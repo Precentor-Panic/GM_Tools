@@ -52,8 +52,14 @@ function lockFilePath(filePath) {
   return `${filePath}.lock`;
 }
 
-/** Generate a batch id. Injectable via opts.makeId for deterministic tests. */
-function defaultMakeBatchId() {
+/**
+ * Generate a batch id. Exported so callers that need the id *before*
+ * createBatch runs (e.g. wf-mcp-server's wf_propose_mutations, which must
+ * stamp batchId onto each Mutation before texturing, then force createBatch
+ * to reuse that same id via opts.makeId) don't have to reimplement the
+ * scheme. Injectable via opts.makeId for deterministic tests either way.
+ */
+export function makeBatchId() {
   return `batch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
@@ -101,7 +107,7 @@ function withLock(filePath, fn) {
  * @returns {object} the created Batch
  */
 export function createBatch(world, scope, elapsedTimeDescriptor, mutations, opts = {}) {
-  const makeId = opts.makeId ?? defaultMakeBatchId;
+  const makeId = opts.makeId ?? makeBatchId;
   const batchId = makeId();
   const createdAt = new Date().toISOString();
 

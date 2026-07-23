@@ -21,6 +21,22 @@ import { resolveDataDir, listWorlds } from "./lib/data-dir.mjs";
 import { loadSnapshot, mutationsPath } from "./lib/snapshot.mjs";
 import { neighborhood, edgesFor, findEntity, findEntityByName } from "./lib/graph.mjs";
 
+// Phase 1 mutation engine — pure library code, this server is a thin wrapper
+// (see gm-tools-conventions skill: "front-ends are thin wrappers, never
+// logic duplicators"). No business logic lives below beyond parameter
+// wiring and status-text formatting.
+import { candidateDeltas } from "../mutation-engine/propagate.mjs";
+import { textureBatch, textureRegion } from "../mutation-engine/texture.mjs";
+import {
+  createBatch,
+  loadBatch,
+  saveBatch,
+  updateMutationStatus,
+  makeBatchId
+} from "../mutation-engine/review-state.mjs";
+import { summarizeBatch, renderHeadline, renderRegionDiff, renderEntityDiff } from "../mutation-engine/grain.mjs";
+import { acceptMutations, rollbackBatch } from "../mutation-engine/rollback.mjs";
+
 const server = new McpServer({ name: "world-fabric", version: "0.1.0" });
 
 const worldParam = z.string().optional().describe(
@@ -221,6 +237,34 @@ const mutationSchema = z.object({
   data: z.record(z.string(), z.any()).optional()
 });
 
+/**
+ * Write mutations to the file bridge and poll briefly for the in-Foundry
+ * watcher to pick them up. Shared by wf_apply_mutations and
+ * wf_sync_to_foundry so the write+poll behavior isn't duplicated between
+ * the two tools (gm-tools-conventions: thin wrappers, no logic duplication).
+ */
+async function applyMutationsToFoundry(dir, w, mutations) {
+  const path = mutationsPath(dir, w);
+  writeFileSync(path, JSON.stringify(mutations, null, 2), "utf8");
+
+  // The watcher clears the file back to "[]" once applied. Poll briefly.
+  const deadline = Date.now() + 7000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 500));
+    if (!existsSync(path)) break;
+    const contents = readFileSync(path, "utf8").trim();
+    if (contents === "[]") {
+      return { status: "applied", count: mutations.length, path };
+    }
+  }
+  return {
+    status: "queued",
+    count: mutations.length,
+    path,
+    note: "Not confirmed applied within 7s — check that a Foundry client has this world open with World Fabric active."
+  };
+}
+
 server.registerTool(
   "wf_apply_mutations",
   {
@@ -240,25 +284,405 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
-      const path = mutationsPath(dir, w);
-      writeFileSync(path, JSON.stringify(mutations, null, 2), "utf8");
+      const result = await applyMutationsToFoundry(dir, w, mutations);
+      return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
 
-      // The watcher clears the file back to "[]" once applied. Poll briefly.
-      const deadline = Date.now() + 7000;
-      while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 500));
-        if (!existsSync(path)) break;
-        const contents = readFileSync(path, "utf8").trim();
-        if (contents === "[]") {
-          return text({ status: "applied", count: mutations.length, path });
+// ======================================================================================
+// Phase 1 — conversational review MCP tools (mutation engine surface)
+//
+// Each tool below is a thin wrapper calling straight into mutation-engine/'s
+// library functions — see plans/phase-1-tasks.md task 1.8. No independent
+// business logic lives here beyond parameter wiring, scope resolution, and
+// status-text formatting.
+// ======================================================================================
+
+/** Resolve a batch-scoped set of mutationIds for accept/reject/regenerate. */
+function resolveMutationIds(batch, scope, id) {
+  if (scope === "batch") return batch.mutations.map((m) => m.mutationId);
+  if (scope === "region") {
+    if (!id) throw new Error("scope='region' requires id (the regionId)");
+    return batch.mutations
+      .filter((m) => (m.regionId ?? `solo-${m.mutationId}`) === id)
+      .map((m) => m.mutationId);
+  }
+  if (scope === "entity") {
+    if (!id) throw new Error("scope='entity' requires id (a mutationId or target entity/edge id)");
+    return batch.mutations.filter((m) => m.mutationId === id || m.id === id).map((m) => m.mutationId);
+  }
+  throw new Error(`Unknown scope: ${scope}`);
+}
+
+/** Next unused m<N> mutationId index in a batch, for appending regenerated mutations. */
+function nextMutationIndex(batch) {
+  let max = -1;
+  for (const m of batch.mutations) {
+    const match = /^m(\d+)$/.exec(m.mutationId ?? "");
+    if (match) max = Math.max(max, parseInt(match[1], 10));
+  }
+  return max + 1;
+}
+
+const proposeScopeSchema = z.object({
+  mode: z.enum(["seed", "ambient", "tag"]),
+  anchorId: z.string().optional().describe(
+    "Entity ID to propagate impact from (mode='seed'). Required unless seeds[] is given."
+  ),
+  depth: z.number().int().min(1).max(6).optional().describe("Max BFS hops for seed propagation. Default 3."),
+  tag: z.string().optional().describe("Tag to scope an ambient-decay pass to (mode='tag')."),
+  elapsedSessions: z.number().min(0).optional().describe(
+    "Sessions elapsed, for the ambient-decay half-life calculation (mode='ambient'/'tag'). Default 1."
+  )
+});
+
+// --- wf_propose_mutations ----------------------------------------------------------
+
+server.registerTool(
+  "wf_propose_mutations",
+  {
+    title: "Propose a batch of graph mutations (propagate + texture + create batch)",
+    description:
+      "Runs the deterministic propagation pass (mutation-engine/propagate.mjs: seed-based BFS impact for " +
+      "mode='seed', ambient time-decay for mode='ambient', decay filtered to a tag for mode='tag') to find " +
+      "candidate changes, then makes one Anthropic API call per affected region (never one per entity) to " +
+      "texture them into concrete mutations with rationale, then writes a new review batch to review-state/. " +
+      "Returns batchId + a headline summary — call wf_review_batch next to drill in. Requires ANTHROPIC_API_KEY " +
+      "to be set in THIS server process's environment for the texturing call — separate from any credential the " +
+      "calling Claude Code session uses, since this call is outbound from the MCP server itself.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      scope: proposeScopeSchema,
+      elapsedTimeDescriptor: z.string().optional().describe(
+        "Human-readable descriptor stored on the batch, e.g. '2 sessions' or 'a few hours'."
+      ),
+      seeds: z
+        .array(z.object({ entityId: z.string(), magnitude: z.number().min(0).max(1) }))
+        .optional()
+        .describe(
+          "Multiple simultaneous seed epicenters (mode='seed' only). If omitted, scope.anchorId with " +
+          "magnitude 1.0 is used as a single seed. Results from multiple seeds are merged, keeping the " +
+          "strongest impact reaching each entity."
+        )
+    }
+  },
+  async ({ world, dataDir, scope, elapsedTimeDescriptor, seeds }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const { entities, edges } = loadSnapshot(dir, w).snapshot;
+
+      let deltas;
+      if (scope.mode === "seed") {
+        const seedList = seeds?.length ? seeds : scope.anchorId ? [{ entityId: scope.anchorId, magnitude: 1.0 }] : [];
+        if (!seedList.length) throw new Error("scope.mode='seed' requires scope.anchorId or seeds[]");
+        const merged = new Map();
+        for (const s of seedList) {
+          const d = candidateDeltas(entities, edges, {
+            seedId: s.entityId,
+            seedMagnitude: s.magnitude,
+            depth: scope.depth ?? 3
+          });
+          for (const delta of d) {
+            const existing = merged.get(delta.entityId);
+            if (!existing || delta.impactScore > existing.impactScore) merged.set(delta.entityId, delta);
+          }
+        }
+        deltas = [...merged.values()];
+      } else if (scope.mode === "ambient") {
+        deltas = candidateDeltas(entities, edges, { elapsedSessions: scope.elapsedSessions ?? 1 });
+      } else if (scope.mode === "tag") {
+        if (!scope.tag) throw new Error("scope.mode='tag' requires scope.tag");
+        const all = candidateDeltas(entities, edges, { elapsedSessions: scope.elapsedSessions ?? 1 });
+        const taggedIds = new Set(entities.filter((e) => (e.tags ?? []).includes(scope.tag)).map((e) => e.id));
+        const edgeMap = new Map(edges.map((e) => [e.id, e]));
+        deltas = all.filter((d) => {
+          if (d.kind === "seed-propagated") return taggedIds.has(d.entityId);
+          const edge = edgeMap.get(d.edgeId);
+          return edge && (taggedIds.has(edge.sourceId) || taggedIds.has(edge.targetId));
+        });
+      } else {
+        throw new Error(`Unknown scope.mode: ${scope.mode}`);
+      }
+
+      const needsLLM = deltas.filter((d) => d.needsLLM);
+      const batchId = makeBatchId();
+      const { mutations } = await textureBatch(
+        needsLLM,
+        { entities, edges, world: w, batchId, elapsedTimeDescriptor },
+        {}
+      );
+
+      const batch = createBatch(w, scope, elapsedTimeDescriptor, mutations, { makeId: () => batchId });
+      const summary = summarizeBatch(batch);
+
+      return text({
+        batchId: batch.id,
+        mutationCount: batch.mutations.length,
+        totalCandidateDeltas: deltas.length,
+        needsLLMCount: needsLLM.length,
+        headline: renderHeadline(summary)
+      });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_review_batch -----------------------------------------------------------------
+
+server.registerTool(
+  "wf_review_batch",
+  {
+    title: "Render a proposed mutation batch at a given grain",
+    description:
+      "Renders the requested detail level for a batch created by wf_propose_mutations: 'headline' (whole batch, " +
+      "collapsed by importance), 'region' (one region's mutations, full detail for important ones), or 'entity' " +
+      "(one mutation's full drill-down, regardless of collapse).",
+    inputSchema: {
+      world: worldParam,
+      batchId: z.string(),
+      grain: z.enum(["headline", "region", "entity"]),
+      regionId: z.string().optional().describe("Required for grain='region'."),
+      entityId: z.string().optional().describe("mutationId or target entity/edge id — required for grain='entity'.")
+    }
+  },
+  async ({ world, batchId, grain, regionId, entityId }) => {
+    try {
+      const w = resolveWorld(world);
+      const batch = loadBatch(w, batchId);
+      const summary = summarizeBatch(batch);
+
+      if (grain === "headline") {
+        return text({ rendered: renderHeadline(summary) });
+      }
+      if (grain === "region") {
+        if (!regionId) throw new Error("grain='region' requires regionId");
+        const region = summary.regions.find((r) => r.regionId === regionId);
+        if (!region) throw new Error(`No region "${regionId}" in batch "${batchId}"`);
+        return text({ rendered: renderRegionDiff(region) });
+      }
+      if (grain === "entity") {
+        if (!entityId) throw new Error("grain='entity' requires entityId");
+        const entity = summary.regions
+          .flatMap((r) => r.entities)
+          .find((e) => e.mutationId === entityId || e.entityId === entityId);
+        if (!entity) throw new Error(`No entity "${entityId}" in batch "${batchId}"`);
+        return text({ rendered: renderEntityDiff(entity) });
+      }
+      throw new Error(`Unknown grain: ${grain}`);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_accept / wf_reject -------------------------------------------------------------
+
+const scopeIdParam = z.string().optional().describe(
+  "regionId (scope='region') or mutationId/target entity-or-edge id (scope='entity'). Not needed for scope='batch'."
+);
+
+server.registerTool(
+  "wf_accept",
+  {
+    title: "Accept mutation(s) in a review batch",
+    description:
+      "Marks mutation(s) accepted via review-state.mjs, capturing each target's pre-mutation entity/edge state " +
+      "(from the live snapshot) for rollback.mjs's later use. Scope 'batch' accepts every mutation in the batch, " +
+      "'region' accepts one region's mutations, 'entity' accepts a single mutation.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      batchId: z.string(),
+      scope: z.enum(["batch", "region", "entity"]),
+      id: scopeIdParam
+    }
+  },
+  async ({ world, dataDir, batchId, scope, id }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const batch = loadBatch(w, batchId);
+      const mutationIds = resolveMutationIds(batch, scope, id);
+      if (!mutationIds.length) throw new Error(`No mutations matched scope="${scope}" id="${id ?? ""}"`);
+      const { entities, edges } = loadSnapshot(dir, w).snapshot;
+      const updated = acceptMutations(w, batchId, mutationIds, entities, edges);
+      return text({ batchId, accepted: mutationIds, batchStatus: updated.status });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_reject",
+  {
+    title: "Reject mutation(s) in a review batch",
+    description: "Marks mutation(s) rejected via review-state.mjs. Same scope semantics as wf_accept.",
+    inputSchema: {
+      world: worldParam,
+      batchId: z.string(),
+      scope: z.enum(["batch", "region", "entity"]),
+      id: scopeIdParam
+    }
+  },
+  async ({ world, batchId, scope, id }) => {
+    try {
+      const w = resolveWorld(world);
+      const batch = loadBatch(w, batchId);
+      const mutationIds = resolveMutationIds(batch, scope, id);
+      if (!mutationIds.length) throw new Error(`No mutations matched scope="${scope}" id="${id ?? ""}"`);
+      let updated;
+      for (const mutationId of mutationIds) updated = updateMutationStatus(w, batchId, mutationId, "rejected");
+      return text({ batchId, rejected: mutationIds, batchStatus: updated.status });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_regenerate ---------------------------------------------------------------------
+
+server.registerTool(
+  "wf_regenerate",
+  {
+    title: "Regenerate texturing for mutation(s), with a steering note",
+    description:
+      "Re-invokes the texturing pass (mutation-engine/texture.mjs) for the selected scope, appending `note` to " +
+      "the prompt. REPLACES (does not stack onto) the prior proposal for that scope: the targeted mutations are " +
+      "removed and new ones (status:'pending') take their place. Still makes one API call per affected region, " +
+      "not one per mutation. Requires ANTHROPIC_API_KEY in this server's environment, same as wf_propose_mutations.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      batchId: z.string(),
+      scope: z.enum(["batch", "region", "entity"]),
+      id: scopeIdParam,
+      note: z.string().describe("Steering note appended to the texturing prompt, e.g. 'make the tone darker'.")
+    }
+  },
+  async ({ world, dataDir, batchId, scope, id, note }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const batch = loadBatch(w, batchId);
+      const mutationIds = resolveMutationIds(batch, scope, id);
+      if (!mutationIds.length) throw new Error(`No mutations matched scope="${scope}" id="${id ?? ""}"`);
+      const targeted = batch.mutations.filter((m) => mutationIds.includes(m.mutationId));
+
+      const { entities, edges } = loadSnapshot(dir, w).snapshot;
+
+      // Group by original regionId so regeneration still costs one API call
+      // per region, not one per mutation (same cost-control behavior as
+      // the original propose pass).
+      const byRegion = new Map();
+      for (const m of targeted) {
+        const key = m.regionId ?? `solo-${m.mutationId}`;
+        if (!byRegion.has(key)) byRegion.set(key, []);
+        byRegion.get(key).push(m);
+      }
+
+      const newMutations = [];
+      let nextIdx = nextMutationIndex(batch);
+      for (const [regionId, entries] of byRegion) {
+        const entityIds = [...new Set(entries.map((m) => m.id).filter(Boolean))];
+        const deltas = entries.map((m) => ({
+          kind: m.sourceKind === "ambient-decay" ? "ambient-decay" : "seed-propagated",
+          entityId: m.id,
+          edgeId: m.op.includes("edge") ? m.id : undefined,
+          impactScore: m.impactScore ?? 0.5,
+          needsLLM: true
+        }));
+        const sourceKind = entries[0].sourceKind ?? "manual";
+        const regionMutations = await textureRegion(
+          { regionId, entityIds, deltas },
+          { entities, edges, world: w, batchId, sourceKind, elapsedTimeDescriptor: batch.elapsedTimeDescriptor, note },
+          {}
+        );
+        for (const rm of regionMutations) {
+          newMutations.push({ ...rm, mutationId: `m${nextIdx++}`, status: "pending" });
         }
       }
+
+      batch.mutations = batch.mutations.filter((m) => !mutationIds.includes(m.mutationId));
+      batch.mutations.push(...newMutations);
+      const saved = saveBatch(w, batch);
+
       return text({
-        status: "queued",
-        count: mutations.length,
-        path,
-        note: "Not confirmed applied within 7s — check that a Foundry client has this world open with World Fabric active."
+        batchId,
+        replaced: mutationIds,
+        regenerated: newMutations.map((m) => m.mutationId),
+        batchStatus: saved.status
       });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_sync_to_foundry ------------------------------------------------------------------
+
+server.registerTool(
+  "wf_sync_to_foundry",
+  {
+    title: "Sync a batch's accepted mutations to Foundry",
+    description:
+      "Writes every 'accepted' mutation in the given batch to world-fabric-mutations.json via the same file " +
+      "bridge wf_apply_mutations uses, and marks the batch 'synced'. Known Phase-1 limitation, expected and " +
+      "resolved in Phase 2b: until the headless-apply path (graph-import/headless-apply.mjs) exists, this " +
+      "reports 'queued'/'not confirmed' whenever no Foundry client is open — same behavior wf_apply_mutations " +
+      "already has today.",
+    inputSchema: { world: worldParam, dataDir: dataDirParam, batchId: z.string() }
+  },
+  async ({ world, dataDir, batchId }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const batch = loadBatch(w, batchId);
+      const accepted = batch.mutations.filter((m) => m.status === "accepted");
+      if (!accepted.length) {
+        return text({ status: "no-op", batchId, note: "No mutations in this batch have status 'accepted'." });
+      }
+      const mutations = accepted.map((m) => ({ op: m.op, id: m.id, data: m.data }));
+      const result = await applyMutationsToFoundry(dir, w, mutations);
+      batch.status = "synced";
+      saveBatch(w, batch);
+      return text({ ...result, batchId, syncedCount: accepted.length });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_rollback_batch -------------------------------------------------------------------
+
+server.registerTool(
+  "wf_rollback_batch",
+  {
+    title: "Roll back the most-recently-accepted batch",
+    description:
+      "Computes the mutations needed to restore this batch's accepted entries to their captured pre-accept " +
+      "state (rollback.mjs), applies them via the same Foundry file bridge, and marks the batch 'rolled-back'. " +
+      "Confirmed Phase-1 scope: the most-recently-accepted batch only — pass that batch's id explicitly. Entries " +
+      "accepted before rollback.mjs existed, or newly-created entities/edges with no id known at accept-time, " +
+      "are reported in `skipped` rather than silently dropped.",
+    inputSchema: { world: worldParam, dataDir: dataDirParam, batchId: z.string() }
+  },
+  async ({ world, dataDir, batchId }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const { restoreMutations, skipped } = rollbackBatch(w, batchId);
+      if (!restoreMutations.length) {
+        return text({ batchId, status: "no-op", skipped, note: "No restorable accepted mutations found." });
+      }
+      const result = await applyMutationsToFoundry(dir, w, restoreMutations);
+      return text({ ...result, batchId, restoredCount: restoreMutations.length, skipped });
     } catch (err) {
       return errorText(err);
     }
