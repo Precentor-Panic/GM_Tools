@@ -1,0 +1,12 @@
+{
+  "name": "wf-mcp-server",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "MCP server exposing World Fabric campaign graph queries and mutations to Claude.",
+  "main": "index.mjs",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  }
+}
