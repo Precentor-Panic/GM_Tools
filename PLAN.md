@@ -208,7 +208,7 @@ Steps 1–3 below predate the toolbox reframing and remain accurate completed-wo
 | Phase | Deliverable | Ships independently? | Status |
 |---|---|---|---|
 | 0 | Prep-time tools (NPC cards, scene briefs, doom clocks, VTT push via step 1's Graph Push) | Yes | Not started |
-| 1 | Mutation engine core: schema, propagation pass, review-state, diff, grain, rollback, batched texturing, conversational MCP review tools | Partially (infra) | **Next up — see `plans/phase-1-tasks.md`** |
+| 1 | Mutation engine core: schema, propagation pass, review-state, diff, grain, rollback, batched texturing, conversational MCP review tools | Partially (infra) | **Done** — tasks 1.1–1.8 built and unit-tested (`mutation-engine/`, 7 new `wf-mcp-server` tools); task 1.9 (dedicated web review UI) explicitly deferred to Phase 6 per its own text. See `plans/phase-1-tasks.md` and `mutation-engine/README.md`. Propagation-tuning constants (task 1.3) are prototype defaults, calibration deferred. |
 | 2/2b | Time-skip mode + headless (Foundry-optional) apply — the MVP wedge | Yes | Depends on Phase 1 — see `plans/phase-2-tasks.md` |
 | 3 | Live on-demand diff mode | Yes | Depends on Phase 1; stretch goal alongside 1–2 |
 | 4 | Rollback hardening + unreviewed-accumulation tracking | Yes | Deferred |
