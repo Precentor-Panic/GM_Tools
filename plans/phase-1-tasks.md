@@ -63,6 +63,14 @@ not a retune) and add a `containment` key (`EDGE_TYPE_WEIGHT.containment: 0.6`;
 no `DECAY_HALF_LIFE_SESSIONS` entry — `containment` edges are hard-excluded
 from `ambientDecay` entirely, not merely slow-decaying).
 
+**Further superseded by Phase 1.5b:** adds an `origin` key
+(`EDGE_TYPE_WEIGHT.origin: 0.6`, matching `containment`; no
+`DECAY_HALF_LIFE_SESSIONS` entry, same hard-exclusion treatment as
+`containment` — see `plans/phase-1.5-tasks.md`'s addendum) for
+`person.homeLocation`'s origin/hometown edges, a biographical fact
+distinct from `containment`'s structural one despite sharing the
+non-decay treatment.
+
 - `propagateSeed(entities, edges, seedId, seedMagnitude, maxDepth)` — weighted BFS diffusion of an impact score outward from a seed entity, using `EDGE_TYPE_WEIGHT[edge.relationshipType] * edge.strength` as the per-hop multiplier. Returns `Map<entityId, impactScore>`.
 - `ambientDecay(edges, elapsedSessions)` — per-`relationshipType` half-life decay of edge `strength`, reusing the same decay-formula shape as `foundry_worldFabric/scripts/data/llm-context.mjs`'s existing `recencyScore()` (`Math.pow(0.5, elapsed/halfLife)`). Returns an array of `{edgeId, relationshipType, from, to, delta}`.
 - `candidateDeltas(entities, edges, {seedId?, seedMagnitude?, elapsedSessions})` — combines both into a flat list of `{kind: 'seed-propagated'|'ambient-decay', ..., needsLLM: boolean}`, where `needsLLM` is derived from `IMPACT_THRESHOLD`/`IMPORTANCE_FLOOR`/decay-magnitude.

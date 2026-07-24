@@ -176,6 +176,39 @@ test("propagateSeed: still traverses containment edges normally (exclusion is sc
   assert.ok(impact.get("building") > 0, "containment-traversed impact should be a real positive score");
 });
 
+// ------------------------------------- Phase 1.5b: origin (homeLocation) ---
+
+test("ambientDecay: origin edges are hard-excluded, not just slow-decaying", () => {
+  const origin = { id: "g1", relationshipType: "origin", strength: 0.8 };
+  const other = { id: "o1", relationshipType: "unspecified", strength: 0.8 };
+  // A very large elapsed-sessions value would decay every other type to ~0
+  // under any finite half-life -- proving origin's absence from the results
+  // isn't just a slow decay hiding under IMPACT_THRESHOLD, but a genuine
+  // exclusion from the candidate list (same proof shape as the containment
+  // test above).
+  const results = ambientDecay([origin, other], 100000);
+  assert.equal(results.some((r) => r.edgeId === "g1"), false,
+    "origin edge should produce no candidate at all, at any elapsed time");
+  assert.equal(results.some((r) => r.edgeId === "o1"), true,
+    "non-origin edge should still produce a candidate (sanity check on the fixture)");
+  assert.ok(results.find((r) => r.edgeId === "o1").to < 0.01,
+    "sanity check: the large elapsed value really does decay other types near zero");
+});
+
+test("propagateSeed: still traverses origin edges normally (exclusion is scoped to ambientDecay only)", () => {
+  const ents = [
+    { id: "hometown", name: "Hometown", type: "place", importance: 0.9 },
+    { id: "expat", name: "Expat", type: "person", importance: 0.6 }
+  ];
+  const originEdges = [
+    { id: "g1", sourceId: "expat", targetId: "hometown", relationshipType: "origin", strength: 0.9 }
+  ];
+  // e.g. news of a hometown's fall should still reach someone who's from there.
+  const impact = propagateSeed(ents, originEdges, "hometown", 1.0, 2);
+  assert.ok(impact.has("expat"), "a seeded event should still ripple through an origin edge");
+  assert.ok(impact.get("expat") > 0, "origin-traversed impact should be a real positive score");
+});
+
 // ---------------------------------------------------------- candidateDeltas
 
 test("candidateDeltas: entity below IMPORTANCE_FLOOR gets needsLLM:false even with high impact", () => {

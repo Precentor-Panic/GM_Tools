@@ -29,6 +29,15 @@
 // "the district burned" should still reach the buildings within it) but is
 // hard-excluded from ambientDecay entirely, below — its DECAY_HALF_LIFE_SESSIONS
 // entry is therefore moot but kept for documentation/completeness.
+//
+// Phase 1.5b: World Fabric added "origin" for person.homeLocation (where
+// someone is *from* — a fixed biographical fact, distinct from "containment"
+// even though both are hard-excluded from ambientDecay here; see
+// NON_DECAYING_RELATIONSHIP_TYPES below and World Fabric's constants.mjs for
+// why they're modeled as separate types rather than one). Like
+// "containment", "origin" gets a normal EDGE_TYPE_WEIGHT (a seeded event
+// should still ripple through it — e.g. news of a hometown's fall reaching
+// someone who's from there) but no DECAY_HALF_LIFE_SESSIONS entry.
 export const EDGE_TYPE_WEIGHT = {
   causal: 1.0,
   fealty: 0.9,
@@ -36,6 +45,7 @@ export const EDGE_TYPE_WEIGHT = {
   membership: 0.7,
   ownership: 0.6,
   containment: 0.6,
+  origin: 0.6, // matches containment's weight -- both are durable, structural-strength facts
   presence: 0.55,
   knowledge: 0.5,
   social: 0.4,
@@ -52,9 +62,19 @@ export const DECAY_HALF_LIFE_SESSIONS = {
   knowledge: 5,
   social: 2,
   unspecified: 3
-  // containment: intentionally absent -- ambientDecay hard-excludes
-  // "containment" edges entirely (see below), so no half-life applies.
+  // containment, origin: intentionally absent -- ambientDecay hard-excludes
+  // both entirely (see NON_DECAYING_RELATIONSHIP_TYPES below), so no
+  // half-life applies to either.
 };
+
+// Relationship types ambientDecay must never touch, regardless of elapsed
+// time or configured half-life: each is a permanent fact for a different
+// reason (containment: structural/compositional -- a place is part of a
+// region; origin: biographical -- where a person is from), and conflating
+// either with a decaying half-life would eventually misfire on a long
+// campaign. propagateSeed is unaffected by this set -- see its own
+// EDGE_TYPE_WEIGHT entries above.
+export const NON_DECAYING_RELATIONSHIP_TYPES = new Set(["containment", "origin"]);
 
 export const IMPACT_THRESHOLD = 0.15;
 export const IMPORTANCE_FLOOR = 0.2;
@@ -119,15 +139,18 @@ export function propagateSeed(entities, edges, seedId, seedMagnitude, maxDepth =
 /**
  * Per-relationshipType half-life decay of edge strength over elapsed sessions.
  *
- * "containment" edges (structural facts, e.g. a place being part of a region)
- * are hard-excluded: no delta computed, no candidate produced, regardless of
- * elapsed time or configured half-life. This is a deliberate skip rather than
- * a very-large half-life constant -- a half-life is still monotonic decay and
- * would eventually misfire on a long enough campaign, spuriously implying
- * "this building stopped being in its district". See
- * GM_Tools/plans/phase-1.5-tasks.md task 1.5.3. Note this exclusion is scoped
- * to ambient decay only -- `propagateSeed` still traverses containment edges
- * normally, since a seeded event legitimately ripples through them.
+ * Edges whose relationshipType is in NON_DECAYING_RELATIONSHIP_TYPES
+ * ("containment" -- structural facts, e.g. a place being part of a region;
+ * "origin" -- biographical facts, e.g. a person's hometown) are hard-excluded:
+ * no delta computed, no candidate produced, regardless of elapsed time or
+ * configured half-life. This is a deliberate skip rather than a very-large
+ * half-life constant -- a half-life is still monotonic decay and would
+ * eventually misfire on a long enough campaign, spuriously implying "this
+ * building stopped being in its district" or "this person is no longer
+ * from where they're from". See GM_Tools/plans/phase-1.5-tasks.md task 1.5.3
+ * (containment) and its Phase 1.5b follow-up (origin). Note this exclusion is
+ * scoped to ambient decay only -- `propagateSeed` still traverses both edge
+ * types normally, since a seeded event legitimately ripples through them.
  *
  * @param {object[]} edges
  * @param {number} elapsedSessions
@@ -135,7 +158,7 @@ export function propagateSeed(entities, edges, seedId, seedMagnitude, maxDepth =
  */
 export function ambientDecay(edges, elapsedSessions) {
   return edges
-    .filter((edge) => edge.relationshipType !== "containment")
+    .filter((edge) => !NON_DECAYING_RELATIONSHIP_TYPES.has(edge.relationshipType))
     .map((edge) => {
       const halfLife = DECAY_HALF_LIFE_SESSIONS[edge.relationshipType] ?? DECAY_HALF_LIFE_SESSIONS.unspecified;
       const from = clamp01(edge.strength);

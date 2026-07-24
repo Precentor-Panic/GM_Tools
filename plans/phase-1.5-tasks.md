@@ -66,3 +66,14 @@
 - [ ] GM_Tools' full test suite (`npm test`) passes.
 - [ ] Docs updated on both sides per task 1.5.4.
 - [ ] Explicitly **not** done as part of this phase, confirmed not started: any `contained-in` scope mode, traversal helper, or changes to `time-skip/` — that's Phase 2, deliberately out of scope here.
+
+---
+
+## Phase 1.5b addendum — `person.homeLocation` resolved
+
+Task 1.5.1/1.5.2 above flagged `person.homeLocation` rather than moving it, since the review's `presence` assumption wasn't supported by the code. Russell's call: `homeLocation` means origin/hometown — a fixed biographical fact, never decaying, but **not** structural containment either (a person isn't compositionally "part of" their hometown the way a place is part of a region — reusing `containment` would repeat the same modeling mistake this phase fixed, at smaller scale). Given its own type: `origin`.
+
+- World Fabric: `origin` added to `RELATIONSHIP_TYPES`/`DEFAULT_STRENGTH_BY_TYPE`; `person.homeLocation`'s `deriveEdge` retargeted to it.
+- **Migration was needed, contrary to task 1.5.1's "should require no explicit migration" acceptance-criteria text** — confirmed by inspection, not assumption. `CORE_ENTITY_TYPES` only seeds the `entityTypes` game.settings default on a brand-new world; once a world persists entityTypes (effectively every real world), `module.mjs`'s "merge new attributeDefs" step is additive-only and never overwrites an already-present attributeDef's `deriveEdge` — so the code-level type change alone would never reach an existing world. Verified directly against this project's own live `wf-test` world: its persisted entityTypes still had `place.region`/`faction.headquarters` frozen at `"location"` despite `constants.mjs` reading `"containment"` since this phase's original commit — the same latent gap, left unfixed there (out of scope) but proving the pattern. Added an idempotent `_runMigration` step that relabels `person.homeLocation`'s stored `deriveEdge.relationshipType` from `"location"` to `"origin"`; once that flips, the existing `dirty → graph._runDerivation()` path discards and rebuilds all derived edges, so no separate edge-level migration was needed on top of it.
+- GM_Tools: `ambientDecay`'s hard exclusion refactored from a single `!== "containment"` check to a `NON_DECAYING_RELATIONSHIP_TYPES` set covering both `containment` and `origin`. `origin` added to `EDGE_TYPE_WEIGHT` (same weight as `containment`, `0.6`) since `propagateSeed` should still traverse it (e.g. news of a hometown's fall reaching someone who's from there). `origin` deliberately **not** added to `DECAY_HALF_LIFE_SESSIONS` — hard-excluded, a half-life value would be dead config.
+- `event.location` was explicitly out of scope for 1.5b too, same as it was for 1.5 — left untouched.

@@ -101,9 +101,16 @@ Concurrency: every write takes an exclusive `<batchId>.json.lock` file
 touching the batch file. A write that finds an existing lock throws
 `ConcurrentWriteError` rather than blind-overwriting.
 
-## Containment vs. presence (Phase 1.5)
+## Containment vs. presence vs. origin (Phase 1.5 / 1.5b)
 
-`ambientDecay` (`propagate.mjs`) hard-excludes edges with `relationshipType === "containment"` — no delta is ever computed for them, at any elapsed-session value. This is a deliberate skip, not a very-long half-life: a half-life is still monotonic decay and would eventually misfire on a long enough campaign. `propagateSeed` is unaffected — a seeded event still ripples through `containment` edges normally, since that's a different, legitimate use of the same edges (e.g. "the district burned" should still reach the buildings within it). See `plans/phase-1.5-tasks.md` for the full design-review reasoning behind the `containment`/`presence` split (World Fabric's former catch-all `location` type).
+`ambientDecay` (`propagate.mjs`) hard-excludes edges whose `relationshipType` is in `NON_DECAYING_RELATIONSHIP_TYPES` — currently `containment` and `origin` — no delta is ever computed for them, at any elapsed-session value. This is a deliberate skip, not a very-long half-life: a half-life is still monotonic decay and would eventually misfire on a long enough campaign. `propagateSeed` is unaffected — a seeded event still ripples through both edge types normally, since that's a different, legitimate use of the same edges (e.g. "the district burned" should still reach the buildings within it; news of a hometown's fall should still reach someone who's from there).
+
+`containment` and `origin` get the same non-decay treatment for different reasons, and it's worth keeping the distinction straight rather than merging them into one "permanent edges" concept:
+
+- **`containment`** is *structural/compositional* — a place is part of a region, a faction's headquarters is a place (`place.region`, `faction.headquarters`). The entity is (part of) the other entity.
+- **`origin`** is *biographical* — a person's hometown (`person.homeLocation`). The entity is *from* the other entity, not part of it; moving away doesn't change where someone's from, but a person was never compositionally "part of" their hometown the way a building is part of a district.
+
+Reusing `containment` for `origin` would repeat, at smaller scale, the exact modeling mistake the original `location` split fixed — a fact needing a distinct "never decays" treatment is not the same as a fact needing containment semantics. See `plans/phase-1.5-tasks.md` for the full design-review reasoning behind the `containment`/`presence` split (World Fabric's former catch-all `location` type), and its Phase 1.5b follow-up for `origin`.
 
 ## Design choices flagged for Russell's review (non-blocking)
 
@@ -123,10 +130,12 @@ touching the batch file. A write that finds an existing lock throws
   exercising `rollbackBatch` as part of the conversational round trip, and
   there was otherwise no MCP surface to call it from. See
   `wf-mcp-server/README.md`.
-- **`person.homeLocation` left on `location`, not moved to `presence` (task
-  1.5.2).** The Phase 1.5 design review assumed it should become `presence`,
-  but World Fabric's own code doesn't support that: mechanically it's a
-  Tier-1 derive-edge recomputed wholesale on every load, identical in
-  mechanism to `place.region`/`faction.headquarters` (now `containment`),
-  and it never participates in world-scan's accumulate-then-decay presence
-  tracking. Flagged rather than forced — see `plans/phase-1.5-tasks.md`.
+- **`person.homeLocation` (task 1.5.2, resolved in 1.5b).** Left flagged
+  during Phase 1.5 rather than moved to `presence` — the design review's
+  `presence` guess didn't match how the code actually treats it (a Tier-1
+  derive-edge recomputed wholesale on load, not part of world-scan's
+  accumulate-then-decay presence tracking). Russell's call: `homeLocation`
+  means origin/hometown, a fixed biographical fact that never decays but
+  also isn't structural containment — so it got a new type, `origin`,
+  rather than reusing `containment` or `presence`. See "Containment vs.
+  presence vs. origin" above and `plans/phase-1.5-tasks.md`.
