@@ -19,9 +19,13 @@ grain.mjs         summarizeBatch()/render*()    -- conversational headline/regio
 rollback.mjs   acceptMutations() / rollbackBatch()  -- capture pre-state at accept, restore on rollback
 ```
 
-`diff.mjs` (`diffEntity`/`diffEdge`) is a standalone utility any of the above
-(or the MCP layer) can call to compute field-level before/after diffs for
-display — it isn't wired into the pipeline itself.
+`diff.mjs` (`diffEntity`/`diffEdge`) is a standalone utility for computing
+field-level before/after diffs. `wf-mcp-server/index.mjs`'s `wf_propose_mutations`
+handler calls it (via its own `attachDiffs` helper) against the live snapshot
+right after texturing and before `createBatch`, merging each proposed
+mutation's `data` onto the current entity/edge state and attaching the
+result as the mutation's `diff` field — this is what `grain.mjs`'s
+`renderEntityDiff` renders in place of its raw-JSON fallback.
 
 ## Schema version
 

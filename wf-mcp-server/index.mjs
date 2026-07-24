@@ -19,7 +19,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 
 import { resolveDataDir, listWorlds } from "./lib/data-dir.mjs";
 import { loadSnapshot, mutationsPath } from "./lib/snapshot.mjs";
-import { neighborhood, edgesFor, findEntity, findEntityByName } from "./lib/graph.mjs";
+import { neighborhood, edgesFor, findEntity, findEntityByName, findEdge } from "./lib/graph.mjs";
 
 // Phase 1 mutation engine — pure library code, this server is a thin wrapper
 // (see gm-tools-conventions skill: "front-ends are thin wrappers, never
@@ -27,6 +27,7 @@ import { neighborhood, edgesFor, findEntity, findEntityByName } from "./lib/grap
 // wiring and status-text formatting.
 import { candidateDeltas } from "../mutation-engine/propagate.mjs";
 import { textureBatch, textureRegion } from "../mutation-engine/texture.mjs";
+import { diffEntity, diffEdge } from "../mutation-engine/diff.mjs";
 import {
   createBatch,
   loadBatch,
@@ -317,6 +318,33 @@ function resolveMutationIds(batch, scope, id) {
   throw new Error(`Unknown scope: ${scope}`);
 }
 
+/**
+ * Attach diff.mjs's field-level diff to each upsert_entity/upsert_edge
+ * mutation, computed against the live snapshot's current state merged with
+ * the mutation's own proposed `data` (the merge semantics diff.mjs's own
+ * doc comment requires: `{...before, ...data}`, not a sparse patch). This is
+ * what grain.mjs's renderEntityDiff needs to show "field: from -> to"
+ * instead of falling back to a raw-JSON-dump view. A create op (no id, or
+ * an id with no live match) has no "before" state -- diffEntity/diffEdge's
+ * own null-before handling already produces a single "(created)" marker
+ * rather than per-field noise, so no special-casing is needed here.
+ */
+function attachDiffs(mutations, entities, edges) {
+  return mutations.map((m) => {
+    if (m.op === "upsert_entity") {
+      const current = m.id ? findEntity(entities, m.id) : null;
+      const merged = { ...(current ?? {}), ...(m.data ?? {}) };
+      return { ...m, diff: diffEntity(current, merged) };
+    }
+    if (m.op === "upsert_edge") {
+      const current = m.id ? findEdge(edges, m.id) : null;
+      const merged = { ...(current ?? {}), ...(m.data ?? {}) };
+      return { ...m, diff: diffEdge(current, merged) };
+    }
+    return m;
+  });
+}
+
 /** Next unused m<N> mutationId index in a batch, for appending regenerated mutations. */
 function nextMutationIndex(batch) {
   let max = -1;
@@ -416,8 +444,9 @@ server.registerTool(
         { entities, edges, world: w, batchId, elapsedTimeDescriptor },
         {}
       );
+      const diffedMutations = attachDiffs(mutations, entities, edges);
 
-      const batch = createBatch(w, scope, elapsedTimeDescriptor, mutations, { makeId: () => batchId });
+      const batch = createBatch(w, scope, elapsedTimeDescriptor, diffedMutations, { makeId: () => batchId });
       const summary = summarizeBatch(batch);
 
       return text({
@@ -689,5 +718,15 @@ server.registerTool(
   }
 );
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+// Guard the actual stdio connect behind an entrypoint check so this module
+// can be imported (e.g. by test/*.test.mjs, to unit-test attachDiffs against
+// this file's real wiring) without spinning up a live MCP transport.
+const isMain = import.meta.url === `file://${process.argv[1]}`;
+if (isMain) {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+// Exported for testing only (attachDiffs is pure/deterministic; see
+// test/propose-diff.test.mjs). Not part of the MCP tool surface.
+export { attachDiffs };

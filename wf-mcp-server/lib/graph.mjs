@@ -47,6 +47,10 @@ export function findEntity(entities, entityId) {
   return entities.find((e) => e.id === entityId) ?? null;
 }
 
+export function findEdge(edges, edgeId) {
+  return edges.find((e) => e.id === edgeId) ?? null;
+}
+
 /** Case-insensitive name lookup, for when the caller has a name but not an ID. */
 export function findEntityByName(entities, name) {
   const lower = name.toLowerCase();
