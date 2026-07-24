@@ -25,17 +25,28 @@ display — it isn't wired into the pipeline itself.
 
 ## Schema version
 
-`schema.mjs` exports `SCHEMA_VERSION = 1` for the `Mutation`/`Batch`/
-`ReviewState` shapes, following the precedent `interchange.mjs`'s
+`schema.mjs` exports `SCHEMA_VERSION = 1` for the `Mutation`/`StoredMutation`/
+`Batch`/`ReviewState` shapes, following the precedent `interchange.mjs`'s
 `WFI_VERSION` already set in `foundry_worldFabric`. Bump it and note the
 breaking change here if the shape changes.
 
 `Mutation` extends `wf-mcp-server`'s existing `wf_apply_mutations` input
 shape (`op`/`id`/`data`) with `rationale`, `batchId`, `sourceKind`, and
-optional `impactScore`. It uses zod's `.passthrough()` deliberately: the
-review-state envelope (below) adds bookkeeping fields on top of this
-validated core, and passthrough is what keeps those fields intact when the
-enriched record gets re-validated.
+optional `impactScore`. It is `.strict()` — a freshly-proposed mutation
+(texture.mjs's LLM output, or a hand-authored 'manual' mutation) must satisfy
+exactly this shape, nothing more; an unexpected field is a validation error,
+not silently ignored.
+
+`StoredMutation` is the separate, wider schema for the envelope actually
+persisted to a batch file: `Mutation`'s core plus `mutationId`/`status`
+(review-state.mjs's `createBatch`), `regionId`/`entityContext` (texture.mjs's
+enrichment), `preState` (rollback.mjs's `acceptMutations`), and `diff`
+(diff.mjs's field-level diff, attached by `wf_propose_mutations` before
+persisting — see below). Every write/re-write of a stored mutation object
+validates against `StoredMutation`, not `Mutation` with `.passthrough()` —
+splitting the two schemas means a typo'd field name on any of them is still
+caught, instead of every field beyond `Mutation`'s core going completely
+unchecked.
 
 ## Review-state file format
 
@@ -61,16 +72,21 @@ File-per-batch JSON at `GM_Tools/review-state/<world>/<batchId>.json`
       "sourceKind": "seeded-propagation",
       "impactScore": 0.72,
 
-      // review-state.mjs bookkeeping (passthrough, not part of the core schema):
+      // review-state.mjs bookkeeping (schema.mjs's StoredMutation, not part of the strict Mutation core):
       "mutationId": "m0",           // stable per-mutation handle; entity's own `id` may not exist yet for a create
       "status": "pending",          // schema.mjs's ReviewState enum
 
-      // texture.mjs enrichment (passthrough), consumed by grain.mjs:
+      // texture.mjs enrichment (StoredMutation), consumed by grain.mjs:
       "regionId": "region-0",       // texture.mjs's connectivity-cluster id -- grain.mjs groups by this, doesn't recompute BFS
       "entityContext": { "name": "Alvor", "importance": 0.5, "tags": [] },
 
       // rollback.mjs enrichment, set at accept-time:
-      "preState": { /* full pre-mutation entity/edge object, or null if this mutation created it */ }
+      "preState": { /* full pre-mutation entity/edge object, or null if this mutation created it */ },
+
+      // diff.mjs enrichment, computed and attached by wf_propose_mutations
+      // against the live snapshot before persisting; grain.mjs's
+      // renderEntityDiff prefers this over a raw data dump when present:
+      "diff": [{ "field": "importance", "from": 0.5, "to": 0.7 }]
     }
   ]
 }

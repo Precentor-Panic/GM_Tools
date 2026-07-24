@@ -11,8 +11,11 @@
  * each stored mutation carrying the enrichment `createBatch` adds on top of
  * the validated `Mutation` core: `mutationId` (stable per-mutation handle —
  * needed because a brand-new entity's own `id` doesn't exist yet at propose
- * time) and `status` (this mutation's ReviewState). `Mutation`'s zod schema
- * uses `.passthrough()` specifically so this envelope survives re-validation.
+ * time) and `status` (this mutation's ReviewState). Every mutation this
+ * module writes or re-writes is validated against `schema.mjs`'s
+ * `StoredMutation` — the wider schema that knows about this bookkeeping
+ * envelope (and texture.mjs's regionId/entityContext, and rollback.mjs's
+ * preState) — not the strict, pre-bookkeeping `Mutation` schema.
  *
  * Concurrency: every write (create or save) takes an exclusive lock file
  * (`<batchId>.json.lock`, created with the `wx` flag so a second writer's
@@ -24,7 +27,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, openSync, writeSync, closeSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Batch, Mutation, ReviewState } from "./schema.mjs";
+import { Batch, StoredMutation, ReviewState } from "./schema.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "review-state");
@@ -101,7 +104,7 @@ function withLock(filePath, fn) {
  * @param {string} world
  * @param {object} scope                          e.g. {mode:'seed', anchorId, depth} or {mode:'ambient', elapsedSessions}
  * @param {string} [elapsedTimeDescriptor]
- * @param {object[]} mutations                     Mutation-shaped objects (validated against schema.mjs's Mutation)
+ * @param {object[]} mutations                     Mutation-shaped objects (validated against schema.mjs's StoredMutation once enriched)
  * @param {object} [opts]
  * @param {() => string} [opts.makeId]             batch id generator, injectable for tests
  * @returns {object} the created Batch
@@ -112,9 +115,11 @@ export function createBatch(world, scope, elapsedTimeDescriptor, mutations, opts
   const createdAt = new Date().toISOString();
 
   const enriched = mutations.map((m, i) => {
-    const withBatchId = { ...m, batchId };
-    const validated = Mutation.parse(withBatchId); // throws on malformed input — fail fast, don't persist garbage
-    return { ...validated, mutationId: validated.mutationId ?? `m${i}`, status: "pending" };
+    const mutationId = m.mutationId ?? `m${i}`;
+    // Validate the fully-enriched, about-to-be-stored object in one pass —
+    // throws on malformed input (including a typo'd bookkeeping field name),
+    // fail fast, don't persist garbage.
+    return StoredMutation.parse({ ...m, batchId, mutationId, status: "pending" });
   });
 
   const batch = Batch.parse({

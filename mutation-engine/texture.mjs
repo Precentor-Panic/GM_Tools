@@ -225,16 +225,20 @@ export async function textureRegion(region, ctx, opts = {}) {
       const rawMutations = RawMutationArray.parse(parsed);
       return rawMutations.map((m) => {
         const entity = m.id ? entityMap.get(m.id) : undefined;
-        return Mutation.parse({
-          ...m,
-          batchId,
-          sourceKind,
-          impactScore,
+        // Validate the LLM-controlled core against the strict Mutation shape
+        // first — this is still a "freshly proposed" mutation, not yet a
+        // stored one. regionId/entityContext are our own trusted enrichment
+        // (not model output), attached after validation rather than parsed
+        // through Mutation itself; schema.mjs's StoredMutation validates the
+        // fully-enriched object later, once review-state.mjs persists it.
+        const validated = Mutation.parse({ ...m, batchId, sourceKind, impactScore });
+        return {
+          ...validated,
           regionId: region.regionId,
           ...(entity
             ? { entityContext: { name: entity.name, importance: entity.importance, tags: entity.tags } }
             : {})
-        });
+        };
       });
     } catch (err) {
       lastError = err;

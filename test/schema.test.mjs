@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   SCHEMA_VERSION,
   Mutation,
+  StoredMutation,
   Batch,
   ReviewState,
   MutationOp,
@@ -88,8 +89,64 @@ test("Mutation: invalid sourceKind is rejected", () => {
   assert.equal(result.success, false);
 });
 
-test("Mutation: passthrough preserves extra bookkeeping fields review-state attaches", () => {
-  const withEnvelope = {
+test("Mutation: rejects an unknown field (passthrough is gone -- typos are caught, not silently ignored)", () => {
+  const withTypo = {
+    op: "upsert_entity",
+    id: "ent1",
+    data: {},
+    rationale: "x",
+    batchId: "batch1",
+    sourceKind: "manual",
+    staus: "pending" // typo of `status` -- must not silently pass
+  };
+  const result = Mutation.safeParse(withTypo);
+  assert.equal(result.success, false);
+});
+
+// ----------------------------------------------------------- StoredMutation
+
+test("StoredMutation: accepts a well-formed stored mutation, including bookkeeping fields", () => {
+  const good = {
+    op: "upsert_entity",
+    id: "ent1",
+    data: { importance: 0.7 },
+    rationale: "The guild lost its grip on the docks.",
+    batchId: "batch1",
+    sourceKind: "seeded-propagation",
+    impactScore: 0.42,
+    mutationId: "m0",
+    status: "pending",
+    regionId: "region-0",
+    entityContext: { name: "Alvor", importance: 0.5, tags: [] },
+    preState: { id: "ent1", importance: 0.5 },
+    diff: [{ field: "importance", from: 0.5, to: 0.7 }]
+  };
+  const parsed = StoredMutation.parse(good);
+  assert.equal(parsed.mutationId, "m0");
+  assert.equal(parsed.status, "pending");
+  assert.equal(parsed.regionId, "region-0");
+  assert.equal(parsed.entityContext.name, "Alvor");
+  assert.deepEqual(parsed.preState, { id: "ent1", importance: 0.5 });
+  assert.deepEqual(parsed.diff, [{ field: "importance", from: 0.5, to: 0.7 }]);
+});
+
+test("StoredMutation: still rejects a genuinely malformed mutation (wrong type on a known field)", () => {
+  const bad = {
+    op: "upsert_entity",
+    id: "ent1",
+    data: {},
+    rationale: "x",
+    batchId: "batch1",
+    sourceKind: "manual",
+    mutationId: "m0",
+    status: "not-a-real-status" // known field, invalid enum value
+  };
+  const result = StoredMutation.safeParse(bad);
+  assert.equal(result.success, false);
+});
+
+test("StoredMutation: also rejects an unknown field", () => {
+  const bad = {
     op: "upsert_entity",
     id: "ent1",
     data: {},
@@ -98,12 +155,10 @@ test("Mutation: passthrough preserves extra bookkeeping fields review-state atta
     sourceKind: "manual",
     mutationId: "m0",
     status: "pending",
-    regionId: "region-0"
+    notARealField: true
   };
-  const parsed = Mutation.parse(withEnvelope);
-  assert.equal(parsed.mutationId, "m0");
-  assert.equal(parsed.status, "pending");
-  assert.equal(parsed.regionId, "region-0");
+  const result = StoredMutation.safeParse(bad);
+  assert.equal(result.success, false);
 });
 
 // ----------------------------------------------------------------- Batch
@@ -122,7 +177,9 @@ test("Batch: valid batch parses", () => {
         data: { importance: 0.6 },
         rationale: "x",
         batchId: "batch1",
-        sourceKind: "manual"
+        sourceKind: "manual",
+        mutationId: "m0",
+        status: "pending"
       }
     ],
     status: "open"
