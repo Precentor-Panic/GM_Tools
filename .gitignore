@@ -1,2 +1,7 @@
 review-state/*/
 !review-state/.gitkeep
+
+# never commit API keys / secrets
+.env
+.env.*
+*.key
