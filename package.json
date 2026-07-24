@@ -5,7 +5,7 @@
   "private": true,
   "description": "Root package for GM_Tools shared library code (mutation-engine/, time-skip/, graph-import/) — pure Node modules with no Foundry or MCP-session dependency. wf-mcp-server keeps its own package.json/node_modules for MCP-specific deps; this root exists so mutation-engine/ can resolve zod and @anthropic-ai/sdk without living inside wf-mcp-server.",
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
