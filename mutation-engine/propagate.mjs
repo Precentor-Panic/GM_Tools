@@ -19,13 +19,24 @@
  * exists. See this repo's Phase 1 closing report for the explicit flag.
  */
 
+// World Fabric's Phase 1.5 split the old catch-all "location" relationship
+// type into "containment" (structural, e.g. place.region/faction.headquarters
+// — shouldn't erode over time) and "presence" (temporal, e.g. an actor's
+// recent whereabouts — should decay). See GM_Tools/plans/phase-1.5-tasks.md.
+// "presence" replaces "location" below (same weight/half-life, a rename not
+// a behavior change). "containment" is still a normal weight for
+// propagateSeed (a seeded event legitimately ripples through containment —
+// "the district burned" should still reach the buildings within it) but is
+// hard-excluded from ambientDecay entirely, below — its DECAY_HALF_LIFE_SESSIONS
+// entry is therefore moot but kept for documentation/completeness.
 export const EDGE_TYPE_WEIGHT = {
   causal: 1.0,
   fealty: 0.9,
   kinship: 0.85,
   membership: 0.7,
   ownership: 0.6,
-  location: 0.55,
+  containment: 0.6,
+  presence: 0.55,
   knowledge: 0.5,
   social: 0.4,
   unspecified: 0.3
@@ -37,10 +48,12 @@ export const DECAY_HALF_LIFE_SESSIONS = {
   membership: 6,
   causal: 12,
   ownership: 6,
-  location: 4,
+  presence: 4,
   knowledge: 5,
   social: 2,
   unspecified: 3
+  // containment: intentionally absent -- ambientDecay hard-excludes
+  // "containment" edges entirely (see below), so no half-life applies.
 };
 
 export const IMPACT_THRESHOLD = 0.15;
@@ -105,23 +118,36 @@ export function propagateSeed(entities, edges, seedId, seedMagnitude, maxDepth =
 
 /**
  * Per-relationshipType half-life decay of edge strength over elapsed sessions.
+ *
+ * "containment" edges (structural facts, e.g. a place being part of a region)
+ * are hard-excluded: no delta computed, no candidate produced, regardless of
+ * elapsed time or configured half-life. This is a deliberate skip rather than
+ * a very-large half-life constant -- a half-life is still monotonic decay and
+ * would eventually misfire on a long enough campaign, spuriously implying
+ * "this building stopped being in its district". See
+ * GM_Tools/plans/phase-1.5-tasks.md task 1.5.3. Note this exclusion is scoped
+ * to ambient decay only -- `propagateSeed` still traverses containment edges
+ * normally, since a seeded event legitimately ripples through them.
+ *
  * @param {object[]} edges
  * @param {number} elapsedSessions
  * @returns {{edgeId:string, relationshipType:string, from:number, to:number, delta:number}[]}
  */
 export function ambientDecay(edges, elapsedSessions) {
-  return edges.map((edge) => {
-    const halfLife = DECAY_HALF_LIFE_SESSIONS[edge.relationshipType] ?? DECAY_HALF_LIFE_SESSIONS.unspecified;
-    const from = clamp01(edge.strength);
-    const to = clamp01(from * Math.pow(0.5, elapsedSessions / halfLife));
-    return {
-      edgeId: edge.id,
-      relationshipType: edge.relationshipType,
-      from,
-      to,
-      delta: to - from
-    };
-  });
+  return edges
+    .filter((edge) => edge.relationshipType !== "containment")
+    .map((edge) => {
+      const halfLife = DECAY_HALF_LIFE_SESSIONS[edge.relationshipType] ?? DECAY_HALF_LIFE_SESSIONS.unspecified;
+      const from = clamp01(edge.strength);
+      const to = clamp01(from * Math.pow(0.5, elapsedSessions / halfLife));
+      return {
+        edgeId: edge.id,
+        relationshipType: edge.relationshipType,
+        from,
+        to,
+        delta: to - from
+      };
+    });
 }
 
 /**

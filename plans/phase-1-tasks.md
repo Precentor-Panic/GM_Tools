@@ -55,6 +55,14 @@ export const IMPORTANCE_FLOOR = 0.2;
 export const PRUNE_FLOOR = 0.01;
 ```
 
+**Superseded by Phase 1.5** (see `plans/phase-1.5-tasks.md`): the block above is
+the values as originally shipped for Phase 1 and is kept here as a historical
+record of what task 1.3 delivered. The live constants in `mutation-engine/propagate.mjs`
+now rename the `location` key to `presence` (same value, 0.55/4 — a rename,
+not a retune) and add a `containment` key (`EDGE_TYPE_WEIGHT.containment: 0.6`;
+no `DECAY_HALF_LIFE_SESSIONS` entry — `containment` edges are hard-excluded
+from `ambientDecay` entirely, not merely slow-decaying).
+
 - `propagateSeed(entities, edges, seedId, seedMagnitude, maxDepth)` — weighted BFS diffusion of an impact score outward from a seed entity, using `EDGE_TYPE_WEIGHT[edge.relationshipType] * edge.strength` as the per-hop multiplier. Returns `Map<entityId, impactScore>`.
 - `ambientDecay(edges, elapsedSessions)` — per-`relationshipType` half-life decay of edge `strength`, reusing the same decay-formula shape as `foundry_worldFabric/scripts/data/llm-context.mjs`'s existing `recencyScore()` (`Math.pow(0.5, elapsed/halfLife)`). Returns an array of `{edgeId, relationshipType, from, to, delta}`.
 - `candidateDeltas(entities, edges, {seedId?, seedMagnitude?, elapsedSessions})` — combines both into a flat list of `{kind: 'seed-propagated'|'ambient-decay', ..., needsLLM: boolean}`, where `needsLLM` is derived from `IMPACT_THRESHOLD`/`IMPORTANCE_FLOOR`/decay-magnitude.

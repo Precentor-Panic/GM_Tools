@@ -101,6 +101,10 @@ Concurrency: every write takes an exclusive `<batchId>.json.lock` file
 touching the batch file. A write that finds an existing lock throws
 `ConcurrentWriteError` rather than blind-overwriting.
 
+## Containment vs. presence (Phase 1.5)
+
+`ambientDecay` (`propagate.mjs`) hard-excludes edges with `relationshipType === "containment"` — no delta is ever computed for them, at any elapsed-session value. This is a deliberate skip, not a very-long half-life: a half-life is still monotonic decay and would eventually misfire on a long enough campaign. `propagateSeed` is unaffected — a seeded event still ripples through `containment` edges normally, since that's a different, legitimate use of the same edges (e.g. "the district burned" should still reach the buildings within it). See `plans/phase-1.5-tasks.md` for the full design-review reasoning behind the `containment`/`presence` split (World Fabric's former catch-all `location` type).
+
 ## Design choices flagged for Russell's review (non-blocking)
 
 - **Propagation-tuning defaults (task 1.3).** `EDGE_TYPE_WEIGHT`,
@@ -119,3 +123,10 @@ touching the batch file. A write that finds an existing lock throws
   exercising `rollbackBatch` as part of the conversational round trip, and
   there was otherwise no MCP surface to call it from. See
   `wf-mcp-server/README.md`.
+- **`person.homeLocation` left on `location`, not moved to `presence` (task
+  1.5.2).** The Phase 1.5 design review assumed it should become `presence`,
+  but World Fabric's own code doesn't support that: mechanically it's a
+  Tier-1 derive-edge recomputed wholesale on every load, identical in
+  mechanism to `place.region`/`faction.headquarters` (now `containment`),
+  and it never participates in world-scan's accumulate-then-decay presence
+  tracking. Flagged rather than forced — see `plans/phase-1.5-tasks.md`.

@@ -38,7 +38,7 @@ const entities = [
 
 const edges = [
   { id: "e1", sourceId: "siege", targetId: "alvor", relationshipType: "kinship", strength: 0.9 },
-  { id: "e2", sourceId: "siege", targetId: "shop", relationshipType: "location", strength: 0.5 },
+  { id: "e2", sourceId: "siege", targetId: "shop", relationshipType: "presence", strength: 0.5 },
   { id: "e3", sourceId: "siege", targetId: "bystander", relationshipType: "causal", strength: 0.9 },
   { id: "e4", sourceId: "alvor", targetId: "gerdur", relationshipType: "kinship", strength: 0.8 },
   { id: "e5", sourceId: "gerdur", targetId: "distant", relationshipType: "social", strength: 0.3 },
@@ -73,9 +73,9 @@ test("propagateSeed: impact strictly decreases with hop distance along a path", 
 
 test("propagateSeed: at equal hop distance, stronger/higher-weight edge outranks weaker one", () => {
   const impact = propagateSeed(entities, edges, "siege", 1.0, 3);
-  // alvor (kinship 0.85*0.9) vs shop (location 0.55*0.5), both hop 1 from siege
+  // alvor (kinship 0.85*0.9) vs shop (presence 0.55*0.5), both hop 1 from siege
   assert.ok(impact.get("alvor") > impact.get("shop"),
-    "strong kinship edge should outrank weaker location edge at the same hop distance");
+    "strong kinship edge should outrank weaker presence edge at the same hop distance");
 });
 
 test("propagateSeed: includes the seed itself at seedMagnitude", () => {
@@ -127,6 +127,53 @@ test("ambientDecay: delta is negative (strength only decays, never grows)", () =
   const [result] = ambientDecay([edge], 2);
   assert.ok(result.delta < 0);
   assert.ok(Math.abs(result.delta - (result.to - result.from)) < 1e-9);
+});
+
+// ---------------------------------- Phase 1.5: containment/presence split ---
+
+test("ambientDecay: containment edges are hard-excluded, not just slow-decaying", () => {
+  const containment = { id: "c1", relationshipType: "containment", strength: 0.8 };
+  const other = { id: "o1", relationshipType: "unspecified", strength: 0.8 };
+  // A very large elapsed-sessions value would decay every other type to ~0
+  // under any finite half-life -- proving containment's absence from the
+  // results isn't just a slow decay hiding under IMPACT_THRESHOLD, but a
+  // genuine exclusion from the candidate list.
+  const results = ambientDecay([containment, other], 100000);
+  assert.equal(results.some((r) => r.edgeId === "c1"), false,
+    "containment edge should produce no candidate at all, at any elapsed time");
+  assert.equal(results.some((r) => r.edgeId === "o1"), true,
+    "non-containment edge should still produce a candidate (sanity check on the fixture)");
+  assert.ok(results.find((r) => r.edgeId === "o1").to < 0.01,
+    "sanity check: the large elapsed value really does decay other types near zero");
+});
+
+test("ambientDecay: presence-typed edges decay exactly as location-typed edges did pre-Phase-1.5 (rename, not behavior change)", () => {
+  // Phase 1.5 renamed the "location" DECAY_HALF_LIFE_SESSIONS/EDGE_TYPE_WEIGHT
+  // key to "presence" without changing its value (half-life 4, per the
+  // pre-Phase-1.5 constant). Recompute against that same half-life by hand
+  // and confirm ambientDecay's presence output matches -- proving the rename
+  // preserved behavior instead of silently changing it.
+  const preSplitLocationHalfLife = 4;
+  assert.equal(DECAY_HALF_LIFE_SESSIONS.presence, preSplitLocationHalfLife,
+    "presence's half-life should equal location's old half-life (4) -- a rename, not a retune");
+  const edge = { id: "p1", relationshipType: "presence", strength: 0.8 };
+  const elapsed = 3;
+  const [result] = ambientDecay([edge], elapsed);
+  const expected = 0.8 * Math.pow(0.5, elapsed / preSplitLocationHalfLife);
+  assert.ok(Math.abs(result.to - expected) < 1e-9);
+});
+
+test("propagateSeed: still traverses containment edges normally (exclusion is scoped to ambientDecay only)", () => {
+  const ents = [
+    { id: "district", name: "District", type: "place", importance: 0.9 },
+    { id: "building", name: "Building", type: "place", importance: 0.6 }
+  ];
+  const containmentEdges = [
+    { id: "c1", sourceId: "district", targetId: "building", relationshipType: "containment", strength: 0.9 }
+  ];
+  const impact = propagateSeed(ents, containmentEdges, "district", 1.0, 2);
+  assert.ok(impact.has("building"), "a seeded event should still ripple through a containment edge");
+  assert.ok(impact.get("building") > 0, "containment-traversed impact should be a real positive score");
 });
 
 // ---------------------------------------------------------- candidateDeltas

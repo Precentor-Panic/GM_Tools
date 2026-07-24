@@ -133,14 +133,14 @@ Install from Foundry package manager into local Foundry instance (`http://localh
   },
   "pipeline": {
     "bfsDepth": 3,
-    "edgeWeights": { "causal": 1.0, "fealty": 0.9, "kinship": 0.85, "membership": 0.7, "ownership": 0.6, "location": 0.55, "knowledge": 0.5, "social": 0.4, "unspecified": 0.3 },
+    "edgeWeights": { "causal": 1.0, "fealty": 0.9, "kinship": 0.85, "membership": 0.7, "ownership": 0.6, "containment": 0.6, "presence": 0.55, "knowledge": 0.5, "social": 0.4, "unspecified": 0.3 },
     "textureModel": "claude-sonnet-5",
     "textureModelOverride": "claude-opus-4-8",
     "sceneModel": "claude-sonnet-5"
   }
 }
 ```
-*(`edgeWeights` now covers all of World Fabric's `RELATIONSHIP_TYPES` — the propagation engine in `mutation-engine/propagate.mjs` needs a weight for every type it might encounter. `mutationModel`/`sceneModel` renamed `textureModel`/`sceneModel` to match the phased plan below: the mutation/texturing pass is now the propagation engine's batched LLM call, not a monolithic session-runner call.)*
+*(`edgeWeights` now covers all of World Fabric's `RELATIONSHIP_TYPES` — the propagation engine in `mutation-engine/propagate.mjs` needs a weight for every type it might encounter. `mutationModel`/`sceneModel` renamed `textureModel`/`sceneModel` to match the phased plan below: the mutation/texturing pass is now the propagation engine's batched LLM call, not a monolithic session-runner call. Phase 1.5 split World Fabric's old catch-all `location` type into `containment` (structural, e.g. a place's parent region — excluded from `ambientDecay` entirely) and `presence` (temporal, e.g. an actor's recent whereabouts — decays same as `location` did); `edgeWeights` above reflects the rename. See `plans/phase-1.5-tasks.md`.)*
 
 **Components:**
 
@@ -209,7 +209,7 @@ Steps 1–3 below predate the toolbox reframing and remain accurate completed-wo
 |---|---|---|---|
 | 0 | Prep-time tools (NPC cards, scene briefs, doom clocks, VTT push via step 1's Graph Push) | Yes | Not started |
 | 1 | Mutation engine core: schema, propagation pass, review-state, diff, grain, rollback, batched texturing, conversational MCP review tools | Partially (infra) | **Done** — tasks 1.1–1.8 built and unit-tested (`mutation-engine/`, 7 new `wf-mcp-server` tools); task 1.9 (dedicated web review UI) explicitly deferred to Phase 6 per its own text. See `plans/phase-1-tasks.md` and `mutation-engine/README.md`. Propagation-tuning constants (task 1.3) are prototype defaults, calibration deferred. Post-Phase-1 remediation also landed: `Mutation`/`StoredMutation` schema split (dropped `.passthrough()`), `diff.mjs` wired into the live review path, `npm test` fixed. |
-| 1.5 | **World Fabric containment/presence split** — fixes a real schema gap (see `plans/phase-1.5-tasks.md`): `location` was conflating structural containment with decaying presence, which would have made GM_Tools' own `ambientDecay` eventually produce spurious "building stopped being in its district" mutations on a long campaign. Out of numeric order, inserted before Phase 2 because Phase 2's `contained-in` scope mode depends on it. | Yes (fixes existing behavior) | **Next up — see `plans/phase-1.5-tasks.md`.** Touches both `GM_Tools/` and `/home/russell/foundry_worldFabric/`. |
+| 1.5 | **World Fabric containment/presence split** — fixes a real schema gap (see `plans/phase-1.5-tasks.md`): `location` was conflating structural containment with decaying presence, which would have made GM_Tools' own `ambientDecay` eventually produce spurious "building stopped being in its district" mutations on a long campaign. Out of numeric order, inserted before Phase 2 because Phase 2's `contained-in` scope mode depends on it. | Yes (fixes existing behavior) | **Done** — tasks 1.5.1–1.5.4 landed across both repos: World Fabric gained `containment`/`presence` relationship types (`place.region`/`faction.headquarters` derive `containment`; world-scan's token-placement tracking uses `presence`; one-time migration relabels persisted `scan:loc:*` edges), GM_Tools' `ambientDecay` hard-excludes `containment` while `propagateSeed` still traverses it normally. **Flagged, not resolved:** `person.homeLocation` stays on `location` — the design review's assumption that it belongs on `presence` isn't supported by how the code actually treats it (see `plans/phase-1.5-tasks.md`'s closing report / World Fabric's own sprint-history memory for the reasoning); needs Russell's call before Phase 2. |
 | 2/2b | Time-skip mode + headless (Foundry-optional) apply — the MVP wedge, now including LLM-inferred seed resolution and a `contained-in` scope mode | Yes | Depends on Phase 1.5. **Before execution, re-review the phase-2 task plan** (it's grown since first written — LLM seed inference and containment scoping were added, and it should be re-checked against Phase 1.5's actual delivered schema) — don't execute `plans/phase-2-tasks.md` as-is without that pass. |
 | 3 | Live on-demand diff mode | Yes | Depends on Phase 1; stretch goal alongside 1–2 |
 | 4 | Rollback hardening + unreviewed-accumulation tracking | Yes | Deferred |
