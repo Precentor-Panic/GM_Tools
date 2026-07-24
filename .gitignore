@@ -1,6 +1,8 @@
 review-state/*/
 !review-state/.gitkeep
 
+node_modules/
+
 # never commit API keys / secrets
 .env
 .env.*
