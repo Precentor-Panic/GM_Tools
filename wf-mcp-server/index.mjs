@@ -63,6 +63,21 @@ import { orchestrateBatch, attachDiffs } from "../time-skip/run.mjs";
 // wf_sync_to_foundry uses when no live Foundry client picks up a mutation.
 import { applyHeadless } from "../graph-import/headless-apply.mjs";
 
+// Phase 5 — import-from-writeup: propose a WFI-shaped document from freeform
+// text (task 5.1), dry-run it through importGraph and convert the result into
+// a normal review batch (task 5.2). wf_accept/wf_sync_to_foundry/
+// wf_rollback_batch below need NO changes at all to handle a writeup-import
+// batch -- they're already generic over Batch shape (they only read
+// mutations by status, never by sourceKind). Only wf_regenerate needs a
+// dispatch: writeup-import mutations aren't texture.mjs candidateDeltas, so
+// regenerating one re-invokes proposeWfiFromWriteup against the batch's own
+// recorded source text instead of textureRegion.
+import {
+  importWriteup,
+  regenerateWriteupImport,
+  WriteupImportRegenerateScopeError
+} from "../graph-import/writeup-import.mjs";
+
 // Phase 4 task 4.2 — unreviewed-accumulation tracking: markHumanReviewed is
 // called from every SCOPED ('region'/'entity', never 'batch') review/accept/
 // reject/regenerate action; recordUnreviewedAccept from a whole-'batch'-scope
@@ -523,6 +538,45 @@ server.registerTool(
   }
 );
 
+// --- wf_propose_from_writeup -------------------------------------------------------
+
+server.registerTool(
+  "wf_propose_from_writeup",
+  {
+    title: "Propose graph entities/edges extracted from freeform text (bring your own world)",
+    description:
+      "Given freeform text (a campaign pitch, prep notes, a wiki export, a session recap), makes one Anthropic " +
+      "API call to extract a WFI-shaped proposal (entities/edges, endpoints referenced by name -- graph-import/" +
+      "writeup-import.mjs's proposeWfiFromWriteup), dry-runs it through interchange.mjs's importGraph against the " +
+      "live snapshot WITHOUT persisting (existing name+type dedup: an entity the writeup mentions that already " +
+      "exists in the graph merges into an UPDATE instead of duplicating; edges referencing an undescribed name " +
+      "get a stub entity, exactly like any other WFI import), and writes the result as a normal review batch -- " +
+      "same review gate (wf_review_batch/wf_accept/wf_reject/wf_regenerate/wf_sync_to_foundry) every other batch " +
+      "goes through. Works against a freshly-bootstrapped empty snapshot (a genuinely new campaign) just as well " +
+      "as an existing populated one. `mode='replace'` only changes how THIS PREVIEW classifies create-vs-existing " +
+      "(importGraph's own replace semantics) -- the actual commit at wf_sync_to_foundry time always applies each " +
+      "mutation individually and never wipes anything not mentioned in the batch. Requires ANTHROPIC_API_KEY in " +
+      "this server process's own environment, same as wf_propose_mutations.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      text: z.string().min(1).describe("Freeform writeup text to extract graph entities/edges from."),
+      mode: z.enum(["merge", "replace"]).optional().describe("Passed through to importGraph's dry-run preview. Default 'merge'.")
+    }
+  },
+  async ({ world, dataDir, text: writeupText, mode }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const { entities, edges, entityTypes } = loadSnapshot(dir, w).snapshot;
+      const result = await importWriteup(w, writeupText, { entities, edges, entityTypes }, { mode });
+      return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
 // --- wf_review_batch -----------------------------------------------------------------
 
 server.registerTool(
@@ -708,7 +762,13 @@ server.registerTool(
       "removed and new ones (status:'pending') take their place. Still makes one API call per affected region, " +
       "not one per mutation. Requires ANTHROPIC_API_KEY in this server's environment, same as wf_propose_mutations. " +
       "Phase 4 task 4.2: scope 'region'/'entity' counts as a genuine human review of the targeted entities (asking " +
-      "for a redo is still an examined diff) -- updates lastHumanReviewedAt. Scope 'batch' does not.",
+      "for a redo is still an examined diff) -- updates lastHumanReviewedAt. Scope 'batch' does not. " +
+      "Phase 5: for a batch produced by wf_propose_from_writeup (sourceKind 'writeup-import'), this instead " +
+      "re-invokes graph-import/writeup-import.mjs's proposeWfiFromWriteup against the batch's ORIGINAL source text " +
+      "plus `note`, then re-runs the dry-run merge -- writeup extraction is one holistic pass over the whole text, " +
+      "not a per-entity delta, so scope='batch'/'region' (equivalent for a writeup-import batch -- it always has " +
+      "exactly one region) replace the WHOLE proposal; scope='entity' is refused with a clear error rather than " +
+      "attempting an unsound partial replace.",
     inputSchema: {
       world: worldParam,
       dataDir: dataDirParam,
@@ -727,7 +787,63 @@ server.registerTool(
       if (!mutationIds.length) throw new Error(`No mutations matched scope="${scope}" id="${id ?? ""}"`);
       const targeted = batch.mutations.filter((m) => mutationIds.includes(m.mutationId));
 
-      const { entities, edges } = loadSnapshot(dir, w).snapshot;
+      const { entities, edges, entityTypes } = loadSnapshot(dir, w).snapshot;
+
+      // Phase 5 dispatch: a writeup-import batch's mutations aren't
+      // texture.mjs candidateDeltas -- regenerating them means re-running
+      // the whole extraction pass, not per-region texturing. Every mutation
+      // in a writeup-import batch always shares this sourceKind (each
+      // wf_propose_from_writeup call produces its own batch), so "some"
+      // targeted mutations having it implies (checked below) all of them do.
+      const writeupImportCount = targeted.filter((m) => m.sourceKind === "writeup-import").length;
+      if (writeupImportCount > 0) {
+        if (writeupImportCount !== targeted.length) {
+          throw new Error(
+            `Regenerate scope="${scope}" id="${id ?? ""}" targets a mix of writeup-import and non-writeup-import ` +
+            `mutations in batch "${batchId}" -- this should be impossible (a batch is only ever produced by one ` +
+            `producer) and isn't handled. Investigate the batch file rather than proceeding.`
+          );
+        }
+        if (scope === "entity") {
+          throw new WriteupImportRegenerateScopeError(
+            "wf_regenerate scope='entity' is not supported for a writeup-import batch: writeup extraction is a " +
+            "single holistic pass over the whole source text, not a per-entity delta, so there's no principled way " +
+            "to regenerate just one extracted item without re-running (and replacing) the whole batch. Use " +
+            "scope='batch' (or 'region' -- a writeup-import batch always has exactly one region) instead, or " +
+            "reject the specific mutation via wf_reject and keep the rest."
+          );
+        }
+
+        const { mutations: regenerated, summary: importSummary, suggestions } = await regenerateWriteupImport(
+          batch,
+          note,
+          { entities, edges, entityTypes },
+          {}
+        );
+
+        let nextIdx = nextMutationIndex(batch);
+        const newMutations = regenerated.map((m) => ({ ...m, mutationId: `m${nextIdx++}`, status: "pending" }));
+
+        batch.mutations = batch.mutations.filter((m) => !mutationIds.includes(m.mutationId));
+        batch.mutations.push(...newMutations);
+        const saved = saveBatch(w, batch);
+
+        // Same rule as the texture.mjs path below: a scoped regenerate is a
+        // genuine review of what it replaced; scope='batch' is not.
+        if (scope !== "batch") {
+          const touchedEntityIds = [...new Set(targeted.map((m) => m.id).filter(Boolean))];
+          markHumanReviewed(w, touchedEntityIds);
+        }
+
+        return text({
+          batchId,
+          replaced: mutationIds,
+          regenerated: newMutations.map((m) => m.mutationId),
+          batchStatus: saved.status,
+          importSummary,
+          suggestions
+        });
+      }
 
       // Group by original regionId so regeneration still costs one API call
       // per region, not one per mutation (same cost-control behavior as
