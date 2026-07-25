@@ -63,6 +63,20 @@ import { orchestrateBatch, attachDiffs } from "../time-skip/run.mjs";
 // wf_sync_to_foundry uses when no live Foundry client picks up a mutation.
 import { applyHeadless } from "../graph-import/headless-apply.mjs";
 
+// Phase 4 task 4.2 — unreviewed-accumulation tracking: markHumanReviewed is
+// called from every SCOPED ('region'/'entity', never 'batch') review/accept/
+// reject/regenerate action; recordUnreviewedAccept from a whole-'batch'-scope
+// accept only (the case this feature exists to guard against);
+// findUnreviewedEntities feeds grain.mjs's summarizeBatch() so a flagged
+// entity forces into the headline regardless of importance.
+import {
+  markHumanReviewed,
+  recordUnreviewedAccept,
+  findUnreviewedEntities,
+  DEFAULT_MAX_AGE_DAYS,
+  DEFAULT_MAX_UNREVIEWED_ACCEPTS
+} from "../mutation-engine/human-review.mjs";
+
 const server = new McpServer({ name: "world-fabric", version: "0.1.0" });
 
 const worldParam = z.string().optional().describe(
@@ -409,6 +423,23 @@ function resolveMutationIds(batch, scope, id) {
   throw new Error(`Unknown scope: ${scope}`);
 }
 
+/**
+ * The target entity/edge ids (`m.id`) touched by a set of mutationIds
+ * within a batch — the unit human-review.mjs tracks against. Falsy ids
+ * (an unsynced create with no id yet) are filtered out; markHumanReviewed/
+ * recordUnreviewedAccept already no-op on those too, this just avoids
+ * passing them through at all.
+ */
+function entityIdsForMutations(batch, mutationIds) {
+  const idSet = new Set(mutationIds);
+  return batch.mutations.filter((m) => idSet.has(m.mutationId)).map((m) => m.id).filter(Boolean);
+}
+
+/** Phase 4 task 4.2: the Set summarizeBatch's flaggedEntityIds opt expects, built from findUnreviewedEntities(). */
+function flaggedEntityIdSet(world) {
+  return new Set(findUnreviewedEntities(world).map((f) => f.entityId));
+}
+
 /** Next unused m<N> mutationId index in a batch, for appending regenerated mutations. */
 function nextMutationIndex(batch) {
   let max = -1;
@@ -500,8 +531,11 @@ server.registerTool(
     title: "Render a proposed mutation batch at a given grain",
     description:
       "Renders the requested detail level for a batch created by wf_propose_mutations: 'headline' (whole batch, " +
-      "collapsed by importance), 'region' (one region's mutations, full detail for important ones), or 'entity' " +
-      "(one mutation's full drill-down, regardless of collapse).",
+      "collapsed by importance -- an entity flagged by long-unreviewed-accumulation tracking is forced into the " +
+      "headline regardless of importance, see wf_get_unreviewed_entities), 'region' (one region's mutations, full " +
+      "detail for important ones), or 'entity' (one mutation's full drill-down, regardless of collapse). Viewing " +
+      "at 'region'/'entity' grain marks the entities actually shown as human-reviewed (Phase 4 task 4.2) -- " +
+      "'headline' grain does NOT, since a collapsed one-liner isn't a genuine review of the diff underneath it.",
     inputSchema: {
       world: worldParam,
       batchId: z.string(),
@@ -514,15 +548,19 @@ server.registerTool(
     try {
       const w = resolveWorld(world);
       const batch = loadBatch(w, batchId);
-      const summary = summarizeBatch(batch);
+      const summary = summarizeBatch(batch, { flaggedEntityIds: flaggedEntityIdSet(w) });
 
       if (grain === "headline") {
+        // Read-only overview, not a genuine per-entity review (collapsed
+        // entities' diffs were never actually shown) -- must NOT mark
+        // anything reviewed. This is the whole point of the distinction.
         return text({ rendered: renderHeadline(summary) });
       }
       if (grain === "region") {
         if (!regionId) throw new Error("grain='region' requires regionId");
         const region = summary.regions.find((r) => r.regionId === regionId);
         if (!region) throw new Error(`No region "${regionId}" in batch "${batchId}"`);
+        markHumanReviewed(w, region.entities.map((e) => e.entityId));
         return text({ rendered: renderRegionDiff(region) });
       }
       if (grain === "entity") {
@@ -531,6 +569,7 @@ server.registerTool(
           .flatMap((r) => r.entities)
           .find((e) => e.mutationId === entityId || e.entityId === entityId);
         if (!entity) throw new Error(`No entity "${entityId}" in batch "${batchId}"`);
+        markHumanReviewed(w, [entity.entityId]);
         return text({ rendered: renderEntityDiff(entity) });
       }
       throw new Error(`Unknown grain: ${grain}`);
@@ -556,7 +595,11 @@ server.registerTool(
       "'region' accepts one region's mutations, 'entity' accepts a single mutation. If this batch originated from " +
       "wf_resolve_pending or a wf_run_cycle growth-bound sweep, accepting the affected region/batch also clears " +
       "(resolves) the pending-ledger entries it was resolving -- reported in the response as `ledgerResolved` when " +
-      "applicable, omitted otherwise.",
+      "applicable, omitted otherwise. Phase 4 task 4.2: scope 'region'/'entity' counts as a genuine human review " +
+      "of the entities touched (updates lastHumanReviewedAt); scope 'batch' (accept-all) deliberately does NOT -- " +
+      "it instead accumulates an unreviewed-accept count per entity, surfaced by wf_get_unreviewed_entities. This " +
+      "is the entire point of the feature: a GM batch-accepting everything without reading any of it must not " +
+      "count as having reviewed it.",
     inputSchema: {
       world: worldParam,
       dataDir: dataDirParam,
@@ -578,6 +621,16 @@ server.registerTool(
       // entries (see pending-ledger.mjs's applyLedgerOutcome doc comment),
       // accepting clears them -- they're now real, reviewed graph mutations.
       const ledgerResolved = applyLedgerOutcome(updated, mutationIds, "accepted");
+      // Phase 4 task 4.2: a scoped accept ('region'/'entity') is a genuine
+      // review of what it targets; a whole-'batch' accept-all is exactly
+      // the case this feature exists to guard against -- it must NEVER
+      // update lastHumanReviewedAt, only accumulate the unreviewed count.
+      const touchedEntityIds = entityIdsForMutations(batch, mutationIds);
+      if (scope === "batch") {
+        recordUnreviewedAccept(w, touchedEntityIds);
+      } else {
+        markHumanReviewed(w, touchedEntityIds);
+      }
       return text({
         batchId,
         accepted: mutationIds,
@@ -598,7 +651,11 @@ server.registerTool(
       "Marks mutation(s) rejected via review-state.mjs. Same scope semantics as wf_accept. If this batch " +
       "originated from wf_resolve_pending or a wf_run_cycle growth-bound sweep, rejecting the affected region/batch " +
       "reverts the pending-ledger entries it was resolving back to 'pending' (never deleted) -- reported as " +
-      "`ledgerReverted` when applicable.",
+      "`ledgerReverted` when applicable. Phase 4 task 4.2: scope 'region'/'entity' still counts as a genuine human " +
+      "review of the entities touched (a deliberate reject is still an examined diff) -- updates " +
+      "lastHumanReviewedAt. Scope 'batch' does not (consistent with wf_accept), but also does NOT accumulate an " +
+      "unreviewed-accept count, since a rejected mutation never lands on the graph -- there's no unreviewed " +
+      "content debt left behind by a reject.",
     inputSchema: {
       world: worldParam,
       batchId: z.string(),
@@ -619,6 +676,14 @@ server.registerTool(
       // silently vanish just because this particular resolution attempt
       // was rejected.
       const ledgerReverted = applyLedgerOutcome(updated, mutationIds, "rejected");
+      // Phase 4 task 4.2: a scoped reject is still a genuine review of the
+      // targeted entities. A whole-batch reject-all is not treated as a
+      // review either, but (unlike accept) doesn't need to accumulate
+      // anything -- a rejected mutation never applies, so there's no
+      // unreviewed graph content left behind by it.
+      if (scope !== "batch") {
+        markHumanReviewed(w, entityIdsForMutations(batch, mutationIds));
+      }
       return text({
         batchId,
         rejected: mutationIds,
@@ -641,7 +706,9 @@ server.registerTool(
       "Re-invokes the texturing pass (mutation-engine/texture.mjs) for the selected scope, appending `note` to " +
       "the prompt. REPLACES (does not stack onto) the prior proposal for that scope: the targeted mutations are " +
       "removed and new ones (status:'pending') take their place. Still makes one API call per affected region, " +
-      "not one per mutation. Requires ANTHROPIC_API_KEY in this server's environment, same as wf_propose_mutations.",
+      "not one per mutation. Requires ANTHROPIC_API_KEY in this server's environment, same as wf_propose_mutations. " +
+      "Phase 4 task 4.2: scope 'region'/'entity' counts as a genuine human review of the targeted entities (asking " +
+      "for a redo is still an examined diff) -- updates lastHumanReviewedAt. Scope 'batch' does not.",
     inputSchema: {
       world: worldParam,
       dataDir: dataDirParam,
@@ -697,6 +764,14 @@ server.registerTool(
       batch.mutations = batch.mutations.filter((m) => !mutationIds.includes(m.mutationId));
       batch.mutations.push(...newMutations);
       const saved = saveBatch(w, batch);
+
+      // Phase 4 task 4.2: a scoped regenerate is a genuine review of the
+      // entities it targeted (before replacement) -- a whole-batch
+      // regenerate is not, same rule as accept/reject.
+      if (scope !== "batch") {
+        const touchedEntityIds = [...new Set(targeted.map((m) => m.id).filter(Boolean))];
+        markHumanReviewed(w, touchedEntityIds);
+      }
 
       return text({
         batchId,
@@ -880,6 +955,45 @@ server.registerTool(
           "will overwrite this file from game.settings -- no reconciliation path exists yet for a mixed " +
           "live/headless world."
       });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// ======================================================================================
+// Phase 4 task 4.2 — unreviewed-accumulation tracking (mutation-engine/human-review.mjs).
+// Thin wrapper, same convention as everything above: no independent business logic
+// beyond parameter wiring.
+// ======================================================================================
+
+// --- wf_get_unreviewed_entities -----------------------------------------------------------
+
+server.registerTool(
+  "wf_get_unreviewed_entities",
+  {
+    title: "Surface entities whose applied-but-unreviewed history has gone too long",
+    description:
+      "Runs mutation-engine/human-review.mjs's findUnreviewedEntities(): entities that have accumulated real, " +
+      "applied graph mutations without a human ever genuinely reviewing them (viewing at 'region'/'entity' grain " +
+      "via wf_review_batch, or a scoped 'region'/'entity' accept/reject/regenerate) -- a whole-batch accept-all " +
+      "never counts as review, by design, so it's exactly the debt this surfaces. An entity is flagged if it was " +
+      "never reviewed at all ('never-reviewed'), last reviewed more than `maxAgeDays` ago ('stale'), or has " +
+      "accumulated at least `maxUnreviewedAccepts` batch-accept-all touches since its last real review " +
+      "('accumulated') -- either threshold alone is enough. Only entities with SOME tracked accept/review history " +
+      "appear at all; an entity nothing has ever touched has no debt to flag. The same flagged set also forces a " +
+      "flagged entity into wf_review_batch's headline rendering regardless of importance.",
+    inputSchema: {
+      world: worldParam,
+      maxAgeDays: z.number().min(0).optional().describe(`Default ${DEFAULT_MAX_AGE_DAYS}.`),
+      maxUnreviewedAccepts: z.number().int().min(1).optional().describe(`Default ${DEFAULT_MAX_UNREVIEWED_ACCEPTS}.`)
+    }
+  },
+  async ({ world, maxAgeDays, maxUnreviewedAccepts }) => {
+    try {
+      const w = resolveWorld(world);
+      const flagged = findUnreviewedEntities(w, { maxAgeDays, maxUnreviewedAccepts });
+      return text({ world: w, count: flagged.length, entities: flagged });
     } catch (err) {
       return errorText(err);
     }

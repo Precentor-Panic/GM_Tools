@@ -45,8 +45,10 @@ const scratchDir = mkdtempSync(join(tmpdir(), "gm-tools-accept-reject-ledger-tes
 const dataDir = join(scratchDir, "foundrydata");
 const reviewStateDir = join(scratchDir, "review-state");
 const pendingLedgerDir = join(scratchDir, "pending-resolution");
+const humanReviewDir = join(scratchDir, "human-review");
 process.env.GM_TOOLS_REVIEW_STATE_DIR = reviewStateDir; // this process's own createBatch/writePending calls below
 process.env.GM_TOOLS_PENDING_LEDGER_DIR = pendingLedgerDir;
+process.env.GM_TOOLS_HUMAN_REVIEW_DIR = humanReviewDir; // wf_accept/wf_reject below write here (Phase 4 task 4.2) -- must not touch the real repo default
 
 const WORLD = "accept-reject-ledger-test-world";
 const snapPath = snapshotFilePath(dataDir, WORLD);
@@ -112,6 +114,7 @@ async function connect() {
       WF_DATA_DIR: dataDir,
       GM_TOOLS_REVIEW_STATE_DIR: reviewStateDir,
       GM_TOOLS_PENDING_LEDGER_DIR: pendingLedgerDir,
+      GM_TOOLS_HUMAN_REVIEW_DIR: humanReviewDir,
       WF_DEFAULT_WORLD: WORLD
     },
     stderr: "pipe"

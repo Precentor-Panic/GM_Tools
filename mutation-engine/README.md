@@ -28,6 +28,20 @@ outbound-LLM-call plumbing, extracted during Phase 2's remediation pass once
 `texture.mjs`) making a real Anthropic API call — both now import from here
 rather than keeping their own near-identical copy.
 
+`human-review.mjs` (Phase 4 task 4.2) tracks, per world/entity, whether a
+human has genuinely reviewed an entity's mutation history — distinct from
+this pipeline's `status`/`preState`/etc bookkeeping, and distinct from
+Phase 3.5's pending-ledger.mjs (that's unresolved/untextured content; this is
+applied-but-unreviewed content — different debt, not conflated). `markHumanReviewed`
+is called from `wf_accept`/`wf_reject`/`wf_regenerate` at `region`/`entity`
+scope and from `wf_review_batch` at `region`/`entity` grain; `recordUnreviewedAccept`
+is called ONLY from a whole-`batch`-scope `wf_accept` — never from `wf_reject`/
+`wf_regenerate`, since only an accepted mutation actually lands on the graph.
+`findUnreviewedEntities` (exposed as `wf_get_unreviewed_entities`) surfaces
+entities whose history has gone too long unreviewed, and its result also
+feeds `grain.mjs`'s `summarizeBatch` (via an optional `flaggedEntityIds` Set)
+to force such an entity into a batch's headline regardless of `importance`.
+
 `diff.mjs` (`diffEntity`/`diffEdge`) is a standalone utility for computing
 field-level before/after diffs. `wf-mcp-server/index.mjs`'s `wf_propose_mutations`
 handler calls it (via its own `attachDiffs` helper) against the live snapshot
@@ -151,6 +165,17 @@ Reusing `containment` for `origin` would repeat, at smaller scale, the exact mod
   dropped. `wf_rollback_batch` also gained the same live-then-headless fallback `wf_sync_to_foundry` already had —
   it previously had none at all, which meant a rollback could never actually apply against a genuinely
   headless-only campaign.
+- **Unreviewed-accumulation tracking, module placement and thresholds (Phase 4 task 4.2).** Lives in its own new
+  module (`human-review.mjs`) rather than extending `review-state.mjs` (the task file's own starting hypothesis,
+  explicitly non-binding) — same reasoning `pending-ledger.mjs` already established for itself: a genuinely
+  separate, cross-batch, per-entity concept earns its own file. Storage is ONE JSON file per world (not
+  one-per-entity like `pending-ledger.mjs`), since the primary consumer needs to scan every tracked entity in a
+  world at once. The task file's own "N sessions or M accepted-mutations" staleness framing was searched for in
+  `PLAN.md`/memory and not found anywhere outside the task file's own mention of it — substituted "N days" for "N
+  sessions" (no per-entity session-counter primitive exists anywhere else in this project), kept "M
+  accepted-mutations" as specified. Defaults (`DEFAULT_MAX_AGE_DAYS = 14`, `DEFAULT_MAX_UNREVIEWED_ACCEPTS = 5`)
+  are uncalibrated prototype values, same caveat as task 1.3's propagation-tuning defaults above — both are
+  per-call-configurable (`wf_get_unreviewed_entities`'s `maxAgeDays`/`maxUnreviewedAccepts` params), not hardcoded.
 - **`person.homeLocation` (task 1.5.2, resolved in 1.5b).** Left flagged
   during Phase 1.5 rather than moved to `presence` — the design review's
   `presence` guess didn't match how the code actually treats it (a Tier-1

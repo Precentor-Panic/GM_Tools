@@ -17,6 +17,19 @@
  * on entityContext.tags (populated by texture.mjs from the live entity at
  * texturing time) — not a new per-world config file. This reuses an existing
  * WF primitive (tags) instead of introducing new state to keep in sync.
+ *
+ * Phase 4 task 4.2 adds a SECOND, independent "always show full" override:
+ * an entity flagged by mutation-engine/human-review.mjs's
+ * findUnreviewedEntities() (applied-but-unreviewed history that's gone on
+ * too long) is forced out of collapse regardless of its `importance` score —
+ * an entity accumulating silent, unreviewed AI-authored history shouldn't
+ * stay hideable just because it's individually low-importance. Unlike the
+ * pin-review tag (an in-batch signal baked into entityContext at texturing
+ * time), the flagged-entity set is genuinely cross-batch, external state —
+ * so this module stays pure/Foundry-free (no file I/O of its own) and
+ * accepts it as an optional `flaggedEntityIds` Set the caller supplies
+ * (queried from human-review.mjs beforehand), rather than importing and
+ * reading human-review.mjs's on-disk state directly from inside here.
  */
 
 // Below this importance, an entity's mutation collapses into its region's
@@ -42,17 +55,30 @@ function displayName(entry) {
   return entry.entityContext?.name ?? entry.id ?? entry.mutationId;
 }
 
-function isCollapsed(entry) {
+function isFlaggedUnreviewed(entry, flaggedEntityIds) {
+  return !!entry.id && flaggedEntityIds.has(entry.id);
+}
+
+function isCollapsed(entry, flaggedEntityIds) {
   if (isPinned(entry)) return false;
+  if (isFlaggedUnreviewed(entry, flaggedEntityIds)) return false;
   return importanceOf(entry) < HEADLINE_IMPORTANCE_THRESHOLD;
 }
 
 /**
  * Summarize a batch into headline + per-region groupings.
  * @param {object} batch  a review-state.mjs Batch object
+ * @param {object} [opts]
+ * @param {Set<string>} [opts.flaggedEntityIds]  entity ids to force out of
+ *   collapse regardless of importance (Phase 4 task 4.2) — typically the
+ *   result of human-review.mjs's findUnreviewedEntities(), mapped to a Set
+ *   of entityId by the caller. Defaults to an empty Set (no forcing), so
+ *   every existing caller that doesn't pass this is unaffected.
  * @returns {{headline:string, regions: Array<{regionId:string, entities:Array, headline:string}>}}
  */
-export function summarizeBatch(batch) {
+export function summarizeBatch(batch, opts = {}) {
+  const flaggedEntityIds = opts.flaggedEntityIds ?? new Set();
+
   const byRegion = new Map();
   for (const m of batch.mutations) {
     const key = m.regionId ?? `solo-${m.mutationId}`;
@@ -69,7 +95,8 @@ export function summarizeBatch(batch) {
       rationale: m.rationale,
       importance: importanceOf(m),
       pinned: isPinned(m),
-      collapsed: isCollapsed(m),
+      flaggedUnreviewed: isFlaggedUnreviewed(m, flaggedEntityIds),
+      collapsed: isCollapsed(m, flaggedEntityIds),
       data: m.data ?? null,
       diff: m.diff ?? null // populated by a caller that ran diff.mjs against a live snapshot, if any
     }));
@@ -77,10 +104,9 @@ export function summarizeBatch(batch) {
   });
 
   const totalMutations = batch.mutations.length;
-  const pinnedNames = regions
-    .flatMap((r) => r.entities)
-    .filter((e) => e.pinned)
-    .map((e) => e.name);
+  const allEntities = regions.flatMap((r) => r.entities);
+  const pinnedNames = allEntities.filter((e) => e.pinned).map((e) => e.name);
+  const flaggedNames = allEntities.filter((e) => e.flaggedUnreviewed).map((e) => e.name);
 
   const headlineParts = [
     `Batch ${batch.id}: ${regions.length} region${regions.length === 1 ? "" : "s"}, ` +
@@ -88,6 +114,9 @@ export function summarizeBatch(batch) {
   ];
   if (pinnedNames.length) {
     headlineParts.push(`Full review flagged for: ${pinnedNames.join(", ")}.`);
+  }
+  if (flaggedNames.length) {
+    headlineParts.push(`Unreviewed-accumulation flagged for: ${flaggedNames.join(", ")}.`);
   }
 
   return { headline: headlineParts.join(" "), regions };

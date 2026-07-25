@@ -53,6 +53,14 @@ persist to `GM_Tools/review-state/<world>/<batchId>.json`.
 |------|---------|
 | `wf_narrate_batch` | Player-facing scene/consequence narration (`mutation-engine/narrate.mjs`) for a batch — the second LLM call from `PLAN.md`'s original two-call pattern (mutation call, then narration call), distinct from `rationale`'s reviewer-facing text. Hard-gated to batches where every mutation is `status:'accepted'` — refuses with a typed error (listing which mutations aren't) rather than partially narrating. Pass `note` to regenerate with steering guidance; this never touches mutation-acceptance status. Same `ANTHROPIC_API_KEY` requirement as `wf_propose_mutations`. |
 
+### Phase 4 task 4.2 — unreviewed-accumulation tracking
+
+Thin wrapper over `../mutation-engine/human-review.mjs`. `wf_accept`/`wf_reject`/`wf_regenerate` (scope `region`/`entity`) and `wf_review_batch` (grain `region`/`entity`) all update `lastHumanReviewedAt` for the entities they touch; scope/grain `batch`/`headline` deliberately never does — see each tool's own description above for the exact rule per action.
+
+| Tool | Purpose |
+|------|---------|
+| `wf_get_unreviewed_entities` | Entities whose applied-but-unreviewed history has gone too long: never reviewed, stale (`maxAgeDays`, default 14), or accumulated too many batch-accept-all touches since the last real review (`maxUnreviewedAccepts`, default 5). The same flagged set forces a flagged entity into `wf_review_batch`'s headline rendering regardless of importance. |
+
 ## Config
 
 Set in `~/.mcp.json` under `mcpServers.world-fabric`. Env vars:

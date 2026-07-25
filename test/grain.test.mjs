@@ -105,6 +105,52 @@ function importanceBelowThreshold(imp) {
   return imp < HEADLINE_IMPORTANCE_THRESHOLD;
 }
 
+// ----------------------------------------------- flaggedEntityIds (Phase 4 task 4.2)
+
+test("summarizeBatch: a flagged (long-unreviewed) low-importance entity is forced into the headline even though HEADLINE_IMPORTANCE_THRESHOLD alone would have collapsed it", () => {
+  const flaggedBatch = {
+    ...batch,
+    mutations: [
+      mutation({
+        mutationId: "m10",
+        id: "quiet-shopkeep",
+        regionId: "region-10",
+        entityContext: { name: "Quiet Shopkeep", importance: 0.1, tags: [] } // no pin-review tag, low importance
+      })
+    ]
+  };
+
+  const withoutFlag = summarizeBatch(flaggedBatch);
+  const unflaggedEntity = withoutFlag.regions[0].entities[0];
+  assert.equal(unflaggedEntity.collapsed, true, "sanity: importance alone collapses this entity when nothing flags it");
+  assert.ok(!withoutFlag.headline.includes("Quiet Shopkeep"), "sanity: not in the headline when unflagged");
+
+  const withFlag = summarizeBatch(flaggedBatch, { flaggedEntityIds: new Set(["quiet-shopkeep"]) });
+  const flaggedEntity = withFlag.regions[0].entities[0];
+  assert.equal(flaggedEntity.importance, 0.1, "importance itself is unchanged");
+  assert.equal(flaggedEntity.flaggedUnreviewed, true);
+  assert.equal(flaggedEntity.collapsed, false, "flagged-unreviewed status must force it out of collapse regardless of importance");
+  assert.ok(withFlag.headline.includes("Quiet Shopkeep"), "must surface by name in the top-level headline, not just avoid collapse in isolation");
+  assert.ok(
+    withFlag.regions[0].headline.includes("Quiet Shopkeep"),
+    "must also surface in its own region's one-line headline -- this is the actual 'force into headline' mechanism"
+  );
+});
+
+test("summarizeBatch: flaggedEntityIds has no effect on an entity NOT in the set (default behavior preserved)", () => {
+  const summary = summarizeBatch(batch, { flaggedEntityIds: new Set(["some-other-entity-entirely"]) });
+  const r0 = summary.regions.find((r) => r.regionId === "region-0");
+  const gerdur = r0.entities.find((e) => e.name === "Gerdur");
+  assert.equal(gerdur.flaggedUnreviewed, false);
+  assert.equal(gerdur.collapsed, true, "untouched by an unrelated flagged set");
+});
+
+test("summarizeBatch: omitting flaggedEntityIds entirely is identical to passing an empty Set (backward compatible)", () => {
+  const withoutOpts = summarizeBatch(batch);
+  const withEmptySet = summarizeBatch(batch, { flaggedEntityIds: new Set() });
+  assert.deepEqual(withoutOpts, withEmptySet);
+});
+
 // ------------------------------------------------------------------ render*
 
 test("renderHeadline: produces readable plain text mentioning batch id and region headlines", () => {

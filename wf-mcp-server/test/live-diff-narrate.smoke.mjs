@@ -44,6 +44,7 @@ const scratchDir = mkdtempSync(join(tmpdir(), "gm-tools-live-diff-narrate-smoke-
 const dataDir = join(scratchDir, "foundrydata");
 const reviewStateDir = join(scratchDir, "review-state");
 const statusDir = join(scratchDir, "time-skip-status");
+const humanReviewDir = join(scratchDir, "human-review"); // Phase 4 task 4.2 -- wf_accept below writes here; must not touch the real repo default
 
 const WORLD = "live-diff-narrate-smoke-world";
 const snapPath = snapshotFilePath(dataDir, WORLD);
@@ -88,6 +89,7 @@ async function connect() {
       WF_DATA_DIR: dataDir,
       GM_TOOLS_REVIEW_STATE_DIR: reviewStateDir,
       GM_TOOLS_TIMESKIP_STATUS_DIR: statusDir,
+      GM_TOOLS_HUMAN_REVIEW_DIR: humanReviewDir,
       WF_DEFAULT_WORLD: WORLD
     },
     stderr: "pipe"
