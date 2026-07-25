@@ -327,14 +327,20 @@ function nextMutationIndex(batch) {
 }
 
 const proposeScopeSchema = z.object({
-  mode: z.enum(["seed", "ambient", "tag"]),
+  mode: z.enum(["seed", "ambient", "tag", "region", "contained-in"]),
   anchorId: z.string().optional().describe(
-    "Entity ID to propagate impact from (mode='seed'). Required unless seeds[] is given."
+    "Entity ID to propagate impact from (mode='seed', required unless seeds[] is given) or to scope the " +
+    "traversal from (mode='region'/'contained-in', required)."
   ),
-  depth: z.number().int().min(1).max(6).optional().describe("Max BFS hops for seed propagation. Default 3."),
+  depth: z.number().int().min(1).max(1000).optional().describe(
+    "Max BFS hops. mode='seed': default 3. mode='region': default 2 (an intentionally shallow proximity " +
+    "radius). mode='contained-in': default effectively-unbounded (1000) — a district -> building -> room " +
+    "chain is the multi-hop case this mode exists for."
+  ),
   tag: z.string().optional().describe("Tag to scope an ambient-decay pass to (mode='tag')."),
   elapsedSessions: z.number().min(0).optional().describe(
-    "Sessions elapsed, for the ambient-decay half-life calculation (mode='ambient'/'tag'). Default 1."
+    "Sessions elapsed, for the ambient-decay half-life calculation " +
+    "(mode='ambient'/'tag'/'region'/'contained-in' when no seeds are given). Default 1."
   )
 });
 
@@ -345,13 +351,16 @@ server.registerTool(
   {
     title: "Propose a batch of graph mutations (propagate + texture + create batch)",
     description:
-      "Runs the deterministic propagation pass (mutation-engine/propagate.mjs: seed-based BFS impact for " +
-      "mode='seed', ambient time-decay for mode='ambient', decay filtered to a tag for mode='tag') to find " +
-      "candidate changes, then makes one Anthropic API call per affected region (never one per entity) to " +
-      "texture them into concrete mutations with rationale, then writes a new review batch to review-state/. " +
-      "Returns batchId + a headline summary — call wf_review_batch next to drill in. Requires ANTHROPIC_API_KEY " +
-      "to be set in THIS server process's environment for the texturing call — separate from any credential the " +
-      "calling Claude Code session uses, since this call is outbound from the MCP server itself.",
+      "Runs the deterministic propagation pass (time-skip/scope.mjs: seed-based BFS impact for mode='seed', " +
+      "ambient time-decay for mode='ambient', decay filtered to a tag for mode='tag', all-types BFS proximity " +
+      "for mode='region' [a GM time-skipping one area/faction without touching the rest of the graph], and " +
+      "containment-edges-only reachability for mode='contained-in' [\"what's structurally inside this place " +
+      "right now\" — district/building/room chains; never follows origin or presence edges]) to find candidate " +
+      "changes, then makes one Anthropic API call per affected region (never one per entity) to texture them " +
+      "into concrete mutations with rationale, then writes a new review batch to review-state/. Returns batchId " +
+      "+ a headline summary — call wf_review_batch next to drill in. Requires ANTHROPIC_API_KEY to be set in " +
+      "THIS server process's environment for the texturing call — separate from any credential the calling " +
+      "Claude Code session uses, since this call is outbound from the MCP server itself.",
     inputSchema: {
       world: worldParam,
       dataDir: dataDirParam,

@@ -14,27 +14,37 @@
  * input exactly (mode, anchorId, depth, tag, elapsedSessions, seeds) — this
  * tool is already in conversational use, nothing here renames its contract.
  *
- * Task 2.0 extracts exactly the three modes that already existed
- * (seed/ambient/tag), byte-identical in behavior — refactor only, no new
- * modes here yet. Task 2.1 adds region and contained-in in a follow-up commit.
+ * Task 2.0 extracted the three modes that already existed (seed/ambient/tag),
+ * byte-identical in behavior. Task 2.1 (below the "--- Phase 2.1 ---" marker)
+ * adds region and contained-in.
  */
 import { candidateDeltas } from "../mutation-engine/propagate.mjs";
+import { neighborhood } from "../wf-mcp-server/lib/graph.mjs";
 
-export const SCOPE_MODES = ["seed", "ambient", "tag"];
+export const SCOPE_MODES = ["seed", "ambient", "tag", "region", "contained-in"];
 
 const DEFAULT_SEED_DEPTH = 3;
+const DEFAULT_REGION_DEPTH = 2;
+// "contained-in" wants effectively-unbounded depth (a district -> building ->
+// room chain is the multi-hop case this mode exists for, per phase-2-tasks.md
+// task 2.1) -- a large finite cap rather than Infinity so neighborhood()'s
+// depth-bounded loop still terminates in a predictable number of iterations
+// on a pathological/cyclic graph.
+export const CONTAINED_IN_DEFAULT_DEPTH = 1000;
 
 /**
  * Resolve a scope spec against a snapshot into a flat candidateDeltas list.
  *
  * @param {{entities:object[], edges:object[]}} snapshot
  * @param {object} scopeSpec
- * @param {'seed'|'ambient'|'tag'} scopeSpec.mode
- * @param {string} [scopeSpec.anchorId]         mode='seed' (single-seed shorthand)
- * @param {number} [scopeSpec.depth]            mode='seed' (BFS hops, default 3)
+ * @param {'seed'|'ambient'|'tag'|'region'|'contained-in'} scopeSpec.mode
+ * @param {string} [scopeSpec.anchorId]         mode='seed' (single-seed shorthand), 'region', 'contained-in'
+ * @param {number} [scopeSpec.depth]            mode='seed' (BFS hops, default 3), 'region' (default 2),
+ *                                               'contained-in' (default effectively-unbounded)
  * @param {string} [scopeSpec.tag]              mode='tag'
- * @param {number} [scopeSpec.elapsedSessions]  mode='ambient'/'tag' (ambient-decay half-life calc, default 1)
- * @param {Array<{entityId:string, magnitude:number}>} [scopeSpec.seeds]  mode='seed' (multi-seed)
+ * @param {number} [scopeSpec.elapsedSessions]  mode='ambient'/'tag'/'region'/'contained-in' (ambient-decay half-life calc, default 1)
+ * @param {Array<{entityId:string, magnitude:number}>} [scopeSpec.seeds]  mode='seed' (multi-seed); also usable
+ *                                               within 'region'/'contained-in' to seed-propagate scoped to that subgraph
  * @returns {{deltas: Array}}
  */
 export function resolveScope(snapshot, scopeSpec) {
@@ -51,6 +61,16 @@ export function resolveScope(snapshot, scopeSpec) {
 
   if (mode === "tag") {
     return { deltas: resolveTagDeltas(entities, edges, scopeSpec) };
+  }
+
+  // --- Phase 2.1 ---
+
+  if (mode === "region") {
+    return { deltas: resolveRegionDeltas(entities, edges, scopeSpec) };
+  }
+
+  if (mode === "contained-in") {
+    return { deltas: resolveContainedInDeltas(entities, edges, scopeSpec) };
   }
 
   throw new Error(`Unknown scope.mode: ${mode}`);
@@ -93,4 +113,70 @@ function resolveTagDeltas(entities, edges, scopeSpec) {
     const edge = edgeMap.get(d.edgeId);
     return edge && (taggedIds.has(edge.sourceId) || taggedIds.has(edge.targetId));
   });
+}
+
+// ------------------------------------------------------------ mode: region
+
+/**
+ * BFS neighborhood from anchorId out to depth hops (reuses graph.mjs's
+ * neighborhood() rather than reimplementing BFS), then runs ambientDecay
+ * (or seeded propagation, if scopeSpec.seeds is also given) scoped to just
+ * that neighborhood's own entities/edges -- a GM can time-skip one
+ * region/faction without touching the rest of the graph.
+ *
+ * Generic all-types BFS is deliberate here (see plans/phase-2-review.md):
+ * "region" answers "what's narratively/relationally near this anchor",
+ * mirroring closeness.mjs's undirected, type-agnostic proximity convention
+ * -- it is not attempting to be a containment tree, so it doesn't inherit
+ * the old location-only-BFS bug that motivated contained-in's stricter
+ * edge-type filter below.
+ */
+function resolveRegionDeltas(entities, edges, scopeSpec) {
+  if (!scopeSpec.anchorId) throw new Error("scope.mode='region' requires scope.anchorId");
+  const { entities: regionEntities, edges: regionEdges } = neighborhood(
+    entities,
+    edges,
+    scopeSpec.anchorId,
+    scopeSpec.depth ?? DEFAULT_REGION_DEPTH
+  );
+
+  if (scopeSpec.seeds?.length) {
+    return resolveSeedDeltas(regionEntities, regionEdges, scopeSpec);
+  }
+  return candidateDeltas(regionEntities, regionEdges, { elapsedSessions: scopeSpec.elapsedSessions ?? 1 });
+}
+
+// ------------------------------------------------------------ mode: contained-in
+
+/**
+ * Plain reachability BFS from anchorId, filtered to containment-typed edges
+ * ONLY -- never origin (biographical: "who's from this place", a different
+ * question than "what's structurally inside this place right now"; folding
+ * it in here would repeat, one layer up, the exact category error the
+ * containment/presence/origin schema split was fixing -- see
+ * plans/phase-2-review.md). Never presence either (temporal "recent
+ * whereabouts", not structural composition).
+ *
+ * Does not assume a strict single-parent tree -- nothing in the schema
+ * enforces that for any relationship type (confirmed against
+ * graph-service.mjs), so this reuses a visited-set BFS shape (same as
+ * neighborhood()'s own), which handles a DAG/cycle safely without needing
+ * tree validation. Default depth is a very high cap, not region's shallow
+ * default -- a district -> building -> room chain is exactly the multi-hop
+ * case this mode exists for.
+ */
+function resolveContainedInDeltas(entities, edges, scopeSpec) {
+  if (!scopeSpec.anchorId) throw new Error("scope.mode='contained-in' requires scope.anchorId");
+  const containmentEdges = edges.filter((e) => e.relationshipType === "containment");
+  const { entities: containedEntities, edges: containedEdges } = neighborhood(
+    entities,
+    containmentEdges,
+    scopeSpec.anchorId,
+    scopeSpec.depth ?? CONTAINED_IN_DEFAULT_DEPTH
+  );
+
+  if (scopeSpec.seeds?.length) {
+    return resolveSeedDeltas(containedEntities, containedEdges, scopeSpec);
+  }
+  return candidateDeltas(containedEntities, containedEdges, { elapsedSessions: scopeSpec.elapsedSessions ?? 1 });
 }
