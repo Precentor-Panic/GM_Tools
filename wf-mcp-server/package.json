@@ -6,7 +6,7 @@
   "description": "MCP server exposing World Fabric campaign graph queries and mutations to Claude.",
   "main": "index.mjs",
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --env-file-if-exists=../.env --test test/*.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

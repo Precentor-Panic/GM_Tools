@@ -9,4 +9,5 @@ node_modules/
 # never commit API keys / secrets
 .env
 .env.*
+!.env.example
 *.key
