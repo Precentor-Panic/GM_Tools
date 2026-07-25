@@ -28,7 +28,13 @@ import { z } from "zod";
 // doc comment and applyLedgerOutcome()). Both are additive (old batch files
 // still parse unchanged), but per this project's schema-versioning
 // discipline every shape change bumps the version and gets a note here.
-export const SCHEMA_VERSION = 2;
+//
+// Bumped 2 -> 3 for Phase 5 (import-from-writeup): SourceKind gained
+// 'writeup-import' (mutations produced by graph-import/writeup-import.mjs's
+// dry-run merge preview of an LLM-proposed WFI document against freeform
+// text, as opposed to a graph-native propagate/decay/resolve pass). Purely
+// additive — old batch files still parse unchanged.
+export const SCHEMA_VERSION = 3;
 
 // Same op set wf-mcp-server/index.mjs's wf_apply_mutations already accepts.
 export const MutationOp = z.enum([
@@ -46,7 +52,22 @@ export const MutationOp = z.enum([
 // than a fresh candidateDeltas pass — distinct from 'ambient-decay'/
 // 'seeded-propagation' (both describe a single fresh delta) and from
 // 'manual' (rollback.mjs's restore mutations; a genuinely different origin).
-export const SourceKind = z.enum(["ambient-decay", "seeded-propagation", "manual", "deferred-resolution"]);
+//
+// 'writeup-import' (Phase 5): a mutation produced by graph-import/
+// writeup-import.mjs's dry-run merge preview — an LLM-proposed WFI document
+// (extracted from freeform text) run through interchange.mjs's importGraph
+// without persisting, converted into review-batch-shaped entries. Distinct
+// from every other kind above because its origin is freeform text rather
+// than the graph's own current state — surfaced separately for auditability
+// (months later, "what proposed this" should say "a writeup import", not
+// look like an ordinary event consequence).
+export const SourceKind = z.enum([
+  "ambient-decay",
+  "seeded-propagation",
+  "manual",
+  "deferred-resolution",
+  "writeup-import"
+]);
 
 export const Mutation = z.object({
   op: MutationOp,

@@ -23,8 +23,8 @@ function test(name, fn) {
   }
 }
 
-test("SCHEMA_VERSION is exported and is 2 (bumped for Phase 3.5's deferred-resolution additions)", () => {
-  assert.equal(SCHEMA_VERSION, 2);
+test("SCHEMA_VERSION is exported and is 3 (bumped for Phase 5's writeup-import addition)", () => {
+  assert.equal(SCHEMA_VERSION, 3);
 });
 
 // --------------------------------------------------------------- Mutation
@@ -253,7 +253,7 @@ test("MutationOp / SourceKind / BatchStatus enums cover the documented values", 
   for (const op of ["upsert_entity", "upsert_edge", "delete_entity", "delete_edge", "upsert_type", "upsert_relationship_type"]) {
     assert.doesNotThrow(() => MutationOp.parse(op));
   }
-  for (const k of ["ambient-decay", "seeded-propagation", "manual", "deferred-resolution"]) {
+  for (const k of ["ambient-decay", "seeded-propagation", "manual", "deferred-resolution", "writeup-import"]) {
     assert.doesNotThrow(() => SourceKind.parse(k));
   }
   for (const s of ["open", "synced", "rolled-back"]) {
