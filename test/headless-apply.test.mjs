@@ -135,6 +135,27 @@ test("applyHeadless: an update mutation against an ALREADY-POPULATED snapshot me
   assert.equal(edge.strength, 0.8, "pre-existing edge should be untouched by an unrelated entity mutation");
 });
 
+test("applyHeadless: a mutation with `id` only inside `data` (not top-level) still resolves against the existing record, rather than silently discarding the id and creating a duplicate (remediation-pass hardening)", () => {
+  const snapshotPath = join(scratchDir, "worlds", "populated-id-in-data", "world-fabric-snapshot.json");
+  writePopulatedFixture(snapshotPath);
+
+  // Malformed relative to mutation-engine/schema.mjs's Mutation shape (id
+  // belongs top-level), but should still resolve correctly rather than
+  // silently orphaning a new random-id record.
+  const result = applyHeadless(snapshotPath, [
+    { op: "upsert_entity", data: { id: "alvor", importance: 0.95 } }
+  ]);
+
+  assert.equal(result.summary.entitiesUpdated, 1);
+  assert.equal(result.summary.entitiesCreated, 0, "must update the existing alvor record, not create a new one under a generated id");
+
+  const onDisk = JSON.parse(readFileSync(snapshotPath, "utf8"));
+  assert.equal(onDisk.snapshot.entities.length, 3, "entity count should be unchanged");
+  const alvor = onDisk.snapshot.entities.find((e) => e.id === "alvor");
+  assert.equal(alvor.importance, 0.95);
+  assert.equal(alvor.name, "Alvor", "untouched fields should still be preserved");
+});
+
 test("applyHeadless: an update mutation on an existing EDGE (sparse data, no sourceId/targetId) merges onto the current edge rather than being skipped", () => {
   const snapshotPath = join(scratchDir, "worlds", "populated-edge-update", "world-fabric-snapshot.json");
   writePopulatedFixture(snapshotPath);

@@ -111,10 +111,23 @@ export function bootstrapSnapshot(snapshotPath, opts = {}) {
  * Merge a mutation's `data` onto the current entity/edge it targets (by
  * top-level `m.id`), producing a full WFI-ready object. Returns `data`
  * as-is (no merge) for a genuine create (no `m.id`, or `m.id` not found).
+ *
+ * Id resolution prefers top-level `m.id` (the documented, authoritative
+ * field per mutation-engine/schema.mjs's Mutation shape -- `data` is a
+ * plain field-value patch and never legitimately carries its own `id` in
+ * any GM_Tools-produced mutation, since diff.mjs's own ENTITY_DIFF_FIELDS/
+ * EDGE_DIFF_FIELDS deliberately exclude it). Falls back to `data.id` rather
+ * than silently discarding it, purely as a defensive guard against a
+ * malformed/hand-authored mutation that put `id` in the wrong place --
+ * found during this phase's own manual round-trip verification, where a
+ * hand-rolled test fixture made exactly that mistake and would otherwise
+ * have silently created a duplicate/orphaned record instead of failing
+ * loudly or updating the intended one.
  */
 function mergedWfiRecord(m, currentMap) {
-  const current = m.id ? currentMap.get(m.id) : undefined;
-  return { ...(current ?? {}), ...(m.data ?? {}), id: m.id ?? current?.id };
+  const targetId = m.id ?? m.data?.id;
+  const current = targetId ? currentMap.get(targetId) : undefined;
+  return { ...(current ?? {}), ...(m.data ?? {}), id: targetId ?? current?.id };
 }
 
 /**
