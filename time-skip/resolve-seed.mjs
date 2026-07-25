@@ -17,12 +17,16 @@
  * typed-error-on-second-failure convention, same DI opts.client/apiKey/
  * model/maxTokens) -- this is the second module in the codebase making an
  * outbound LLM call, and there's no reason to invent a second pattern for it.
+ * callModel/fillTemplate/JSON-fence-stripping are shared with texture.mjs
+ * via mutation-engine/llm-call.mjs (extracted during Phase 2's remediation
+ * pass once this became the second real call site — see that module's own
+ * doc comment).
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
+import { callModel, fillTemplate as fillTemplateShared, parseJsonResponse } from "../mutation-engine/llm-call.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPT_TEMPLATE = readFileSync(join(__dirname, "..", "prompts", "resolve-seed.md"), "utf8");
@@ -71,32 +75,7 @@ function renderEntityContext(entities) {
 }
 
 function fillTemplate(vars) {
-  let out = PROMPT_TEMPLATE;
-  for (const [key, value] of Object.entries(vars)) {
-    out = out.replaceAll(`{{${key}}}`, value);
-  }
-  return out;
-}
-
-function parseJsonObject(text) {
-  const cleaned = text
-    .trim()
-    .replace(/^```(?:json)?/i, "")
-    .replace(/```$/, "")
-    .trim();
-  return JSON.parse(cleaned);
-}
-
-async function callModel(prompt, opts) {
-  const client = opts.client ?? new Anthropic({ apiKey: opts.apiKey });
-  const model = opts.model ?? DEFAULT_RESOLVE_SEED_MODEL;
-  const response = await client.messages.create({
-    model,
-    max_tokens: opts.maxTokens ?? 1024,
-    messages: [{ role: "user", content: prompt }]
-  });
-  const textBlock = (response.content ?? []).find((b) => b.type === "text");
-  return textBlock?.text ?? "";
+  return fillTemplateShared(PROMPT_TEMPLATE, vars);
 }
 
 /**
@@ -131,10 +110,17 @@ export async function resolveSeed(eventDescription, snapshot, opts = {}) {
   const maxAttempts = 2;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const raw = await callModel(prompt, opts);
+    // maxTokens default (1024) preserved explicitly here, distinct from
+    // llm-call.mjs's own 2048 default -- a resolution response is much
+    // shorter than a texturing response, no reason to share that default.
+    const raw = await callModel(prompt, {
+      ...opts,
+      model: opts.model ?? DEFAULT_RESOLVE_SEED_MODEL,
+      maxTokens: opts.maxTokens ?? 1024
+    });
     lastRaw = raw;
     try {
-      const parsed = parseJsonObject(raw);
+      const parsed = parseJsonResponse(raw);
       const validated = RawResolution.parse(parsed);
 
       if (validated.resolution === "single") {

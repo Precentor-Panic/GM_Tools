@@ -16,13 +16,18 @@
  * (plans/phase-1-tasks.md task 1.5) — pass opts.model to override for
  * higher-stakes calls (not needed within Phase 1 itself; the parameter
  * exists for Phase 3/live-diff to use later).
+ *
+ * callModel/fillTemplate/JSON-fence-stripping are shared with time-skip/
+ * resolve-seed.mjs (the mutation engine's second outward-facing LLM call
+ * site) via ./llm-call.mjs, extracted during Phase 2's remediation pass —
+ * see that module's own doc comment.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { Mutation, MutationOp } from "./schema.mjs";
+import { callModel, fillTemplate as fillTemplateShared, parseJsonResponse } from "./llm-call.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPT_TEMPLATE = readFileSync(join(__dirname, "..", "prompts", "texture.md"), "utf8");
@@ -144,32 +149,7 @@ function renderDeltaSummary(deltas, entities) {
 }
 
 function fillTemplate(vars) {
-  let out = PROMPT_TEMPLATE;
-  for (const [key, value] of Object.entries(vars)) {
-    out = out.replaceAll(`{{${key}}}`, value);
-  }
-  return out;
-}
-
-function parseJsonArray(text) {
-  const cleaned = text
-    .trim()
-    .replace(/^```(?:json)?/i, "")
-    .replace(/```$/, "")
-    .trim();
-  return JSON.parse(cleaned);
-}
-
-async function callModel(prompt, opts) {
-  const client = opts.client ?? new Anthropic({ apiKey: opts.apiKey });
-  const model = opts.model ?? DEFAULT_TEXTURE_MODEL;
-  const response = await client.messages.create({
-    model,
-    max_tokens: opts.maxTokens ?? 2048,
-    messages: [{ role: "user", content: prompt }]
-  });
-  const textBlock = (response.content ?? []).find((b) => b.type === "text");
-  return textBlock?.text ?? "";
+  return fillTemplateShared(PROMPT_TEMPLATE, vars);
 }
 
 /**
@@ -218,10 +198,10 @@ export async function textureRegion(region, ctx, opts = {}) {
   const maxAttempts = 2;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const raw = await callModel(prompt, opts);
+    const raw = await callModel(prompt, { ...opts, model: opts.model ?? DEFAULT_TEXTURE_MODEL });
     lastRaw = raw;
     try {
-      const parsed = parseJsonArray(raw);
+      const parsed = parseJsonResponse(raw);
       const rawMutations = RawMutationArray.parse(parsed);
       return rawMutations.map((m) => {
         const entity = m.id ? entityMap.get(m.id) : undefined;
