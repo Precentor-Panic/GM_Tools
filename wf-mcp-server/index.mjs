@@ -12,34 +12,14 @@
  * depends on `game.settings`), so this server never talks to Foundry
  * directly — it only reads/writes the snapshot and mutation files.
  */
-import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { resolveDataDir, listWorlds } from "./lib/data-dir.mjs";
-import { loadSnapshot, mutationsPath, snapshotFilePath } from "./lib/snapshot.mjs";
+import { listWorlds } from "./lib/data-dir.mjs";
+import { loadSnapshot } from "./lib/snapshot.mjs";
 import { neighborhood, edgesFor, findEntity, findEntityByName, findEdge } from "./lib/graph.mjs";
-
-// Phase 1 mutation engine — pure library code, this server is a thin wrapper
-// (see gm-tools-conventions skill: "front-ends are thin wrappers, never
-// logic duplicators"). No business logic lives below beyond parameter
-// wiring and status-text formatting.
-import { textureRegion } from "../mutation-engine/texture.mjs";
-import { loadBatch, saveBatch, updateMutationStatus } from "../mutation-engine/review-state.mjs";
-import { summarizeBatch, renderHeadline, renderRegionDiff, renderEntityDiff } from "../mutation-engine/grain.mjs";
-import { acceptMutations, rollbackBatch } from "../mutation-engine/rollback.mjs";
-
-// Phase 3.5 task 3.5.4 — resolve-outcome wiring: a batch that originated
-// from time-skip/resolve-pending.mjs or run-cycle.mjs's growth-bound sweep
-// carries `resolvedPendingEntries` metadata naming which pending-ledger.mjs
-// entries it resolves. applyLedgerOutcome() (defined in pending-ledger.mjs,
-// not here, to avoid a circular import with review-state.mjs -- see its own
-// doc comment) is the single hook point for both wf_accept and wf_reject
-// below: accept resolves (clears) the entries, reject reverts them to
-// 'pending' rather than losing them. No-op for the overwhelming common case
-// of a batch with no resolvedPendingEntries at all.
-import { applyLedgerOutcome } from "../mutation-engine/pending-ledger.mjs";
+import { resolveWorld, resolveDir } from "./lib/resolve.mjs";
 
 // Phase 3.5 task 3.5.2/3.5.3 — deferred/lazy consequence resolution:
 // orchestrateCycle (headline-focus + backlog deferral, wrapped below as
@@ -48,49 +28,35 @@ import { applyLedgerOutcome } from "../mutation-engine/pending-ledger.mjs";
 import { orchestrateCycle } from "../time-skip/run-cycle.mjs";
 import { resolvePending } from "../time-skip/resolve-pending.mjs";
 
-// Phase 3 task 3.2/3.3 — the scene-narration pass (player-facing prose, NOT
-// the reviewer-facing `rationale` field), hard-gated to already-accepted
-// batches only. See mutation-engine/narrate.mjs's own doc comment.
-import { narrateBatch } from "../mutation-engine/narrate.mjs";
-
 // Phase 2 task 2.0 — the propagate/scope-resolution and orchestration logic
 // that used to be inlined in wf_propose_mutations's handler now lives in
 // time-skip/ as reusable library code; this server just wires parameters
 // through to it. See time-skip/scope.mjs, time-skip/run.mjs.
 import { orchestrateBatch, attachDiffs } from "../time-skip/run.mjs";
 
-// Phase 2 task 2.3/2.4 — the Foundry-optional headless-apply fallback
-// wf_sync_to_foundry uses when no live Foundry client picks up a mutation.
-import { applyHeadless } from "../graph-import/headless-apply.mjs";
-
 // Phase 5 — import-from-writeup: propose a WFI-shaped document from freeform
 // text (task 5.1), dry-run it through importGraph and convert the result into
-// a normal review batch (task 5.2). wf_accept/wf_sync_to_foundry/
-// wf_rollback_batch below need NO changes at all to handle a writeup-import
-// batch -- they're already generic over Batch shape (they only read
-// mutations by status, never by sourceKind). Only wf_regenerate needs a
-// dispatch: writeup-import mutations aren't texture.mjs candidateDeltas, so
-// regenerating one re-invokes proposeWfiFromWriteup against the batch's own
-// recorded source text instead of textureRegion.
-import {
-  importWriteup,
-  regenerateWriteupImport,
-  WriteupImportRegenerateScopeError
-} from "../graph-import/writeup-import.mjs";
+// a normal review batch (task 5.2).
+import { importWriteup } from "../graph-import/writeup-import.mjs";
 
-// Phase 4 task 4.2 — unreviewed-accumulation tracking: markHumanReviewed is
-// called from every SCOPED ('region'/'entity', never 'batch') review/accept/
-// reject/regenerate action; recordUnreviewedAccept from a whole-'batch'-scope
-// accept only (the case this feature exists to guard against);
-// findUnreviewedEntities feeds grain.mjs's summarizeBatch() so a flagged
-// entity forces into the headline regardless of importance.
+// Phase 4 task 4.2 — unreviewed-accumulation tracking (read-only surface;
+// the accept/reject-time bookkeeping itself lives in lib/mutation-ops.mjs now).
+import { findUnreviewedEntities, DEFAULT_MAX_AGE_DAYS, DEFAULT_MAX_UNREVIEWED_ACCEPTS } from "../mutation-engine/human-review.mjs";
+
+// Phase 6 — the actual review-workflow operations (accept/reject/regenerate/
+// narrate/sync/rollback/review-grain) now live in lib/mutation-ops.mjs,
+// shared verbatim with review-ui/server.mjs rather than kept as two
+// independently-drifting copies. See that module's own doc comment.
 import {
-  markHumanReviewed,
-  recordUnreviewedAccept,
-  findUnreviewedEntities,
-  DEFAULT_MAX_AGE_DAYS,
-  DEFAULT_MAX_UNREVIEWED_ACCEPTS
-} from "../mutation-engine/human-review.mjs";
+  applyMutationsToFoundry,
+  reviewGrainOp,
+  acceptOp,
+  rejectOp,
+  regenerateOp,
+  narrateOp,
+  syncOp,
+  rollbackOp
+} from "./lib/mutation-ops.mjs";
 
 const server = new McpServer({ name: "world-fabric", version: "0.1.0" });
 
@@ -101,27 +67,6 @@ const worldParam = z.string().optional().describe(
 const dataDirParam = z.string().optional().describe(
   "Override the Foundry data directory. Defaults to WF_DATA_DIR env var, then OS-typical install paths."
 );
-
-function resolveWorld(world) {
-  const resolved = world ?? process.env.WF_DEFAULT_WORLD;
-  if (!resolved) {
-    throw new Error(
-      "No world specified and WF_DEFAULT_WORLD is not set. Call wf_list_worlds to see available worlds, " +
-      "then pass one explicitly."
-    );
-  }
-  return resolved;
-}
-
-function resolveDir(dataDir) {
-  const dir = resolveDataDir(dataDir);
-  if (!dir) {
-    throw new Error(
-      "Could not locate the Foundry data directory. Pass dataDir explicitly or set WF_DATA_DIR."
-    );
-  }
-  return dir;
-}
 
 function text(payload) {
   return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
@@ -292,99 +237,9 @@ const mutationSchema = z.object({
   data: z.record(z.string(), z.any()).optional()
 });
 
-/**
- * Write mutations to the file bridge and poll briefly for the in-Foundry
- * watcher to pick them up. Shared by wf_apply_mutations and
- * wf_sync_to_foundry so the write+poll behavior isn't duplicated between
- * the two tools (gm-tools-conventions: thin wrappers, no logic duplication).
- */
-async function applyMutationsToFoundry(dir, w, mutations) {
-  const path = mutationsPath(dir, w);
-  writeFileSync(path, JSON.stringify(mutations, null, 2), "utf8");
-
-  // The watcher clears the file back to "[]" once applied. Poll briefly.
-  const deadline = Date.now() + 7000;
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 500));
-    if (!existsSync(path)) break;
-    const contents = readFileSync(path, "utf8").trim();
-    if (contents === "[]") {
-      return { status: "applied", count: mutations.length, path };
-    }
-  }
-  return {
-    status: "queued",
-    count: mutations.length,
-    path,
-    note: "Not confirmed applied within 7s — check that a Foundry client has this world open with World Fabric active."
-  };
-}
-
-/**
- * Apply a mutations array via the live-Foundry file bridge first; if no live
- * client picks it up within the poll window, fall back to
- * graph-import/headless-apply.mjs's applyHeadless() against the standalone
- * snapshot directly. Shared by wf_sync_to_foundry (task 2.4, the original
- * home of this fallback) and wf_rollback_batch (task 4.1) so the
- * live-then-headless behavior isn't duplicated between the two tools
- * (gm-tools-conventions: thin wrappers, no logic duplication).
- *
- * Extracted during task 4.1's own end-to-end verification: wf_rollback_batch
- * previously had NO headless fallback at all (only wf_sync_to_foundry did),
- * which meant a rollback could never actually apply against a genuinely
- * headless-only campaign (no live Foundry client ever open) — the restore
- * mutations would sit "queued" in world-fabric-mutations.json forever,
- * never reaching the snapshot. Task 4.1's own acceptance criterion (roll
- * back a batch, confirm the created entity is ACTUALLY deleted from the
- * snapshot) cannot be satisfied against a headless-only fixture without
- * this — so it's fixed here as part of closing that task, not left as a
- * separately-scoped gap.
- *
- * @returns {{path:'live'|'headless', liveResult:object, headlessResult?:object, snapshotPath?:string}}
- */
-async function applyMutationsWithHeadlessFallback(dir, w, mutations) {
-  const liveResult = await applyMutationsToFoundry(dir, w, mutations);
-  if (liveResult.status === "applied") {
-    return { path: "live", liveResult };
-  }
-  const snapshotPath = snapshotFilePath(dir, w);
-  const headlessResult = applyHeadless(snapshotPath, mutations);
-  return { path: "headless", liveResult, headlessResult, snapshotPath };
-}
-
-/**
- * Task 4.1: write applyHeadless()'s reported `idAssignments` (keyed by
- * position in the mutations array it received) back onto the originating
- * batch's stored mutation entries, keyed instead by mutationId (the index
- * is an internal accounting detail of this one call, not something a caller
- * outside this function should need to know about). Mutates `batch.mutations`
- * in place; the caller still owns saveBatch() (both wf_sync_to_foundry and
- * anyone else calling this also need to set batch.status, so one combined
- * save is cheaper than saving twice).
- *
- * `orderedSourceEntries` must be the exact same array (same order) the
- * mutations passed to applyHeadless() were mapped from — wf_sync_to_foundry
- * passes its own `accepted` array, since `mutations = accepted.map(...)`
- * preserves that 1:1 index correspondence.
- *
- * @param {object} batch
- * @param {object[]} orderedSourceEntries   StoredMutation entries, same order/length as the mutations array applyHeadless() received
- * @param {Object<string,string>} idAssignments   applyHeadless()'s returned idAssignments
- * @returns {Object<string,string>} {mutationId: assignedId} for whatever this call actually wrote back
- */
-function writeBackIdAssignments(batch, orderedSourceEntries, idAssignments) {
-  const written = {};
-  if (!idAssignments) return written;
-  for (const [indexStr, assignedId] of Object.entries(idAssignments)) {
-    const sourceEntry = orderedSourceEntries[Number(indexStr)];
-    if (!sourceEntry) continue; // defensive: shouldn't happen, index always came from the same-length array we built
-    const entry = batch.mutations.find((m) => m.mutationId === sourceEntry.mutationId);
-    if (!entry) continue;
-    entry.id = assignedId;
-    written[sourceEntry.mutationId] = assignedId;
-  }
-  return written;
-}
+// applyMutationsToFoundry/applyMutationsWithHeadlessFallback/
+// writeBackIdAssignments now live in ./lib/mutation-ops.mjs (Phase 6),
+// shared verbatim with review-ui/server.mjs — imported above.
 
 server.registerTool(
   "wf_apply_mutations",
@@ -422,48 +277,10 @@ server.registerTool(
 // status-text formatting.
 // ======================================================================================
 
-/** Resolve a batch-scoped set of mutationIds for accept/reject/regenerate. */
-function resolveMutationIds(batch, scope, id) {
-  if (scope === "batch") return batch.mutations.map((m) => m.mutationId);
-  if (scope === "region") {
-    if (!id) throw new Error("scope='region' requires id (the regionId)");
-    return batch.mutations
-      .filter((m) => (m.regionId ?? `solo-${m.mutationId}`) === id)
-      .map((m) => m.mutationId);
-  }
-  if (scope === "entity") {
-    if (!id) throw new Error("scope='entity' requires id (a mutationId or target entity/edge id)");
-    return batch.mutations.filter((m) => m.mutationId === id || m.id === id).map((m) => m.mutationId);
-  }
-  throw new Error(`Unknown scope: ${scope}`);
-}
-
-/**
- * The target entity/edge ids (`m.id`) touched by a set of mutationIds
- * within a batch — the unit human-review.mjs tracks against. Falsy ids
- * (an unsynced create with no id yet) are filtered out; markHumanReviewed/
- * recordUnreviewedAccept already no-op on those too, this just avoids
- * passing them through at all.
- */
-function entityIdsForMutations(batch, mutationIds) {
-  const idSet = new Set(mutationIds);
-  return batch.mutations.filter((m) => idSet.has(m.mutationId)).map((m) => m.id).filter(Boolean);
-}
-
-/** Phase 4 task 4.2: the Set summarizeBatch's flaggedEntityIds opt expects, built from findUnreviewedEntities(). */
-function flaggedEntityIdSet(world) {
-  return new Set(findUnreviewedEntities(world).map((f) => f.entityId));
-}
-
-/** Next unused m<N> mutationId index in a batch, for appending regenerated mutations. */
-function nextMutationIndex(batch) {
-  let max = -1;
-  for (const m of batch.mutations) {
-    const match = /^m(\d+)$/.exec(m.mutationId ?? "");
-    if (match) max = Math.max(max, parseInt(match[1], 10));
-  }
-  return max + 1;
-}
+// resolveMutationIds/entityIdsForMutations/flaggedEntityIdSet/nextMutationIndex
+// now live in ./lib/mutation-ops.mjs (Phase 6), imported above and reused
+// verbatim inside that module's own acceptOp/rejectOp/regenerateOp/
+// reviewGrainOp — nothing left to wire here beyond parameter passthrough.
 
 const proposeScopeSchema = z.object({
   mode: z.enum(["seed", "ambient", "tag", "region", "contained-in"]),
@@ -601,32 +418,8 @@ server.registerTool(
   async ({ world, batchId, grain, regionId, entityId }) => {
     try {
       const w = resolveWorld(world);
-      const batch = loadBatch(w, batchId);
-      const summary = summarizeBatch(batch, { flaggedEntityIds: flaggedEntityIdSet(w) });
-
-      if (grain === "headline") {
-        // Read-only overview, not a genuine per-entity review (collapsed
-        // entities' diffs were never actually shown) -- must NOT mark
-        // anything reviewed. This is the whole point of the distinction.
-        return text({ rendered: renderHeadline(summary) });
-      }
-      if (grain === "region") {
-        if (!regionId) throw new Error("grain='region' requires regionId");
-        const region = summary.regions.find((r) => r.regionId === regionId);
-        if (!region) throw new Error(`No region "${regionId}" in batch "${batchId}"`);
-        markHumanReviewed(w, region.entities.map((e) => e.entityId));
-        return text({ rendered: renderRegionDiff(region) });
-      }
-      if (grain === "entity") {
-        if (!entityId) throw new Error("grain='entity' requires entityId");
-        const entity = summary.regions
-          .flatMap((r) => r.entities)
-          .find((e) => e.mutationId === entityId || e.entityId === entityId);
-        if (!entity) throw new Error(`No entity "${entityId}" in batch "${batchId}"`);
-        markHumanReviewed(w, [entity.entityId]);
-        return text({ rendered: renderEntityDiff(entity) });
-      }
-      throw new Error(`Unknown grain: ${grain}`);
+      const { rendered } = reviewGrainOp(w, { batchId, grain, regionId, entityId });
+      return text({ rendered });
     } catch (err) {
       return errorText(err);
     }
@@ -666,31 +459,8 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
-      const batch = loadBatch(w, batchId);
-      const mutationIds = resolveMutationIds(batch, scope, id);
-      if (!mutationIds.length) throw new Error(`No mutations matched scope="${scope}" id="${id ?? ""}"`);
-      const { entities, edges } = loadSnapshot(dir, w).snapshot;
-      const updated = acceptMutations(w, batchId, mutationIds, entities, edges);
-      // Phase 3.5 task 3.5.4: if this batch resolves any pending-ledger
-      // entries (see pending-ledger.mjs's applyLedgerOutcome doc comment),
-      // accepting clears them -- they're now real, reviewed graph mutations.
-      const ledgerResolved = applyLedgerOutcome(updated, mutationIds, "accepted");
-      // Phase 4 task 4.2: a scoped accept ('region'/'entity') is a genuine
-      // review of what it targets; a whole-'batch' accept-all is exactly
-      // the case this feature exists to guard against -- it must NEVER
-      // update lastHumanReviewedAt, only accumulate the unreviewed count.
-      const touchedEntityIds = entityIdsForMutations(batch, mutationIds);
-      if (scope === "batch") {
-        recordUnreviewedAccept(w, touchedEntityIds);
-      } else {
-        markHumanReviewed(w, touchedEntityIds);
-      }
-      return text({
-        batchId,
-        accepted: mutationIds,
-        batchStatus: updated.status,
-        ...(ledgerResolved.length ? { ledgerResolved } : {})
-      });
+      const result = await acceptOp(dir, w, { batchId, scope, id });
+      return text(result);
     } catch (err) {
       return errorText(err);
     }
@@ -720,30 +490,8 @@ server.registerTool(
   async ({ world, batchId, scope, id }) => {
     try {
       const w = resolveWorld(world);
-      const batch = loadBatch(w, batchId);
-      const mutationIds = resolveMutationIds(batch, scope, id);
-      if (!mutationIds.length) throw new Error(`No mutations matched scope="${scope}" id="${id ?? ""}"`);
-      let updated;
-      for (const mutationId of mutationIds) updated = updateMutationStatus(w, batchId, mutationId, "rejected");
-      // Phase 3.5 task 3.5.4: reject reverts any resolved ledger entries
-      // back to 'pending' -- the underlying debt is real and must not
-      // silently vanish just because this particular resolution attempt
-      // was rejected.
-      const ledgerReverted = applyLedgerOutcome(updated, mutationIds, "rejected");
-      // Phase 4 task 4.2: a scoped reject is still a genuine review of the
-      // targeted entities. A whole-batch reject-all is not treated as a
-      // review either, but (unlike accept) doesn't need to accumulate
-      // anything -- a rejected mutation never applies, so there's no
-      // unreviewed graph content left behind by it.
-      if (scope !== "batch") {
-        markHumanReviewed(w, entityIdsForMutations(batch, mutationIds));
-      }
-      return text({
-        batchId,
-        rejected: mutationIds,
-        batchStatus: updated.status,
-        ...(ledgerReverted.length ? { ledgerReverted } : {})
-      });
+      const result = rejectOp(w, { batchId, scope, id });
+      return text(result);
     } catch (err) {
       return errorText(err);
     }
@@ -782,119 +530,8 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
-      const batch = loadBatch(w, batchId);
-      const mutationIds = resolveMutationIds(batch, scope, id);
-      if (!mutationIds.length) throw new Error(`No mutations matched scope="${scope}" id="${id ?? ""}"`);
-      const targeted = batch.mutations.filter((m) => mutationIds.includes(m.mutationId));
-
-      const { entities, edges, entityTypes } = loadSnapshot(dir, w).snapshot;
-
-      // Phase 5 dispatch: a writeup-import batch's mutations aren't
-      // texture.mjs candidateDeltas -- regenerating them means re-running
-      // the whole extraction pass, not per-region texturing. Every mutation
-      // in a writeup-import batch always shares this sourceKind (each
-      // wf_propose_from_writeup call produces its own batch), so "some"
-      // targeted mutations having it implies (checked below) all of them do.
-      const writeupImportCount = targeted.filter((m) => m.sourceKind === "writeup-import").length;
-      if (writeupImportCount > 0) {
-        if (writeupImportCount !== targeted.length) {
-          throw new Error(
-            `Regenerate scope="${scope}" id="${id ?? ""}" targets a mix of writeup-import and non-writeup-import ` +
-            `mutations in batch "${batchId}" -- this should be impossible (a batch is only ever produced by one ` +
-            `producer) and isn't handled. Investigate the batch file rather than proceeding.`
-          );
-        }
-        if (scope === "entity") {
-          throw new WriteupImportRegenerateScopeError(
-            "wf_regenerate scope='entity' is not supported for a writeup-import batch: writeup extraction is a " +
-            "single holistic pass over the whole source text, not a per-entity delta, so there's no principled way " +
-            "to regenerate just one extracted item without re-running (and replacing) the whole batch. Use " +
-            "scope='batch' (or 'region' -- a writeup-import batch always has exactly one region) instead, or " +
-            "reject the specific mutation via wf_reject and keep the rest."
-          );
-        }
-
-        const { mutations: regenerated, summary: importSummary, suggestions } = await regenerateWriteupImport(
-          batch,
-          note,
-          { entities, edges, entityTypes },
-          {}
-        );
-
-        let nextIdx = nextMutationIndex(batch);
-        const newMutations = regenerated.map((m) => ({ ...m, mutationId: `m${nextIdx++}`, status: "pending" }));
-
-        batch.mutations = batch.mutations.filter((m) => !mutationIds.includes(m.mutationId));
-        batch.mutations.push(...newMutations);
-        const saved = saveBatch(w, batch);
-
-        // Same rule as the texture.mjs path below: a scoped regenerate is a
-        // genuine review of what it replaced; scope='batch' is not.
-        if (scope !== "batch") {
-          const touchedEntityIds = [...new Set(targeted.map((m) => m.id).filter(Boolean))];
-          markHumanReviewed(w, touchedEntityIds);
-        }
-
-        return text({
-          batchId,
-          replaced: mutationIds,
-          regenerated: newMutations.map((m) => m.mutationId),
-          batchStatus: saved.status,
-          importSummary,
-          suggestions
-        });
-      }
-
-      // Group by original regionId so regeneration still costs one API call
-      // per region, not one per mutation (same cost-control behavior as
-      // the original propose pass).
-      const byRegion = new Map();
-      for (const m of targeted) {
-        const key = m.regionId ?? `solo-${m.mutationId}`;
-        if (!byRegion.has(key)) byRegion.set(key, []);
-        byRegion.get(key).push(m);
-      }
-
-      const newMutations = [];
-      let nextIdx = nextMutationIndex(batch);
-      for (const [regionId, entries] of byRegion) {
-        const entityIds = [...new Set(entries.map((m) => m.id).filter(Boolean))];
-        const deltas = entries.map((m) => ({
-          kind: m.sourceKind === "ambient-decay" ? "ambient-decay" : "seed-propagated",
-          entityId: m.id,
-          edgeId: m.op.includes("edge") ? m.id : undefined,
-          impactScore: m.impactScore ?? 0.5,
-          needsLLM: true
-        }));
-        const sourceKind = entries[0].sourceKind ?? "manual";
-        const regionMutations = await textureRegion(
-          { regionId, entityIds, deltas },
-          { entities, edges, world: w, batchId, sourceKind, elapsedTimeDescriptor: batch.elapsedTimeDescriptor, note },
-          {}
-        );
-        for (const rm of regionMutations) {
-          newMutations.push({ ...rm, mutationId: `m${nextIdx++}`, status: "pending" });
-        }
-      }
-
-      batch.mutations = batch.mutations.filter((m) => !mutationIds.includes(m.mutationId));
-      batch.mutations.push(...newMutations);
-      const saved = saveBatch(w, batch);
-
-      // Phase 4 task 4.2: a scoped regenerate is a genuine review of the
-      // entities it targeted (before replacement) -- a whole-batch
-      // regenerate is not, same rule as accept/reject.
-      if (scope !== "batch") {
-        const touchedEntityIds = [...new Set(targeted.map((m) => m.id).filter(Boolean))];
-        markHumanReviewed(w, touchedEntityIds);
-      }
-
-      return text({
-        batchId,
-        replaced: mutationIds,
-        regenerated: newMutations.map((m) => m.mutationId),
-        batchStatus: saved.status
-      });
+      const result = await regenerateOp(dir, w, { batchId, scope, id, note });
+      return text(result);
     } catch (err) {
       return errorText(err);
     }
@@ -928,54 +565,8 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
-      const batch = loadBatch(w, batchId);
-      const accepted = batch.mutations.filter((m) => m.status === "accepted");
-      if (!accepted.length) {
-        return text({ status: "no-op", batchId, note: "No mutations in this batch have status 'accepted'." });
-      }
-      const mutations = accepted.map((m) => ({ op: m.op, id: m.id, data: m.data }));
-
-      const { path, liveResult, headlessResult, snapshotPath } = await applyMutationsWithHeadlessFallback(dir, w, mutations);
-
-      if (path === "live") {
-        batch.status = "synced";
-        saveBatch(w, batch);
-        // NOTE: liveResult itself carries its own `path` field (the
-        // mutations file path, from applyMutationsToFoundry) -- renamed to
-        // mutationsFilePath here so it can't collide with (and silently get
-        // overwritten by, or silently overwrite) this `path: "live"` label,
-        // which is the thing wf_sync_to_foundry's contract actually promises
-        // callers ("always report which path was used").
-        const { path: mutationsFilePath, ...rest } = liveResult;
-        return text({ path: "live", ...rest, mutationsFilePath, batchId, syncedCount: accepted.length });
-      }
-
-      // path === "headless" -- no live Foundry client picked this up within
-      // the poll window. Fell back to the headless path (task 2.3) against
-      // the standalone snapshot file. Task 4.1: write back any ids the
-      // headless apply assigned to newly-created entities/edges so a later
-      // rollback can target them.
-      const idAssignments = writeBackIdAssignments(batch, accepted, headlessResult.idAssignments);
-      batch.status = "synced";
-      saveBatch(w, batch);
-      return text({
-        path: "headless",
-        status: "applied",
-        batchId,
-        syncedCount: accepted.length,
-        snapshotPath,
-        liveAttempt: liveResult,
-        summary: headlessResult.summary,
-        deletedEntityCount: headlessResult.deletedEntityCount,
-        deletedEdgeCount: headlessResult.deletedEdgeCount,
-        skipped: headlessResult.skipped,
-        ...(Object.keys(idAssignments).length ? { idAssignments } : {}),
-        note:
-          "No live Foundry client picked up the mutation within the poll window; applied directly to the " +
-          "standalone snapshot instead. If a live Foundry client for this world reopens later, its own export " +
-          "will overwrite this file from game.settings -- no reconciliation path exists yet for a mixed " +
-          "live/headless world."
-      });
+      const result = await syncOp(dir, w, { batchId });
+      return text(result);
     } catch (err) {
       return errorText(err);
     }
@@ -1009,8 +600,7 @@ server.registerTool(
   async ({ world, batchId, note }) => {
     try {
       const w = resolveWorld(world);
-      const batch = loadBatch(w, batchId);
-      const result = await narrateBatch(batch, { world: w, note }, {});
+      const result = await narrateOp(w, { batchId, note });
       return text(result);
     } catch (err) {
       return errorText(err);
@@ -1043,34 +633,8 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
-      const { restoreMutations, skipped } = rollbackBatch(w, batchId);
-      if (!restoreMutations.length) {
-        return text({ batchId, status: "no-op", skipped, note: "No restorable accepted mutations found." });
-      }
-      const { path, liveResult, headlessResult, snapshotPath } = await applyMutationsWithHeadlessFallback(dir, w, restoreMutations);
-
-      if (path === "live") {
-        const { path: mutationsFilePath, ...rest } = liveResult;
-        return text({ path: "live", ...rest, mutationsFilePath, batchId, restoredCount: restoreMutations.length, skipped });
-      }
-
-      return text({
-        path: "headless",
-        status: "applied",
-        batchId,
-        restoredCount: restoreMutations.length,
-        snapshotPath,
-        liveAttempt: liveResult,
-        summary: headlessResult.summary,
-        deletedEntityCount: headlessResult.deletedEntityCount,
-        deletedEdgeCount: headlessResult.deletedEdgeCount,
-        skipped,
-        note:
-          "No live Foundry client picked up the rollback within the poll window; applied directly to the " +
-          "standalone snapshot instead. If a live Foundry client for this world reopens later, its own export " +
-          "will overwrite this file from game.settings -- no reconciliation path exists yet for a mixed " +
-          "live/headless world."
-      });
+      const result = await rollbackOp(dir, w, { batchId });
+      return text(result);
     } catch (err) {
       return errorText(err);
     }
