@@ -15,12 +15,38 @@
  * apply) is responsible for actually applying them, e.g. via
  * wf-mcp-server's existing wf_apply_mutations.
  *
- * Known Phase-1 limitation: a mutation that *created* a brand-new entity/edge
- * (no id known at accept-time — Foundry assigns the id when it actually
- * applies the create, and Phase 1 has no headless-apply id read-back path;
- * that's explicitly Phase 2b's job) cannot be targeted for a delete-based
- * rollback. Such entries are reported in the returned `skipped` array
- * rather than silently dropped or crashing.
+ * Newly-created entities/edges (Phase 4 task 4.1): a mutation that *creates*
+ * a brand-new entity/edge has no id known at accept-time — nothing assigns
+ * one until the mutation is actually applied. `acceptMutations` below still
+ * correctly captures `preState: null` for these (there is nothing to
+ * restore-to; a rollback should delete, not restore-a-value), but
+ * `rollbackBatch` can only turn that into a real delete once `entry.id` gets
+ * filled in after the fact. For the headless path (`graph-import/
+ * headless-apply.mjs`'s `applyHeadless`), that gap is closed: it now
+ * pre-assigns and reports back the id it gives every id-less create, and
+ * wf-mcp-server's `wf_sync_to_foundry` writes that id back onto the batch's
+ * stored mutation entry before this module ever sees it again — by the time
+ * `rollbackBatch` runs, `entry.id` is populated and it resolves to a real
+ * delete_entity/delete_edge, same as any other created-entity case with a
+ * known id. No code change was needed in this file itself for that — this
+ * function already re-reads `entry.id` fresh off the loaded batch, it just
+ * needed something upstream to have actually written it there.
+ *
+ * The live-Foundry path is a genuinely different story, confirmed by reading
+ * both `graph-service.mjs`'s `startMutationWatcher`/`applyMutations` and
+ * `wf-mcp-server/index.mjs`'s `applyMutationsToFoundry`: Foundry assigns the
+ * created id server-side (`foundry.utils.randomID()`, inside the browser
+ * session), but the mutation watcher never writes that id anywhere the file
+ * bridge can read it back — it applies, flushes, and clears
+ * world-fabric-mutations.json to `[]`, and that's the entire signal
+ * `applyMutationsToFoundry` gets. Closing this would require a change to
+ * World Fabric itself (e.g. the watcher writing a small id-assignment result
+ * file alongside the mutations file), which is out of scope here — World
+ * Fabric is a separate, read-only-for-this-phase project. A mutation created
+ * via the live path (rather than synced headless) therefore still has no id
+ * to target and is reported in the returned `skipped` array rather than
+ * silently dropped or crashing — a real, confirmed, but currently unclosable
+ * (from this side of the file bridge) limitation, not an oversight.
  */
 import { loadBatch, saveBatch } from "./review-state.mjs";
 
@@ -93,8 +119,11 @@ export function rollbackBatch(world, batchId) {
         skipped.push({
           mutationId: entry.mutationId,
           reason:
-            "created entity/edge has no known id -- cannot target a delete for rollback " +
-            "(Phase 1 limitation: no headless-apply id read-back yet, see Phase 2b)"
+            "created entity/edge has no known id -- cannot target a delete for rollback. If this batch was " +
+            "synced via wf_sync_to_foundry's headless path, the id should have been written back onto this " +
+            "entry (Phase 4 task 4.1); if it wasn't (e.g. the batch was applied via the live-Foundry path, " +
+            "which cannot report a created id back through the file bridge -- see this module's own doc " +
+            "comment), it genuinely cannot be resolved from this side."
         });
         continue;
       }

@@ -44,8 +44,8 @@ persist to `GM_Tools/review-state/<world>/<batchId>.json`.
 | `wf_accept` | Accept mutation(s) (`batch`\|`region`\|`entity` scope), capturing pre-state for rollback |
 | `wf_reject` | Reject mutation(s), same scope semantics |
 | `wf_regenerate` | Re-texture mutation(s) with a steering note; replaces, doesn't stack onto, the prior proposal for that scope. Same `ANTHROPIC_API_KEY` requirement as `wf_propose_mutations`. |
-| `wf_sync_to_foundry` | Write accepted mutations to the Foundry file bridge (same `wf_apply_mutations` mechanism); reports `queued` if no Foundry client has the world open |
-| `wf_rollback_batch` | Restore a batch's accepted mutations to their captured pre-accept state. Phase-1 scope: most-recently-accepted batch only (pass its id explicitly) — no multi-batch version history yet. Not in the original 6-tool task-1.8 table; added because the Definition of Done explicitly requires exercising rollback conversationally, and there was otherwise no MCP surface for it. |
+| `wf_sync_to_foundry` | Write accepted mutations to the Foundry file bridge (same `wf_apply_mutations` mechanism); falls back to `graph-import/headless-apply.mjs` if no Foundry client has the world open, always reports which path was used (`path`: `'live'`\|`'headless'`). A headless-applied create's assigned id is written back onto the batch (`idAssignments`) so `wf_rollback_batch` can later target it (Phase 4 task 4.1). |
+| `wf_rollback_batch` | Restore a batch's accepted mutations to their captured pre-accept state. Same live-then-headless-fallback behavior as `wf_sync_to_foundry` (Phase 4 task 4.1 — it previously had no headless fallback at all, so rollback could never actually apply against a headless-only campaign). Phase-1 scope: most-recently-accepted batch only (pass its id explicitly) — no multi-batch version history yet. Not in the original 6-tool task-1.8 table; added because the Definition of Done explicitly requires exercising rollback conversationally, and there was otherwise no MCP surface for it. |
 
 ### Phase 3 — scene narration
 

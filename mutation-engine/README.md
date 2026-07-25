@@ -139,6 +139,18 @@ Reusing `containment` for `origin` would repeat, at smaller scale, the exact mod
   exercising `rollbackBatch` as part of the conversational round trip, and
   there was otherwise no MCP surface to call it from. See
   `wf-mcp-server/README.md`.
+- **Newly-created-entity rollback (Phase 4 task 4.1).** `graph-import/headless-apply.mjs`'s `applyHeadless` now
+  pre-assigns and reports back the id it gives every id-less create (same `wf_<ts>_<n>` convention
+  `interchange.mjs`'s private `defaultMakeId` already uses), and `wf-mcp-server`'s `wf_sync_to_foundry` writes that
+  id back onto the batch's stored mutation entry — closing the gap `rollback.mjs`'s own doc comment used to flag
+  as "explicitly Phase 2b's job" (Phase 2b shipped without ever adding it). The live-Foundry path (Foundry assigns
+  the id in-browser via `foundry.utils.randomID()`) is a genuinely different, currently-unclosable limitation from
+  this side of the file bridge: the mutation watcher never writes a created id anywhere the file bridge can read
+  it back, and fixing that requires a `foundry_worldFabric`-side change, out of scope here. A mutation created via
+  the live path (rather than synced headless) still surfaces in `rollbackBatch`'s `skipped` array, not silently
+  dropped. `wf_rollback_batch` also gained the same live-then-headless fallback `wf_sync_to_foundry` already had —
+  it previously had none at all, which meant a rollback could never actually apply against a genuinely
+  headless-only campaign.
 - **`person.homeLocation` (task 1.5.2, resolved in 1.5b).** Left flagged
   during Phase 1.5 rather than moved to `presence` — the design review's
   `presence` guess didn't match how the code actually treats it (a Tier-1

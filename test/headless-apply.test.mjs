@@ -268,6 +268,91 @@ test("applyHeadless: throws for an upsert_edge create with no sourceId/targetId,
   );
 });
 
+// ------------------------------------------------------- idAssignments (Phase 4 task 4.1)
+
+test("applyHeadless: an id-less upsert_entity (genuine create) is reported in idAssignments, keyed by its position in `mutations`", () => {
+  const snapshotPath = join(scratchDir, "worlds", "id-assign-entity", "world-fabric-snapshot.json");
+  writePopulatedFixture(snapshotPath);
+
+  const result = applyHeadless(snapshotPath, [
+    { op: "upsert_entity", data: { name: "A New Rumor", type: "concept", importance: 0.3 } }
+  ]);
+
+  assert.equal(typeof result.idAssignments, "object");
+  const assignedId = result.idAssignments["0"];
+  assert.ok(assignedId && typeof assignedId === "string", "the create at index 0 should have an assigned id reported");
+  assert.match(assignedId, /^wf_/, "should follow the same wf_<ts>_<n> convention interchange.mjs's own id generator uses");
+
+  const onDisk = JSON.parse(readFileSync(snapshotPath, "utf8"));
+  const created = onDisk.snapshot.entities.find((e) => e.name === "A New Rumor");
+  assert.ok(created, "the created entity should actually be on disk");
+  assert.equal(created.id, assignedId, "the id reported in idAssignments must be the SAME id the entity actually got");
+});
+
+test("applyHeadless: an id-less upsert_edge (genuine create) is reported in idAssignments too", () => {
+  const snapshotPath = join(scratchDir, "worlds", "id-assign-edge", "world-fabric-snapshot.json");
+  writePopulatedFixture(snapshotPath);
+
+  const result = applyHeadless(snapshotPath, [
+    { op: "upsert_edge", data: { sourceId: "alvor", targetId: "riverwood", relationshipType: "social", strength: 0.4 } }
+  ]);
+
+  const assignedId = result.idAssignments["0"];
+  assert.ok(assignedId, "the edge create at index 0 should have an assigned id reported");
+
+  const onDisk = JSON.parse(readFileSync(snapshotPath, "utf8"));
+  const created = onDisk.snapshot.edges.find((e) => e.relationshipType === "social" && e.strength === 0.4);
+  assert.ok(created, "the created edge should actually be on disk");
+  assert.equal(created.id, assignedId);
+});
+
+test("applyHeadless: idAssignments is keyed by index -- mixing an update (no assignment) and a create (assignment) reports only the create, at its own index", () => {
+  const snapshotPath = join(scratchDir, "worlds", "id-assign-mixed", "world-fabric-snapshot.json");
+  writePopulatedFixture(snapshotPath);
+
+  const result = applyHeadless(snapshotPath, [
+    { op: "upsert_entity", id: "alvor", data: { importance: 0.6 } }, // index 0: update, known id, no assignment
+    { op: "upsert_entity", data: { name: "Another New Thing", type: "object" } } // index 1: genuine create
+  ]);
+
+  assert.equal(Object.hasOwn(result.idAssignments, "0"), false, "an update with a known id must not get an assignment entry");
+  assert.ok(Object.hasOwn(result.idAssignments, "1"), "the create at index 1 should be reported");
+
+  const onDisk = JSON.parse(readFileSync(snapshotPath, "utf8"));
+  const created = onDisk.snapshot.entities.find((e) => e.name === "Another New Thing");
+  assert.equal(created.id, result.idAssignments["1"]);
+});
+
+test("applyHeadless: idAssignments is an empty object when every mutation already targets a known id", () => {
+  const snapshotPath = join(scratchDir, "worlds", "id-assign-none", "world-fabric-snapshot.json");
+  writePopulatedFixture(snapshotPath);
+
+  const result = applyHeadless(snapshotPath, [
+    { op: "upsert_entity", id: "alvor", data: { importance: 0.6 } }
+  ]);
+
+  assert.deepEqual(result.idAssignments, {});
+});
+
+test("applyHeadless: multiple genuine creates in one call each get distinct, non-colliding ids (no counter collision with importGraph's own internal id generation)", () => {
+  const snapshotPath = join(scratchDir, "worlds", "id-assign-multi", "world-fabric-snapshot.json");
+  writePopulatedFixture(snapshotPath);
+
+  const result = applyHeadless(snapshotPath, [
+    { op: "upsert_entity", data: { name: "First New Thing", type: "object" } },
+    { op: "upsert_entity", data: { name: "Second New Thing", type: "object" } },
+    { op: "upsert_entity", data: { name: "Third New Thing", type: "object" } }
+  ]);
+
+  const ids = [result.idAssignments["0"], result.idAssignments["1"], result.idAssignments["2"]];
+  assert.equal(new Set(ids).size, 3, "all three assigned ids must be distinct");
+
+  const onDisk = JSON.parse(readFileSync(snapshotPath, "utf8"));
+  assert.equal(onDisk.snapshot.entities.length, 6, "prior 3 + 3 new");
+  const allIds = onDisk.snapshot.entities.map((e) => e.id);
+  assert.equal(new Set(allIds).size, allIds.length, "no id collisions anywhere on disk");
+});
+
 test("applyHeadless: throws for an unknown mutation op", () => {
   const snapshotPath = join(scratchDir, "worlds", "populated-bad-op", "world-fabric-snapshot.json");
   writePopulatedFixture(snapshotPath);

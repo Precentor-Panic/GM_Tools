@@ -291,6 +291,72 @@ async function applyMutationsToFoundry(dir, w, mutations) {
   };
 }
 
+/**
+ * Apply a mutations array via the live-Foundry file bridge first; if no live
+ * client picks it up within the poll window, fall back to
+ * graph-import/headless-apply.mjs's applyHeadless() against the standalone
+ * snapshot directly. Shared by wf_sync_to_foundry (task 2.4, the original
+ * home of this fallback) and wf_rollback_batch (task 4.1) so the
+ * live-then-headless behavior isn't duplicated between the two tools
+ * (gm-tools-conventions: thin wrappers, no logic duplication).
+ *
+ * Extracted during task 4.1's own end-to-end verification: wf_rollback_batch
+ * previously had NO headless fallback at all (only wf_sync_to_foundry did),
+ * which meant a rollback could never actually apply against a genuinely
+ * headless-only campaign (no live Foundry client ever open) — the restore
+ * mutations would sit "queued" in world-fabric-mutations.json forever,
+ * never reaching the snapshot. Task 4.1's own acceptance criterion (roll
+ * back a batch, confirm the created entity is ACTUALLY deleted from the
+ * snapshot) cannot be satisfied against a headless-only fixture without
+ * this — so it's fixed here as part of closing that task, not left as a
+ * separately-scoped gap.
+ *
+ * @returns {{path:'live'|'headless', liveResult:object, headlessResult?:object, snapshotPath?:string}}
+ */
+async function applyMutationsWithHeadlessFallback(dir, w, mutations) {
+  const liveResult = await applyMutationsToFoundry(dir, w, mutations);
+  if (liveResult.status === "applied") {
+    return { path: "live", liveResult };
+  }
+  const snapshotPath = snapshotFilePath(dir, w);
+  const headlessResult = applyHeadless(snapshotPath, mutations);
+  return { path: "headless", liveResult, headlessResult, snapshotPath };
+}
+
+/**
+ * Task 4.1: write applyHeadless()'s reported `idAssignments` (keyed by
+ * position in the mutations array it received) back onto the originating
+ * batch's stored mutation entries, keyed instead by mutationId (the index
+ * is an internal accounting detail of this one call, not something a caller
+ * outside this function should need to know about). Mutates `batch.mutations`
+ * in place; the caller still owns saveBatch() (both wf_sync_to_foundry and
+ * anyone else calling this also need to set batch.status, so one combined
+ * save is cheaper than saving twice).
+ *
+ * `orderedSourceEntries` must be the exact same array (same order) the
+ * mutations passed to applyHeadless() were mapped from — wf_sync_to_foundry
+ * passes its own `accepted` array, since `mutations = accepted.map(...)`
+ * preserves that 1:1 index correspondence.
+ *
+ * @param {object} batch
+ * @param {object[]} orderedSourceEntries   StoredMutation entries, same order/length as the mutations array applyHeadless() received
+ * @param {Object<string,string>} idAssignments   applyHeadless()'s returned idAssignments
+ * @returns {Object<string,string>} {mutationId: assignedId} for whatever this call actually wrote back
+ */
+function writeBackIdAssignments(batch, orderedSourceEntries, idAssignments) {
+  const written = {};
+  if (!idAssignments) return written;
+  for (const [indexStr, assignedId] of Object.entries(idAssignments)) {
+    const sourceEntry = orderedSourceEntries[Number(indexStr)];
+    if (!sourceEntry) continue; // defensive: shouldn't happen, index always came from the same-length array we built
+    const entry = batch.mutations.find((m) => m.mutationId === sourceEntry.mutationId);
+    if (!entry) continue;
+    entry.id = assignedId;
+    written[sourceEntry.mutationId] = assignedId;
+  }
+  return written;
+}
+
 server.registerTool(
   "wf_apply_mutations",
   {
@@ -656,10 +722,14 @@ server.registerTool(
       "If that path reports 'queued' (no live client picked it up within the poll window), falls back to " +
       "graph-import/headless-apply.mjs's applyHeadless() against the standalone world-fabric-snapshot.json " +
       "directly — no live Foundry client required. Always reports which path was actually used (`path`: " +
-      "'live' or 'headless') — never just a bare 'success'. Marks the batch 'synced' either way. Known limitation " +
-      "of the headless path: if this world ALSO has a live Foundry client that is merely closed right now (not " +
-      "a genuinely headless-only campaign), that client's own next export will overwrite the snapshot file " +
-      "from its in-Foundry game.settings state, silently discarding a headless-applied change — there is no " +
+      "'live' or 'headless') — never just a bare 'success'. Marks the batch 'synced' either way. If the headless " +
+      "path assigned an id to a newly-created entity/edge (a mutation with no id at propose time), that " +
+      "assignment is written back onto the batch's stored mutation entry and reported under `idAssignments` " +
+      "(mutationId -> assigned id) — this is what lets wf_rollback_batch later target the creation for a " +
+      "delete-based rollback instead of skipping it (Phase 4 task 4.1). Known limitation of the headless path: " +
+      "if this world ALSO has a live Foundry client that is merely closed right now (not a genuinely " +
+      "headless-only campaign), that client's own next export will overwrite the snapshot file from its " +
+      "in-Foundry game.settings state, silently discarding a headless-applied change — there is no " +
       "reconciliation path back into game.settings yet (a foundry_worldFabric-side change, out of this phase's scope).",
     inputSchema: { world: worldParam, dataDir: dataDirParam, batchId: z.string() }
   },
@@ -674,8 +744,9 @@ server.registerTool(
       }
       const mutations = accepted.map((m) => ({ op: m.op, id: m.id, data: m.data }));
 
-      const liveResult = await applyMutationsToFoundry(dir, w, mutations);
-      if (liveResult.status === "applied") {
+      const { path, liveResult, headlessResult, snapshotPath } = await applyMutationsWithHeadlessFallback(dir, w, mutations);
+
+      if (path === "live") {
         batch.status = "synced";
         saveBatch(w, batch);
         // NOTE: liveResult itself carries its own `path` field (the
@@ -688,11 +759,12 @@ server.registerTool(
         return text({ path: "live", ...rest, mutationsFilePath, batchId, syncedCount: accepted.length });
       }
 
-      // liveResult.status === "queued" -- no live Foundry client picked this
-      // up within the poll window. Fall back to the headless path (task 2.3)
-      // against the standalone snapshot file.
-      const snapshotPath = snapshotFilePath(dir, w);
-      const headlessResult = applyHeadless(snapshotPath, mutations);
+      // path === "headless" -- no live Foundry client picked this up within
+      // the poll window. Fell back to the headless path (task 2.3) against
+      // the standalone snapshot file. Task 4.1: write back any ids the
+      // headless apply assigned to newly-created entities/edges so a later
+      // rollback can target them.
+      const idAssignments = writeBackIdAssignments(batch, accepted, headlessResult.idAssignments);
       batch.status = "synced";
       saveBatch(w, batch);
       return text({
@@ -706,6 +778,7 @@ server.registerTool(
         deletedEntityCount: headlessResult.deletedEntityCount,
         deletedEdgeCount: headlessResult.deletedEdgeCount,
         skipped: headlessResult.skipped,
+        ...(Object.keys(idAssignments).length ? { idAssignments } : {}),
         note:
           "No live Foundry client picked up the mutation within the poll window; applied directly to the " +
           "standalone snapshot instead. If a live Foundry client for this world reopens later, its own export " +
@@ -762,10 +835,17 @@ server.registerTool(
     title: "Roll back the most-recently-accepted batch",
     description:
       "Computes the mutations needed to restore this batch's accepted entries to their captured pre-accept " +
-      "state (rollback.mjs), applies them via the same Foundry file bridge, and marks the batch 'rolled-back'. " +
-      "Confirmed Phase-1 scope: the most-recently-accepted batch only — pass that batch's id explicitly. Entries " +
-      "accepted before rollback.mjs existed, or newly-created entities/edges with no id known at accept-time, " +
-      "are reported in `skipped` rather than silently dropped.",
+      "state (rollback.mjs), applies them via the live Foundry file bridge first and falls back to " +
+      "graph-import/headless-apply.mjs's applyHeadless() against the standalone snapshot if no live client picks " +
+      "them up within the poll window — same live-then-headless behavior wf_sync_to_foundry uses, and always " +
+      "reports which path was used (`path`: 'live' or 'headless'), same convention (Phase 4 task 4.1: this tool " +
+      "previously had no headless fallback at all, so a rollback against a genuinely headless-only campaign could " +
+      "never actually apply). Marks the batch 'rolled-back' either way. Confirmed Phase-1 scope: the " +
+      "most-recently-accepted batch only — pass that batch's id explicitly. Entries accepted before rollback.mjs " +
+      "existed, or a newly-created entity/edge whose id was never written back onto this batch (this now happens " +
+      "automatically when a create was synced via wf_sync_to_foundry's headless path, but NOT for one applied via " +
+      "the live-Foundry path — Foundry does not report a created id back through the file bridge), are reported " +
+      "in `skipped` rather than silently dropped.",
     inputSchema: { world: worldParam, dataDir: dataDirParam, batchId: z.string() }
   },
   async ({ world, dataDir, batchId }) => {
@@ -776,8 +856,30 @@ server.registerTool(
       if (!restoreMutations.length) {
         return text({ batchId, status: "no-op", skipped, note: "No restorable accepted mutations found." });
       }
-      const result = await applyMutationsToFoundry(dir, w, restoreMutations);
-      return text({ ...result, batchId, restoredCount: restoreMutations.length, skipped });
+      const { path, liveResult, headlessResult, snapshotPath } = await applyMutationsWithHeadlessFallback(dir, w, restoreMutations);
+
+      if (path === "live") {
+        const { path: mutationsFilePath, ...rest } = liveResult;
+        return text({ path: "live", ...rest, mutationsFilePath, batchId, restoredCount: restoreMutations.length, skipped });
+      }
+
+      return text({
+        path: "headless",
+        status: "applied",
+        batchId,
+        restoredCount: restoreMutations.length,
+        snapshotPath,
+        liveAttempt: liveResult,
+        summary: headlessResult.summary,
+        deletedEntityCount: headlessResult.deletedEntityCount,
+        deletedEdgeCount: headlessResult.deletedEdgeCount,
+        skipped,
+        note:
+          "No live Foundry client picked up the rollback within the poll window; applied directly to the " +
+          "standalone snapshot instead. If a live Foundry client for this world reopens later, its own export " +
+          "will overwrite this file from game.settings -- no reconciliation path exists yet for a mixed " +
+          "live/headless world."
+      });
     } catch (err) {
       return errorText(err);
     }

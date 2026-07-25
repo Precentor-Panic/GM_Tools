@@ -30,6 +30,24 @@
  * -- required for correctness here, not just for diffing: importGraph's edge
  * path skips (rather than corrupts) an edge with no sourceId/targetId, so a
  * sparse `data:{strength:0.2}` patch fed in unmerged would silently vanish.
+ *
+ * Id-assignment read-back (Phase 4 task 4.1): a genuine create (an
+ * upsert_entity/upsert_edge mutation with no `m.id`/`m.data.id`) has no id
+ * for the caller to target with a later delete-based rollback
+ * (mutation-engine/rollback.mjs) -- that id doesn't exist until this
+ * function assigns one. Rather than let importGraph()'s own internal id
+ * generator assign it invisibly, applyHeadless() pre-assigns an id (in the
+ * SAME `wf_<timestamp>_<counter>` convention interchange.mjs's private
+ * defaultMakeId() already establishes -- confirmed by reading that function
+ * directly, not invented fresh here) for every id-less create BEFORE handing
+ * it to importGraph, and reports the assignment back in the returned
+ * `idAssignments` map, keyed by the create mutation's position (index) in
+ * the `mutations` array this call received. The SAME generator instance is
+ * also passed to importGraph as `opts.makeId`, so any id it still has to
+ * generate on its own (e.g. a stub entity created for an unresolved named
+ * edge endpoint) draws from the same monotonic counter -- one shared
+ * sequence, so a pre-assigned id can never collide with one importGraph
+ * generates internally in the same call.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -59,6 +77,19 @@ function readSnapshotFile(snapshotPath) {
 function writeSnapshotFile(snapshotPath, payload) {
   mkdirSync(dirname(snapshotPath), { recursive: true });
   writeFileSync(snapshotPath, JSON.stringify(payload, null, 2), "utf8");
+}
+
+/**
+ * Same format as interchange.mjs's private defaultMakeId() (`wf_<ts36>_<n36>`)
+ * -- that function isn't exported, so this is a same-convention sibling, not
+ * a reused reference. One instance per applyHeadless() call: its counter is
+ * shared between this module's own pre-assigned create ids AND importGraph's
+ * `opts.makeId` for that same call, so the two id sources can never collide.
+ */
+function makeIdGenerator() {
+  let n = 0;
+  const ts = Date.now().toString(36);
+  return () => `wf_${ts}_${(n++).toString(36)}`;
 }
 
 /**
@@ -123,9 +154,14 @@ export function bootstrapSnapshot(snapshotPath, opts = {}) {
  * hand-rolled test fixture made exactly that mistake and would otherwise
  * have silently created a duplicate/orphaned record instead of failing
  * loudly or updating the intended one.
+ *
+ * `assignedId` (Phase 4 task 4.1) is the id this call's makeIdGenerator()
+ * pre-assigned for a genuine create (no `m.id`/`m.data.id` at all) -- used
+ * only as the last fallback in the same `??` chain, so it never overrides a
+ * real target id an update mutation actually carries.
  */
-function mergedWfiRecord(m, currentMap) {
-  const targetId = m.id ?? m.data?.id;
+function mergedWfiRecord(m, currentMap, assignedId) {
+  const targetId = m.id ?? m.data?.id ?? assignedId;
   const current = targetId ? currentMap.get(targetId) : undefined;
   return { ...(current ?? {}), ...(m.data ?? {}), id: targetId ?? current?.id };
 }
@@ -137,7 +173,15 @@ function mergedWfiRecord(m, currentMap) {
  *
  * @param {string} snapshotPath
  * @param {object[]} mutations
- * @returns {{summary:object, deletedEntityCount:number, deletedEdgeCount:number, skipped:Array<{op:string,id:string,reason:string}>}}
+ * @returns {{summary:object, deletedEntityCount:number, deletedEdgeCount:number, skipped:Array<{op:string,id:string,reason:string}>, idAssignments:Object<string,string>}}
+ *   `idAssignments` (Phase 4 task 4.1): for every id-less upsert_entity/
+ *   upsert_edge mutation (a genuine create), maps its position (index, as a
+ *   string object key) in the `mutations` array this call received to the
+ *   id actually assigned. Empty object if every mutation already targeted a
+ *   known id. The caller (wf-mcp-server's wf_sync_to_foundry) uses this to
+ *   write the assigned id back onto the originating batch's stored mutation
+ *   entry, so mutation-engine/rollback.mjs's later delete-based rollback has
+ *   an id to target instead of skipping the entry as unresolvable.
  */
 export function applyHeadless(snapshotPath, mutations) {
   if (!existsSync(snapshotPath)) {
@@ -157,20 +201,32 @@ export function applyHeadless(snapshotPath, mutations) {
   const deletedEntityIds = new Set();
   const deletedEdgeIds = new Set();
   const skipped = [];
+  const idAssignments = {};
+  const makeId = makeIdGenerator();
 
-  for (const m of mutations) {
+  mutations.forEach((m, index) => {
     switch (m.op) {
       case "upsert_entity": {
-        wfiEntities.push(mergedWfiRecord(m, entityMap));
+        let assignedId;
+        if (!(m.id ?? m.data?.id)) {
+          assignedId = makeId();
+          idAssignments[index] = assignedId;
+        }
+        wfiEntities.push(mergedWfiRecord(m, entityMap, assignedId));
         break;
       }
       case "upsert_edge": {
-        const merged = mergedWfiRecord(m, edgeMap);
+        let assignedId;
+        if (!(m.id ?? m.data?.id)) {
+          assignedId = makeId();
+          idAssignments[index] = assignedId;
+        }
+        const merged = mergedWfiRecord(m, edgeMap, assignedId);
         if (!merged.sourceId || !merged.targetId) {
           throw new HeadlessApplyError(
-            `upsert_edge mutation for id="${m.id ?? "(new)"}" has no sourceId/targetId, and no existing edge to ` +
-            `merge onto -- importGraph would silently skip it. A create needs both in \`data\`; an update needs ` +
-            `a matching existing edge id.`,
+            `upsert_edge mutation for id="${m.id ?? assignedId ?? "(new)"}" has no sourceId/targetId, and no ` +
+            `existing edge to merge onto -- importGraph would silently skip it. A create needs both in \`data\`; ` +
+            `an update needs a matching existing edge id.`,
             { op: m.op, mutation: m }
           );
         }
@@ -200,10 +256,10 @@ export function applyHeadless(snapshotPath, mutations) {
       default:
         throw new HeadlessApplyError(`Unknown mutation op: "${m.op}"`, { op: m.op, mutation: m });
     }
-  }
+  });
 
   const wfi = { version: 1, entities: wfiEntities, edges: wfiEdges, entityTypes: wfiEntityTypes };
-  const result = importGraph(wfi, existing, { mode: "merge" });
+  const result = importGraph(wfi, existing, { mode: "merge", makeId });
 
   // importGraph() has no delete concept of its own -- apply deletes as a
   // separate pass afterward, including cascading edge deletes for a deleted
@@ -237,6 +293,7 @@ export function applyHeadless(snapshotPath, mutations) {
     // edge cascade-deleted because one of its endpoints was itself deleted
     // (matching graph-service.mjs's delete_entity behavior).
     deletedEdgeCount: result.edges.length - finalEdges.length,
-    skipped
+    skipped,
+    idAssignments
   };
 }
