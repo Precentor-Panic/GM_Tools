@@ -1,6 +1,9 @@
 review-state/*/
 !review-state/.gitkeep
 
+time-skip-status/*/
+!time-skip-status/.gitkeep
+
 node_modules/
 
 # never commit API keys / secrets
