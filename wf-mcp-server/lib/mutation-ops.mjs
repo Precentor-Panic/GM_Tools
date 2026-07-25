@@ -191,25 +191,44 @@ export function reviewGrainOp(w, { batchId, grain, regionId, entityId }) {
 
 // --- accept / reject -----------------------------------------------------
 
-export async function acceptOp(dir, w, { batchId, scope, id }) {
+/**
+ * Accept an arbitrary set of mutationIds within a batch, with EXPLICIT
+ * control (via `reviewedMutationIds`) over which of them count as a genuine
+ * human review (`markHumanReviewed`) vs. an unreviewed accept-all
+ * (`recordUnreviewedAccept`) — Phase 4 task 4.2's distinction, generalized
+ * (Phase 6) from "batch scope = never reviewed, region/entity scope = always
+ * reviewed" to a per-mutation split, because review-ui's checkbox
+ * multi-select accept can genuinely mix the two in one call (some checked
+ * rows were individually expanded/read first, some were only swept in via
+ * "Select All Boring"). Defaults `reviewedMutationIds` to `mutationIds`
+ * (everything counts as reviewed) when omitted, matching every EXISTING
+ * caller's behavior (acceptOp below always passes it explicitly either way).
+ *
+ * @param {string} w
+ * @param {string} batchId
+ * @param {string[]} mutationIds
+ * @param {object} opts
+ * @param {object[]} opts.entities             live snapshot, for pre-state capture
+ * @param {object[]} opts.edges
+ * @param {string[]} [opts.reviewedMutationIds] subset of mutationIds that count as genuinely reviewed
+ */
+export function acceptMutationIds(w, batchId, mutationIds, opts = {}) {
+  const { entities, edges, reviewedMutationIds } = opts;
   const batch = loadBatch(w, batchId);
-  const mutationIds = resolveMutationIds(batch, scope, id);
-  if (!mutationIds.length) throw new Error(`No mutations matched scope="${scope}" id="${id ?? ""}"`);
-  const { entities, edges } = loadSnapshot(dir, w).snapshot;
-  const updated = acceptMutations(w, batchId, mutationIds, entities, edges);
+  const updated = acceptMutations(w, batchId, mutationIds, entities ?? [], edges ?? []);
   // Phase 3.5 task 3.5.4: if this batch resolves any pending-ledger entries,
   // accepting clears them — they're now real, reviewed graph mutations.
   const ledgerResolved = applyLedgerOutcome(updated, mutationIds, "accepted");
-  // Phase 4 task 4.2: a scoped accept ('region'/'entity') is a genuine
-  // review of what it targets; a whole-'batch' accept-all is exactly the
-  // case this feature exists to guard against — it must NEVER update
-  // lastHumanReviewedAt, only accumulate the unreviewed count.
-  const touchedEntityIds = entityIdsForMutations(batch, mutationIds);
-  if (scope === "batch") {
-    recordUnreviewedAccept(w, touchedEntityIds);
-  } else {
-    markHumanReviewed(w, touchedEntityIds);
-  }
+
+  const reviewedSet = new Set(reviewedMutationIds ?? mutationIds);
+  const reviewedIds = mutationIds.filter((id) => reviewedSet.has(id));
+  const unreviewedIds = mutationIds.filter((id) => !reviewedSet.has(id));
+  // Phase 4 task 4.2: a genuinely-reviewed mutation updates lastHumanReviewedAt;
+  // one accepted without review accumulates the unreviewed count instead —
+  // never both for the same mutation.
+  if (reviewedIds.length) markHumanReviewed(w, entityIdsForMutations(batch, reviewedIds));
+  if (unreviewedIds.length) recordUnreviewedAccept(w, entityIdsForMutations(batch, unreviewedIds));
+
   return {
     batchId,
     accepted: mutationIds,
@@ -218,28 +237,48 @@ export async function acceptOp(dir, w, { batchId, scope, id }) {
   };
 }
 
-export function rejectOp(w, { batchId, scope, id }) {
+/** MCP-tool-shaped wrapper: resolves scope -> mutationIds, preserves wf_accept's exact original behavior (scope='batch' never reviewed, 'region'/'entity' always reviewed). */
+export async function acceptOp(dir, w, { batchId, scope, id }) {
   const batch = loadBatch(w, batchId);
   const mutationIds = resolveMutationIds(batch, scope, id);
   if (!mutationIds.length) throw new Error(`No mutations matched scope="${scope}" id="${id ?? ""}"`);
+  const { entities, edges } = loadSnapshot(dir, w).snapshot;
+  return acceptMutationIds(w, batchId, mutationIds, {
+    entities,
+    edges,
+    reviewedMutationIds: scope === "batch" ? [] : mutationIds
+  });
+}
+
+/** Same generalization as acceptMutationIds, for reject (see its own doc comment). Reject never accumulates an unreviewed-accept count (nothing was applied to the graph), so there's no unreviewedMutationIds branch to handle beyond simply not marking those reviewed. */
+export function rejectMutationIds(w, batchId, mutationIds, opts = {}) {
+  const { reviewedMutationIds } = opts;
+  const batch = loadBatch(w, batchId);
   let updated;
   for (const mutationId of mutationIds) updated = updateMutationStatus(w, batchId, mutationId, "rejected");
   // Phase 3.5 task 3.5.4: reject reverts any resolved ledger entries back to
   // 'pending' — the underlying debt is real and must not silently vanish
   // just because this particular resolution attempt was rejected.
   const ledgerReverted = applyLedgerOutcome(updated, mutationIds, "rejected");
-  // Phase 4 task 4.2: a scoped reject is still a genuine review of the
-  // targeted entities. A whole-batch reject-all is not treated as a review
-  // either, but (unlike accept) doesn't need to accumulate anything.
-  if (scope !== "batch") {
-    markHumanReviewed(w, entityIdsForMutations(batch, mutationIds));
-  }
+
+  const reviewedSet = new Set(reviewedMutationIds ?? mutationIds);
+  const reviewedIds = mutationIds.filter((id) => reviewedSet.has(id));
+  if (reviewedIds.length) markHumanReviewed(w, entityIdsForMutations(batch, reviewedIds));
+
   return {
     batchId,
     rejected: mutationIds,
     batchStatus: updated.status,
     ...(ledgerReverted.length ? { ledgerReverted } : {})
   };
+}
+
+/** MCP-tool-shaped wrapper: resolves scope -> mutationIds, preserves wf_reject's exact original behavior. */
+export function rejectOp(w, { batchId, scope, id }) {
+  const batch = loadBatch(w, batchId);
+  const mutationIds = resolveMutationIds(batch, scope, id);
+  if (!mutationIds.length) throw new Error(`No mutations matched scope="${scope}" id="${id ?? ""}"`);
+  return rejectMutationIds(w, batchId, mutationIds, { reviewedMutationIds: scope === "batch" ? [] : mutationIds });
 }
 
 // --- regenerate ------------------------------------------------------------
