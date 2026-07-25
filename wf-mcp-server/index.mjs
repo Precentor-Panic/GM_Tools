@@ -30,6 +30,11 @@ import { loadBatch, saveBatch, updateMutationStatus } from "../mutation-engine/r
 import { summarizeBatch, renderHeadline, renderRegionDiff, renderEntityDiff } from "../mutation-engine/grain.mjs";
 import { acceptMutations, rollbackBatch } from "../mutation-engine/rollback.mjs";
 
+// Phase 3 task 3.2/3.3 — the scene-narration pass (player-facing prose, NOT
+// the reviewer-facing `rationale` field), hard-gated to already-accepted
+// batches only. See mutation-engine/narrate.mjs's own doc comment.
+import { narrateBatch } from "../mutation-engine/narrate.mjs";
+
 // Phase 2 task 2.0 — the propagate/scope-resolution and orchestration logic
 // that used to be inlined in wf_propose_mutations's handler now lives in
 // time-skip/ as reusable library code; this server just wires parameters
@@ -364,7 +369,15 @@ server.registerTool(
       "into concrete mutations with rationale, then writes a new review batch to review-state/. Returns batchId " +
       "+ a headline summary — call wf_review_batch next to drill in. Requires ANTHROPIC_API_KEY to be set in " +
       "THIS server process's environment for the texturing call — separate from any credential the calling " +
-      "Claude Code session uses, since this call is outbound from the MCP server itself.",
+      "Claude Code session uses, since this call is outbound from the MCP server itself. LATENCY (measured, " +
+      "Phase 3 task 3.1, 5 real timed runs each at depth=2 and depth=3, mode='seed' against a 50-entity/129-edge " +
+      "fixture whose 15-17 texture-eligible entities land in a single connected region): depth=3 min=34.4s " +
+      "p50=59.0s p90=59.9s max=59.9s; depth=2 min=26.1s p50=51.4s p90=62.5s max=62.5s. Depth barely moves this " +
+      "— the real cost driver is texture-eligible entity count within ONE affected region (-> output token count " +
+      "for that single API call), not raw BFS hop count. This is NOT reliably sub-5s live for a moderately-" +
+      "connected anchor. A calling Claude Code session should say something like 'resolving, one moment' to the " +
+      "user BEFORE invoking this tool for a 'seed' proposal, rather than letting the call appear to hang " +
+      "silently for up to a minute.",
     inputSchema: {
       world: worldParam,
       dataDir: dataDirParam,
@@ -655,6 +668,42 @@ server.registerTool(
           "will overwrite this file from game.settings -- no reconciliation path exists yet for a mixed " +
           "live/headless world."
       });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_narrate_batch ---------------------------------------------------------------------
+
+server.registerTool(
+  "wf_narrate_batch",
+  {
+    title: "Narrate an accepted mutation batch as in-fiction, player-facing prose",
+    description:
+      "Generates 2-3 paragraphs of scene/consequence narration for a batch's mutations (mutation-engine/narrate.mjs) " +
+      "-- what the players actually see, read aloud at the table. This is NOT the reviewer-facing `rationale` field " +
+      "reused; it's new prose written for a different audience, with no meta-commentary. Hard-gated: every mutation " +
+      "in the batch must already be status:'accepted' (via wf_accept) -- if any mutation is still pending/rejected/" +
+      "regenerate-requested, this is refused with a clear typed error listing which ones, never partially narrated " +
+      "and never silently skipped. Pass `note` to regenerate with steering guidance (e.g. 'make the tone darker') " +
+      "-- this never touches review-state.mjs's mutation-acceptance status, only produces new prose. Requires " +
+      "ANTHROPIC_API_KEY in this server process's own environment, same as wf_propose_mutations.",
+    inputSchema: {
+      world: worldParam,
+      batchId: z.string(),
+      note: z.string().optional().describe(
+        "Steering note for regenerating narration with different tone/guidance, e.g. 'make it more ominous'. " +
+        "Produces new prose only -- does not affect any mutation's accepted status."
+      )
+    }
+  },
+  async ({ world, batchId, note }) => {
+    try {
+      const w = resolveWorld(world);
+      const batch = loadBatch(w, batchId);
+      const result = await narrateBatch(batch, { world: w, note }, {});
+      return text(result);
     } catch (err) {
       return errorText(err);
     }

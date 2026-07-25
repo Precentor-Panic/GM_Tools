@@ -47,6 +47,12 @@ persist to `GM_Tools/review-state/<world>/<batchId>.json`.
 | `wf_sync_to_foundry` | Write accepted mutations to the Foundry file bridge (same `wf_apply_mutations` mechanism); reports `queued` if no Foundry client has the world open |
 | `wf_rollback_batch` | Restore a batch's accepted mutations to their captured pre-accept state. Phase-1 scope: most-recently-accepted batch only (pass its id explicitly) — no multi-batch version history yet. Not in the original 6-tool task-1.8 table; added because the Definition of Done explicitly requires exercising rollback conversationally, and there was otherwise no MCP surface for it. |
 
+### Phase 3 — scene narration
+
+| Tool | Purpose |
+|------|---------|
+| `wf_narrate_batch` | Player-facing scene/consequence narration (`mutation-engine/narrate.mjs`) for a batch — the second LLM call from `PLAN.md`'s original two-call pattern (mutation call, then narration call), distinct from `rationale`'s reviewer-facing text. Hard-gated to batches where every mutation is `status:'accepted'` — refuses with a typed error (listing which mutations aren't) rather than partially narrating. Pass `note` to regenerate with steering guidance; this never touches mutation-acceptance status. Same `ANTHROPIC_API_KEY` requirement as `wf_propose_mutations`. |
+
 ## Config
 
 Set in `~/.mcp.json` under `mcpServers.world-fabric`. Env vars:
