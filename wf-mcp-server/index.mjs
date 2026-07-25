@@ -41,6 +41,13 @@ import { acceptMutations, rollbackBatch } from "../mutation-engine/rollback.mjs"
 // of a batch with no resolvedPendingEntries at all.
 import { applyLedgerOutcome } from "../mutation-engine/pending-ledger.mjs";
 
+// Phase 3.5 task 3.5.2/3.5.3 — deferred/lazy consequence resolution:
+// orchestrateCycle (headline-focus + backlog deferral, wrapped below as
+// wf_run_cycle) and resolvePending (explicit, opt-in resolve of an
+// accumulated backlog, wrapped below as wf_resolve_pending).
+import { orchestrateCycle } from "../time-skip/run-cycle.mjs";
+import { resolvePending } from "../time-skip/resolve-pending.mjs";
+
 // Phase 3 task 3.2/3.3 — the scene-narration pass (player-facing prose, NOT
 // the reviewer-facing `rationale` field), hard-gated to already-accepted
 // batches only. See mutation-engine/narrate.mjs's own doc comment.
@@ -771,6 +778,114 @@ server.registerTool(
       }
       const result = await applyMutationsToFoundry(dir, w, restoreMutations);
       return text({ ...result, batchId, restoredCount: restoreMutations.length, skipped });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// ======================================================================================
+// Phase 3.5 — deferred/lazy consequence resolution (mutation-engine/pending-ledger.mjs,
+// time-skip/run-cycle.mjs, time-skip/resolve-pending.mjs). Thin wrappers, same convention
+// as everything above: no independent business logic beyond parameter wiring.
+// ======================================================================================
+
+// --- wf_run_cycle ------------------------------------------------------------------------
+
+server.registerTool(
+  "wf_run_cycle",
+  {
+    title: "Run one deferred-resolution time-skip cycle (headline focus now, everything else deferred)",
+    description:
+      "Runs time-skip/run-cycle.mjs's orchestrateCycle(): resolves `cycleScope` (same shape as " +
+      "wf_propose_mutations' `scope` -- everything this cycle could plausibly touch) via time-skip/scope.mjs, " +
+      "eagerly textures a small 'headline' neighborhood (region-mode BFS around `headlineAnchorId`, depth " +
+      "`headlineDepth`) into a real review batch, and defers EVERYTHING ELSE in cycleScope -- including deltas " +
+      "that would have cleared needsLLM on their own -- to mutation-engine/pending-ledger.mjs instead of texturing " +
+      "or discarding it. Zero further API cost is ever spent on a deferred entity unless wf_resolve_pending is " +
+      "later called on it explicitly. Any entity touched by this cycle whose ledger already exceeds " +
+      "`growthBoundThreshold` (default 5) gets its full accumulated backlog folded into THIS cycle's resolution " +
+      "too (one more texture call), rather than left to grow further unbounded. Requires ANTHROPIC_API_KEY in " +
+      "this server process's own environment for the headline texturing call (and the growth-bound sweep call, " +
+      "if triggered) -- same latency caveat as wf_propose_mutations applies to the headline call.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      cycleScope: proposeScopeSchema.describe(
+        "Full scope for this cycle -- same shape as wf_propose_mutations' `scope`. Everything this could " +
+        "plausibly touch; the headline subset (below) is textured now, everything else is deferred."
+      ),
+      headlineAnchorId: z.string().describe("Entity id to eagerly texture THIS cycle -- the 'headline' focus."),
+      headlineDepth: z.number().int().min(1).max(6).default(1).describe(
+        "BFS depth around headlineAnchorId textured now. Default 1 (the anchor plus its close neighborhood) -- " +
+        "deliberately small, this is the 'spend real money here' half of the cycle."
+      ),
+      elapsedTimeDescriptor: z.string().optional().describe("Human-readable descriptor stored on the batch, e.g. '1 month'."),
+      cycleDescriptor: z.string().describe(
+        "Short label for this cycle, e.g. 'month 3'. Stored on every deferred ledger entry this cycle writes and " +
+        "used for chronological ordering when wf_resolve_pending eventually renders them."
+      ),
+      growthBoundThreshold: z.number().int().min(1).optional().describe(
+        "Pending-entry count above which an already-bloated entity touched by this cycle gets swept into this " +
+        "cycle's resolution instead of growing further. Default 5."
+      )
+    }
+  },
+  async ({ world, dataDir, cycleScope, headlineAnchorId, headlineDepth, elapsedTimeDescriptor, cycleDescriptor, growthBoundThreshold }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const { entities, edges } = loadSnapshot(dir, w).snapshot;
+      const result = await orchestrateCycle(
+        w,
+        { cycleScope, headlineAnchorId, headlineDepth, elapsedTimeDescriptor, cycleDescriptor },
+        { entities, edges, growthBoundThreshold }
+      );
+      return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_resolve_pending ------------------------------------------------------------------
+
+server.registerTool(
+  "wf_resolve_pending",
+  {
+    title: "Resolve an entity's accumulated pending-ledger backlog (explicit, opt-in only)",
+    description:
+      "Runs time-skip/resolve-pending.mjs's resolvePending(): the ONLY way anything ever gets pulled out of " +
+      "mutation-engine/pending-ledger.mjs's backlog and turned into a real review batch. Gathers `entityId`'s own " +
+      "pending ledger, finds its BFS neighborhood (depth), filters to neighbors that also carry a pending backlog, " +
+      "sorts them by highest single pending impactScore descending, and folds in only the top `maxNeighbors` " +
+      "(default 8) -- THE FAN-OUT CAP, which bounds cost regardless of how large or high-degree the neighborhood " +
+      "is. Excluded neighbors are left untouched (still 'pending', still available for a future resolve). " +
+      "Everything included gets hydrated with its full source-batch context and rendered chronologically by cycle " +
+      "before ONE texturing call produces the resulting mutations. " +
+      "IMPORTANT: this tool is NEVER invoked automatically by wf_get_entity, wf_get_context, or wf_get_adjacent, " +
+      "or by any other read-path tool -- resolving costs a real API call, so it only ever runs when explicitly " +
+      "requested here. An incidental read that happens to touch a tagged entity must never silently trigger a " +
+      "resolve. Requires ANTHROPIC_API_KEY in this server process's own environment, same as wf_propose_mutations.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      entityId: z.string().describe("The entity a GM is asking about -- its accumulated backlog (if any) gets resolved."),
+      depth: z.number().int().min(1).max(4).optional().describe("Neighbor BFS depth. Default 1."),
+      maxNeighbors: z.number().int().min(1).max(50).optional().describe(
+        "The fan-out cap: max neighboring pending-bearing entities folded into this same resolve call, ranked by " +
+        "highest single pending impactScore. Default 8."
+      ),
+      elapsedTimeDescriptor: z.string().optional()
+    }
+  },
+  async ({ world, dataDir, entityId, depth, maxNeighbors, elapsedTimeDescriptor }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const { entities, edges } = loadSnapshot(dir, w).snapshot;
+      const result = await resolvePending(w, entityId, { depth, maxNeighbors }, { entities, edges, elapsedTimeDescriptor });
+      return text(result);
     } catch (err) {
       return errorText(err);
     }
