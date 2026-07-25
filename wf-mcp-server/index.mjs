@@ -30,6 +30,17 @@ import { loadBatch, saveBatch, updateMutationStatus } from "../mutation-engine/r
 import { summarizeBatch, renderHeadline, renderRegionDiff, renderEntityDiff } from "../mutation-engine/grain.mjs";
 import { acceptMutations, rollbackBatch } from "../mutation-engine/rollback.mjs";
 
+// Phase 3.5 task 3.5.4 — resolve-outcome wiring: a batch that originated
+// from time-skip/resolve-pending.mjs or run-cycle.mjs's growth-bound sweep
+// carries `resolvedPendingEntries` metadata naming which pending-ledger.mjs
+// entries it resolves. applyLedgerOutcome() (defined in pending-ledger.mjs,
+// not here, to avoid a circular import with review-state.mjs -- see its own
+// doc comment) is the single hook point for both wf_accept and wf_reject
+// below: accept resolves (clears) the entries, reject reverts them to
+// 'pending' rather than losing them. No-op for the overwhelming common case
+// of a batch with no resolvedPendingEntries at all.
+import { applyLedgerOutcome } from "../mutation-engine/pending-ledger.mjs";
+
 // Phase 3 task 3.2/3.3 — the scene-narration pass (player-facing prose, NOT
 // the reviewer-facing `rationale` field), hard-gated to already-accepted
 // batches only. See mutation-engine/narrate.mjs's own doc comment.
@@ -469,7 +480,10 @@ server.registerTool(
     description:
       "Marks mutation(s) accepted via review-state.mjs, capturing each target's pre-mutation entity/edge state " +
       "(from the live snapshot) for rollback.mjs's later use. Scope 'batch' accepts every mutation in the batch, " +
-      "'region' accepts one region's mutations, 'entity' accepts a single mutation.",
+      "'region' accepts one region's mutations, 'entity' accepts a single mutation. If this batch originated from " +
+      "wf_resolve_pending or a wf_run_cycle growth-bound sweep, accepting the affected region/batch also clears " +
+      "(resolves) the pending-ledger entries it was resolving -- reported in the response as `ledgerResolved` when " +
+      "applicable, omitted otherwise.",
     inputSchema: {
       world: worldParam,
       dataDir: dataDirParam,
@@ -487,7 +501,16 @@ server.registerTool(
       if (!mutationIds.length) throw new Error(`No mutations matched scope="${scope}" id="${id ?? ""}"`);
       const { entities, edges } = loadSnapshot(dir, w).snapshot;
       const updated = acceptMutations(w, batchId, mutationIds, entities, edges);
-      return text({ batchId, accepted: mutationIds, batchStatus: updated.status });
+      // Phase 3.5 task 3.5.4: if this batch resolves any pending-ledger
+      // entries (see pending-ledger.mjs's applyLedgerOutcome doc comment),
+      // accepting clears them -- they're now real, reviewed graph mutations.
+      const ledgerResolved = applyLedgerOutcome(updated, mutationIds, "accepted");
+      return text({
+        batchId,
+        accepted: mutationIds,
+        batchStatus: updated.status,
+        ...(ledgerResolved.length ? { ledgerResolved } : {})
+      });
     } catch (err) {
       return errorText(err);
     }
@@ -498,7 +521,11 @@ server.registerTool(
   "wf_reject",
   {
     title: "Reject mutation(s) in a review batch",
-    description: "Marks mutation(s) rejected via review-state.mjs. Same scope semantics as wf_accept.",
+    description:
+      "Marks mutation(s) rejected via review-state.mjs. Same scope semantics as wf_accept. If this batch " +
+      "originated from wf_resolve_pending or a wf_run_cycle growth-bound sweep, rejecting the affected region/batch " +
+      "reverts the pending-ledger entries it was resolving back to 'pending' (never deleted) -- reported as " +
+      "`ledgerReverted` when applicable.",
     inputSchema: {
       world: worldParam,
       batchId: z.string(),
@@ -514,7 +541,17 @@ server.registerTool(
       if (!mutationIds.length) throw new Error(`No mutations matched scope="${scope}" id="${id ?? ""}"`);
       let updated;
       for (const mutationId of mutationIds) updated = updateMutationStatus(w, batchId, mutationId, "rejected");
-      return text({ batchId, rejected: mutationIds, batchStatus: updated.status });
+      // Phase 3.5 task 3.5.4: reject reverts any resolved ledger entries
+      // back to 'pending' -- the underlying debt is real and must not
+      // silently vanish just because this particular resolution attempt
+      // was rejected.
+      const ledgerReverted = applyLedgerOutcome(updated, mutationIds, "rejected");
+      return text({
+        batchId,
+        rejected: mutationIds,
+        batchStatus: updated.status,
+        ...(ledgerReverted.length ? { ledgerReverted } : {})
+      });
     } catch (err) {
       return errorText(err);
     }
