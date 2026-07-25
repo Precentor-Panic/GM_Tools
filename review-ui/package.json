@@ -1,0 +1,11 @@
+{
+  "name": "gm-tools-review-ui",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Phase 6 dedicated web review UI: a small node:http server (server.mjs) over mutation-engine/time-skip's existing library modules (via wf-mcp-server/lib/mutation-ops.mjs, shared verbatim with the MCP server), plus a vanilla HTML/CSS/JS frontend (public/) -- no framework, no build step, matching this project's established convention. No dependencies of its own: every import in server.mjs is a Node built-in or a relative path into mutation-engine/, time-skip/, or wf-mcp-server/lib/, whose own transitive deps (zod, @anthropic-ai/sdk) resolve from GM_Tools/'s root node_modules via Node's normal upward node_modules search.",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}
