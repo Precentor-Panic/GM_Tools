@@ -104,7 +104,17 @@ function renderMutationSummary(mutations) {
     .map((m) => {
       const name = m.entityContext?.name ?? m.id ?? m.mutationId;
       let changeDesc;
-      if (Array.isArray(m.diff) && m.diff.length) {
+      if (m.op === "delete_entity" || m.op === "delete_edge") {
+        // time-skip/run.mjs's attachDiffs() only computes a diff for
+        // upsert_entity/upsert_edge (see its own doc comment) -- a delete op
+        // reaches here with no `diff` and typically no `data` either, which
+        // would otherwise fall through to the generic "(no field-level
+        // detail recorded)" case below and read as missing information
+        // rather than as the deletion it actually is. Narration needs to
+        // know something was removed/destroyed, not just that nothing was
+        // recorded about it.
+        changeDesc = "removed/destroyed";
+      } else if (Array.isArray(m.diff) && m.diff.length) {
         changeDesc = m.diff
           .map((d) => (d.field === "(created)" ? "newly created" : `${d.field} is now ${JSON.stringify(d.to)}`))
           .join("; ");

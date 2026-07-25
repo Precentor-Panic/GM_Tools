@@ -155,6 +155,23 @@ test("narrateBatch: builds the prompt from the batch's post-mutation diffs, not 
   assert.ok(!capturedPrompt.includes("A smith."), "should not surface the pre-mutation (from) value as if it were current");
 });
 
+test("narrateBatch: describes a delete_entity/delete_edge mutation as removed/destroyed, not as missing detail (found in self-review: attachDiffs never computes a diff for delete ops)", async () => {
+  let capturedPrompt = "";
+  const client = mockClient([
+    (params) => {
+      capturedPrompt = params.messages[0].content;
+      return "Some prose.";
+    }
+  ]);
+  const batch = acceptedBatch();
+  batch.mutations[0].op = "delete_entity";
+  delete batch.mutations[0].data;
+  delete batch.mutations[0].diff;
+  await narrateBatch(batch, {}, { client });
+  assert.ok(capturedPrompt.includes("removed/destroyed"));
+  assert.ok(!capturedPrompt.includes("no field-level detail recorded"));
+});
+
 test("narrateBatch: includes currentLocation/reachableAreas grounding context when provided", async () => {
   let capturedPrompt = "";
   const client = mockClient([
