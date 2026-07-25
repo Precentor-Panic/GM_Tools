@@ -17,6 +17,9 @@ review-state.mjs       createBatch()            -- persists the batch, all mutat
 grain.mjs         summarizeBatch()/render*()    -- conversational headline/region/entity display
        |
 rollback.mjs   acceptMutations() / rollbackBatch()  -- capture pre-state at accept, restore on rollback
+       |
+narrate.mjs        narrateBatch()             -- Phase 3: 1 Anthropic call per NARRATED batch, player-facing
+                                                   prose, hard-gated to fully-accepted batches only
 ```
 
 `llm-call.mjs` (`callModel`/`fillTemplate`/`parseJsonResponse`) is shared
