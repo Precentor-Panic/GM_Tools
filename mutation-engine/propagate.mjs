@@ -17,6 +17,19 @@
  * real campaign. Shipped as prototype defaults per task 1.3's own text —
  * Russell has deferred tuning to a future step once live playtest data
  * exists. See this repo's Phase 1 closing report for the explicit flag.
+ *
+ * FLAGGED, NOT SCOPED (PLAN.md Phase 9): both mechanisms here only ever
+ * change *scores* (impact, decayed strength) — neither can add a new edge
+ * with explicit endpoints or re-parent an existing one. That's a real gap:
+ * `texture.mjs`'s prompt has no vocabulary for "this containment edge moves
+ * from A to B" either, so a structural reassignment (an item changing hands,
+ * an NPC relocating) isn't representable anywhere in the pipeline today. A
+ * future third deterministic mechanism here — e.g. a per-entity-type rule
+ * table for "seed event of kind X reassigns this node's containment/
+ * ownership edge" — would keep that class of change in the free, non-LLM
+ * layer, same split as everything else in this file: code decides the
+ * structural fact, an LLM call (if any) only decorates it with narrative
+ * texture. Not designed beyond this note.
  */
 
 // World Fabric's Phase 1.5 split the old catch-all "location" relationship
