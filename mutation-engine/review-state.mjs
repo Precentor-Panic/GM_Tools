@@ -69,8 +69,14 @@ export function makeBatchId() {
 /**
  * Acquire an exclusive lock for a batch file write, run fn(), release the
  * lock in a finally. Throws ConcurrentWriteError if the lock already exists.
+ *
+ * Exported (Phase 3.5 task 3.5.1) so mutation-engine/pending-ledger.mjs can
+ * reuse this exact locking primitive for its own per-entity ledger files
+ * instead of duplicating a second file-locking implementation — see that
+ * module's own doc comment. Purely additive: no change to this function's
+ * behavior or any existing caller.
  */
-function withLock(filePath, fn) {
+export function withLock(filePath, fn) {
   mkdirSync(dirname(filePath), { recursive: true });
   const lockPath = lockFilePath(filePath);
   let fd;
@@ -107,6 +113,9 @@ function withLock(filePath, fn) {
  * @param {object[]} mutations                     Mutation-shaped objects (validated against schema.mjs's StoredMutation once enriched)
  * @param {object} [opts]
  * @param {() => string} [opts.makeId]             batch id generator, injectable for tests
+ * @param {Array<{regionId:string,entityId:string,entryIds:string[]}>} [opts.resolvedPendingEntries]
+ *                                                  Phase 3.5: which pending-ledger entries this batch resolves,
+ *                                                  if any (see schema.mjs's Batch.resolvedPendingEntries doc comment)
  * @returns {object} the created Batch
  */
 export function createBatch(world, scope, elapsedTimeDescriptor, mutations, opts = {}) {
@@ -129,7 +138,8 @@ export function createBatch(world, scope, elapsedTimeDescriptor, mutations, opts
     scope,
     elapsedTimeDescriptor,
     mutations: enriched,
-    status: "open"
+    status: "open",
+    ...(opts.resolvedPendingEntries?.length ? { resolvedPendingEntries: opts.resolvedPendingEntries } : {})
   });
 
   const filePath = batchFilePath(world, batchId);

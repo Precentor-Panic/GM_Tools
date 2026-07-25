@@ -19,7 +19,16 @@
  */
 import { z } from "zod";
 
-export const SCHEMA_VERSION = 1;
+// Bumped 1 -> 2 for Phase 3.5 (deferred/lazy consequence resolution):
+// SourceKind gained 'deferred-resolution' (mutations produced by
+// time-skip/resolve-pending.mjs's on-demand resolve or time-skip/
+// run-cycle.mjs's growth-bound sweep, as opposed to a fresh propagate/decay
+// pass) and Batch gained the optional `resolvedPendingEntries` field (which
+// ledger entries, if any, a batch resolves — see pending-ledger.mjs's own
+// doc comment and applyLedgerOutcome()). Both are additive (old batch files
+// still parse unchanged), but per this project's schema-versioning
+// discipline every shape change bumps the version and gets a note here.
+export const SCHEMA_VERSION = 2;
 
 // Same op set wf-mcp-server/index.mjs's wf_apply_mutations already accepts.
 export const MutationOp = z.enum([
@@ -31,7 +40,13 @@ export const MutationOp = z.enum([
   "upsert_relationship_type"
 ]);
 
-export const SourceKind = z.enum(["ambient-decay", "seeded-propagation", "manual"]);
+// 'deferred-resolution' (Phase 3.5): a mutation produced by texturing an
+// entity's accumulated pending-ledger backlog (time-skip/resolve-pending.mjs's
+// on-demand resolve, or time-skip/run-cycle.mjs's growth-bound sweep) rather
+// than a fresh candidateDeltas pass — distinct from 'ambient-decay'/
+// 'seeded-propagation' (both describe a single fresh delta) and from
+// 'manual' (rollback.mjs's restore mutations; a genuinely different origin).
+export const SourceKind = z.enum(["ambient-decay", "seeded-propagation", "manual", "deferred-resolution"]);
 
 export const Mutation = z.object({
   op: MutationOp,
@@ -82,6 +97,23 @@ export const StoredMutation = Mutation.extend({
 // accepted subset; 'rolled-back' once rollbackBatch has run against it.
 export const BatchStatus = z.enum(["open", "synced", "rolled-back"]);
 
+// Phase 3.5: which pending-ledger entries (mutation-engine/pending-ledger.mjs)
+// a batch resolves, if any — recorded by time-skip/resolve-pending.mjs and
+// time-skip/run-cycle.mjs's growth-bound sweep at batch-creation time, and
+// read by pending-ledger.mjs's applyLedgerOutcome() on wf_accept/wf_reject to
+// know what to clear (accept) or revert to 'pending' (reject). `regionId`
+// scopes a record to the specific texture call that produced it (a
+// wf_run_cycle batch can mix ordinary headline regions with a
+// "region-pending-sweep" region in the same batch — only the latter's
+// entries should move on a scoped accept/reject of that region). Absent
+// entirely on any batch that didn't originate from a resolve/sweep — the
+// overwhelming common case.
+const ResolvedPendingEntry = z.object({
+  regionId: z.string(),
+  entityId: z.string(),
+  entryIds: z.array(z.string())
+});
+
 export const Batch = z.object({
   id: z.string(),
   world: z.string(),
@@ -89,5 +121,6 @@ export const Batch = z.object({
   scope: z.record(z.string(), z.any()),
   elapsedTimeDescriptor: z.string().optional(),
   mutations: z.array(StoredMutation),
-  status: BatchStatus
+  status: BatchStatus,
+  resolvedPendingEntries: z.array(ResolvedPendingEntry).optional()
 });
