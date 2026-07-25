@@ -26,31 +26,15 @@
  * part of this phase (explicitly out of scope; see Definition of Done).
  */
 import { textureRegion, renderPendingResolutionSummary } from "../mutation-engine/texture.mjs";
-import { createBatch, makeBatchId, loadBatch } from "../mutation-engine/review-state.mjs";
+import { createBatch, makeBatchId } from "../mutation-engine/review-state.mjs";
 import { summarizeBatch, renderHeadline } from "../mutation-engine/grain.mjs";
-import { readPending, listPendingEntities, markProposed } from "../mutation-engine/pending-ledger.mjs";
+import { readAvailablePending, listPendingEntities, markProposed, sourceBatchHeadline } from "../mutation-engine/pending-ledger.mjs";
 import { attachDiffs } from "./run.mjs";
 import { neighborhood, findEntity } from "../wf-mcp-server/lib/graph.mjs";
 
 export const DEFAULT_RESOLVE_DEPTH = 1;
 export const DEFAULT_MAX_NEIGHBORS = 8;
 export const RESOLVE_REGION_ID = "region-resolve-pending";
-
-function pendingEntriesFor(world, entityId) {
-  return readPending(world, entityId).filter((e) => e.status === "pending");
-}
-
-function safeBatchHeadline(world, batchId, cache) {
-  if (cache.has(batchId)) return cache.get(batchId);
-  let headline;
-  try {
-    headline = renderHeadline(summarizeBatch(loadBatch(world, batchId)));
-  } catch {
-    headline = "(source batch unavailable)";
-  }
-  cache.set(batchId, headline);
-  return headline;
-}
 
 /**
  * Resolve a requested entity's accumulated pending-ledger backlog (plus a
@@ -79,7 +63,7 @@ export async function resolvePending(world, requestedEntityId, resolveOpts = {},
   }
 
   // 1. The requested entity's own pending ledger -- never subject to the cap.
-  const ownEntries = pendingEntriesFor(world, requestedEntityId);
+  const ownEntries = readAvailablePending(world, requestedEntityId);
 
   // 2. Its neighborhood (reuses graph.mjs's neighborhood(), not a third BFS).
   const { entities: neighborEntities } = neighborhood(entities, edges, requestedEntityId, depth);
@@ -92,7 +76,7 @@ export async function resolvePending(world, requestedEntityId, resolveOpts = {},
   const candidateNeighborIds = neighborIds.filter((id) => pendingEntitySet.has(id));
   const neighborScored = candidateNeighborIds
     .map((id) => {
-      const entries = pendingEntriesFor(world, id);
+      const entries = readAvailablePending(world, id);
       const maxImpact = entries.reduce((m, e) => Math.max(m, e.impactScore), 0);
       return { id, maxImpact };
     })
@@ -115,7 +99,7 @@ export async function resolvePending(world, requestedEntityId, resolveOpts = {},
   const entryIdsByEntity = new Map();
 
   for (const entityId of resolvedEntityIds) {
-    const entries = pendingEntriesFor(world, entityId);
+    const entries = readAvailablePending(world, entityId);
     if (!entries.length) continue;
     entryIdsByEntity.set(entityId, entries.map((e) => e.entryId));
     const entity = findEntity(entities, entityId);
@@ -126,7 +110,7 @@ export async function resolvePending(world, requestedEntityId, resolveOpts = {},
         cycleDescriptor: entry.cycleDescriptor,
         causeTag: entry.causeTag,
         impactScore: entry.impactScore,
-        sourceBatchHeadline: safeBatchHeadline(world, entry.sourceBatchId, batchHeadlineCache)
+        sourceBatchHeadline: sourceBatchHeadline(world, entry.sourceBatchId, batchHeadlineCache)
       });
     }
   }

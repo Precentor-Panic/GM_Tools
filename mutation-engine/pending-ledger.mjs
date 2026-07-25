@@ -36,7 +36,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { withLock, ConcurrentWriteError } from "./review-state.mjs";
+import { withLock, ConcurrentWriteError, loadBatch } from "./review-state.mjs";
+import { summarizeBatch, renderHeadline } from "./grain.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "pending-resolution");
@@ -77,6 +78,17 @@ export function readPending(world, entityId) {
   const filePath = ledgerFilePath(world, entityId);
   if (!existsSync(filePath)) return [];
   return JSON.parse(readFileSync(filePath, "utf8"));
+}
+
+/**
+ * readPending(), filtered to entries actually AVAILABLE to be resolved right
+ * now (status 'pending', not the locked 'proposed' state). This exact
+ * `readPending(...).filter(status === 'pending')` idiom was repeated
+ * verbatim across time-skip/run-cycle.mjs and time-skip/resolve-pending.mjs
+ * (remediation pass) — factored out here rather than duplicated further.
+ */
+export function readAvailablePending(world, entityId) {
+  return readPending(world, entityId).filter((e) => e.status === "pending");
 }
 
 function writeLedger(world, entityId, entries) {
@@ -191,6 +203,38 @@ export function markResolved(world, entityId, entryIds) {
  * @param {'accepted'|'rejected'} outcome
  * @returns {Array<{regionId:string, entityId:string, entryIds:string[]}>} the records actually applied
  */
+/**
+ * Best-effort render of a pending entry's source batch as a short headline
+ * string -- the "full narrative context" task 3.5.3 step 4 asks resolve
+ * calls to hydrate via loadBatch(). Returns a placeholder rather than
+ * throwing if the batch is missing/unreadable (e.g. a historical batch file
+ * got cleaned up) -- a resolve/sweep call should degrade gracefully, not
+ * fail outright, over one unreadable source batch.
+ *
+ * Shared by time-skip/resolve-pending.mjs and time-skip/run-cycle.mjs's
+ * growth-bound sweep (remediation pass: both originally carried their own,
+ * nearly-identical private copy of this — factored out here rather than
+ * duplicated, per gm-tools-conventions). `cache` is an optional Map the
+ * caller supplies so repeated entries sharing the same sourceBatchId within
+ * one resolve/sweep call only hit review-state.mjs's loadBatch() once.
+ *
+ * @param {string} world
+ * @param {string} batchId
+ * @param {Map<string,string>} [cache]
+ * @returns {string}
+ */
+export function sourceBatchHeadline(world, batchId, cache) {
+  if (cache?.has(batchId)) return cache.get(batchId);
+  let headline;
+  try {
+    headline = renderHeadline(summarizeBatch(loadBatch(world, batchId)));
+  } catch {
+    headline = "(source batch unavailable)";
+  }
+  cache?.set(batchId, headline);
+  return headline;
+}
+
 export function applyLedgerOutcome(batch, mutationIds, outcome) {
   const records = batch.resolvedPendingEntries;
   if (!records || !records.length) return [];

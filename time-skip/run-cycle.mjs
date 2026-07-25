@@ -31,10 +31,10 @@
  * multi-cause rendering resolve-pending.mjs uses) rather than being allowed
  * to grow further unbounded.
  */
-import { groupByRegion, textureBatch, textureRegion, renderPendingResolutionSummary } from "../mutation-engine/texture.mjs";
-import { createBatch, makeBatchId, loadBatch } from "../mutation-engine/review-state.mjs";
+import { textureBatch, textureRegion, renderPendingResolutionSummary } from "../mutation-engine/texture.mjs";
+import { createBatch, makeBatchId } from "../mutation-engine/review-state.mjs";
 import { summarizeBatch, renderHeadline } from "../mutation-engine/grain.mjs";
-import { readPending, writePending, listPendingEntities, markProposed } from "../mutation-engine/pending-ledger.mjs";
+import { readAvailablePending, writePending, listPendingEntities, markProposed, sourceBatchHeadline } from "../mutation-engine/pending-ledger.mjs";
 import { attachDiffs } from "./run.mjs";
 import { resolveScope } from "./scope.mjs";
 import { neighborhood, findEntity } from "../wf-mcp-server/lib/graph.mjs";
@@ -50,14 +50,6 @@ function deltaEntityIds(delta, edges) {
     return edge ? [edge.sourceId, edge.targetId] : [];
   }
   return [];
-}
-
-function safeBatchHeadline(world, batchId) {
-  try {
-    return renderHeadline(summarizeBatch(loadBatch(world, batchId)));
-  } catch {
-    return "(source batch unavailable)";
-  }
 }
 
 /**
@@ -155,14 +147,15 @@ export async function orchestrateCycle(world, cycleSpec, opts = {}) {
   const touchedIds = new Set(cycleDeltas.flatMap((d) => deltaEntityIds(d, edges)));
   const bloated = listPendingEntities(world)
     .filter((id) => touchedIds.has(id) && !headlineEntityIds.has(id))
-    .filter((id) => readPending(world, id).filter((e) => e.status === "pending").length > growthBoundThreshold);
+    .filter((id) => readAvailablePending(world, id).length > growthBoundThreshold);
 
   const resolvedPendingEntries = [];
   if (bloated.length) {
     const records = [];
     const entryIdsByEntity = new Map();
+    const batchHeadlineCache = new Map();
     for (const entityId of bloated) {
-      const entries = readPending(world, entityId).filter((e) => e.status === "pending");
+      const entries = readAvailablePending(world, entityId);
       entryIdsByEntity.set(entityId, entries.map((e) => e.entryId));
       const entity = findEntity(entities, entityId);
       for (const entry of entries) {
@@ -172,7 +165,7 @@ export async function orchestrateCycle(world, cycleSpec, opts = {}) {
           cycleDescriptor: entry.cycleDescriptor,
           causeTag: entry.causeTag,
           impactScore: entry.impactScore,
-          sourceBatchHeadline: safeBatchHeadline(world, entry.sourceBatchId)
+          sourceBatchHeadline: sourceBatchHeadline(world, entry.sourceBatchId, batchHeadlineCache)
         });
       }
     }

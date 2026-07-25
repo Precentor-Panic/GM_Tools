@@ -13,13 +13,16 @@ process.env.GM_TOOLS_PENDING_LEDGER_DIR = join(scratchDir, "pending-resolution")
 const {
   writePending,
   readPending,
+  readAvailablePending,
   listPendingEntities,
   markProposed,
   markResolved,
   revertToPending,
   applyLedgerOutcome,
+  sourceBatchHeadline,
   ConcurrentWriteError
 } = await import("../mutation-engine/pending-ledger.mjs");
+const { createBatch } = await import("../mutation-engine/review-state.mjs");
 
 let passed = 0;
 function test(name, fn) {
@@ -90,6 +93,65 @@ test("listPendingEntities: an entity whose only entries are 'proposed' (locked) 
 
 test("listPendingEntities: empty for a world with no ledger directory yet", () => {
   assert.deepEqual(listPendingEntities("wf-nonexistent-world"), []);
+});
+
+// ------------------------------------------------------------ readAvailablePending
+
+test("readAvailablePending: filters out 'proposed' entries, keeps only 'pending' ones", () => {
+  const entity = "ent-available-filter";
+  writePending(WORLD, entity, baseEntry(), { makeId: () => "avail1" });
+  writePending(WORLD, entity, baseEntry({ cycleDescriptor: "month 4" }), { makeId: () => "avail2" });
+  markProposed(WORLD, entity, ["avail1"]);
+
+  const available = readAvailablePending(WORLD, entity);
+  assert.equal(available.length, 1);
+  assert.equal(available[0].entryId, "avail2");
+
+  // readPending() itself is unfiltered -- both still present on disk.
+  assert.equal(readPending(WORLD, entity).length, 2);
+});
+
+test("readAvailablePending: [] for an entity with no ledger file at all", () => {
+  assert.deepEqual(readAvailablePending(WORLD, "ent-never-touched-2"), []);
+});
+
+// ------------------------------------------------------------ sourceBatchHeadline
+
+test("sourceBatchHeadline: renders a real batch's headline", () => {
+  const batch = createBatch(
+    WORLD,
+    { mode: "manual" },
+    "a session",
+    [{ op: "upsert_entity", id: "ent1", data: {}, rationale: "test", batchId: "placeholder", sourceKind: "manual" }],
+    { makeId: () => "batch_headline_test" }
+  );
+  const headline = sourceBatchHeadline(WORLD, batch.id);
+  assert.ok(headline.includes("batch_headline_test"), "should render the real batch's own headline text");
+});
+
+test("sourceBatchHeadline: degrades gracefully (placeholder, not a throw) for a missing/unreadable batch", () => {
+  assert.doesNotThrow(() => sourceBatchHeadline(WORLD, "batch_does_not_exist"));
+  const headline = sourceBatchHeadline(WORLD, "batch_does_not_exist");
+  assert.match(headline, /unavailable/);
+});
+
+test("sourceBatchHeadline: an optional cache Map avoids recomputation for a repeated batchId", () => {
+  const batch = createBatch(
+    WORLD,
+    { mode: "manual" },
+    "a session",
+    [{ op: "upsert_entity", id: "ent1", data: {}, rationale: "test", batchId: "placeholder", sourceKind: "manual" }],
+    { makeId: () => "batch_cache_test" }
+  );
+  const cache = new Map();
+  const first = sourceBatchHeadline(WORLD, batch.id, cache);
+  assert.ok(cache.has(batch.id), "cache should be populated after the first call");
+  // Poison the cache with a sentinel value -- if the second call actually
+  // re-renders instead of reading the cache, this assertion would fail.
+  cache.set(batch.id, "SENTINEL_FROM_CACHE");
+  const second = sourceBatchHeadline(WORLD, batch.id, cache);
+  assert.equal(second, "SENTINEL_FROM_CACHE", "second call should read from the cache, not re-render");
+  assert.notEqual(first, "SENTINEL_FROM_CACHE");
 });
 
 // --------------------------------------------------------------- concurrency
