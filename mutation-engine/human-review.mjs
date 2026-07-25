@@ -138,7 +138,8 @@ export function recordUnreviewedAccept(world, entityIds) {
   const state = readState(world);
   for (const entityId of entityIds) {
     if (!entityId) continue;
-    state[entityId] = { ...entryFor(state, entityId), unreviewedAcceptCount: entryFor(state, entityId).unreviewedAcceptCount + 1 };
+    const current = entryFor(state, entityId);
+    state[entityId] = { ...current, unreviewedAcceptCount: current.unreviewedAcceptCount + 1 };
   }
   return writeState(world, state);
 }
@@ -171,7 +172,7 @@ export function getHumanReviewState(world, entityId) {
 export function findUnreviewedEntities(world, opts = {}) {
   const maxAgeDays = opts.maxAgeDays ?? DEFAULT_MAX_AGE_DAYS;
   const maxUnreviewedAccepts = opts.maxUnreviewedAccepts ?? DEFAULT_MAX_UNREVIEWED_ACCEPTS;
-  const now = new Date(opts.now ?? new Date().toISOString());
+  const now = opts.now ? new Date(opts.now) : new Date();
   const state = readState(world);
 
   const flagged = [];
