@@ -19,6 +19,12 @@ grain.mjs         summarizeBatch()/render*()    -- conversational headline/regio
 rollback.mjs   acceptMutations() / rollbackBatch()  -- capture pre-state at accept, restore on rollback
 ```
 
+`llm-call.mjs` (`callModel`/`fillTemplate`/`parseJsonResponse`) is shared
+outbound-LLM-call plumbing, extracted during Phase 2's remediation pass once
+`time-skip/resolve-seed.mjs` became the second module (alongside
+`texture.mjs`) making a real Anthropic API call — both now import from here
+rather than keeping their own near-identical copy.
+
 `diff.mjs` (`diffEntity`/`diffEdge`) is a standalone utility for computing
 field-level before/after diffs. `wf-mcp-server/index.mjs`'s `wf_propose_mutations`
 handler calls it (via its own `attachDiffs` helper) against the live snapshot
