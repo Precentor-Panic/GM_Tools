@@ -304,10 +304,17 @@ async function handleApi(req, res, url, parts) {
       throw new Error("bulk-accept requires a non-empty mutationIds array");
     }
     const { entities, edges } = loadSnapshot(dir, w).snapshot;
+    // Self-review remediation: mutation-ops.mjs's acceptMutationIds defaults
+    // an OMITTED reviewedMutationIds to mutationIds (everything counts as
+    // reviewed) -- correct for acceptOp's scope-based callers, which always
+    // pass an explicit value either way, but the wrong default for THIS
+    // route: a caller of the bulk endpoint that forgets the field should not
+    // silently over-credit review. Default to [] (nothing reviewed) here at
+    // the HTTP boundary instead of passing an omitted field straight through.
     const result = acceptMutationIds(w, parts[2], mutationIds, {
       entities,
       edges,
-      reviewedMutationIds: body.reviewedMutationIds
+      reviewedMutationIds: body.reviewedMutationIds ?? []
     });
     return sendJson(res, 200, result);
   }
@@ -320,7 +327,8 @@ async function handleApi(req, res, url, parts) {
     if (!Array.isArray(mutationIds) || !mutationIds.length) {
       throw new Error("bulk-reject requires a non-empty mutationIds array");
     }
-    const result = rejectMutationIds(w, parts[2], mutationIds, { reviewedMutationIds: body.reviewedMutationIds });
+    // Same conservative-default reasoning as bulk-accept above.
+    const result = rejectMutationIds(w, parts[2], mutationIds, { reviewedMutationIds: body.reviewedMutationIds ?? [] });
     return sendJson(res, 200, result);
   }
 

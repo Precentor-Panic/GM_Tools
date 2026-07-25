@@ -216,6 +216,21 @@ test("bulk-accept with an explicit reviewedMutationIds subset splits reviewed vs
   assert.ok(flaggedIds.includes(batch.idB), "m1 was NOT in reviewedMutationIds -- must NOT count as reviewed");
 });
 
+test("self-review remediation: bulk-accept OMITTING reviewedMutationIds entirely defaults to nothing-reviewed (safe default), not everything-reviewed", async () => {
+  const batch = makeTwoMutationBatch();
+  const { status, body } = await postJson(`/api/batches/${batch.id}/bulk-accept`, {
+    world: WORLD,
+    mutationIds: ["m0", "m1"]
+    // reviewedMutationIds deliberately omitted -- must NOT silently credit both as reviewed
+  });
+  assert.equal(status, 200);
+  assert.equal(body.accepted.length, 2);
+
+  const { body: unreviewed } = await getJson(`/api/unreviewed-entities?world=${WORLD}`);
+  const flaggedIds = unreviewed.entities.map((e) => e.entityId);
+  assert.ok(flaggedIds.includes(batch.idA) && flaggedIds.includes(batch.idB), "omitting reviewedMutationIds must be the conservative default -- neither entity should count as reviewed");
+});
+
 test("bulk-reject accepts a plain mutationIds array and rejects each", async () => {
   const batch = makeTwoMutationBatch();
   const { status, body } = await postJson(`/api/batches/${batch.id}/bulk-reject`, {
