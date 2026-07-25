@@ -1,4 +1,98 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>placeholder</title></head>
-<body>placeholder — task 6.2 replaces this.</body>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GM Review</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <button class="brand" data-nav="queue" title="Back to Queue">GM Review</button>
+  <nav class="topnav">
+    <button data-nav="queue">Queue</button>
+    <button data-nav="debt">Deferred Debt</button>
+  </nav>
+  <div class="topbar-right">
+    <select id="world-select" aria-label="World"></select>
+    <button id="gear-btn" class="icon-btn" data-nav="settings" title="Settings" aria-label="Settings">&#9881;</button>
+  </div>
+</header>
+
+<main>
+
+<!-- ================= QUEUE ================= -->
+<section id="view-queue" class="view">
+  <h1>Queue</h1>
+  <div id="queue-empty" class="empty-state" hidden>Nothing needs you right now.</div>
+
+  <div id="queue-batches-wrap" hidden>
+    <h2 class="section-label">Awaiting review</h2>
+    <ul id="queue-batches" class="queue-list"></ul>
+  </div>
+
+  <div id="queue-flagged-wrap" hidden>
+    <h2 class="section-label">Long-unreviewed entities</h2>
+    <ul id="queue-flagged" class="queue-list queue-list--flagged"></ul>
+  </div>
+</section>
+
+<!-- ================= REVIEW ================= -->
+<section id="view-review" class="view">
+  <div class="review-header">
+    <button class="link-btn" data-nav="queue">&larr; Back to Queue</button>
+    <div id="review-headline" class="review-headline"></div>
+    <div id="review-meta" class="review-meta"></div>
+  </div>
+
+  <div id="review-actionbar" class="action-bar">
+    <label class="select-all-boring">
+      <button id="btn-select-boring" class="btn btn--ghost">Select All Boring</button>
+    </label>
+    <div class="action-bar-spacer"></div>
+    <button id="btn-accept-selected" class="btn btn--accept">Accept Selected</button>
+    <button id="btn-reject-selected" class="btn btn--reject">Reject Selected</button>
+  </div>
+
+  <div id="review-list" class="mutation-list"></div>
+</section>
+
+<!-- ================= DEFERRED DEBT ================= -->
+<section id="view-debt" class="view">
+  <h1>Deferred Debt</h1>
+  <p class="hint">Entities carrying accumulated, un-textured history from past time-skips. Nothing here costs anything until you resolve it.</p>
+  <input id="debt-search" type="search" placeholder="Search entities&hellip;" class="search-box">
+  <ul id="debt-list" class="debt-list"></ul>
+  <div id="debt-empty" class="empty-state" hidden>No deferred entities in this world.</div>
+</section>
+
+<!-- ================= SETTINGS ================= -->
+<section id="view-settings" class="view">
+  <h1>Settings</h1>
+
+  <div class="settings-card">
+    <h2 class="section-label">Foundry sync</h2>
+    <p><span id="sync-dot" class="status-dot status-dot--unknown"></span> <span id="sync-text">Unknown until a sync happens.</span></p>
+  </div>
+
+  <div class="settings-card">
+    <h2 class="section-label">Rollback</h2>
+    <p class="hint">Reverts the most recently accepted batch to its pre-accept state. No history list — this is a one-shot undo.</p>
+    <button id="btn-undo-last" class="btn btn--reject">Undo Last Batch</button>
+    <div id="undo-last-status" class="hint"></div>
+  </div>
+
+  <div class="settings-card">
+    <h2 class="section-label">Graph</h2>
+    <a href="/graph.html" target="_blank" rel="noopener" class="link-btn">Explore Graph &rarr;</a>
+  </div>
+</section>
+
+</main>
+
+<div id="toast-container" class="toast-container"></div>
+
+<script src="/app.js"></script>
+</body>
 </html>
