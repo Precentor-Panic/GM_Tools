@@ -164,16 +164,39 @@ function resolveRegionDeltas(entities, edges, scopeSpec) {
  * tree validation. Default depth is a very high cap, not region's shallow
  * default -- a district -> building -> room chain is exactly the multi-hop
  * case this mode exists for.
+ *
+ * IMPORTANT (found during Phase 2's remediation pass, via the manual
+ * round-trip check): the containment-only filter above governs the BFS
+ * TRAVERSAL only -- i.e. what new entities you can reach, and how ("what's
+ * inside this place" must not be inferred through an origin/presence hop).
+ * It must NOT also become the edge set handed to candidateDeltas/
+ * ambientDecay/propagateSeed once the entity set is settled. containment
+ * edges are themselves hard-excluded from ambientDecay entirely
+ * (NON_DECAYING_RELATIONSHIP_TYPES, propagate.mjs) -- so if the only edges
+ * ever passed downstream were the containment ones used to discover the
+ * entities, "contained-in" + ambient mode (no seeds) would be a PERMANENT
+ * no-op: zero possible decay candidates, always, for any world. Once the
+ * entity set is fixed via the containment-only BFS, this instead gathers
+ * ALL real edges (any type) between two already-in-scope entities from the
+ * full graph, so a time-skip over "everything inside this district" still
+ * sees e.g. a fealty bond or social standing fraying between two buildings
+ * both structurally inside it -- exactly what a GM time-skipping a region
+ * would expect to happen. This does not reopen the origin/presence
+ * traversal question above: an origin/presence edge only shows up here if
+ * BOTH its endpoints were already reached via containment alone, never as a
+ * new entity discovered through it.
  */
 function resolveContainedInDeltas(entities, edges, scopeSpec) {
   if (!scopeSpec.anchorId) throw new Error("scope.mode='contained-in' requires scope.anchorId");
   const containmentEdges = edges.filter((e) => e.relationshipType === "containment");
-  const { entities: containedEntities, edges: containedEdges } = neighborhood(
+  const { entities: containedEntities } = neighborhood(
     entities,
     containmentEdges,
     scopeSpec.anchorId,
     scopeSpec.depth ?? CONTAINED_IN_DEFAULT_DEPTH
   );
+  const containedIds = new Set(containedEntities.map((e) => e.id));
+  const containedEdges = edges.filter((e) => containedIds.has(e.sourceId) && containedIds.has(e.targetId));
 
   if (scopeSpec.seeds?.length) {
     return resolveSeedDeltas(containedEntities, containedEdges, scopeSpec);

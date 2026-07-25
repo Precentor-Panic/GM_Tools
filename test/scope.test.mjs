@@ -46,7 +46,14 @@ const edges = [
   { id: "c3", sourceId: "building1", targetId: "room1", relationshipType: "containment", strength: 0.6 },
   { id: "s1", sourceId: "district1", targetId: "factionZ", relationshipType: "social", strength: 0.5 },
   { id: "g1", sourceId: "expat", targetId: "cityHall", relationshipType: "origin", strength: 0.9 },
-  { id: "p1", sourceId: "building1", targetId: "touristY", relationshipType: "presence", strength: 0.5 }
+  { id: "p1", sourceId: "building1", targetId: "touristY", relationshipType: "presence", strength: 0.5 },
+  // A non-containment edge between TWO entities both already reachable via
+  // containment alone (district1, building1) -- proves contained-in's
+  // downstream decay pass isn't restricted to containment-typed edges once
+  // the entity set is settled (see the "IMPORTANT" note on
+  // resolveContainedInDeltas in scope.mjs: containment-only governs the BFS
+  // traversal, not what's visible to ambientDecay/propagateSeed afterward).
+  { id: "k1", sourceId: "district1", targetId: "building1", relationshipType: "knowledge", strength: 0.6 }
 ];
 
 // ------------------------------------------------------------------ modes list
@@ -62,13 +69,14 @@ test("SCOPE_MODES includes all four documented modes plus the pre-existing three
 test("region: entity/edge set matches neighborhood()'s own output for the same anchor/depth", () => {
   // depth=1 from district1: neighborhood() (all edge types, undirected)
   // reaches exactly {district1, cityHall, building1, factionZ} via
-  // {c1, c2, s1} -- a small, hand-verifiable set to cross-check against.
+  // {c1, c2, s1, k1} (k1 is district1<->building1, a direct hop-1 edge
+  // like c2) -- a small, hand-verifiable set to cross-check against.
   const depth = 1;
   const expected = neighborhood(entities, edges, "district1", depth);
   const expectedIds = new Set(expected.entities.map((e) => e.id));
   const expectedEdgeIds = new Set(expected.edges.map((e) => e.id));
   assert.deepEqual(expectedIds, new Set(["district1", "cityHall", "building1", "factionZ"]));
-  assert.deepEqual(expectedEdgeIds, new Set(["c1", "c2", "s1"]));
+  assert.deepEqual(expectedEdgeIds, new Set(["c1", "c2", "s1", "k1"]));
 
   // resolveScope's region mode must restrict its own candidateDeltas call to
   // exactly this same neighborhood -- large elapsedSessions forces every
@@ -79,9 +87,10 @@ test("region: entity/edge set matches neighborhood()'s own output for the same a
   for (const edgeId of decayEdgeIds) {
     assert.ok(expectedEdgeIds.has(edgeId), `delta edge ${edgeId} should be within neighborhood()'s own edge set`);
   }
-  // s1 (social, non-containment) is IN the neighborhood and should decay
-  // heavily enough at elapsedSessions=100 to appear.
+  // s1 (social) and k1 (knowledge), both non-containment, are IN the
+  // neighborhood and should decay heavily enough at elapsedSessions=100 to appear.
   assert.ok(decayEdgeIds.has("s1"), "s1 is within the depth-1 neighborhood and should appear as a decay delta");
+  assert.ok(decayEdgeIds.has("k1"), "k1 is within the depth-1 neighborhood and should appear as a decay delta");
   // c1/c2 are containment-typed -- hard-excluded from ambientDecay regardless
   // of scope, so their absence here is expected for a different reason (not
   // being out-of-neighborhood).
@@ -140,6 +149,30 @@ test("contained-in: traverses containment-typed edges only -- origin and presenc
   assert.equal(touchedEdgeIds.has("g1"), false, "origin edge g1 must never appear in contained-in's deltas");
   assert.equal(touchedEdgeIds.has("p1"), false, "presence edge p1 must never appear in contained-in's deltas");
   assert.equal(touchedEdgeIds.has("s1"), false, "social edge s1 must never appear in contained-in's deltas");
+});
+
+test("contained-in: a non-containment edge between two already-in-scope entities still surfaces for ambient decay (found in remediation: containment-only must govern the BFS traversal, not silently make ambient mode a permanent no-op)", () => {
+  // k1 (knowledge, district1<->building1) connects two entities BOTH
+  // reachable from cityHall via containment alone -- it must appear as an
+  // ambient-decay candidate. If contained-in's downstream edge set were
+  // (incorrectly) restricted to containment-typed edges only, this would be
+  // impossible: containment edges are themselves hard-excluded from
+  // ambientDecay everywhere, so "contained-in + ambient, no seeds" would
+  // ALWAYS produce zero candidates, for any world, which is not a useful
+  // "time-skip everything inside this district" operation.
+  const { deltas } = resolveScope(
+    { entities, edges },
+    { mode: "contained-in", anchorId: "cityHall", elapsedSessions: 100 }
+  );
+  const decayEdgeIds = new Set(deltas.filter((d) => d.kind === "ambient-decay").map((d) => d.edgeId));
+  assert.ok(decayEdgeIds.has("k1"), "k1 (knowledge, between two in-scope entities) should surface as a decay candidate");
+  assert.ok(deltas.length > 0, "contained-in + ambient should not be an unconditional no-op");
+
+  // The out-of-scope edges must still never appear, confirming the fix
+  // didn't just fall back to "every edge in the whole graph."
+  assert.equal(decayEdgeIds.has("g1"), false, "origin edge to an out-of-scope entity must still never appear");
+  assert.equal(decayEdgeIds.has("p1"), false, "presence edge to an out-of-scope entity must still never appear");
+  assert.equal(decayEdgeIds.has("s1"), false, "social edge to an out-of-scope entity must still never appear");
 });
 
 test("contained-in: reaches a multi-hop chain (district -> building -> room) that region's shallow default depth would miss", () => {
