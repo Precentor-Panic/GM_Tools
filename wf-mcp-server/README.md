@@ -61,6 +61,26 @@ Thin wrapper over `../mutation-engine/human-review.mjs`. `wf_accept`/`wf_reject`
 |------|---------|
 | `wf_get_unreviewed_entities` | Entities whose applied-but-unreviewed history has gone too long: never reviewed, stale (`maxAgeDays`, default 14), or accumulated too many batch-accept-all touches since the last real review (`maxUnreviewedAccepts`, default 5). The same flagged set forces a flagged entity into `wf_review_batch`'s headline rendering regardless of importance. |
 
+### Phase 5 — import-from-writeup
+
+Thin wrapper over `../graph-import/writeup-import.mjs`. Produces a normal review batch
+(`sourceKind: 'writeup-import'`) — `wf_review_batch`/`wf_accept`/`wf_reject`/
+`wf_sync_to_foundry`/`wf_rollback_batch` above all handle it unmodified, since they're
+already generic over batch shape.
+
+| Tool | Purpose |
+|------|---------|
+| `wf_propose_from_writeup` | Given freeform text (a pitch, prep notes, a wiki export), one LLM call extracts a WFI-shaped proposal (entities/edges referencing endpoints by name), dry-runs it through `interchange.mjs`'s `importGraph` against the live snapshot without persisting (existing name+type dedup: a mentioned entity that already exists in the graph merges as an UPDATE instead of duplicating; an undescribed edge endpoint gets a stub, same as any other WFI import), and writes the result as a review batch. Works against a freshly-bootstrapped empty snapshot (a brand-new campaign) as well as an existing populated one. Same `ANTHROPIC_API_KEY` requirement as `wf_propose_mutations`. |
+
+`wf_regenerate` dispatches specially for a writeup-import batch: it re-invokes the
+extraction against the batch's own recorded source text plus the steering note (not
+`texture.mjs`'s per-region texturing, which has no meaning for a holistic
+text-extraction pass) — see that tool's own description. `scope='entity'` is refused
+for a writeup-import batch (there's no principled way to regenerate one extracted item
+out of a whole-document pass); use `scope='batch'`/`'region'` (equivalent — a
+writeup-import batch always has exactly one region) or reject the specific mutation via
+`wf_reject`.
+
 ## Config
 
 Set in `~/.mcp.json` under `mcpServers.world-fabric`. Env vars:
