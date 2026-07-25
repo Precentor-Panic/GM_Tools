@@ -18,7 +18,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { resolveDataDir, listWorlds } from "./lib/data-dir.mjs";
-import { loadSnapshot, mutationsPath } from "./lib/snapshot.mjs";
+import { loadSnapshot, mutationsPath, snapshotFilePath } from "./lib/snapshot.mjs";
 import { neighborhood, edgesFor, findEntity, findEntityByName, findEdge } from "./lib/graph.mjs";
 
 // Phase 1 mutation engine — pure library code, this server is a thin wrapper
@@ -35,6 +35,10 @@ import { acceptMutations, rollbackBatch } from "../mutation-engine/rollback.mjs"
 // time-skip/ as reusable library code; this server just wires parameters
 // through to it. See time-skip/scope.mjs, time-skip/run.mjs.
 import { orchestrateBatch, attachDiffs } from "../time-skip/run.mjs";
+
+// Phase 2 task 2.3/2.4 — the Foundry-optional headless-apply fallback
+// wf_sync_to_foundry uses when no live Foundry client picks up a mutation.
+import { applyHeadless } from "../graph-import/headless-apply.mjs";
 
 const server = new McpServer({ name: "world-fabric", version: "0.1.0" });
 
@@ -591,10 +595,15 @@ server.registerTool(
     title: "Sync a batch's accepted mutations to Foundry",
     description:
       "Writes every 'accepted' mutation in the given batch to world-fabric-mutations.json via the same file " +
-      "bridge wf_apply_mutations uses, and marks the batch 'synced'. Known Phase-1 limitation, expected and " +
-      "resolved in Phase 2b: until the headless-apply path (graph-import/headless-apply.mjs) exists, this " +
-      "reports 'queued'/'not confirmed' whenever no Foundry client is open — same behavior wf_apply_mutations " +
-      "already has today.",
+      "bridge wf_apply_mutations uses (the live path — requires a Foundry client to have the world open). " +
+      "If that path reports 'queued' (no live client picked it up within the poll window), falls back to " +
+      "graph-import/headless-apply.mjs's applyHeadless() against the standalone world-fabric-snapshot.json " +
+      "directly — no live Foundry client required. Always reports which path was actually used (`path`: " +
+      "'live' or 'headless') — never just a bare 'success'. Marks the batch 'synced' either way. Known limitation " +
+      "of the headless path: if this world ALSO has a live Foundry client that is merely closed right now (not " +
+      "a genuinely headless-only campaign), that client's own next export will overwrite the snapshot file " +
+      "from its in-Foundry game.settings state, silently discarding a headless-applied change — there is no " +
+      "reconciliation path back into game.settings yet (a foundry_worldFabric-side change, out of this phase's scope).",
     inputSchema: { world: worldParam, dataDir: dataDirParam, batchId: z.string() }
   },
   async ({ world, dataDir, batchId }) => {
@@ -607,10 +616,45 @@ server.registerTool(
         return text({ status: "no-op", batchId, note: "No mutations in this batch have status 'accepted'." });
       }
       const mutations = accepted.map((m) => ({ op: m.op, id: m.id, data: m.data }));
-      const result = await applyMutationsToFoundry(dir, w, mutations);
+
+      const liveResult = await applyMutationsToFoundry(dir, w, mutations);
+      if (liveResult.status === "applied") {
+        batch.status = "synced";
+        saveBatch(w, batch);
+        // NOTE: liveResult itself carries its own `path` field (the
+        // mutations file path, from applyMutationsToFoundry) -- renamed to
+        // mutationsFilePath here so it can't collide with (and silently get
+        // overwritten by, or silently overwrite) this `path: "live"` label,
+        // which is the thing wf_sync_to_foundry's contract actually promises
+        // callers ("always report which path was used").
+        const { path: mutationsFilePath, ...rest } = liveResult;
+        return text({ path: "live", ...rest, mutationsFilePath, batchId, syncedCount: accepted.length });
+      }
+
+      // liveResult.status === "queued" -- no live Foundry client picked this
+      // up within the poll window. Fall back to the headless path (task 2.3)
+      // against the standalone snapshot file.
+      const snapshotPath = snapshotFilePath(dir, w);
+      const headlessResult = applyHeadless(snapshotPath, mutations);
       batch.status = "synced";
       saveBatch(w, batch);
-      return text({ ...result, batchId, syncedCount: accepted.length });
+      return text({
+        path: "headless",
+        status: "applied",
+        batchId,
+        syncedCount: accepted.length,
+        snapshotPath,
+        liveAttempt: liveResult,
+        summary: headlessResult.summary,
+        deletedEntityCount: headlessResult.deletedEntityCount,
+        deletedEdgeCount: headlessResult.deletedEdgeCount,
+        skipped: headlessResult.skipped,
+        note:
+          "No live Foundry client picked up the mutation within the poll window; applied directly to the " +
+          "standalone snapshot instead. If a live Foundry client for this world reopens later, its own export " +
+          "will overwrite this file from game.settings -- no reconciliation path exists yet for a mixed " +
+          "live/headless world."
+      });
     } catch (err) {
       return errorText(err);
     }
