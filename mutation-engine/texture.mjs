@@ -148,6 +148,45 @@ function renderDeltaSummary(deltas, entities) {
     .join("\n");
 }
 
+/**
+ * Phase 3.5: render a set of pending-ledger entries (mutation-engine/
+ * pending-ledger.mjs), each already hydrated with its source batch's
+ * headline text, into the same delta-summary-shaped text block
+ * renderDeltaSummary produces for a fresh candidateDeltas pass — this is
+ * what feeds textureRegion's ctx.deltaSummaryOverride (below) for a
+ * deferred-resolution texturing call (time-skip/resolve-pending.mjs's
+ * on-demand resolve, and time-skip/run-cycle.mjs's growth-bound sweep).
+ * Lives alongside renderDeltaSummary rather than as a new, unrelated
+ * rendering path (per task 3.5.3's own instruction to extend one of
+ * grain.mjs/texture.mjs rather than invent a third one) — it plays the
+ * exact same structural role, just sourced from ledger history instead of a
+ * live delta.
+ *
+ * Sorted chronologically by `cycleDescriptor` (not insertion/createdAt
+ * order) and each line explicitly labeled with its cycle, per the
+ * architect's reasoning that a flat undated bullet dump reads as
+ * "everything happened at once" instead of a sequence. Multi-cause entries
+ * for one entity are never split across calls -- this renders the full set
+ * handed to it in one text block, and the caller passes ALL entries for ALL
+ * entities being resolved in a single resolve/sweep call.
+ *
+ * @param {Array<{entityId:string, entityName:string, cycleDescriptor:string, causeTag:string, impactScore:number, sourceBatchHeadline?:string}>} records
+ * @returns {string}
+ */
+export function renderPendingResolutionSummary(records) {
+  const sorted = [...records].sort((a, b) => {
+    if (a.cycleDescriptor === b.cycleDescriptor) return 0;
+    return a.cycleDescriptor < b.cycleDescriptor ? -1 : 1;
+  });
+  return sorted
+    .map((r) => {
+      const impact = typeof r.impactScore === "number" ? r.impactScore.toFixed(3) : "?";
+      const context = r.sourceBatchHeadline ? ` — context: ${r.sourceBatchHeadline}` : "";
+      return `- [${r.cycleDescriptor}] ${r.entityName} [id=${r.entityId}]: ${r.causeTag} (impactScore=${impact})${context}`;
+    })
+    .join("\n");
+}
+
 function fillTemplate(vars) {
   return fillTemplateShared(PROMPT_TEMPLATE, vars);
 }
@@ -162,9 +201,18 @@ function fillTemplate(vars) {
  * @param {object[]} ctx.edges
  * @param {string} ctx.world
  * @param {string} ctx.batchId
- * @param {'ambient-decay'|'seeded-propagation'|'manual'} ctx.sourceKind
+ * @param {'ambient-decay'|'seeded-propagation'|'manual'|'deferred-resolution'} ctx.sourceKind
  * @param {string} [ctx.elapsedTimeDescriptor]
  * @param {string} [ctx.note]  appended for wf_regenerate's re-invocation path
+ * @param {string} [ctx.deltaSummaryOverride]  Phase 3.5: if given, used verbatim as the prompt's delta-summary
+ *                                              text instead of renderDeltaSummary(region.deltas, entities) --
+ *                                              time-skip/resolve-pending.mjs and time-skip/run-cycle.mjs's
+ *                                              growth-bound sweep pass renderPendingResolutionSummary()'s output
+ *                                              here, since their "deltas" are pending-ledger history, not a fresh
+ *                                              candidateDeltas pass. region.deltas is still supplied by those
+ *                                              callers (as {impactScore} stubs) so the impactScore-max calc below
+ *                                              is unaffected -- this override only changes what the model reads,
+ *                                              not the bookkeeping.
  * @param {object} [opts]
  * @param {object} [opts.client]  injectable Anthropic-SDK-shaped client (for tests / DI)
  * @param {string} [opts.apiKey]
@@ -173,9 +221,9 @@ function fillTemplate(vars) {
  * @returns {Promise<object[]>}  validated Mutation objects
  */
 export async function textureRegion(region, ctx, opts = {}) {
-  const { entities, edges, world, batchId, sourceKind, elapsedTimeDescriptor, note } = ctx;
+  const { entities, edges, world, batchId, sourceKind, elapsedTimeDescriptor, note, deltaSummaryOverride } = ctx;
   const regionContext = renderRegionContext(entities, region.entityIds, edges) || "(no entities)";
-  const deltaSummary = renderDeltaSummary(region.deltas, entities) || "(no deltas)";
+  const deltaSummary = deltaSummaryOverride ?? (renderDeltaSummary(region.deltas, entities) || "(no deltas)");
 
   const basePrompt = fillTemplate({
     world,
