@@ -25,7 +25,8 @@ import { loadBatch, saveBatch, updateMutationStatus } from "../../mutation-engin
 import { summarizeBatch, renderHeadline, renderRegionDiff, renderEntityDiff } from "../../mutation-engine/grain.mjs";
 import { acceptMutations, rollbackBatch } from "../../mutation-engine/rollback.mjs";
 import { applyLedgerOutcome } from "../../mutation-engine/pending-ledger.mjs";
-import { narrateBatch } from "../../mutation-engine/narrate.mjs";
+import { narrateBatch, narrateEntity } from "../../mutation-engine/narrate.mjs";
+import { supersedeEntityNarration, getCurrentEntityNarration, getEntityNarrationHistory } from "../../mutation-engine/entity-narration.mjs";
 import { applyHeadless } from "../../graph-import/headless-apply.mjs";
 import {
   importWriteup,
@@ -227,6 +228,20 @@ export function acceptMutationIds(w, batchId, mutationIds, opts = {}) {
   // Phase 3.5 task 3.5.4: if this batch resolves any pending-ledger entries,
   // accepting clears them — they're now real, reviewed graph mutations.
   const ledgerResolved = applyLedgerOutcome(updated, mutationIds, "accepted");
+
+  // Phase 10 task 10.3: an entity just accepted again is, by definition,
+  // being mutated again -- any narration that was 'current' for it now
+  // describes a stale prior state, not what's actually true anymore. Mark
+  // it superseded (never deleted -- still recallable from history) so
+  // review-ui never shows a stale narration as if it were current. A safe
+  // no-op for an entity that was never narrated. Runs regardless of
+  // reviewedMutationIds/unreviewedMutationIds split below -- the entity was
+  // mutated either way; whether a HUMAN reviewed it is an orthogonal
+  // concern (human-review.mjs's own tracking), not a reason to keep an
+  // otherwise-stale narration presenting as current.
+  for (const entityId of entityIdsForMutations(batch, mutationIds)) {
+    supersedeEntityNarration(w, entityId);
+  }
 
   const reviewedSet = new Set(reviewedMutationIds ?? mutationIds);
   const reviewedIds = mutationIds.filter((id) => reviewedSet.has(id));
@@ -601,6 +616,36 @@ export async function rejectWithLoopOp(dir, w, { batchId, scope, id, note, quick
 export async function narrateOp(w, { batchId, note, currentLocation, reachableAreas }) {
   const batch = loadBatch(w, batchId);
   return narrateBatch(batch, { world: w, note, currentLocation, reachableAreas }, {});
+}
+
+// --- Phase 10: per-entity narration -----------------------------------------
+
+/**
+ * wf_narrate_entity / review-ui's per-row "Narrate This" action (task 10.4):
+ * the per-entity replacement review-ui now uses instead of narrateOp above.
+ * Loads the live snapshot's entities/edges itself (mutation-engine/narrate.mjs
+ * stays Foundry/file-bridge-agnostic, same layering as every other library
+ * module) so narrateEntity() can ground the prompt in the target entity's
+ * real immediate graph neighbors instead of an empty location/area pair.
+ * Persistence (entity-narration.mjs's saveEntityNarration) happens INSIDE
+ * narrateEntity() on success -- this wrapper adds no persistence logic of
+ * its own, matching "front-ends are thin wrappers" even though this module
+ * itself is shared library code, not a front-end.
+ */
+export async function narrateEntityOp(dir, w, { batchId, mutationId, note }) {
+  const batch = loadBatch(w, batchId);
+  const { entities, edges } = loadSnapshot(dir, w).snapshot;
+  return narrateEntity(batch, mutationId, { world: w, entities, edges, note }, {});
+}
+
+/** wf_get_entity_narration / review-ui's per-row narration fetch: the one entry with status:'current', or null if never narrated (or superseded with nothing to replace it yet). */
+export function getEntityNarrationOp(w, { entityId }) {
+  return { entityId, narration: getCurrentEntityNarration(w, entityId) };
+}
+
+/** wf_get_entity_narration_history / review-ui's "view history" affordance: the entity's FULL history, oldest-first as stored -- nothing is ever filtered out or deleted. */
+export function getEntityNarrationHistoryOp(w, { entityId }) {
+  return { entityId, history: getEntityNarrationHistory(w, entityId) };
 }
 
 // --- sync / rollback --------------------------------------------------------
