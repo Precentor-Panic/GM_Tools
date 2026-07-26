@@ -72,6 +72,22 @@ import {
   getEntityNarrationHistoryOp
 } from "./lib/mutation-ops.mjs";
 
+// Phase 11 — per-node content generation ("develop this node"): a genuinely
+// separate store/pipeline from mutation-ops.mjs above (see
+// mutation-engine/prep-content.mjs's own doc comment for why) -- these
+// tools never touch a Batch/StoredMutation and are never reachable from any
+// accept/reject/sync-to-Foundry code path.
+import {
+  proposePrepFramingsOp,
+  reframePrepFramingsOp,
+  generatePrepContentOp,
+  getPrepContentOp,
+  acceptPrepContentOp,
+  discardPrepContentOp,
+  regeneratePrepFieldOp,
+  markPrepContentStaleOp
+} from "./lib/prep-content-ops.mjs";
+
 const server = new McpServer({ name: "world-fabric", version: "0.1.0" });
 
 const worldParam = z.string().optional().describe(
@@ -838,6 +854,235 @@ server.registerTool(
     try {
       const w = resolveWorld(world);
       return text(getEntityNarrationHistoryOp(w, { entityId }));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// ======================================================================================
+// Phase 11 -- per-node content generation ("develop this node"): an opt-in,
+// entity-scoped, framing-first two-stage pipeline (mutation-engine/
+// prep-content.mjs) producing structured, type-specific GM prep content
+// (description, secret, potential rolls, hooks -- different fields per
+// entity type). Triggered from an already-committed entity, NEVER a Batch
+// Review row action -- there is no batchId parameter anywhere below, so
+// these tools are not reachable from the batch-review tool surface even in
+// principle. Stored in its own separate store, never synced to Foundry:
+// no tool below writes to world-fabric-mutations.json or the standalone
+// snapshot, and none is called by wf_sync_to_foundry/wf_apply_mutations.
+// ======================================================================================
+
+// --- wf_propose_prep_framings ---------------------------------------------------------
+
+server.registerTool(
+  "wf_propose_prep_framings",
+  {
+    title: "Propose 3 framings for developing an entity's prep content (Phase 11, round 1)",
+    description:
+      "Given an already-committed entity (person/place/faction/object/event/concept), makes one cheap Anthropic " +
+      "API call (mutation-engine/prep-content.mjs's proposeFramingsForEntity, haiku tier) grounded in the entity's " +
+      "own recorded fields AND its real immediate graph neighborhood, returning 3 one-sentence interpretive angles " +
+      "-- the same framing-first discipline as the whole-writeup rubber-duck mode (wf_propose_from_writeup), one " +
+      "level down to a single entity. No content is generated yet and nothing is persisted. Pick one (or write a " +
+      "custom framing) and call wf_generate_prep_content next. Requires ANTHROPIC_API_KEY in this server " +
+      "process's own environment.",
+    inputSchema: { world: worldParam, dataDir: dataDirParam, entityId: z.string().describe("An already-committed entity/edge id from the live snapshot.") }
+  },
+  async ({ world, dataDir, entityId }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const result = await proposePrepFramingsOp(dir, w, { entityId });
+      return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_reframe_prep_framings ----------------------------------------------------------
+
+server.registerTool(
+  "wf_reframe_prep_framings",
+  {
+    title: "Request one bounded re-framing round for an entity's prep content (Phase 11)",
+    description:
+      "If the reviewer doesn't like any of wf_propose_prep_framings' three angles, this requests ONE more round " +
+      "(bounded, mirroring writeup-import's MAX_FRAMING_ROUNDS precedent) -- pass `priorRoundCount` (1 right after " +
+      "the initial proposal). A second reframe attempt is refused (PrepFramingRoundLimitError) -- pick one of the " +
+      "current framings, or write a fully custom one, instead. Requires ANTHROPIC_API_KEY.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      entityId: z.string(),
+      priorRoundCount: z.number().int().min(1).optional().describe("How many framing rounds have already happened for this entity's in-progress 'develop this node' session. Default 1.")
+    }
+  },
+  async ({ world, dataDir, entityId, priorRoundCount }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const result = await reframePrepFramingsOp(dir, w, { entityId, priorRoundCount });
+      return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_generate_prep_content ------------------------------------------------------------
+
+const prepFramingItemSchema = z.object({ id: z.string(), sentence: z.string() });
+const prepFramingSelectionSchema = z.object({
+  primary: prepFramingItemSchema.describe("The framing picked as primary (or a custom {id:'d', sentence} the reviewer wrote themselves)."),
+  blend: z.string().optional().describe("Optional freeform blend line.")
+});
+
+server.registerTool(
+  "wf_generate_prep_content",
+  {
+    title: "Generate this entity's structured prep content, steered by the chosen framing (Phase 11, round 2)",
+    description:
+      "The fuller generation call (mutation-engine/prep-content.mjs's generatePrepContent), steered by `selection` " +
+      "(composed into a steering note the same way wf_select_framing composes a writeup-import selection), grounded " +
+      "in the entity's real fields and graph neighborhood. Produces a STRUCTURED, type-specific object (not flat " +
+      "prose) -- different fields for a person vs. a place vs. a faction vs. an object vs. an event vs. a reduced " +
+      "concept template, per this phase's design. Immediately persisted as a 'proposed' draft (mutation-engine/" +
+      "prep-content.mjs's own store, NOT the mutation-engine/review-state.mjs pipeline, NEVER synced to Foundry) " +
+      "-- call wf_accept_prep_content to confirm it, or wf_discard_prep_content to throw it away. Requires " +
+      "ANTHROPIC_API_KEY.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      entityId: z.string(),
+      selection: prepFramingSelectionSchema
+    }
+  },
+  async ({ world, dataDir, entityId, selection }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const result = await generatePrepContentOp(dir, w, { entityId, selection });
+      return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_get_prep_content -----------------------------------------------------------------
+
+server.registerTool(
+  "wf_get_prep_content",
+  {
+    title: "Get an entity's current prep content, if any",
+    description:
+      "Reads mutation-engine/prep-content.mjs's store for this entity -- a pure read, no model call, no cost. " +
+      "Returns {entityId, prepContent:null} if this entity has never been developed.",
+    inputSchema: { world: worldParam, entityId: z.string() }
+  },
+  async ({ world, entityId }) => {
+    try {
+      const w = resolveWorld(world);
+      return text(getPrepContentOp(w, { entityId }));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_accept_prep_content / wf_discard_prep_content ------------------------------------
+
+server.registerTool(
+  "wf_accept_prep_content",
+  {
+    title: "Accept a 'proposed' prep-content draft",
+    description:
+      "Flips status 'proposed' -> 'accepted', with no model call and no change to `fields`. Required before " +
+      "wf_regenerate_prep_field's living-doc field-granular editing is meaningful, per this phase's design (the " +
+      "review gate: nothing about a generated draft is treated as settled prep material until explicitly " +
+      "accepted). Throws if nothing has been proposed yet for this entity.",
+    inputSchema: { world: worldParam, entityId: z.string() }
+  },
+  async ({ world, entityId }) => {
+    try {
+      const w = resolveWorld(world);
+      return text(acceptPrepContentOp(w, { entityId }));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_discard_prep_content",
+  {
+    title: "Discard a not-yet-accepted 'proposed' prep-content draft",
+    description:
+      "Deletes a 'proposed' draft outright -- safe because it was never confirmed as real prep material. Refuses " +
+      "(throws) to discard 'accepted' or 'stale' content: that is never deleted by this phase, only ever marked " +
+      "stale (wf_mark_prep_content_stale). A safe no-op if there's nothing at all yet for this entity.",
+    inputSchema: { world: worldParam, entityId: z.string() }
+  },
+  async ({ world, entityId }) => {
+    try {
+      const w = resolveWorld(world);
+      return text(discardPrepContentOp(w, { entityId }));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_regenerate_prep_field ------------------------------------------------------------
+
+server.registerTool(
+  "wf_regenerate_prep_field",
+  {
+    title: "Regenerate ONE field of an entity's prep content (Phase 11 living-doc editing)",
+    description:
+      "The field-granular living-doc revision path (mutation-engine/prep-content.mjs's regeneratePrepField + " +
+      "updatePrepField): regenerates exactly the one named field, grounded in the entity's OTHER current fields " +
+      "(for consistency) plus its real graph neighborhood, and persists ONLY that field -- every other field stays " +
+      "byte-identical. Pass `note` for steering guidance (e.g. 'reveal a different secret'). Requires " +
+      "ANTHROPIC_API_KEY.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      entityId: z.string(),
+      fieldName: z.string().describe("Which field to regenerate, e.g. 'secret' or 'potentialRolls' -- must be a real field for this entity's type."),
+      note: z.string().optional()
+    }
+  },
+  async ({ world, dataDir, entityId, fieldName, note }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const result = await regeneratePrepFieldOp(dir, w, { entityId, fieldName, note });
+      return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_mark_prep_content_stale -----------------------------------------------------------
+
+server.registerTool(
+  "wf_mark_prep_content_stale",
+  {
+    title: "Manually flag an entity's prep content as stale",
+    description:
+      "Flips status -> 'stale' without touching `fields` at all -- the same function task 11.4's accept-time hook " +
+      "calls automatically when the underlying entity is re-mutated; exposed here too for a GM who wants to flag " +
+      "it themselves. A safe no-op for an entity with no prep content yet.",
+    inputSchema: { world: worldParam, entityId: z.string() }
+  },
+  async ({ world, entityId }) => {
+    try {
+      const w = resolveWorld(world);
+      return text(markPrepContentStaleOp(w, { entityId }));
     } catch (err) {
       return errorText(err);
     }

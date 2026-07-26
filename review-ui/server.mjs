@@ -71,6 +71,22 @@ import {
   getEntityNarrationHistoryOp
 } from "../wf-mcp-server/lib/mutation-ops.mjs";
 
+// Phase 11 -- per-node content generation ("develop this node"). A
+// deliberately separate operations module from mutation-ops.mjs above (see
+// mutation-engine/prep-content.mjs's own doc comment) -- none of these
+// routes take a batchId, so this surface is not reachable from Batch
+// Review even in principle.
+import {
+  proposePrepFramingsOp,
+  reframePrepFramingsOp,
+  generatePrepContentOp,
+  getPrepContentOp,
+  acceptPrepContentOp,
+  discardPrepContentOp,
+  regeneratePrepFieldOp,
+  markPrepContentStaleOp
+} from "../wf-mcp-server/lib/prep-content-ops.mjs";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
 
@@ -100,6 +116,9 @@ function statusForError(err) {
   // conflict with the reject-loop's own precondition (needs a note now),
   // not a malformed request.
   if (err.name === "FramingRoundLimitError") return 409;
+  // Phase 11: same conflict, one level down (a single entity's prep-content
+  // framing round, not a whole writeup-import batch).
+  if (err.name === "PrepFramingRoundLimitError") return 409;
   if (/no (batch|region|entity|world|snapshot) found/i.test(err.message ?? "")) return 404;
   if (/not found/i.test(err.message ?? "")) return 404;
   return 400; // everything else thrown by this codebase's library modules is a deliberate, caller-facing validation error, not a crash
@@ -757,6 +776,80 @@ async function handleApi(req, res, url, parts) {
       rubberDuck: body.rubberDuck
     });
     return sendJson(res, 200, result);
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 11 -- per-node content generation ("develop this node"). Entirely
+  // separate from every /api/batches/* route above: no batchId anywhere in
+  // this surface, so it is not reachable from Batch Review even in
+  // principle. All routes below hang off /api/entities/:entityId/prep(...)
+  // -- entityId is an already-committed entity/edge id from the live
+  // snapshot, resolved the same way the narration routes above already do.
+  // ---------------------------------------------------------------------
+
+  // GET /api/entities/:entityId/prep?world=...
+  if (method === "GET" && parts.length === 4 && parts[1] === "entities" && parts[3] === "prep") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, getPrepContentOp(w, { entityId: parts[2] }));
+  }
+
+  // POST /api/entities/:entityId/prep/propose-framings  { world, dataDir }
+  if (method === "POST" && parts.length === 5 && parts[1] === "entities" && parts[3] === "prep" && parts[4] === "propose-framings") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
+    const w = resolveWorld(body.world);
+    const result = await proposePrepFramingsOp(dir, w, { entityId: parts[2] });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/entities/:entityId/prep/reframe  { world, dataDir, priorRoundCount }
+  if (method === "POST" && parts.length === 5 && parts[1] === "entities" && parts[3] === "prep" && parts[4] === "reframe") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
+    const w = resolveWorld(body.world);
+    const result = await reframePrepFramingsOp(dir, w, { entityId: parts[2], priorRoundCount: body.priorRoundCount });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/entities/:entityId/prep/generate  { world, dataDir, selection }
+  if (method === "POST" && parts.length === 5 && parts[1] === "entities" && parts[3] === "prep" && parts[4] === "generate") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
+    const w = resolveWorld(body.world);
+    if (!body.selection) throw new Error("POST .../prep/generate requires a `selection` field.");
+    const result = await generatePrepContentOp(dir, w, { entityId: parts[2], selection: body.selection });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/entities/:entityId/prep/accept  { world }
+  if (method === "POST" && parts.length === 5 && parts[1] === "entities" && parts[3] === "prep" && parts[4] === "accept") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    return sendJson(res, 200, acceptPrepContentOp(w, { entityId: parts[2] }));
+  }
+
+  // POST /api/entities/:entityId/prep/discard  { world }
+  if (method === "POST" && parts.length === 5 && parts[1] === "entities" && parts[3] === "prep" && parts[4] === "discard") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    return sendJson(res, 200, discardPrepContentOp(w, { entityId: parts[2] }));
+  }
+
+  // POST /api/entities/:entityId/prep/regenerate-field  { world, dataDir, fieldName, note }
+  if (method === "POST" && parts.length === 5 && parts[1] === "entities" && parts[3] === "prep" && parts[4] === "regenerate-field") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
+    const w = resolveWorld(body.world);
+    if (!body.fieldName) throw new Error("POST .../prep/regenerate-field requires a `fieldName` field.");
+    const result = await regeneratePrepFieldOp(dir, w, { entityId: parts[2], fieldName: body.fieldName, note: body.note });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/entities/:entityId/prep/mark-stale  { world }
+  if (method === "POST" && parts.length === 5 && parts[1] === "entities" && parts[3] === "prep" && parts[4] === "mark-stale") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    return sendJson(res, 200, markPrepContentStaleOp(w, { entityId: parts[2] }));
   }
 
   sendJson(res, 404, { error: `No route: ${req.method} ${url.pathname}` });
