@@ -2,16 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Graph Explorer — not yet built</title>
-<style>
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 640px; margin: 4rem auto; padding: 0 1rem; color: #1c1b1a; }
-  @media (prefers-color-scheme: dark) { body { background: #181614; color: #ece7e0; } a { color: #6fcf9c; } }
-  a { color: #2f6f4f; }
-</style>
+<title>Graph Explorer — moved</title>
+<meta http-equiv="refresh" content="0; url=/#graph">
 </head>
 <body>
-  <h1>Graph Explorer</h1>
-  <p>Not yet built. Per Phase 6's design doc, the full graph visualization is a "maybe once a month" tool, explicitly out of scope for this phase — this is a stub link, not a real page.</p>
-  <p><a href="/">&larr; Back to Review</a></p>
+  <!-- Phase 7: the real graph view was built into the main SPA shell as a
+       hash-routed view (index.html's #view-graph, app.js's
+       renderGraphStandaloneView) rather than as this separate static page --
+       this file used to be a deliberate Phase-6-era "not yet built" stub
+       (see plans/phase-7-tasks.md task 7.4), now just a redirect for any
+       old bookmark/link pointing here. -->
+  <p><a href="/#graph">Continue to the Graph view &rarr;</a></p>
+  <script>location.replace("/#graph");</script>
 </body>
 </html>

@@ -14,6 +14,7 @@
     <button data-nav="queue">Queue</button>
     <button data-nav="import">New Import</button>
     <button data-nav="debt">Deferred Debt</button>
+    <button data-nav="graph">Graph</button>
   </nav>
   <div class="topbar-right">
     <select id="world-select" aria-label="World"></select>
@@ -91,7 +92,44 @@
     <button id="btn-reject-selected" class="btn btn--reject">Reject Selected</button>
   </div>
 
-  <div id="review-list" class="mutation-list"></div>
+  <!-- Phase 7 task 7.3: List/Graph toggle. Both render from the SAME
+       reviewState.detail and the SAME checkboxes in #review-list -- Graph
+       mode never fetches or tracks a second copy of selection/accept/reject
+       state, see app.js's renderReviewGraph. -->
+  <div class="view-toggle" id="review-mode-toggle">
+    <button data-review-mode="list" class="active">List</button>
+    <button data-review-mode="graph">Graph</button>
+  </div>
+
+  <div id="review-list-wrap">
+    <div id="review-list" class="mutation-list"></div>
+  </div>
+
+  <div id="review-graph-wrap" hidden>
+    <div class="graph-context-controls">
+      <span class="hint">Batch entities plus their persisted neighbors.</span>
+      <button id="btn-graph-expand-context" class="btn btn--ghost">Expand context</button>
+      <span id="review-graph-count" class="graph-node-count"></span>
+    </div>
+    <div id="review-graph" class="graph-view-container"></div>
+  </div>
+</section>
+
+<!-- ================= GRAPH (standalone, Phase 7 task 7.4) ================= -->
+<section id="view-graph" class="view">
+  <h1>Graph</h1>
+  <p class="hint">The whole world graph. Defaults to entities needing attention -- unreviewed or carrying deferred debt.</p>
+
+  <div class="graph-filter-bar">
+    <label><input type="checkbox" id="graph-filter-unreviewed" checked> Unreviewed</label>
+    <label><input type="checkbox" id="graph-filter-debt" checked> Deferred debt</label>
+    <button id="btn-graph-show-everything" class="btn btn--ghost">Show everything</button>
+    <input id="graph-search" type="search" placeholder="Search by name or type&hellip;">
+    <span id="graph-standalone-count" class="graph-node-count"></span>
+  </div>
+
+  <div id="graph-standalone" class="graph-view-container"></div>
+  <div id="graph-standalone-empty" class="empty-state" hidden>No entities need attention right now.</div>
 </section>
 
 <!-- ================= DEFERRED DEBT ================= -->
@@ -121,7 +159,7 @@
 
   <div class="settings-card">
     <h2 class="section-label">Graph</h2>
-    <a href="/graph.html" target="_blank" rel="noopener" class="link-btn">Explore Graph &rarr;</a>
+    <button class="link-btn" data-nav="graph">Explore Graph &rarr;</button>
   </div>
 
   <div class="settings-card">
@@ -136,6 +174,6 @@
 
 <div id="toast-container" class="toast-container"></div>
 
-<script src="/app.js"></script>
+<script type="module" src="/app.js"></script>
 </body>
 </html>

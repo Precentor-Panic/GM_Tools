@@ -1,5 +1,10 @@
 // GM Review — Phase 6 review UI frontend. Plain JS, no framework, no build step.
+// Phase 7 adds review-ui/public/graph-view.js, a shared SVG graph-rendering
+// module used both by the Review screen's List/Graph toggle and the
+// standalone Graph nav view -- imported as an ES module (index.html's
+// <script> tag was switched to type="module" for this).
 "use strict";
+import { renderGraph } from "./graph-view.js";
 
 // ---------------------------------------------------------------------------
 // world selection
@@ -80,6 +85,7 @@ function renderCurrentView() {
   else if (view === "settings") renderSettings();
   else if (view === "import") renderImportView();
   else if (view === "framing") renderFramingView();
+  else if (view === "graph") renderGraphStandaloneView();
 }
 
 window.addEventListener("hashchange", renderCurrentView);
@@ -201,11 +207,19 @@ let reviewState = {
   batchId: null,
   detail: null,
   expanded: new Set(), // mutationIds the GM has actually opened this session
-  focusIndex: -1
+  focusIndex: -1,
+  mode: "list", // Phase 7 task 7.3: 'list' | 'graph' -- List stays the confirmed default on every fresh batch load
+  graphDepth: 1
 };
 
+// Phase 7 task 7.4: set by the standalone Graph view's "Show in list" action
+// so renderReviewFromState can scroll to and expand the right row once the
+// batch it navigates to has loaded -- cleared immediately after use.
+let pendingScrollToEntityId = null;
+
 async function renderReview(batchId) {
-  reviewState = { batchId, detail: null, expanded: new Set(), focusIndex: -1 };
+  reviewState = { batchId, detail: null, expanded: new Set(), focusIndex: -1, mode: "list", graphDepth: 1 };
+  setReviewModeToggle("list");
   const listEl = document.getElementById("review-list");
   listEl.innerHTML = "<p class='hint'>Loading&hellip;</p>";
   try {
@@ -286,6 +300,33 @@ function renderReviewFromState(openMutationIds, openEntityIdHint) {
     }
   }
   reviewState.focusIndex = -1;
+
+  // Phase 7 task 7.4: a "Show in list" jump from the standalone Graph view
+  // lands here once this batch has (re)loaded -- scroll to and expand the
+  // matching row, same mechanism as an in-page row expansion.
+  if (pendingScrollToEntityId) {
+    const targetEntityId = pendingScrollToEntityId;
+    pendingScrollToEntityId = null;
+    const target = detail.regions
+      .flatMap((r) => r.entities)
+      .find((e) => e.entityId === targetEntityId);
+    if (target) {
+      const row = document.querySelector(`.mutation-row[data-mutation-id="${cssEscapeId(target.mutationId)}"]`);
+      const details = row?.querySelector("details");
+      if (details && !details.open) details.open = true; // triggers onRowExpanded via the 'toggle' listener
+      row?.scrollIntoView({ block: "center" });
+    }
+  }
+
+  // Phase 7 task 7.3: Graph mode renders from this SAME reviewState.detail
+  // (never a second fetch/copy of batch state) -- re-render it in lockstep
+  // with every List rebuild so switching back to Graph after an accept/
+  // reject/regenerate always reflects the latest state.
+  if (reviewState.mode === "graph") renderReviewGraph();
+}
+
+function cssEscapeId(s) {
+  return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(s) : String(s);
 }
 
 function opLabel(op) {
@@ -865,6 +906,104 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase 7 task 7.3 — Review screen's List/Graph toggle.
+//
+// The single most important correctness point in this phase: Graph mode is
+// a second RENDERING of reviewState.detail, never a second source of truth.
+// It shares the exact same checkbox elements List mode builds (in
+// #review-list, which stays in the DOM -- just hidden -- while Graph mode
+// is showing) and the exact same acceptSingle/rejectSingle functions List's
+// own per-row buttons call. Multi-select in the graph works by flipping
+// those SAME checkboxes, so the existing #btn-accept-selected/
+// #btn-reject-selected bar (which reads checkedMutationIds() from the
+// whole document, not scoped to whichever view is visible) needs no
+// changes at all to also work from Graph mode.
+// ---------------------------------------------------------------------------
+
+function setReviewModeToggle(mode) {
+  for (const btn of document.querySelectorAll("#review-mode-toggle button")) {
+    btn.classList.toggle("active", btn.dataset.reviewMode === mode);
+  }
+  document.getElementById("review-list-wrap").hidden = mode !== "list";
+  document.getElementById("review-graph-wrap").hidden = mode !== "graph";
+}
+
+document.getElementById("review-mode-toggle").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-review-mode]");
+  if (!btn) return;
+  reviewState.mode = btn.dataset.reviewMode;
+  setReviewModeToggle(reviewState.mode);
+  if (reviewState.mode === "graph") renderReviewGraph();
+});
+
+document.getElementById("btn-graph-expand-context").addEventListener("click", () => {
+  reviewState.graphDepth += 1;
+  renderReviewGraph();
+});
+
+/**
+ * Fetch this batch's graph payload (task 7.1's batch-scoped route) and
+ * cross-reference it with reviewState.detail's own per-entity status/
+ * rationale/mutationId -- keyed the SAME way the server keys a
+ * not-yet-persisted create (`new:<mutationId>`), so a graph node maps to
+ * EXACTLY the mutationId the list's checkbox/Accept/Reject buttons use.
+ */
+async function renderReviewGraph() {
+  const container = document.getElementById("review-graph");
+  const countEl = document.getElementById("review-graph-count");
+  let graph;
+  try {
+    graph = await api(`/api/graph${withWorld({ batchId: reviewState.batchId, depth: reviewState.graphDepth })}`);
+  } catch (err) {
+    container.innerHTML = `<p class="hint">Could not load graph: ${escapeHtml(err.message)}</p>`;
+    return;
+  }
+
+  const byNodeKey = new Map();
+  for (const region of reviewState.detail.regions) {
+    for (const entity of region.entities) {
+      const key = entity.entityId ?? `new:${entity.mutationId}`;
+      byNodeKey.set(key, entity);
+    }
+  }
+
+  const nodes = graph.nodes.map((n) => {
+    const entity = byNodeKey.get(n.id);
+    return { ...n, status: entity?.status, mutationId: entity?.mutationId, rationale: entity?.rationale };
+  });
+
+  countEl.textContent = `${nodes.length} node${nodes.length === 1 ? "" : "s"} (context depth ${reviewState.graphDepth})`;
+
+  renderGraph(container, { nodes, edges: graph.edges }, {
+    mode: "batch",
+    cacheKey: `batch:${reviewState.batchId}`,
+    isSelected: (nodeId) => {
+      const entity = byNodeKey.get(nodeId);
+      if (!entity) return false;
+      return !!document.querySelector(`.mutation-row[data-mutation-id="${cssEscapeId(entity.mutationId)}"] .row-check`)?.checked;
+    },
+    onToggleSelect: (nodeId, selected) => {
+      const entity = byNodeKey.get(nodeId);
+      if (!entity) return;
+      const cb = document.querySelector(`.mutation-row[data-mutation-id="${cssEscapeId(entity.mutationId)}"] .row-check`);
+      if (cb && !cb.disabled) cb.checked = selected;
+    },
+    onAccept: (mutationId) => acceptSingle(mutationId),
+    onReject: (mutationId) => rejectSingle(mutationId),
+    onShowInList: (nodeId) => {
+      const entity = byNodeKey.get(nodeId);
+      reviewState.mode = "list";
+      setReviewModeToggle("list");
+      if (!entity) return;
+      const row = document.querySelector(`.mutation-row[data-mutation-id="${cssEscapeId(entity.mutationId)}"]`);
+      const details = row?.querySelector("details");
+      if (details && !details.open) details.open = true;
+      row?.scrollIntoView({ block: "center" });
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // DEFERRED DEBT
 // ---------------------------------------------------------------------------
 
@@ -1014,6 +1153,120 @@ document.getElementById("btn-undo-last").addEventListener("click", async () => {
     statusEl.textContent = `Undo failed: ${err.message}`;
   }
 });
+
+// ---------------------------------------------------------------------------
+// Phase 7 task 7.4 — standalone Graph nav view: whole-graph, batch-
+// independent, defaulting to the CONFIRMED unreviewed-OR-deferred-debt
+// filter (never "show everything" -- that's an explicit escape hatch).
+// This is NOT a review surface: nodes here have no Accept/Reject (there's
+// no batch-selection state to act on), only an optional "Show in list" if
+// the entity happens to belong to a currently-open batch.
+// ---------------------------------------------------------------------------
+
+let graphStandaloneShowAll = false;
+
+function renderGraphStandaloneView() {
+  graphStandaloneShowAll = false;
+  document.getElementById("graph-filter-unreviewed").checked = true;
+  document.getElementById("graph-filter-debt").checked = true;
+  document.getElementById("graph-search").value = "";
+  refreshGraphStandalone();
+}
+
+async function refreshGraphStandalone() {
+  const container = document.getElementById("graph-standalone");
+  const emptyEl = document.getElementById("graph-standalone-empty");
+  const countEl = document.getElementById("graph-standalone-count");
+  emptyEl.hidden = true;
+  countEl.textContent = "";
+
+  if (!CURRENT_WORLD) {
+    container.innerHTML = "";
+    emptyEl.hidden = false;
+    emptyEl.textContent = "No world configured yet.";
+    return;
+  }
+
+  let filterParam;
+  if (graphStandaloneShowAll) {
+    filterParam = "all";
+  } else {
+    const tokens = [];
+    if (document.getElementById("graph-filter-unreviewed").checked) tokens.push("unreviewed");
+    if (document.getElementById("graph-filter-debt").checked) tokens.push("deferred-debt");
+    if (!tokens.length) {
+      container.innerHTML = "";
+      emptyEl.hidden = false;
+      emptyEl.textContent = "No status filter selected — check Unreviewed or Deferred debt, or Show everything.";
+      return;
+    }
+    filterParam = tokens.join(",");
+  }
+
+  let graph;
+  try {
+    graph = await api(`/api/graph${withWorld({ filter: filterParam })}`);
+  } catch (err) {
+    container.innerHTML = `<p class="hint">Could not load graph: ${escapeHtml(err.message)}</p>`;
+    return;
+  }
+  if (!graph.nodes.length) {
+    container.innerHTML = "";
+    emptyEl.hidden = false;
+    emptyEl.textContent = graphStandaloneShowAll ? "No entities in this world yet." : "No entities need attention right now.";
+    return;
+  }
+
+  // Search/filter bar narrows client-side over whatever the server already
+  // returned -- the DEFAULT status filter above is what actually bounds how
+  // much gets fetched/rendered (task 7.4's real scaling lever); search never
+  // needs to reduce fetch size, only which of an already-small set renders.
+  const q = document.getElementById("graph-search").value.trim().toLowerCase();
+  const nodes = q
+    ? graph.nodes.filter((n) => n.name.toLowerCase().includes(q) || n.type.toLowerCase().includes(q))
+    : graph.nodes;
+  const visibleIds = new Set(nodes.map((n) => n.id));
+  const edges = graph.edges.filter((e) => visibleIds.has(e.sourceId) && visibleIds.has(e.targetId));
+
+  countEl.textContent = nodes.length === graph.nodes.length
+    ? `${nodes.length} node${nodes.length === 1 ? "" : "s"}`
+    : `${nodes.length} of ${graph.nodes.length} nodes`;
+
+  // Best-effort: which open batch (if any) a given entity belongs to, so
+  // the popover can offer "Show in list" -- this is a status dashboard, not
+  // a review surface, so Accept/Reject never appear here regardless.
+  const entityToBatch = new Map();
+  try {
+    const { batches } = await api(`/api/batches${withWorld()}`);
+    for (const b of batches.filter((x) => x.status === "open")) {
+      try {
+        const detail = await api(`/api/batches/${b.id}${withWorld()}`);
+        for (const region of detail.regions) {
+          for (const entity of region.entities) {
+            if (entity.entityId) entityToBatch.set(entity.entityId, b.id);
+          }
+        }
+      } catch { /* skip an unreadable batch, don't fail the whole view */ }
+    }
+  } catch { /* no open batches is a completely normal state */ }
+
+  renderGraph(container, { nodes, edges }, {
+    mode: "standalone",
+    cacheKey: "standalone",
+    findOpenBatchForNode: (nodeId) => (entityToBatch.has(nodeId) ? { batchId: entityToBatch.get(nodeId) } : null),
+    onShowInList: (nodeId) => {
+      const batchId = entityToBatch.get(nodeId);
+      if (!batchId) return;
+      pendingScrollToEntityId = nodeId;
+      navigate("review", batchId);
+    }
+  });
+}
+
+document.getElementById("graph-filter-unreviewed").addEventListener("change", () => { graphStandaloneShowAll = false; refreshGraphStandalone(); });
+document.getElementById("graph-filter-debt").addEventListener("change", () => { graphStandaloneShowAll = false; refreshGraphStandalone(); });
+document.getElementById("btn-graph-show-everything").addEventListener("click", () => { graphStandaloneShowAll = true; refreshGraphStandalone(); });
+document.getElementById("graph-search").addEventListener("input", () => refreshGraphStandalone());
 
 // ---------------------------------------------------------------------------
 // misc helpers
