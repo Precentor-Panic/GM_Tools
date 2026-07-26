@@ -556,7 +556,7 @@ function appendNarrateEntityButton(entity, actionArea) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ world: CURRENT_WORLD, mutationId: entity.mutationId })
       });
-      appendEntityNarrationCard(entity, actionArea, { prose: result.prose, createdAt: new Date().toISOString(), status: "current" });
+      appendEntityNarrationCard(entity, actionArea, { prose: result.prose });
     } catch (err) {
       btn.disabled = false;
       btn.textContent = "Narrate This";
@@ -598,7 +598,7 @@ function appendEntityNarrationCard(entity, actionArea, narration) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ world: CURRENT_WORLD, mutationId: entity.mutationId, note: input.value })
       });
-      appendEntityNarrationCard(entity, actionArea, { prose: result.prose, createdAt: new Date().toISOString(), status: "current" });
+      appendEntityNarrationCard(entity, actionArea, { prose: result.prose });
     } catch (err) {
       showToast(`Narration failed: ${err.message}`);
     } finally {

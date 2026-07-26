@@ -65,7 +65,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { callModelDetailed, fillTemplate as fillTemplateShared } from "./llm-call.mjs";
-import { neighborhood, findEntity } from "../wf-mcp-server/lib/graph.mjs";
+import { neighborhood, findEntity, findEdge } from "../wf-mcp-server/lib/graph.mjs";
 import { saveEntityNarration } from "./entity-narration.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -188,26 +188,68 @@ export function assertMutationNarratable(batch, mutationId) {
  */
 export function buildAdjacencyContext(entities, edges, entityId, depth = DEFAULT_ENTITY_NARRATE_DEPTH) {
   const entity = findEntity(entities, entityId);
-  const entityLabel = entity ? `${entity.name}${entity.type ? ` (${entity.type})` : ""}` : entityId;
-
-  const { edges: nearbyEdges } = neighborhood(entities, edges, entityId, depth);
-  const entityMap = new Map(entities.map((e) => [e.id, e]));
-  const seen = new Set();
-  const neighborDescriptions = [];
-  for (const edge of nearbyEdges) {
-    // neighborhood() at depth=1 only ever returns edges incident to entityId
-    // in the first place, but this guard keeps the result correct even if a
-    // caller passes a larger depth (edges among neighbors-of-neighbors would
-    // otherwise leak in as if they were "immediate").
-    if (edge.sourceId !== entityId && edge.targetId !== entityId) continue;
-    const otherId = edge.sourceId === entityId ? edge.targetId : edge.sourceId;
-    if (seen.has(otherId)) continue;
-    seen.add(otherId);
-    const other = entityMap.get(otherId);
-    neighborDescriptions.push(`${other?.name ?? otherId} (${edge.relationshipType})`);
+  if (entity) {
+    const entityLabel = `${entity.name}${entity.type ? ` (${entity.type})` : ""}`;
+    const { edges: nearbyEdges } = neighborhood(entities, edges, entityId, depth);
+    const entityMap = new Map(entities.map((e) => [e.id, e]));
+    const seen = new Set();
+    const neighborDescriptions = [];
+    for (const edge of nearbyEdges) {
+      // neighborhood() at depth=1 only ever returns edges incident to
+      // entityId in the first place, but this guard keeps the result
+      // correct even if a caller passes a larger depth (edges among
+      // neighbors-of-neighbors would otherwise leak in as if they were
+      // "immediate").
+      if (edge.sourceId !== entityId && edge.targetId !== entityId) continue;
+      const otherId = edge.sourceId === entityId ? edge.targetId : edge.sourceId;
+      if (seen.has(otherId)) continue;
+      seen.add(otherId);
+      const other = entityMap.get(otherId);
+      neighborDescriptions.push(`${other?.name ?? otherId} (${edge.relationshipType})`);
+    }
+    return { entityLabel, neighborDescriptions };
   }
 
-  return { entityLabel, neighborDescriptions };
+  // SELF-REVIEW REMEDIATION: `entityId` isn't an entity at all for an
+  // upsert_edge/delete_edge mutation -- StoredMutation.id there is the EDGE's
+  // own id, which is never a key in neighborhood()'s adjacency map (built
+  // from edge.sourceId/targetId, not edge.id). Without this branch, an edge
+  // mutation's narration would ground on the raw internal edge id string
+  // with zero neighbors -- not a crash, but exactly the kind of hollow,
+  // untargeted context this task exists to eliminate, and edge mutations
+  // (relationship strength/valence/notes changes) are a common, ordinary
+  // case in this codebase, not a rare corner. Ground on the edge's own two
+  // endpoints instead: the relationship IS the "entity" being narrated, and
+  // its endpoints are its most immediate real context.
+  const edge = findEdge(edges, entityId);
+  if (edge) {
+    const entityMap = new Map(entities.map((e) => [e.id, e]));
+    const sourceName = entityMap.get(edge.sourceId)?.name ?? edge.sourceId;
+    const targetName = entityMap.get(edge.targetId)?.name ?? edge.targetId;
+    const entityLabel = `${sourceName} ↔ ${targetName} (${edge.relationshipType})`;
+
+    const neighborDescriptions = [];
+    const seen = new Set([edge.sourceId, edge.targetId]);
+    for (const [anchorId, anchorName] of [[edge.sourceId, sourceName], [edge.targetId, targetName]]) {
+      const { edges: anchorEdges } = neighborhood(entities, edges, anchorId, depth);
+      for (const nearbyEdge of anchorEdges) {
+        if (nearbyEdge.id === edge.id) continue; // the edge being narrated itself, not one of its neighbors
+        if (nearbyEdge.sourceId !== anchorId && nearbyEdge.targetId !== anchorId) continue;
+        const otherId = nearbyEdge.sourceId === anchorId ? nearbyEdge.targetId : nearbyEdge.sourceId;
+        if (seen.has(otherId)) continue;
+        seen.add(otherId);
+        const otherName = entityMap.get(otherId)?.name ?? otherId;
+        neighborDescriptions.push(`${anchorName} → ${otherName} (${nearbyEdge.relationshipType})`);
+      }
+    }
+    return { entityLabel, neighborDescriptions };
+  }
+
+  // Neither a known entity nor a known edge -- degrade to the raw id rather
+  // than throwing, matching renderMutationSummary's own existing fallback
+  // convention (`m.entityContext?.name ?? m.id ?? m.mutationId`) elsewhere
+  // in this file for the same "we don't actually know what this is" case.
+  return { entityLabel: entityId, neighborDescriptions: [] };
 }
 
 /**

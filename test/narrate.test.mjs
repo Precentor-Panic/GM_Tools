@@ -394,6 +394,58 @@ test("DEFAULT_ENTITY_NARRATE_DEPTH is 1 -- immediate neighbors only, not a wider
   assert.equal(DEFAULT_ENTITY_NARRATE_DEPTH, 1);
 });
 
+test("SELF-REVIEW REMEDIATION: buildAdjacencyContext grounds an EDGE mutation in its own two endpoints, not a hollow raw-id-with-no-neighbors result", () => {
+  // e1-shared connects alvor-shared <-kinship-> gerdur-shared; gerdur-shared
+  // also connects onward to riverwood-shared via e2-shared.
+  const { entityLabel, neighborDescriptions } = buildAdjacencyContext(FIXTURE_ENTITIES, FIXTURE_EDGES, "e1-shared");
+  assert.equal(entityLabel, "Alvor ↔ Gerdur (kinship)", "the relationship's own two endpoints, not the raw edge id");
+  assert.ok(neighborDescriptions.some((d) => d.includes("Riverwood") && d.includes("containment")), "should surface Gerdur's OTHER real connection (to Riverwood) as further grounding");
+  assert.ok(!neighborDescriptions.some((d) => d.includes("e1-shared")), "must not describe the edge as its own neighbor");
+});
+
+test("buildAdjacencyContext: an unknown id (neither entity nor edge) degrades to the raw id with no neighbors, rather than throwing", () => {
+  const { entityLabel, neighborDescriptions } = buildAdjacencyContext(FIXTURE_ENTITIES, FIXTURE_EDGES, "does-not-exist");
+  assert.equal(entityLabel, "does-not-exist");
+  assert.deepEqual(neighborDescriptions, []);
+});
+
+test("narrateEntity: an upsert_edge mutation is grounded in its real endpoints, not the raw edge id (real-shaped prompt check)", async () => {
+  let capturedPrompt = "";
+  const client = mockClient([
+    (params) => {
+      capturedPrompt = params.messages[0].content;
+      return "Some prose.";
+    }
+  ]);
+  const { entities, edges } = fx("edgecase");
+  const batch = {
+    id: "batch-edge-1",
+    world: "wf-test",
+    createdAt: new Date().toISOString(),
+    scope: { mode: "manual" },
+    elapsedTimeDescriptor: "right now",
+    status: "open",
+    mutations: [
+      {
+        op: "upsert_edge",
+        id: `e1-edgecase`,
+        data: { strength: 0.95 },
+        rationale: "Their bond strengthens under threat.",
+        batchId: "batch-edge-1",
+        sourceKind: "manual",
+        mutationId: "m0",
+        status: "accepted",
+        regionId: "region-0",
+        entityContext: { name: "Alvor -> Gerdur (kinship)", importance: 0.5, tags: [] },
+        diff: [{ field: "strength", from: 0.8, to: 0.95 }]
+      }
+    ]
+  };
+  await narrateEntity(batch, "m0", { entities, edges }, { client });
+  assert.ok(capturedPrompt.includes("Alvor ↔ Gerdur (kinship)"), "should ground on the edge's real endpoints");
+  assert.ok(!capturedPrompt.includes("e1-edgecase"), "must not surface the raw internal edge id as if it were a place/entity name");
+});
+
 test("narrateEntity: THE ACTUAL REGRESSION FIX -- targeting context is built from this entity's real adjacent-entity data, not left empty, and different entities in the same batch get different grounding", async () => {
   let capturedPrompts = [];
   const client = mockClient([
