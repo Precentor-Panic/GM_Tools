@@ -201,12 +201,11 @@ let reviewState = {
   batchId: null,
   detail: null,
   expanded: new Set(), // mutationIds the GM has actually opened this session
-  narrationCache: null, // {prose} once fetched for this batch
   focusIndex: -1
 };
 
 async function renderReview(batchId) {
-  reviewState = { batchId, detail: null, expanded: new Set(), narrationCache: null, focusIndex: -1 };
+  reviewState = { batchId, detail: null, expanded: new Set(), focusIndex: -1 };
   const listEl = document.getElementById("review-list");
   listEl.innerHTML = "<p class='hint'>Loading&hellip;</p>";
   try {
@@ -485,64 +484,94 @@ function renderRowActionArea(entity, actionArea) {
   }
 
   // status === 'accepted'
-  if (!reviewState.detail.narratable) {
+  if (!entity.entityId) {
+    // A create not yet synced has no resolved target id -- entity-narration.mjs
+    // has nothing to key its store by (see mutation-engine/narrate.mjs's
+    // narrateEntity, which fails fast on exactly this case rather than
+    // wasting an API call on an unpersistable result).
     const note = document.createElement("div");
     note.className = "row-status-note";
-    note.textContent = "Accepted — waiting on the rest of this batch before narration is available.";
+    note.textContent = "Accepted — sync this batch before narrating (a newly-created entity needs a resolved id first).";
     actionArea.appendChild(note);
     return;
   }
 
-  renderNarrationArea(actionArea);
+  renderEntityNarrationArea(entity, actionArea);
 }
 
 /**
- * Narration is generated once per BATCH (mutation-engine/narrate.mjs
- * narrates the whole scene's consequences, not one mutation in isolation --
- * see server.mjs's narrateOp), but the design doc (phase-6-review.md)
- * describes it appearing PER ROW, replacing that row's own action area,
- * directly below that row's own rationale, the moment the row's mutation is
- * accepted and the batch has become fully narratable. Reconciled here (a
- * genuinely ambiguous point, noted in the closing report): the same
- * batch-level prose, once fetched, is cached client-side
- * (reviewState.narrationCache) and rendered into every accepted row's own
- * action area -- satisfying the letter of "narration replaces that row's
- * action bar" and "these two texts [rationale, narration] sit near each
- * other on screen in the one moment right after accept" for every row that
- * belongs to this batch, without re-fetching per row.
+ * PHASE 10 (plans/phase-10-review.md / phase-10-tasks.md task 10.5):
+ * replaces the old whole-BATCH narration (a single client-side
+ * reviewState.narrationCache, the actual root cause of "narration is the
+ * same across every row," "regenerate recycles one generic statement," and
+ * "leaving and coming back loses it" -- narrate.mjs only ever narrated an
+ * entire batch in one call, and the result never touched disk). Per-entity
+ * narration is now the default: each accepted row fetches (and persists,
+ * server-side, via mutation-engine/entity-narration.mjs) ITS OWN narration,
+ * gated at ENTITY grain (this row's own mutation must be accepted -- no
+ * dependency on `reviewState.detail.narratable`/the rest of the batch at
+ * all anymore, the actual grain fix).
+ *
+ * Fetches this entity's current narration fresh every time a row is
+ * (re)rendered -- deliberately not client-cached, so a fresh page load (or
+ * simply reopening this row later) always reflects the real, durable,
+ * server-side state instead of a stale in-memory guess. A GM leaving and
+ * returning to this exact batch will see whatever was last generated,
+ * because the fetch below reads it back from disk every time.
  */
-function renderNarrationArea(actionArea) {
-  if (reviewState.narrationCache) {
-    appendNarrationCard(actionArea, reviewState.narrationCache.prose);
-    return;
+async function renderEntityNarrationArea(entity, actionArea) {
+  const loading = document.createElement("div");
+  loading.className = "hint";
+  loading.textContent = "Loading narration…";
+  actionArea.appendChild(loading);
+
+  let current = null;
+  try {
+    const result = await api(`/api/entities/${encodeURIComponent(entity.entityId)}/narration${withWorld()}`);
+    current = result.narration;
+  } catch {
+    // A fetch failure here shouldn't block offering the Narrate button --
+    // fall through and treat it the same as "never narrated yet".
   }
+  if (!actionArea.isConnected) return; // the row was re-rendered while this fetch was in flight -- don't stomp a newer render
+
+  actionArea.innerHTML = "";
+  if (current) {
+    appendEntityNarrationCard(entity, actionArea, current);
+  } else {
+    appendNarrateEntityButton(entity, actionArea);
+  }
+}
+
+function appendNarrateEntityButton(entity, actionArea) {
   const btn = document.createElement("button");
   btn.className = "btn btn--accept";
-  btn.textContent = "Narrate This Scene";
+  btn.textContent = "Narrate This";
   btn.addEventListener("click", async () => {
     btn.disabled = true;
     btn.textContent = "Narrating…";
     try {
-      const result = await api(`/api/batches/${reviewState.batchId}/narrate`, {
+      const result = await api(`/api/batches/${reviewState.batchId}/narrate-entity`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ world: CURRENT_WORLD })
+        body: JSON.stringify({ world: CURRENT_WORLD, mutationId: entity.mutationId })
       });
-      reviewState.narrationCache = result;
-      renderReviewFromState(currentlyOpenMutationIds());
+      appendEntityNarrationCard(entity, actionArea, { prose: result.prose, createdAt: new Date().toISOString(), status: "current" });
     } catch (err) {
       btn.disabled = false;
-      btn.textContent = "Narrate This Scene";
+      btn.textContent = "Narrate This";
       showToast(`Narration failed: ${err.message}`);
     }
   });
   actionArea.appendChild(btn);
 }
 
-function appendNarrationCard(actionArea, prose) {
+/** Same visual card Phase 6 established (serif/parchment, distinct from the sans-serif rationale card above it) -- just fed by this ONE entity's own narration now, not a whole-batch cache. */
+function appendEntityNarrationCard(entity, actionArea, narration) {
+  actionArea.innerHTML = "";
   const card = document.createElement("div");
   card.className = "narration-card";
-  for (const para of prose.split(/\n+/).filter(Boolean)) {
+  for (const para of narration.prose.split(/\n+/).filter(Boolean)) {
     const p = document.createElement("p");
     p.style.margin = "0 0 0.75rem";
     p.textContent = para;
@@ -561,13 +590,15 @@ function appendNarrationCard(actionArea, prose) {
   btn.addEventListener("click", async () => {
     btn.disabled = true;
     try {
-      const result = await api(`/api/batches/${reviewState.batchId}/narrate`, {
+      // Regenerate creates a NEW history entry server-side (entity-narration.mjs's
+      // saveEntityNarration marks the prior one 'superseded', never overwrites
+      // it in place) -- the prior text stays recallable via "View history" below.
+      const result = await api(`/api/batches/${reviewState.batchId}/narrate-entity`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ world: CURRENT_WORLD, note: input.value })
+        body: JSON.stringify({ world: CURRENT_WORLD, mutationId: entity.mutationId, note: input.value })
       });
-      reviewState.narrationCache = result;
-      renderReviewFromState(currentlyOpenMutationIds());
+      appendEntityNarrationCard(entity, actionArea, { prose: result.prose, createdAt: new Date().toISOString(), status: "current" });
     } catch (err) {
       showToast(`Narration failed: ${err.message}`);
     } finally {
@@ -576,6 +607,72 @@ function appendNarrationCard(actionArea, prose) {
   });
   regen.append(input, btn);
   actionArea.appendChild(regen);
+
+  appendNarrationHistoryToggle(entity, actionArea);
+}
+
+/**
+ * Secondary "view history" affordance (task 10.5's explicit ask: a GM
+ * wanting to recall what was narrated here last time). Deliberately simple
+ * for v1, per the task doc: an expandable list of past entries with
+ * timestamps, fetched only on demand (not preloaded for every row).
+ */
+function appendNarrationHistoryToggle(entity, actionArea) {
+  const wrap = document.createElement("div");
+  wrap.className = "narration-history";
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "link-btn";
+  toggle.textContent = "View narration history";
+
+  const list = document.createElement("div");
+  list.className = "narration-history-list";
+  list.hidden = true;
+
+  toggle.addEventListener("click", async () => {
+    if (!list.hidden) {
+      list.hidden = true;
+      toggle.textContent = "View narration history";
+      return;
+    }
+    toggle.disabled = true;
+    toggle.textContent = "Loading…";
+    try {
+      const { history } = await api(`/api/entities/${encodeURIComponent(entity.entityId)}/narration-history${withWorld()}`);
+      list.innerHTML = "";
+      // Stored oldest-first; show newest-first -- "what did we say most
+      // recently" is the more natural first read for this affordance.
+      for (const entry of [...history].reverse()) {
+        const item = document.createElement("div");
+        item.className = `narration-history-item narration-history-item--${entry.status}`;
+        const meta = document.createElement("div");
+        meta.className = "narration-history-meta";
+        meta.textContent = `${new Date(entry.createdAt).toLocaleString()} — ${entry.status === "current" ? "current" : "superseded"}`;
+        const prose = document.createElement("div");
+        prose.className = "narration-history-prose";
+        prose.textContent = entry.prose;
+        item.append(meta, prose);
+        list.appendChild(item);
+      }
+      if (!history.length) {
+        const none = document.createElement("div");
+        none.className = "hint";
+        none.textContent = "No prior narrations.";
+        list.appendChild(none);
+      }
+      list.hidden = false;
+      toggle.textContent = "Hide narration history";
+    } catch (err) {
+      toggle.textContent = "View narration history";
+      showToast(`Could not load narration history: ${err.message}`);
+    } finally {
+      toggle.disabled = false;
+    }
+  });
+
+  wrap.append(toggle, list);
+  actionArea.appendChild(wrap);
 }
 
 async function acceptSingle(mutationId) {

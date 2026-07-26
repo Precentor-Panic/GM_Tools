@@ -234,6 +234,21 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .narration-regenerate { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
 .narration-regenerate input { flex: 1; font-size: 0.85rem; padding: 0.35rem 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 
+/* --- Narration history (Phase 10 task 10.5): a simple expandable list of
+   past entries per entity, secondary to the current-narration card above it. --- */
+.narration-history { margin-top: 0.35rem; }
+.narration-history-list { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; }
+.narration-history-item {
+  border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: 6px;
+  padding: 0.5rem 0.65rem; background: var(--card-bg);
+}
+.narration-history-item--current { border-left-color: var(--accent); }
+.narration-history-meta { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.3rem; text-transform: capitalize; }
+.narration-history-prose {
+  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
+  font-size: 0.92rem; line-height: 1.55;
+}
+
 /* --- Deferred Debt --- */
 .search-box { width: 100%; font-size: 0.95rem; padding: 0.5rem 0.7rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); margin-bottom: 0.75rem; }
 .debt-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
