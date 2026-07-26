@@ -766,7 +766,7 @@ function renderDebtResolvedDiff(body, detail) {
   }
   const link = document.createElement("button");
   link.className = "link-btn";
-  link.textContent = "Open in Batch Review &rarr;";
+  link.textContent = "Open in Batch Review →";
   link.addEventListener("click", () => navigate("review", detail.batch.id));
   body.appendChild(link);
 }
