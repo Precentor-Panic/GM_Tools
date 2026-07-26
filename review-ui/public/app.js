@@ -241,6 +241,24 @@ async function refreshReviewDetail(openEntityIdHint) {
   renderReviewFromState(openMutationIds, openEntityIdHint);
 }
 
+// One-line plain-language explanation of what actually produced this batch --
+// a real gap found via hands-on use: the review screen never said what kind
+// of thing it was looking at (e.g. "this took a pasted writeup and proposed
+// entities/edges to add to the graph"), leaving the GM to guess.
+function batchExplainerText(scope) {
+  const mode = scope?.mode;
+  if (mode === "writeup-import") {
+    return "This batch extracted entities and relationships from a pasted writeup and proposed adding them to the graph.";
+  }
+  if (mode === "seed" || mode === "ambient" || mode === "tag" || mode === "region" || mode === "contained-in") {
+    return "This batch proposes consequences of time passing in the world, starting from the scope you requested.";
+  }
+  if (mode === "resolve-pending") {
+    return "This batch resolves a backlog of deferred changes for an entity you asked about, synthesized across every cycle that touched it.";
+  }
+  return "";
+}
+
 function renderReviewFromState(openMutationIds, openEntityIdHint) {
   const { detail } = reviewState;
   document.getElementById("review-headline").textContent = detail.headline;
@@ -248,9 +266,12 @@ function renderReviewFromState(openMutationIds, openEntityIdHint) {
   if (detail.batch.elapsedTimeDescriptor) meta.push(detail.batch.elapsedTimeDescriptor);
   meta.push(`status: ${detail.batch.status}`);
   document.getElementById("review-meta").textContent = meta.join(" · ");
+  document.getElementById("review-explainer").textContent = batchExplainerText(detail.batch.scope);
 
   const actionBar = document.getElementById("review-actionbar");
   actionBar.style.display = detail.batch.mutationCount === 0 ? "none" : "";
+
+  renderSyncBar(detail);
 
   renderRubberDuckRejectPanel(detail); // Phase 8: only renders anything for a rubber-duck-mode writeup-import batch
 
@@ -326,11 +347,25 @@ async function onRowExpanded(entity, body) {
   // again on re-expand.
   if (entity.entityId) {
     reviewState.expanded.add(entity.mutationId);
-    api(`/api/batches/${reviewState.batchId}/view`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ world: CURRENT_WORLD, grain: "entity", entityId: entity.entityId })
-    }).catch(() => { /* best-effort; not fatal if it fails */ });
+    try {
+      await api(`/api/batches/${reviewState.batchId}/view`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: CURRENT_WORLD, grain: "entity", entityId: entity.entityId })
+      });
+      // The server-side flag is now cleared (markHumanReviewed already ran),
+      // but the row was rendered with the flag BEFORE this call resolved --
+      // a real bug found via hands-on use: the amber border/dot otherwise
+      // silently persisted on screen until the whole view was reloaded, even
+      // though the underlying state was already correct. Update the DOM to
+      // match reality immediately instead of waiting for a reload.
+      if (entity.flaggedUnreviewed) {
+        entity.flaggedUnreviewed = false;
+        const row = body.closest(".mutation-row");
+        row?.classList.remove("flagged");
+        row?.querySelector(".flag-dot")?.remove();
+      }
+    } catch { /* best-effort; not fatal if it fails */ }
   }
   renderRowBody(entity, body);
 }
@@ -582,6 +617,64 @@ async function regenerateRow(entity, note) {
   }
 }
 
+// A real gap found via hands-on use: accepting every mutation in a batch
+// only changes their review-state status -- it does NOT write anything to
+// the actual World Fabric graph. That requires a separate explicit "sync"
+// step, and this frontend never called that route at all (the server route
+// existed since Phase 6, but nothing here triggered it), so an accepted
+// batch was, from the GM's perspective, a dead end: no further edits
+// possible, nothing visibly happening, and no way to actually commit the
+// changes without going around the UI entirely via chat.
+function renderSyncBar(detail) {
+  const bar = document.getElementById("review-sync-bar");
+  const statusEl = document.getElementById("review-sync-status");
+  const acceptedCount = detail.regions
+    .flatMap((r) => r.entities)
+    .filter((e) => e.status === "accepted").length;
+
+  if (detail.batch.status !== "open") {
+    bar.hidden = true;
+    return;
+  }
+  if (acceptedCount === 0) {
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  statusEl.textContent = `${acceptedCount} accepted mutation${acceptedCount === 1 ? "" : "s"} not yet written to the graph.`;
+}
+
+document.getElementById("btn-sync-now").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-sync-now");
+  const statusEl = document.getElementById("review-sync-status");
+  btn.disabled = true;
+  btn.textContent = "Syncing…";
+  // The dual-path apply checks for a live Foundry client before falling back
+  // to headless -- confirmed (via a real timed test) that this genuinely
+  // takes ~7 seconds, not an instant round trip. Set that expectation
+  // explicitly partway through so a several-second silent wait doesn't read
+  // as the button being stuck.
+  const slowNotice = setTimeout(() => {
+    statusEl.textContent = "Still working — checking whether a live Foundry client is open for this world…";
+  }, 1500);
+  try {
+    const result = await api(`/api/batches/${reviewState.batchId}/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: CURRENT_WORLD })
+    });
+    recordSyncPath(result.path);
+    showToast(`Synced ${result.syncedCount ?? 0} mutation${result.syncedCount === 1 ? "" : "s"} to the graph (${result.path}).`);
+    await refreshReviewDetail();
+  } catch (err) {
+    statusEl.textContent = `Sync failed: ${err.message}`;
+  } finally {
+    clearTimeout(slowNotice);
+    btn.disabled = false;
+    btn.textContent = "Sync to Foundry";
+  }
+});
+
 async function rollbackCurrentBatch() {
   try {
     const result = await api(`/api/batches/${reviewState.batchId}/rollback`, {
@@ -599,6 +692,17 @@ async function rollbackCurrentBatch() {
 function checkedMutationIds() {
   return [...document.querySelectorAll(".row-check:checked")].map((c) => c.closest(".mutation-row").dataset.mutationId);
 }
+
+document.getElementById("btn-select-all").addEventListener("click", () => {
+  for (const row of document.querySelectorAll(".mutation-row")) {
+    const cb = row.querySelector(".row-check");
+    if (!cb.disabled) cb.checked = true;
+  }
+});
+
+document.getElementById("btn-select-none").addEventListener("click", () => {
+  for (const cb of document.querySelectorAll(".row-check")) cb.checked = false;
+});
 
 document.getElementById("btn-select-boring").addEventListener("click", () => {
   for (const row of document.querySelectorAll(".mutation-row.boring")) {

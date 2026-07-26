@@ -133,6 +133,18 @@ main { max-width: 860px; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
 .review-header { padding: 0.25rem 0 0.75rem; border-bottom: 1px solid var(--border); margin-bottom: 0; }
 .review-headline { font-weight: 600; margin-top: 0.4rem; }
 .review-meta { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.2rem; }
+.review-explainer { margin-top: 0.35rem; }
+
+/* :not([hidden]) rather than a bare .sync-bar rule -- an unconditional
+   `display: flex` here would override the browser's default [hidden]{display:none}
+   UA rule (equal specificity, later in the cascade), so toggling the `hidden`
+   IDL property from app.js would silently stop working. A real bug caught by
+   actually driving this in a browser, not visible from reading the JS alone. */
+.sync-bar:not([hidden]) {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+  background: var(--amber-bg); border: 1px solid var(--amber); border-radius: 8px;
+  padding: 0.6rem 0.8rem; margin: 0.6rem 0;
+}
 
 .action-bar {
   position: sticky; top: var(--topbar-h); z-index: 10;

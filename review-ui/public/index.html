@@ -71,12 +71,20 @@
     <button class="link-btn" data-nav="queue">&larr; Back to Queue</button>
     <div id="review-headline" class="review-headline"></div>
     <div id="review-meta" class="review-meta"></div>
+    <div id="review-explainer" class="hint review-explainer"></div>
     <div id="rubber-duck-reject-panel" class="rubber-duck-panel" hidden></div>
   </div>
 
+  <div id="review-sync-bar" class="sync-bar" hidden>
+    <span id="review-sync-status" class="hint"></span>
+    <button id="btn-sync-now" class="btn btn--accept">Sync to Foundry</button>
+  </div>
+
   <div id="review-actionbar" class="action-bar">
+    <button id="btn-select-all" class="btn btn--ghost">Select All</button>
+    <button id="btn-select-none" class="btn btn--ghost">Select None</button>
     <label class="select-all-boring">
-      <button id="btn-select-boring" class="btn btn--ghost">Select All Boring</button>
+      <button id="btn-select-boring" class="btn btn--ghost" title="Selects everything below this batch's importance threshold -- routine/minor changes, not the ones likely to need your attention">Select All Boring</button>
     </label>
     <div class="action-bar-spacer"></div>
     <button id="btn-accept-selected" class="btn btn--accept">Accept Selected</button>
