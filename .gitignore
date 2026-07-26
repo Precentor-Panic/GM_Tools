@@ -18,6 +18,11 @@ pending-resolution/*/
 user-settings/*
 !user-settings/.gitkeep
 
+# Phase 10: mutation-engine/entity-narration.mjs, same per-world-subdir
+# convention as pending-resolution/ above.
+entity-narration/*/
+!entity-narration/.gitkeep
+
 node_modules/
 
 # never commit API keys / secrets
