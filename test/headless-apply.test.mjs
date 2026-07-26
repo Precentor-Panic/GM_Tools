@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, mkdirSync, openSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,6 +8,7 @@ import {
   HeadlessApplyError,
   SNAPSHOT_SCHEMA_VERSION
 } from "../graph-import/headless-apply.mjs";
+import { ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 
 let passed = 0;
 function test(name, fn) {
@@ -360,6 +361,30 @@ test("applyHeadless: throws for an unknown mutation op", () => {
     () => applyHeadless(snapshotPath, [{ op: "not_a_real_op", id: "x" }]),
     (err) => err instanceof HeadlessApplyError
   );
+});
+
+test("applyHeadless: a held lock (a concurrent sync, or a crashed process) rejects with a clear HeadlessApplyError instead of racing the write, and never touches the file on disk", () => {
+  const snapshotPath = join(scratchDir, "worlds", "locked-snapshot", "world-fabric-snapshot.json");
+  writePopulatedFixture(snapshotPath);
+  const before = readFileSync(snapshotPath, "utf8");
+
+  const lockPath = `${snapshotPath}.lock`;
+  const fd = openSync(lockPath, "wx");
+  try {
+    assert.throws(
+      () => applyHeadless(snapshotPath, [{ op: "upsert_entity", data: { name: "Should not land", type: "person" } }]),
+      (err) => err instanceof HeadlessApplyError && /locked/i.test(err.message)
+    );
+    assert.equal(readFileSync(snapshotPath, "utf8"), before, "the snapshot file must be untouched by the rejected write");
+  } finally {
+    closeSync(fd);
+    rmSync(lockPath, { force: true });
+  }
+
+  // Once the lock clears, a normal apply succeeds -- confirms this isn't a
+  // permanently-broken lock path, just a real held one being respected.
+  const result = applyHeadless(snapshotPath, [{ op: "upsert_entity", data: { name: "Lands fine now", type: "person" } }]);
+  assert.equal(result.summary.entitiesCreated, 1);
 });
 
 console.log(`\n${passed} passed`);

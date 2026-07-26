@@ -52,6 +52,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { importGraph } from "../../foundry_worldFabric/scripts/data/interchange.mjs";
+import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 
 export const SNAPSHOT_SCHEMA_VERSION = 1;
 
@@ -182,8 +183,34 @@ function mergedWfiRecord(m, currentMap, assignedId) {
  *   write the assigned id back onto the originating batch's stored mutation
  *   entry, so mutation-engine/rollback.mjs's later delete-based rollback has
  *   an id to target instead of skipping the entry as unresolvable.
+ *
+ * Locking (found missing during a QA pass, not part of the original design):
+ * every other data store in this codebase (review-state.mjs, pending-ledger.mjs,
+ * human-review.mjs, user-settings.mjs) wraps its read-modify-write in
+ * review-state.mjs's withLock, but this was the one file that read, merged,
+ * and rewrote a shared file (world-fabric-snapshot.json) with no locking at
+ * all -- two concurrent callers (e.g. two review-ui tabs syncing at once)
+ * could silently clobber each other. Wrapped in the SAME withLock this
+ * codebase already uses everywhere else, reusing it rather than inventing a
+ * second locking mechanism.
  */
 export function applyHeadless(snapshotPath, mutations) {
+  try {
+    return withLock(snapshotPath, () => runApplyHeadless(snapshotPath, mutations));
+  } catch (err) {
+    if (err instanceof ConcurrentWriteError) {
+      throw new HeadlessApplyError(
+        `Snapshot file is locked by an in-progress write: ${snapshotPath}. Another headless apply (a sync, ` +
+        `a rollback, or a crashed process) holds the lock. Retry once that write completes, or investigate a ` +
+        `stale lock if it persists.`,
+        { op: "apply", mutation: null }
+      );
+    }
+    throw err;
+  }
+}
+
+function runApplyHeadless(snapshotPath, mutations) {
   if (!existsSync(snapshotPath)) {
     throw new HeadlessApplyError(
       `No snapshot file at "${snapshotPath}". Call bootstrapSnapshot() first for a brand-new campaign, ` +
