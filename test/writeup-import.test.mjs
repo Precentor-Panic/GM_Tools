@@ -19,7 +19,19 @@ const {
   WriteupImportValidationError,
   MAX_WRITEUP_CHARS,
   WRITEUP_IMPORT_REGION_ID,
-  DEFAULT_WRITEUP_IMPORT_MODEL
+  DEFAULT_WRITEUP_IMPORT_MODEL,
+  // Phase 8 task 8.1
+  proposeFramingsFromWriteup,
+  FramingProposalError,
+  DEFAULT_FRAMING_MODEL,
+  // Phase 8 task 8.2
+  composeFramingNote,
+  recordFramingRound,
+  requestReframing,
+  resolveRejectLoop,
+  FramingRoundLimitError,
+  QUICK_PICK_REASONS,
+  MAX_FRAMING_ROUNDS
 } = await import("../graph-import/writeup-import.mjs");
 const { loadBatch } = await import("../mutation-engine/review-state.mjs");
 
@@ -485,6 +497,194 @@ test("regenerateWriteupImport: throws a clear error if the batch has no recorded
     regenerateWriteupImport(batchWithoutText, "a note", { entities: [], edges: [] }, {}),
     /no original writeup text/
   );
+});
+
+// ============================================================ task 8.1 ==
+
+test("DEFAULT_FRAMING_MODEL is a distinct, cheaper/faster tier than DEFAULT_WRITEUP_IMPORT_MODEL", () => {
+  assert.equal(DEFAULT_FRAMING_MODEL, "claude-haiku-4-5");
+  assert.notEqual(DEFAULT_FRAMING_MODEL, DEFAULT_WRITEUP_IMPORT_MODEL);
+});
+
+test("proposeFramingsFromWriteup: a well-formed writeup produces exactly 3 framings with ids a/b/c", async () => {
+  const goodResponse = JSON.stringify({
+    framings: [
+      { id: "a", sentence: "A political-intrigue reading centered on the merchant houses." },
+      { id: "b", sentence: "A frontier/exploration reading centered on the ruins." },
+      { id: "c", sentence: "A personal-stakes reading centered on the narrator." }
+    ]
+  });
+  const client = mockClient([goodResponse]);
+  const result = await proposeFramingsFromWriteup("Some writeup about ruins and merchant houses.", { client });
+  assert.equal(result.framings.length, 3);
+  assert.deepEqual(result.framings.map((f) => f.id).sort(), ["a", "b", "c"]);
+  for (const f of result.framings) assert.ok(f.sentence && f.sentence.length > 0);
+});
+
+test("proposeFramingsFromWriteup: uses DEFAULT_FRAMING_MODEL and a small maxTokens by default, not DEFAULT_WRITEUP_IMPORT_MODEL's settings", async () => {
+  let capturedParams;
+  const client = mockClient([
+    (params) => {
+      capturedParams = params;
+      return JSON.stringify({
+        framings: [
+          { id: "a", sentence: "x" },
+          { id: "b", sentence: "y" },
+          { id: "c", sentence: "z" }
+        ]
+      });
+    }
+  ]);
+  await proposeFramingsFromWriteup("Some writeup.", { client });
+  assert.equal(capturedParams.model, DEFAULT_FRAMING_MODEL);
+  assert.ok(capturedParams.max_tokens <= 1024, "framing call must be deliberately cheap (small maxTokens)");
+});
+
+test("proposeFramingsFromWriteup: wrong count is retried once then surfaces a typed error", async () => {
+  const wrongCount = JSON.stringify({ framings: [{ id: "a", sentence: "x" }, { id: "b", sentence: "y" }] });
+  const client = mockClient([wrongCount, wrongCount]);
+  await assert.rejects(
+    proposeFramingsFromWriteup("Some writeup.", { client }),
+    (err) => {
+      assert.ok(err instanceof FramingProposalError);
+      assert.equal(err.attempts, 2);
+      return true;
+    }
+  );
+  assert.equal(client.calls.length, 2);
+});
+
+test("proposeFramingsFromWriteup: duplicate ids (missing the full a/b/c set) is retried once then surfaces a typed error", async () => {
+  const duplicateIds = JSON.stringify({
+    framings: [
+      { id: "a", sentence: "x" },
+      { id: "a", sentence: "y" },
+      { id: "b", sentence: "z" }
+    ]
+  });
+  const good = JSON.stringify({
+    framings: [
+      { id: "a", sentence: "x" },
+      { id: "b", sentence: "y" },
+      { id: "c", sentence: "z" }
+    ]
+  });
+  const client = mockClient([duplicateIds, good]);
+  const result = await proposeFramingsFromWriteup("Some writeup.", { client });
+  assert.deepEqual(result.framings.map((f) => f.id).sort(), ["a", "b", "c"]);
+  assert.equal(client.calls.length, 2, "should have retried once after the duplicate-id failure");
+});
+
+test("proposeFramingsFromWriteup: missing sentence is retried once then surfaces a typed error", async () => {
+  const missingSentence = JSON.stringify({
+    framings: [{ id: "a", sentence: "" }, { id: "b", sentence: "y" }, { id: "c", sentence: "z" }]
+  });
+  const client = mockClient([missingSentence, missingSentence]);
+  await assert.rejects(proposeFramingsFromWriteup("Some writeup.", { client }), FramingProposalError);
+});
+
+test("proposeFramingsFromWriteup: reuses the shared WriteupTooLargeError guard, without making an API call", async () => {
+  const client = mockClient(["should never be called"]);
+  const huge = "x".repeat(MAX_WRITEUP_CHARS + 1);
+  await assert.rejects(proposeFramingsFromWriteup(huge, { client }), WriteupTooLargeError);
+  assert.equal(client.calls.length, 0);
+});
+
+// ============================================================ task 8.2 ==
+
+test("composeFramingNote: a plain pick with no blend", () => {
+  const note = composeFramingNote({ primary: { id: "a", sentence: "A political-intrigue reading." } });
+  assert.match(note, /A political-intrigue reading\./);
+});
+
+test("composeFramingNote: a pick plus a blend line includes both", () => {
+  const note = composeFramingNote({
+    primary: { id: "a", sentence: "A political-intrigue reading." },
+    blend: "also pull in the ruins from framing B"
+  });
+  assert.match(note, /A political-intrigue reading\./);
+  assert.match(note, /also pull in the ruins from framing B/);
+});
+
+test("composeFramingNote: throws a clear error without a valid primary selection", () => {
+  assert.throws(() => composeFramingNote({}), /primary/);
+  assert.throws(() => composeFramingNote(null), /selection/);
+});
+
+test("recordFramingRound: appends one entry per call, framingHistory accumulates, confirmed by inspecting the actual object", () => {
+  const batch = { id: "b1", scope: { mode: "writeup-import", text: "x" } };
+  recordFramingRound(batch, { framings: [{ id: "a", sentence: "1" }], selection: { primary: { id: "a", sentence: "1" } }, note: "n1" });
+  assert.equal(batch.scope.framingHistory.length, 1);
+  recordFramingRound(batch, { framings: [{ id: "a", sentence: "2" }], selection: { primary: { id: "a", sentence: "2" } }, note: "n2" });
+  assert.equal(batch.scope.framingHistory.length, 2);
+  assert.equal(batch.scope.framingHistory[0].note, "n1");
+  assert.equal(batch.scope.framingHistory[1].note, "n2");
+});
+
+test("requestReframing: a plain reject produces a new framing round, with the rejection reason threaded into the prompt", async () => {
+  const batch = { id: "b2", scope: { mode: "writeup-import", text: "Some writeup text.", framingHistory: [{ framings: [], selection: {}, note: "n0" }] } };
+  let capturedPrompt = "";
+  const client = mockClient([
+    (params) => {
+      capturedPrompt = params.messages[0].content;
+      return JSON.stringify({
+        framings: [{ id: "a", sentence: "1" }, { id: "b", sentence: "2" }, { id: "c", sentence: "3" }]
+      });
+    }
+  ]);
+  const result = await requestReframing(batch, "wrong-emphasis", { llmOpts: { client } });
+  assert.equal(result.framings.length, 3);
+  assert.match(capturedPrompt, /Some writeup text\./, "must re-use the batch's original recorded text");
+  assert.match(capturedPrompt, new RegExp(QUICK_PICK_REASONS["wrong-emphasis"]), "the picked reason must be threaded into the new framing call, not a blind repeat");
+});
+
+test("requestReframing: throws for an unknown quick-pick reason code", async () => {
+  const batch = { id: "b3", scope: { mode: "writeup-import", text: "x", framingHistory: [] } };
+  await assert.rejects(requestReframing(batch, "not-a-real-reason", {}), /Unknown quick-pick reason/);
+});
+
+test("requestReframing: a SECOND plain reject is refused with FramingRoundLimitError once the bounded round budget is spent, rather than silently offering quick-picks again", async () => {
+  const batch = {
+    id: "b4",
+    scope: {
+      mode: "writeup-import",
+      text: "x",
+      framingHistory: [
+        { framings: [], selection: {}, note: "initial round" },
+        { framings: [], selection: {}, note: "re-framing round" }
+      ]
+    }
+  };
+  assert.equal(batch.scope.framingHistory.length, MAX_FRAMING_ROUNDS, "sanity: budget already fully spent");
+  await assert.rejects(requestReframing(batch, "wrong-scope", {}), FramingRoundLimitError);
+});
+
+test("resolveRejectLoop: an EXPLICIT-note reject resolves straight to {kind:'regenerate', note} and never touches the framing path (no API call made)", async () => {
+  const batch = { id: "b5", scope: { mode: "writeup-import", text: "x", framingHistory: [{ framings: [], selection: {}, note: "n0" }] } };
+  const client = mockClient(["should never be called"]);
+  const decision = await resolveRejectLoop(batch, { note: "I know exactly what's wrong" }, { llmOpts: { client } });
+  assert.deepEqual(decision, { kind: "regenerate", note: "I know exactly what's wrong" });
+  assert.equal(client.calls.length, 0, "an explicit-note reject must never call the framing model");
+});
+
+test("resolveRejectLoop: a PLAIN reject (quickPickReason, no note) resolves to {kind:'reframe', framings}", async () => {
+  const batch = { id: "b6", scope: { mode: "writeup-import", text: "x", framingHistory: [{ framings: [], selection: {}, note: "n0" }] } };
+  const client = mockClient([JSON.stringify({ framings: [{ id: "a", sentence: "1" }, { id: "b", sentence: "2" }, { id: "c", sentence: "3" }] })]);
+  const decision = await resolveRejectLoop(batch, { quickPickReason: "missing-something" }, { llmOpts: { client } });
+  assert.equal(decision.kind, "reframe");
+  assert.equal(decision.framings.length, 3);
+});
+
+test("resolveRejectLoop: a whitespace-only note is treated as a PLAIN reject (falls through to quickPickReason), not an explicit note", async () => {
+  const batch = { id: "b7", scope: { mode: "writeup-import", text: "x", framingHistory: [{ framings: [], selection: {}, note: "n0" }] } };
+  const client = mockClient([JSON.stringify({ framings: [{ id: "a", sentence: "1" }, { id: "b", sentence: "2" }, { id: "c", sentence: "3" }] })]);
+  const decision = await resolveRejectLoop(batch, { note: "   ", quickPickReason: "not-feeling-it-yet" }, { llmOpts: { client } });
+  assert.equal(decision.kind, "reframe");
+});
+
+test("resolveRejectLoop: neither note nor quickPickReason throws a clear error", async () => {
+  const batch = { id: "b8", scope: { mode: "writeup-import", text: "x", framingHistory: [] } };
+  await assert.rejects(resolveRejectLoop(batch, {}, {}), /requires either an explicit `note` or a `quickPickReason`/);
 });
 
 await Promise.all(pending);

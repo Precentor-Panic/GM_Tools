@@ -50,8 +50,17 @@ import { importGraph, WFI_VERSION } from "../../foundry_worldFabric/scripts/data
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPT_TEMPLATE = readFileSync(join(__dirname, "..", "prompts", "writeup-import.md"), "utf8");
+// Phase 8 task 8.1: the framing-proposal call's OWN prompt file, deliberately
+// not a variant of prompts/writeup-import.md — see that file's own top note.
+const FRAMING_PROMPT_TEMPLATE = readFileSync(join(__dirname, "..", "prompts", "writeup-framing.md"), "utf8");
 
 export const DEFAULT_WRITEUP_IMPORT_MODEL = "claude-sonnet-5";
+// Phase 8 task 8.1: a deliberately cheaper/faster model tier for the framing
+// call specifically — per the design doc, a visibly-fast first reaction is
+// itself part of signaling "this is a glance, not the real answer" (Phase 3
+// measured the real extraction pass at ~51-59s p50; see 8.1's own smoke test
+// for a real head-to-head timing comparison against that baseline).
+export const DEFAULT_FRAMING_MODEL = "claude-haiku-4-5";
 
 // Simple v1 length guard (gm-tools-conventions / task 5.1: "a simple length
 // guard with a clear error is enough for v1, don't over-build a chunking
@@ -85,6 +94,39 @@ export class WriteupImportValidationError extends Error {
     this.attempts = attempts;
     this.lastError = lastError;
     this.rawResponse = rawResponse;
+  }
+}
+
+/**
+ * Phase 8 task 8.1: thrown by proposeFramingsFromWriteup when the framing
+ * model's output never validates (wrong count, wrong/duplicate ids, missing
+ * a sentence) after one retry — matches WriteupImportValidationError's own
+ * retry-once-then-typed-error convention, kept as its own class (rather than
+ * reusing WriteupImportValidationError) so a caller can tell "the cheap
+ * framing glance failed" apart from "the real extraction failed" without
+ * inspecting message text.
+ */
+export class FramingProposalError extends Error {
+  constructor(message, { attempts, lastError, rawResponse } = {}) {
+    super(message);
+    this.name = "FramingProposalError";
+    this.attempts = attempts;
+    this.lastError = lastError;
+    this.rawResponse = rawResponse;
+  }
+}
+
+/**
+ * Phase 8 task 8.2: thrown when a rubber-duck writeup-import batch's bounded
+ * re-framing budget (MAX_FRAMING_ROUNDS) is already spent — a further plain
+ * reject must supply an explicit note instead of triggering another
+ * quick-pick round. See resolveRejectLoop's own doc comment for the full
+ * state machine this guards.
+ */
+export class FramingRoundLimitError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "FramingRoundLimitError";
   }
 }
 
@@ -133,8 +175,26 @@ const RawWfiProposal = z.object({
   edges: z.array(RawWfiEdge)
 });
 
+// Phase 8 task 8.1: exactly 3 framings, ids exactly {"a","b","c"} (no
+// duplicates, no missing id) — the .refine below checks the SET of ids
+// rather than relying on array order, since z.array(...).length(3) alone
+// would happily accept e.g. two "a"s and a "b".
+const FramingItem = z.object({
+  id: z.enum(["a", "b", "c"]),
+  sentence: z.string().min(1)
+});
+const FramingsResponse = z
+  .object({ framings: z.array(FramingItem).length(3) })
+  .refine((v) => new Set(v.framings.map((f) => f.id)).size === 3, {
+    message: "framings must have exactly the id set {\"a\",\"b\",\"c\"}, one each, no duplicates"
+  });
+
 function fillTemplate(vars) {
   return fillTemplateShared(PROMPT_TEMPLATE, vars);
+}
+
+function fillFramingTemplate(vars) {
+  return fillTemplateShared(FRAMING_PROMPT_TEMPLATE, vars);
 }
 
 /**
@@ -205,6 +265,87 @@ export async function proposeWfiFromWriteup(writeupText, opts = {}) {
 
   throw new WriteupImportValidationError(
     `Writeup-import proposal failed validation twice: ${lastError?.message}`,
+    { attempts: maxAttempts, lastError, rawResponse: lastRaw }
+  );
+}
+
+/**
+ * Phase 8 task 8.1: the rubber-duck-mode "first reaction" call — three
+ * cheap, one-sentence interpretive framings of a writeup, sitting IN FRONT
+ * OF proposeWfiFromWriteup rather than replacing any part of it. Own
+ * dedicated prompt file (prompts/writeup-framing.md), deliberately cheap by
+ * construction: small maxTokens (three short sentences need very little),
+ * a faster/cheaper model tier (DEFAULT_FRAMING_MODEL, distinct from
+ * DEFAULT_WRITEUP_IMPORT_MODEL), and the same retry-once-then-typed-error
+ * convention as proposeWfiFromWriteup itself.
+ *
+ * Same MAX_WRITEUP_CHARS/WriteupTooLargeError guard as proposeWfiFromWriteup
+ * — reused, not duplicated — since this call still reads the full writeup
+ * text (the framing has to be grounded in the real thing, not a summary).
+ *
+ * @param {string} writeupText
+ * @param {object} [opts]
+ * @param {string} [opts.note]  optional steering note, folded into the same
+ *                                {{retryNote}} slot (used by the reject-loop's
+ *                                re-framing round — see requestReframing below —
+ *                                to inform a second round with WHY the first
+ *                                one didn't land, not a blind repeat)
+ * @param {object} [opts.client]
+ * @param {string} [opts.apiKey]
+ * @param {string} [opts.model]
+ * @param {number} [opts.maxTokens]
+ * @returns {Promise<{framings: Array<{id:"a"|"b"|"c", sentence:string}>}>}
+ * @throws {WriteupTooLargeError} writeupText exceeds MAX_WRITEUP_CHARS
+ * @throws {FramingProposalError} model output never validates after one retry
+ */
+export async function proposeFramingsFromWriteup(writeupText, opts = {}) {
+  if (typeof writeupText !== "string" || !writeupText.trim()) {
+    throw new Error("proposeFramingsFromWriteup requires non-empty writeupText.");
+  }
+  if (writeupText.length > MAX_WRITEUP_CHARS) {
+    throw new WriteupTooLargeError(
+      `Writeup is ${writeupText.length} characters, over the ${MAX_WRITEUP_CHARS}-character v1 guard. ` +
+      `Trim it or split it into multiple smaller writeup-import calls — chunking isn't built yet.`,
+      { length: writeupText.length, max: MAX_WRITEUP_CHARS }
+    );
+  }
+
+  const basePrompt = fillFramingTemplate({
+    writeupText,
+    retryNote: opts.note ? `Additional note from the reviewer: ${opts.note}` : ""
+  });
+
+  let prompt = basePrompt;
+  let lastError;
+  let lastRaw;
+  const maxAttempts = 2;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const raw = await callModel(prompt, {
+      ...opts,
+      model: opts.model ?? DEFAULT_FRAMING_MODEL,
+      // Three short sentences: small on purpose, per task 8.1's "deliberately
+      // cheap by construction" instruction, not just a fast model tier.
+      maxTokens: opts.maxTokens ?? 512
+    });
+    lastRaw = raw;
+    try {
+      const parsed = parseJsonResponse(raw);
+      const validated = FramingsResponse.parse(parsed);
+      return { framings: validated.framings };
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxAttempts) {
+        prompt =
+          basePrompt +
+          `\n\nYour previous response failed validation with this error — fix it and respond with ONLY ` +
+          `the corrected JSON object, no prose:\n${err.message}\n\nYour previous response was:\n${raw}`;
+      }
+    }
+  }
+
+  throw new FramingProposalError(
+    `Framing proposal failed validation twice: ${lastError?.message}`,
     { attempts: maxAttempts, lastError, rawResponse: lastRaw }
   );
 }
@@ -411,6 +552,13 @@ export function previewWriteupImport(proposal, existingSnapshot, opts = {}) {
  * @param {"merge"|"replace"} [opts.mode]
  * @param {object} [opts.llmOpts]  forwarded to proposeWfiFromWriteup (injectable client, etc.)
  * @param {() => string} [opts.makeId]  batch id generator, injectable for tests
+ * @param {object} [opts.extraScope]  Phase 8 task 8.3/8.4: additional keys merged into the
+ *   batch's scope object at creation time (e.g. `{rubberDuck: {...}}`) — kept as a fully
+ *   generic passthrough rather than this module knowing anything about rubber-duck mode
+ *   specifically, per that task's own instruction to keep writeup-import.mjs free of any
+ *   global-settings dependency. Omitted entirely (not even an empty object key) when not
+ *   supplied, so a rubber-duck-OFF call produces the EXACT SAME scope shape Phase 5 always
+ *   has — `{mode:'writeup-import', text}` and nothing else.
  * @returns {Promise<{batchId:string, mutationCount:number, importSummary:object, suggestions:Array, headline:string}>}
  */
 export async function importWriteup(world, text, existingSnapshot, opts = {}) {
@@ -420,7 +568,7 @@ export async function importWriteup(world, text, existingSnapshot, opts = {}) {
 
   const batch = createBatch(
     world,
-    { mode: "writeup-import", text },
+    { mode: "writeup-import", text, ...(opts.extraScope ?? {}) },
     opts.elapsedTimeDescriptor,
     diffed,
     opts.makeId ? { makeId: opts.makeId } : {}
@@ -478,4 +626,167 @@ export async function regenerateWriteupImport(batch, note, existingSnapshot, opt
   const { mutations, summary, suggestions } = previewWriteupImport(proposal, existingSnapshot, { mode: opts.mode });
   const diffed = attachDiffs(mutations, existingSnapshot.entities ?? [], existingSnapshot.edges ?? []);
   return { mutations: diffed, summary, suggestions };
+}
+
+// =====================================================================
+// Phase 8 task 8.2 — feed-forward composition + the reject-loop state
+// machine. Everything below is pure (no I/O beyond requestReframing's own
+// LLM call, which just calls proposeFramingsFromWriteup above) — the actual
+// wiring of these into wf_reject / review-ui's reject route lives in task
+// 8.4 (wf-mcp-server/lib/mutation-ops.mjs), which persists the results onto
+// the real batch. Kept here, not there, so the DECISION logic (which of the
+// three reject-loop paths applies, and the bounded-round check) is testable
+// in isolation from any HTTP/MCP transport concern.
+// =====================================================================
+
+/**
+ * The GM-requirements doc's suggested quick-pick reasons for a plain reject
+ * in rubber-duck mode — deliberately a small, fixed set (not freeform) so
+ * the UI can render them as buttons rather than asking for typed text (a
+ * typed reason is the EXPLICIT-note path below, a different branch of the
+ * state machine entirely). Keys are the wire-format code a caller passes;
+ * values are the human-readable label folded into the next framing call's
+ * steering context.
+ */
+export const QUICK_PICK_REASONS = {
+  "wrong-emphasis": "wrong emphasis",
+  "wrong-scope": "wrong scope",
+  "missing-something": "missing something",
+  "not-feeling-it-yet": "not feeling it yet"
+};
+
+// Bounded to one re-framing round, per the design doc's decisive resolution:
+// the INITIAL framing round (recorded when the batch is first created — see
+// mutation-ops.mjs's selectFramingForNewBatch) counts as entry 1; a plain
+// reject is allowed to trigger ONE more round (entry 2). A batch whose
+// framingHistory already has MAX_FRAMING_ROUNDS entries has used up its
+// bounded budget — a further plain reject must supply an explicit note
+// instead (requestReframing throws FramingRoundLimitError in that case).
+export const MAX_FRAMING_ROUNDS = 2;
+
+/**
+ * Turn a user's pick/blend into plain text fed through the EXISTING
+ * note/{{retryNote}} slot proposeWfiFromWriteup already has — no new prompt
+ * slot, per the design doc's explicit "reuses the existing regenerate-with-note
+ * mechanism" instruction.
+ *
+ * @param {object} selection
+ * @param {{id:"a"|"b"|"c", sentence:string}} selection.primary  the framing the reviewer picked
+ * @param {string} [selection.blend]  optional freeform line, e.g. "also pull in elements of framing C: ..."
+ * @returns {string}
+ */
+export function composeFramingNote(selection) {
+  if (!selection || typeof selection !== "object") {
+    throw new Error("composeFramingNote requires a selection object.");
+  }
+  const { primary, blend } = selection;
+  if (!primary || typeof primary.sentence !== "string" || !primary.sentence.trim()) {
+    throw new Error("composeFramingNote requires selection.primary.{id,sentence}.");
+  }
+  let note = `The reviewer's chosen framing for this extraction: "${primary.sentence.trim()}". Steer the extraction toward this reading.`;
+  if (typeof blend === "string" && blend.trim()) {
+    note += ` Additionally, blend in: ${blend.trim()}`;
+  }
+  return note;
+}
+
+/**
+ * Append one framingHistory entry — called once a framing round genuinely
+ * COMPLETES (a selection was made and a note composed from it), for both the
+ * initial round (at batch-creation time) and any re-framing round (after a
+ * plain reject). `batch.scope.framingHistory.length` is deliberately reused
+ * as the round counter rather than inventing a second one, per the design
+ * doc's own instruction. Mutates `batch.scope` in place (a new object, not
+ * the same reference, so callers relying on referential equality elsewhere
+ * aren't surprised) and returns `batch` — the caller still owns persisting
+ * it via review-state.mjs's saveBatch.
+ *
+ * @param {object} batch
+ * @param {{framings:Array, selection:object, note:string}} entry
+ * @returns {object} the same batch object, scope updated
+ */
+export function recordFramingRound(batch, entry) {
+  const history = Array.isArray(batch.scope?.framingHistory) ? batch.scope.framingHistory : [];
+  batch.scope = { ...batch.scope, framingHistory: [...history, entry] };
+  return batch;
+}
+
+/**
+ * A plain reject's new round of framings — informed by the picked quick-pick
+ * reason so the second round is an actually-informed re-read, not a blind
+ * repeat (per task 8.2's own instruction). Bounded: throws
+ * FramingRoundLimitError once `batch.scope.framingHistory.length` has
+ * already reached MAX_FRAMING_ROUNDS, so a second plain rejection can't
+ * silently offer a third round of quick-picks.
+ *
+ * Does NOT itself append to framingHistory — that only happens once the
+ * reviewer actually SELECTS one of these new framings (recordFramingRound,
+ * called by whoever persists the resulting batch — see mutation-ops.mjs's
+ * selectFramingForExistingBatch).
+ *
+ * @param {object} batch  the loaded Batch (must carry scope.text)
+ * @param {string} quickPickReason  a key of QUICK_PICK_REASONS
+ * @param {object} [opts]
+ * @param {object} [opts.llmOpts]  forwarded to proposeFramingsFromWriteup
+ * @returns {Promise<{framings: Array<{id:"a"|"b"|"c", sentence:string}>}>}
+ * @throws {FramingRoundLimitError} the bounded re-framing budget is already spent
+ */
+export async function requestReframing(batch, quickPickReason, opts = {}) {
+  const history = batch.scope?.framingHistory ?? [];
+  if (history.length >= MAX_FRAMING_ROUNDS) {
+    throw new FramingRoundLimitError(
+      `Batch "${batch.id}" has already used its one bounded re-framing round ` +
+      `(framingHistory has ${history.length} entries, max ${MAX_FRAMING_ROUNDS}). A further plain reject on ` +
+      `this batch requires an explicit note instead of another quick-pick round.`
+    );
+  }
+  const reasonLabel = QUICK_PICK_REASONS[quickPickReason];
+  if (!reasonLabel) {
+    throw new Error(
+      `Unknown quick-pick reason "${quickPickReason}" — expected one of: ${Object.keys(QUICK_PICK_REASONS).join(", ")}.`
+    );
+  }
+  const originalText = batch.scope?.text;
+  if (typeof originalText !== "string" || !originalText) {
+    throw new Error(`Batch "${batch.id}" has no original writeup text recorded at batch.scope.text — cannot re-frame it.`);
+  }
+  return proposeFramingsFromWriteup(originalText, {
+    ...(opts.llmOpts ?? {}),
+    note:
+      `The reviewer rejected the previous framing/extraction, citing: "${reasonLabel}." Propose three genuinely ` +
+      `different interpretive readings than before — do not just restate the same three ideas in different words.`
+  });
+}
+
+/**
+ * The reject-loop's actual DECISION — given a rubber-duck writeup-import
+ * batch and either an explicit note or a quick-pick reason code, decides
+ * which of the design doc's three paths applies:
+ *   - explicit note (non-empty after trim)  -> {kind:'regenerate', note}
+ *       skips the framing loop ENTIRELY, per the design doc's explicit
+ *       callout that conflating this with the quick-pick path would be a
+ *       real bug — the caller runs the EXISTING regenerateWriteupImport
+ *       unchanged, straight from the note.
+ *   - quick-pick reason, budget available    -> {kind:'reframe', framings}
+ *   - quick-pick reason, budget exhausted    -> throws FramingRoundLimitError
+ * Exactly one of `note`/`quickPickReason` is expected; an explicit note
+ * always wins if somehow both are supplied (the more informative signal),
+ * matching "explicit-note rejects always stay on the fast path."
+ *
+ * @param {object} batch
+ * @param {{note?:string, quickPickReason?:string}} rejection
+ * @param {object} [opts]  forwarded to requestReframing's opts.llmOpts
+ * @returns {Promise<{kind:'regenerate', note:string} | {kind:'reframe', framings:Array}>}
+ */
+export async function resolveRejectLoop(batch, { note, quickPickReason } = {}, opts = {}) {
+  if (typeof note === "string" && note.trim()) {
+    return { kind: "regenerate", note: note.trim() };
+  }
+  if (!quickPickReason) {
+    throw new Error(
+      "resolveRejectLoop requires either an explicit `note` or a `quickPickReason` for a rubber-duck-mode reject."
+    );
+  }
+  const { framings } = await requestReframing(batch, quickPickReason, opts);
+  return { kind: "reframe", framings };
 }
