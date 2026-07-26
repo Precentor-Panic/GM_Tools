@@ -35,6 +35,7 @@ import {
   recordFramingRound,
   resolveRejectLoop,
   QUICK_PICK_REASONS,
+  MAX_FRAMING_ROUNDS,
   WriteupImportRegenerateScopeError,
   FramingRoundLimitError
 } from "../../graph-import/writeup-import.mjs";
@@ -482,6 +483,17 @@ export async function selectFramingForNewBatch(dir, w, { writeupText, mode, fram
  * framingHistory.length, which only grows here and in
  * selectFramingForNewBatch above, never anywhere else.
  *
+ * DEFENSE IN DEPTH (self-review remediation): requestReframing (in
+ * writeup-import.mjs) is the primary bound check -- it refuses to spend an
+ * LLM call minting a NEW round of framings once the budget is spent. But
+ * that alone leaves a gap: nothing stopped a caller from invoking THIS
+ * function directly, more than once, with an old/reused `framings` array
+ * that never went through requestReframing at all (e.g. replaying an old
+ * MCP tool call), which would silently push framingHistory.length past
+ * MAX_FRAMING_ROUNDS purely by committing rounds, never by requesting new
+ * ones. Guarded here too so the bound holds regardless of entry path, not
+ * just against a well-behaved caller that always calls wf_reject first.
+ *
  * @param {string} dir
  * @param {string} w
  * @param {{batchId:string, framings:Array, selection:object}} args
@@ -492,6 +504,13 @@ export async function selectFramingForExistingBatch(dir, w, { batchId, framings,
     throw new Error(
       `Batch "${batchId}" was not created with rubber-duck mode on (batch.scope.rubberDuck.enabled is not true) ` +
       `-- re-framing an existing batch only applies to a rubber-duck-mode writeup-import batch.`
+    );
+  }
+  const priorRounds = preBatch.scope?.framingHistory?.length ?? 0;
+  if (priorRounds >= MAX_FRAMING_ROUNDS) {
+    throw new FramingRoundLimitError(
+      `Batch "${batchId}" has already used its one bounded re-framing round (framingHistory has ${priorRounds} ` +
+      `entries, max ${MAX_FRAMING_ROUNDS}) -- cannot commit another framing round onto it.`
     );
   }
   const note = composeFramingNote(selection);

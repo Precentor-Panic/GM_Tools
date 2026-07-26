@@ -227,6 +227,24 @@ test("POST /api/writeup-select-framing: batchId path against a NON-rubber-duck b
   assert.match(body.error, /not created with rubber-duck mode on/);
 });
 
+test("POST /api/writeup-select-framing: batchId path against a batch whose round budget is ALREADY spent is refused with a clean 409 -- defense in depth, independent of the reject-route's own bound check", async () => {
+  const batch = makeWriteupImportBatch({
+    rubberDuck: { enabled: true, updatedAt: "2026-01-01T00:00:00.000Z" },
+    framingHistory: [
+      { framings: [], selection: {}, note: "initial round" },
+      { framings: [], selection: {}, note: "re-framing round" }
+    ]
+  });
+  const { status, body } = await postJson("/api/writeup-select-framing", {
+    world: WORLD,
+    batchId: batch.id,
+    framings: [{ id: "a", sentence: "x" }, { id: "b", sentence: "y" }, { id: "c", sentence: "z" }],
+    selection: { primary: { id: "a", sentence: "x" } }
+  });
+  assert.equal(status, 409);
+  assert.equal(body.name, "FramingRoundLimitError");
+});
+
 test("POST /api/writeup-propose: empty text is a clean 400, no API call", async () => {
   const { status, body } = await postJson("/api/writeup-propose", { world: WORLD, text: "   " });
   assert.equal(status, 400);
