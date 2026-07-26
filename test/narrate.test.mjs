@@ -1,11 +1,29 @@
 import assert from "node:assert/strict";
-import {
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// Phase 10: narrateEntity persists via entity-narration.mjs on success --
+// isolate both review-state.mjs (entity-narration.mjs reuses its withLock)
+// and entity-narration.mjs's own root before importing narrate.mjs (which
+// imports entity-narration.mjs), same isolation pattern as
+// test/entity-narration.test.mjs.
+const scratchDir = mkdtempSync(join(tmpdir(), "gm-tools-narrate-test-"));
+process.env.GM_TOOLS_REVIEW_STATE_DIR = join(scratchDir, "review-state");
+process.env.GM_TOOLS_ENTITY_NARRATION_DIR = join(scratchDir, "entity-narration");
+
+const {
   narrateBatch,
+  narrateEntity,
   assertBatchNarratable,
+  assertMutationNarratable,
+  buildAdjacencyContext,
+  DEFAULT_ENTITY_NARRATE_DEPTH,
   NarrationGateError,
   NarrationError,
   DEFAULT_NARRATE_MODEL
-} from "../mutation-engine/narrate.mjs";
+} = await import("../mutation-engine/narrate.mjs");
+const { getCurrentEntityNarration, getEntityNarrationHistory } = await import("../mutation-engine/entity-narration.mjs");
 
 let passed = 0;
 const pending = [];
@@ -252,5 +270,246 @@ test("DEFAULT_NARRATE_MODEL is claude-sonnet-5, matching this project's other LL
   assert.equal(DEFAULT_NARRATE_MODEL, "claude-sonnet-5");
 });
 
+// =================================================================================
+// Phase 10 task 10.2: narrateEntity -- the per-entity replacement for narrateBatch
+// =================================================================================
+
+// This file's own test() harness fires every test body concurrently
+// (pushed into `pending`, awaited together at the bottom) -- fine when
+// nothing touches shared state, but narrateEntity now does a REAL file
+// write via entity-narration.mjs. Every test below that exercises
+// narrateEntity's persistence therefore uses its own unique entity-id
+// suffix (`fx(suffix)`) so concurrent tests never race on the same
+// on-disk (world, entityId) file.
+function fx(suffix) {
+  const entities = [
+    { id: `alvor-${suffix}`, name: "Alvor", type: "person", description: "The village smith." },
+    { id: `gerdur-${suffix}`, name: "Gerdur", type: "person", description: "Alvor's sister, runs the mill." },
+    { id: `riverwood-${suffix}`, name: "Riverwood", type: "place", description: "A small logging village." },
+    { id: `sven-${suffix}`, name: "Sven", type: "person", description: "A hunter, unrelated to this narration." }
+  ];
+  const edges = [
+    { id: `e1-${suffix}`, sourceId: `alvor-${suffix}`, targetId: `gerdur-${suffix}`, relationshipType: "kinship", strength: 0.9 },
+    { id: `e2-${suffix}`, sourceId: `alvor-${suffix}`, targetId: `riverwood-${suffix}`, relationshipType: "containment", strength: 0.6 },
+    // Two hops from alvor via riverwood/sven -- must NOT show up as an "immediate" neighbor of alvor.
+    { id: `e3-${suffix}`, sourceId: `riverwood-${suffix}`, targetId: `sven-${suffix}`, relationshipType: "containment", strength: 0.5 }
+  ];
+  return { entities, edges };
+}
+
+const FIXTURE_ENTITIES = fx("shared").entities;
+const FIXTURE_EDGES = fx("shared").edges;
+
+function twoEntityAcceptedBatch(suffix, overrides = {}) {
+  const batchId = `batch-entity-${suffix}`;
+  return {
+    id: batchId,
+    world: "wf-test",
+    createdAt: new Date().toISOString(),
+    scope: { mode: "seed", anchorId: `alvor-${suffix}` },
+    elapsedTimeDescriptor: "right now",
+    status: "open",
+    mutations: [
+      {
+        op: "upsert_entity",
+        id: `alvor-${suffix}`,
+        data: { description: "Shaken by the news." },
+        rationale: "The siege reached his forge.",
+        batchId,
+        sourceKind: "seeded-propagation",
+        impactScore: 0.7,
+        mutationId: "m0",
+        status: "accepted",
+        regionId: "region-0",
+        entityContext: { name: "Alvor", importance: 0.5, tags: [] },
+        diff: [{ field: "description", from: "A smith.", to: "Shaken by the news." }]
+      },
+      {
+        op: "upsert_entity",
+        id: `gerdur-${suffix}`,
+        data: { description: "Worried, watching the road." },
+        rationale: "News of the siege reached the mill too.",
+        batchId,
+        sourceKind: "seeded-propagation",
+        impactScore: 0.6,
+        mutationId: "m1",
+        status: "accepted",
+        regionId: "region-0",
+        entityContext: { name: "Gerdur", importance: 0.5, tags: [] },
+        diff: [{ field: "description", from: "Runs the mill.", to: "Worried, watching the road." }]
+      }
+    ],
+    ...overrides
+  };
+}
+
+// --------------------------------------------------- the entity-grain gate
+
+test("assertMutationNarratable: passes and returns the mutation when it's accepted", () => {
+  const batch = twoEntityAcceptedBatch("gate1");
+  const mutation = assertMutationNarratable(batch, "m0");
+  assert.equal(mutation.id, "alvor-gate1");
+});
+
+test("assertMutationNarratable: throws NarrationGateError for a non-accepted mutation, WITHOUT requiring the rest of the batch to be accepted (the actual grain fix)", () => {
+  const batch = twoEntityAcceptedBatch("gate2");
+  batch.mutations[1].status = "pending"; // the OTHER mutation, not m0
+  assert.doesNotThrow(() => assertMutationNarratable(batch, "m0"), "m0 is still accepted -- must not be blocked by m1's status");
+  assert.throws(
+    () => assertMutationNarratable(batch, "m1"),
+    (err) => {
+      assert.ok(err instanceof NarrationGateError);
+      assert.equal(err.notAccepted.length, 1);
+      assert.equal(err.notAccepted[0].mutationId, "m1");
+      return true;
+    }
+  );
+});
+
+test("assertMutationNarratable: throws a plain Error for an unknown mutationId", () => {
+  const batch = twoEntityAcceptedBatch("gate3");
+  assert.throws(() => assertMutationNarratable(batch, "does-not-exist"), /No mutation with mutationId/);
+});
+
+test("narrateEntity: refuses to call the model at all if the targeted mutation isn't accepted, even though the batch has other accepted mutations", async () => {
+  const { entities, edges } = fx("gate4");
+  const batch = twoEntityAcceptedBatch("gate4");
+  batch.mutations[0].status = "pending";
+  const client = mockClient(["should never be reached"]);
+  await assert.rejects(() => narrateEntity(batch, "m0", { entities, edges }, { client }), NarrationGateError);
+  assert.equal(client.calls.length, 0, "the model must never be called for a non-accepted mutation");
+});
+
+// --------------------------------------------------- targeting via real adjacency
+
+test("buildAdjacencyContext: labels the entity and lists its immediate neighbors with relationship types, excludes two-hop entities", () => {
+  const { entityLabel, neighborDescriptions } = buildAdjacencyContext(FIXTURE_ENTITIES, FIXTURE_EDGES, "alvor-shared");
+  assert.equal(entityLabel, "Alvor (person)");
+  assert.ok(neighborDescriptions.includes("Gerdur (kinship)"));
+  assert.ok(neighborDescriptions.includes("Riverwood (containment)"));
+  assert.ok(!neighborDescriptions.some((d) => d.startsWith("Sven")), "Sven is two hops away via Riverwood, not an immediate neighbor of Alvor");
+});
+
+test("DEFAULT_ENTITY_NARRATE_DEPTH is 1 -- immediate neighbors only, not a wider blast-radius walk", () => {
+  assert.equal(DEFAULT_ENTITY_NARRATE_DEPTH, 1);
+});
+
+test("narrateEntity: THE ACTUAL REGRESSION FIX -- targeting context is built from this entity's real adjacent-entity data, not left empty, and different entities in the same batch get different grounding", async () => {
+  let capturedPrompts = [];
+  const client = mockClient([
+    (params) => {
+      capturedPrompts.push(params.messages[0].content);
+      return "Some prose.";
+    }
+  ]);
+  const { entities, edges } = fx("regression");
+  const batch = twoEntityAcceptedBatch("regression");
+
+  await narrateEntity(batch, "m0", { entities, edges }, { client });
+  await narrateEntity(batch, "m1", { entities, edges }, { client });
+
+  const [alvorPrompt, gerdurPrompt] = capturedPrompts;
+  assert.ok(alvorPrompt.includes("Alvor (person)"), "alvor's own narration should be grounded in Alvor as the current entity");
+  assert.ok(alvorPrompt.includes("Gerdur (kinship)"), "alvor's grounding should list his real neighbor Gerdur");
+  assert.ok(gerdurPrompt.includes("Gerdur (person)"), "gerdur's own narration should be grounded in Gerdur, not Alvor");
+  assert.ok(gerdurPrompt.includes("Alvor (kinship)"), "gerdur's grounding should list her real neighbor Alvor");
+  assert.notEqual(alvorPrompt, gerdurPrompt, "two different entities in the same batch must NOT receive the same prompt/context");
+});
+
+test("narrateEntity: falls back to '(not specified)' grounding when no entities/edges are supplied, rather than crashing", async () => {
+  let capturedPrompt = "";
+  const client = mockClient([
+    (params) => {
+      capturedPrompt = params.messages[0].content;
+      return "Some prose.";
+    }
+  ]);
+  const batch = twoEntityAcceptedBatch("fallback");
+  await narrateEntity(batch, "m0", {}, { client });
+  assert.ok(capturedPrompt.includes("(not specified)"));
+});
+
+test("narrateEntity: builds the prompt from only the ONE targeted mutation, not every mutation in the batch (the identical-text-across-every-row regression)", async () => {
+  let capturedPrompt = "";
+  const client = mockClient([
+    (params) => {
+      capturedPrompt = params.messages[0].content;
+      return "Some prose.";
+    }
+  ]);
+  const { entities, edges } = fx("onlyone");
+  const batch = twoEntityAcceptedBatch("onlyone");
+  await narrateEntity(batch, "m0", { entities, edges }, { client });
+  assert.ok(capturedPrompt.includes("Shaken by the news."), "should include m0's own change");
+  assert.ok(!capturedPrompt.includes("Worried, watching the road."), "must NOT include m1's change -- entity grain, not batch grain");
+});
+
+// --------------------------------------------------- persistence (the reload-survival fix)
+
+test("narrateEntity: on success, persists via entity-narration.mjs's saveEntityNarration -- durable across a reload, not just returned", async () => {
+  const client = mockClient(["The forge falls silent, and Gerdur watches the smoke rise."]);
+  const { entities, edges } = fx("persist1");
+  const batch = twoEntityAcceptedBatch("persist1");
+
+  assert.equal(getCurrentEntityNarration("wf-test", "alvor-persist1"), null, "sanity: nothing persisted yet");
+
+  const result = await narrateEntity(batch, "m0", { entities, edges }, { client });
+  assert.equal(result.entityId, "alvor-persist1");
+  assert.equal(result.mutationId, "m0");
+  assert.equal(result.prose, "The forge falls silent, and Gerdur watches the smoke rise.");
+
+  const current = getCurrentEntityNarration("wf-test", "alvor-persist1");
+  assert.ok(current, "must be durably persisted, not just returned to the caller");
+  assert.equal(current.prose, result.prose);
+  assert.equal(current.sourceMutationId, "m0");
+  assert.equal(current.sourceBatchId, "batch-entity-persist1");
+});
+
+test("narrateEntity: regenerating (a second call for the same entity) creates a NEW history entry, superseding the first -- not overwritten in place", async () => {
+  const { entities, edges } = fx("regen1");
+  const batch = twoEntityAcceptedBatch("regen1");
+  const client1 = mockClient(["First narration for Alvor."]);
+  await narrateEntity(batch, "m0", { entities, edges }, { client: client1 });
+
+  const client2 = mockClient(["Second, regenerated narration for Alvor."]);
+  await narrateEntity(batch, "m0", { entities, edges, note: "make it darker" }, { client: client2 });
+
+  const history = getEntityNarrationHistory("wf-test", "alvor-regen1");
+  assert.equal(history.length, 2, "both entries remain in history");
+  assert.ok(history.some((e) => e.prose === "First narration for Alvor." && e.status === "superseded"));
+  assert.ok(history.some((e) => e.prose === "Second, regenerated narration for Alvor." && e.status === "current"));
+});
+
+test("narrateEntity: throws NarrationError (never silently no-ops) for a mutation with no resolved entity id yet, and never persists garbage", async () => {
+  const { entities, edges } = fx("noid");
+  const batch = twoEntityAcceptedBatch("noid");
+  batch.mutations[0].id = undefined; // simulate an accepted-but-not-yet-synced create
+  const client = mockClient(["should never be reached, id check happens before the API call"]);
+  await assert.rejects(() => narrateEntity(batch, "m0", { entities, edges }, { client }), NarrationError);
+  assert.equal(client.calls.length, 0, "should fail fast before spending an API call on an unpersistable result");
+});
+
+test("narrateEntity: truncated on both attempts throws a NarrationError with the mutationId attached", async () => {
+  const client = mockClient([
+    { text: "The forge falls silent", stopReason: "max_tokens" },
+    { text: "The forge falls silent as word", stopReason: "max_tokens" }
+  ]);
+  const { entities, edges } = fx("trunc1");
+  const batch = twoEntityAcceptedBatch("trunc1");
+  await assert.rejects(
+    narrateEntity(batch, "m0", { entities, edges }, { client, maxTokens: 50 }),
+    (err) => {
+      assert.ok(err instanceof NarrationError);
+      assert.equal(err.mutationId, "m0");
+      assert.match(err.message, /truncated/i);
+      return true;
+    }
+  );
+});
+
 await Promise.all(pending);
 console.log(`\n${passed} passed`);
+
+process.on("exit", () => {
+  try { rmSync(scratchDir, { recursive: true, force: true }); } catch { /* best effort */ }
+});
