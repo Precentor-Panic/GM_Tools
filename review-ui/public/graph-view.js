@@ -410,6 +410,16 @@ function showPopover(container, node, pos, opts) {
   const mode = opts.mode ?? "standalone";
   const el = document.createElement("div");
   el.className = "graph-popover";
+  // A real bug found only by actually clicking Reject in a browser (not
+  // visible from reading the code): the popover is a direct child of
+  // `container`, the SAME element wireRubberBandSelection binds its
+  // rubber-band-drag `mousedown` listener to (moved there from the
+  // per-render `svg` element to fix a listener-leak issue) -- without
+  // this stopPropagation, a mousedown on the popover's own Accept/Reject
+  // button bubbles up to that listener, which calls closePopover() and
+  // removes the button from the DOM before its `click` ever fires, so
+  // Accept/Reject from the popover silently did nothing.
+  el.addEventListener("mousedown", (evt) => evt.stopPropagation());
   // Position relative to the SVG's own coordinate box, scaled to the
   // container's actual rendered size (the SVG uses a fixed viewBox and
   // scales to fit its container).
@@ -487,23 +497,44 @@ function showPopover(container, node, pos, opts) {
 // multi-select: rubber-band drag over the SVG background
 // ---------------------------------------------------------------------------
 
+/**
+ * Self-review remediation: a batch's graph re-renders on every accept/
+ * reject/refresh (renderGraph() tears down and rebuilds the SVG each
+ * time), so binding fresh `window`-level mousemove/mouseup listeners on
+ * every call -- as an earlier version of this function did -- would leak
+ * one more pair of listeners per render, forever, for the life of the
+ * page. Fixed by binding those two `window` listeners EXACTLY ONCE per
+ * container (guarded by `container._graphRubberBandWired`), reading the
+ * CURRENT nodes/positions/svg from a small mutable record
+ * (`container._graphRubberBand`) that every renderGraph() call refreshes.
+ * `mousedown` is bound on `container` (stable across re-renders) rather
+ * than the per-render `svg` element; a node's own `mousedown` handler
+ * already calls stopPropagation(), so this container-level listener only
+ * ever sees a genuine background drag, never a click that started on a
+ * node.
+ */
 function wireRubberBandSelection(container, svg, nodes, positions, mode, opts) {
   if (mode !== "batch") return; // selection only makes sense where there's something to select FOR (the bulk accept/reject bar)
+  container._graphRubberBand = { nodes, positions, svg, opts };
+  if (container._graphRubberBandWired) return;
+  container._graphRubberBandWired = true;
+
   let dragStart = null;
   let rectEl = null;
 
   function svgPoint(evt) {
-    const rect = svg.getBoundingClientRect();
+    const currentSvg = container._graphRubberBand.svg;
+    const rect = currentSvg.getBoundingClientRect();
     const x = ((evt.clientX - rect.left) / rect.width) * LAYOUT_W;
     const y = ((evt.clientY - rect.top) / rect.height) * LAYOUT_H;
     return { x, y };
   }
 
-  svg.addEventListener("mousedown", (evt) => {
+  container.addEventListener("mousedown", (evt) => {
     closePopover(container);
     dragStart = svgPoint(evt);
     rectEl = svgEl("rect", { class: "graph-selection-rect", x: dragStart.x, y: dragStart.y, width: 0, height: 0 });
-    svg.appendChild(rectEl);
+    container._graphRubberBand.svg.appendChild(rectEl);
   });
 
   window.addEventListener("mousemove", (evt) => {
@@ -521,19 +552,20 @@ function wireRubberBandSelection(container, svg, nodes, positions, mode, opts) {
     const x0 = Math.min(dragStart.x, cur.x), x1 = Math.max(dragStart.x, cur.x);
     const y0 = Math.min(dragStart.y, cur.y), y1 = Math.max(dragStart.y, cur.y);
     const draggedEnough = (x1 - x0) > 4 || (y1 - y0) > 4;
+    const { nodes: currentNodes, positions: currentPositions, svg: currentSvg, opts: currentOpts } = container._graphRubberBand;
     if (draggedEnough) {
-      for (const n of nodes) {
+      for (const n of currentNodes) {
         // Same selectability rule as shift-click: only a node with its own
         // pending mutation can actually be fed to the bulk accept/reject
         // bar -- a rubber-band sweeping over a purely-contextual neighbor
         // must not visually claim it as selected when nothing happens.
         if (!n.mutationId || n.status !== "pending") continue;
-        const p = positions.get(n.id);
+        const p = currentPositions.get(n.id);
         if (!p) continue;
         if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) {
-          const g = svg.querySelector(`.graph-node[data-node-id="${cssEscape(n.id)}"]`);
+          const g = currentSvg.querySelector(`.graph-node[data-node-id="${cssEscape(n.id)}"]`);
           g?.classList.add("graph-node--selected");
-          opts.onToggleSelect?.(n.id, true);
+          currentOpts.onToggleSelect?.(n.id, true);
         }
       }
     }
