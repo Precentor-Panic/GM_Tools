@@ -12,6 +12,7 @@
   <button class="brand" data-nav="queue" title="Back to Queue">GM Review</button>
   <nav class="topnav">
     <button data-nav="queue">Queue</button>
+    <button data-nav="import">New Import</button>
     <button data-nav="debt">Deferred Debt</button>
   </nav>
   <div class="topbar-right">
@@ -38,12 +39,39 @@
   </div>
 </section>
 
+<!-- ================= NEW IMPORT (Phase 8) ================= -->
+<section id="view-import" class="view">
+  <h1>New Writeup Import</h1>
+  <p class="hint">Paste a campaign pitch, prep notes, or a wiki export. One pass extracts entities and edges for review.</p>
+  <textarea id="import-writeup-text" class="writeup-textarea" rows="14" placeholder="Paste your writeup here&hellip;"></textarea>
+  <div class="import-actions">
+    <button id="btn-import-submit" class="btn btn--accept">Submit</button>
+    <span id="import-status" class="hint"></span>
+  </div>
+</section>
+
+<!-- ================= FIRST REACTIONS / framing selection (Phase 8) ================= -->
+<section id="view-framing" class="view">
+  <h1>First Reactions</h1>
+  <p class="hint">Three quick readings of the writeup. Pick one, or blend, then run the real extraction.</p>
+  <div id="framing-cards" class="framing-cards"></div>
+  <div class="framing-blend">
+    <label for="framing-blend-input">Also pull in elements of another framing (optional):</label>
+    <input id="framing-blend-input" type="text" placeholder="e.g. also bring in the political intrigue from framing A">
+  </div>
+  <div class="import-actions">
+    <button id="btn-framing-submit" class="btn btn--accept" disabled>Use This Framing</button>
+    <span id="framing-status" class="hint"></span>
+  </div>
+</section>
+
 <!-- ================= REVIEW ================= -->
 <section id="view-review" class="view">
   <div class="review-header">
     <button class="link-btn" data-nav="queue">&larr; Back to Queue</button>
     <div id="review-headline" class="review-headline"></div>
     <div id="review-meta" class="review-meta"></div>
+    <div id="rubber-duck-reject-panel" class="rubber-duck-panel" hidden></div>
   </div>
 
   <div id="review-actionbar" class="action-bar">
@@ -86,6 +114,13 @@
   <div class="settings-card">
     <h2 class="section-label">Graph</h2>
     <a href="/graph.html" target="_blank" rel="noopener" class="link-btn">Explore Graph &rarr;</a>
+  </div>
+
+  <div class="settings-card">
+    <h2 class="section-label">Rubber-Duck Mode</h2>
+    <p class="hint">When on, submitting a writeup first shows three quick interpretive framings to pick from &mdash; then the real extraction runs, steered by that choice. A standing personal setting, not a per-import toggle.</p>
+    <label class="toggle-row"><input type="checkbox" id="rubber-duck-toggle"> Enabled</label>
+    <div id="rubber-duck-status" class="hint"></div>
   </div>
 </section>
 

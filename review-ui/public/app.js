@@ -78,6 +78,8 @@ function renderCurrentView() {
   else if (view === "review") renderReview(arg);
   else if (view === "debt") renderDebt();
   else if (view === "settings") renderSettings();
+  else if (view === "import") renderImportView();
+  else if (view === "framing") renderFramingView();
 }
 
 window.addEventListener("hashchange", renderCurrentView);
@@ -249,6 +251,8 @@ function renderReviewFromState(openMutationIds, openEntityIdHint) {
 
   const actionBar = document.getElementById("review-actionbar");
   actionBar.style.display = detail.batch.mutationCount === 0 ? "none" : "";
+
+  renderRubberDuckRejectPanel(detail); // Phase 8: only renders anything for a rubber-duck-mode writeup-import batch
 
   const listEl = document.getElementById("review-list");
   listEl.innerHTML = "";
@@ -788,6 +792,7 @@ function renderSyncStatus() {
 async function renderSettings() {
   renderSyncStatus();
   document.getElementById("undo-last-status").textContent = "";
+  await renderRubberDuckToggle();
 }
 
 document.getElementById("btn-undo-last").addEventListener("click", async () => {
@@ -831,6 +836,286 @@ window.fetch = function patchedFetch(...args) {
     return res;
   });
 };
+
+// ---------------------------------------------------------------------------
+// Phase 8 — rubber-duck mode: New Import screen, First-Reactions framing
+// screen, the reject-loop's quick-pick panel on Review, and the Settings
+// toggle. Reuses existing visual conventions (card styling, .btn/.hint
+// classes, showToast) rather than inventing a new visual language.
+// ---------------------------------------------------------------------------
+
+/**
+ * Carries state between the New Import / First Reactions screens, since
+ * this is a genuinely stateless two-request flow (server holds nothing in
+ * between) -- the client is what remembers "what did phase A just show me."
+ * Two shapes:
+ *   {kind:'new', writeupText, mode, rubberDuck, framings}   -- first submission
+ *   {kind:'reframe', batchId, framings}                     -- after a plain reject
+ */
+let importFlowState = null;
+
+// --- New Import -------------------------------------------------------------
+
+function renderImportView() {
+  document.getElementById("import-writeup-text").value = "";
+  document.getElementById("import-status").textContent = "";
+}
+
+document.getElementById("btn-import-submit").addEventListener("click", async () => {
+  const textEl = document.getElementById("import-writeup-text");
+  const statusEl = document.getElementById("import-status");
+  const btn = document.getElementById("btn-import-submit");
+  const writeupText = textEl.value;
+  if (!writeupText.trim()) {
+    statusEl.textContent = "Paste a writeup first.";
+    return;
+  }
+  if (!CURRENT_WORLD) {
+    statusEl.textContent = "No world configured yet.";
+    return;
+  }
+  btn.disabled = true;
+  statusEl.textContent = "Reading the writeup&hellip;";
+  try {
+    const result = await api("/api/writeup-propose", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: CURRENT_WORLD, text: writeupText })
+    });
+    if (result.phase === "framing") {
+      importFlowState = {
+        kind: "new",
+        writeupText: result.writeupText,
+        mode: result.mode,
+        rubberDuck: result.rubberDuck,
+        framings: result.framings
+      };
+      navigate("framing");
+      return;
+    }
+    // rubber-duck mode is off -- a real batch was created in one shot, same
+    // as Phase 5's behavior, just reached through this new screen.
+    statusEl.textContent = "";
+    navigate("review", result.batchId);
+  } catch (err) {
+    statusEl.textContent = `Failed: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// --- First Reactions (framing selection) ------------------------------------
+
+function renderFramingView() {
+  const cardsEl = document.getElementById("framing-cards");
+  const blendInput = document.getElementById("framing-blend-input");
+  const submitBtn = document.getElementById("btn-framing-submit");
+  const statusEl = document.getElementById("framing-status");
+  cardsEl.innerHTML = "";
+  blendInput.value = "";
+  statusEl.textContent = "";
+  submitBtn.disabled = true;
+
+  if (!importFlowState || !Array.isArray(importFlowState.framings)) {
+    cardsEl.innerHTML = `<p class="hint">Nothing to show here yet &mdash; start a <a href="#import">New Import</a>.</p>`;
+    return;
+  }
+
+  for (const framing of importFlowState.framings) {
+    const label = document.createElement("label");
+    label.className = "framing-card";
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "framing-pick";
+    radio.value = framing.id;
+    radio.addEventListener("change", () => { submitBtn.disabled = false; });
+    const body = document.createElement("div");
+    body.className = "framing-card-body";
+    const idEl = document.createElement("div");
+    idEl.className = "framing-card-id";
+    idEl.textContent = `(${framing.id})`;
+    const sentenceEl = document.createElement("div");
+    sentenceEl.className = "framing-card-sentence";
+    sentenceEl.textContent = framing.sentence;
+    body.append(idEl, sentenceEl);
+    label.append(radio, body);
+    cardsEl.appendChild(label);
+  }
+}
+
+document.getElementById("btn-framing-submit").addEventListener("click", async () => {
+  const statusEl = document.getElementById("framing-status");
+  const btn = document.getElementById("btn-framing-submit");
+  if (!importFlowState) return;
+  const picked = document.querySelector('input[name="framing-pick"]:checked');
+  if (!picked) {
+    statusEl.textContent = "Pick a framing first.";
+    return;
+  }
+  const primary = importFlowState.framings.find((f) => f.id === picked.value);
+  const blend = document.getElementById("framing-blend-input").value.trim();
+  const selection = { primary, ...(blend ? { blend } : {}) };
+
+  const body = { world: CURRENT_WORLD, framings: importFlowState.framings, selection };
+  if (importFlowState.kind === "reframe") {
+    body.batchId = importFlowState.batchId;
+  } else {
+    body.writeupText = importFlowState.writeupText;
+    body.mode = importFlowState.mode;
+    body.rubberDuck = importFlowState.rubberDuck;
+  }
+
+  btn.disabled = true;
+  statusEl.textContent = "Running the real extraction&hellip; this can take a while.";
+  try {
+    const result = await api("/api/writeup-select-framing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    importFlowState = null;
+    navigate("review", result.batchId);
+  } catch (err) {
+    statusEl.textContent = `Failed: ${err.message}`;
+    btn.disabled = false;
+  }
+});
+
+// --- reject-loop quick-pick panel (Review screen) ----------------------------
+
+const QUICK_PICK_LABELS = {
+  "wrong-emphasis": "Wrong emphasis",
+  "wrong-scope": "Wrong scope",
+  "missing-something": "Missing something",
+  "not-feeling-it-yet": "Not feeling it yet"
+};
+
+/**
+ * Renders (or hides) the rubber-duck reject panel on the Review screen.
+ * Only ever shows anything for a batch whose OWN stamped
+ * batch.scope.rubberDuck.enabled is true -- a normal-mode batch (or a
+ * rubber-duck-mode batch reviewed after the setting was later flipped off)
+ * shows nothing here at all, matching the read-once-snapshot invariant: the
+ * frontend defers entirely to what the BATCH says, never the live setting.
+ */
+function renderRubberDuckRejectPanel(detail) {
+  const panel = document.getElementById("rubber-duck-reject-panel");
+  panel.innerHTML = "";
+  const rubberDuck = detail.batch.scope?.rubberDuck;
+  if (!rubberDuck?.enabled || detail.batch.mutationCount === 0) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+
+  const startBtn = document.createElement("button");
+  startBtn.className = "btn btn--reject";
+  startBtn.textContent = "Reject This Extraction";
+  startBtn.addEventListener("click", () => renderRubberDuckRejectExpanded(detail, panel));
+  panel.appendChild(startBtn);
+}
+
+function renderRubberDuckRejectExpanded(detail, panel, opts = {}) {
+  panel.innerHTML = "";
+  const { noteOnly, message } = opts;
+
+  if (message) {
+    const msg = document.createElement("div");
+    msg.className = "hint rubber-duck-message";
+    msg.textContent = message;
+    panel.appendChild(msg);
+  }
+
+  if (!noteOnly) {
+    const quickPicks = document.createElement("div");
+    quickPicks.className = "quick-pick-row";
+    for (const [code, label] of Object.entries(QUICK_PICK_LABELS)) {
+      const btn = document.createElement("button");
+      btn.className = "btn";
+      btn.textContent = label;
+      btn.addEventListener("click", () => submitRubberDuckReject(detail, { quickPickReason: code }, panel));
+      quickPicks.appendChild(btn);
+    }
+    panel.appendChild(quickPicks);
+  }
+
+  const noteRow = document.createElement("div");
+  noteRow.className = "regenerate-box";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = noteOnly ? "An explicit reason (required now)&hellip;" : "Or reject with an explicit reason&hellip;";
+  const noteBtn = document.createElement("button");
+  noteBtn.className = "btn btn--reject";
+  noteBtn.textContent = "Reject with Note";
+  noteBtn.addEventListener("click", () => {
+    if (!input.value.trim()) return;
+    submitRubberDuckReject(detail, { note: input.value.trim() }, panel);
+  });
+  noteRow.append(input, noteBtn);
+  panel.appendChild(noteRow);
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "link-btn";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", () => renderRubberDuckRejectPanel(detail));
+  panel.appendChild(cancelBtn);
+}
+
+async function submitRubberDuckReject(detail, { note, quickPickReason }, panel) {
+  try {
+    const result = await api(`/api/batches/${detail.batch.id}/reject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: CURRENT_WORLD, scope: "batch", note, quickPickReason })
+    });
+    if (result.rubberDuckLoop?.kind === "reframe") {
+      importFlowState = { kind: "reframe", batchId: detail.batch.id, framings: result.rubberDuckLoop.framings };
+      navigate("framing");
+      return;
+    }
+    showToast(result.rubberDuckLoop?.kind === "regenerate" ? "Rejected — re-extracted with your note." : "Rejected.");
+    await refreshReviewDetail();
+  } catch (err) {
+    if (err.status === 409 && err.body?.name === "FramingRoundLimitError") {
+      renderRubberDuckRejectExpanded(detail, panel, {
+        noteOnly: true,
+        message: "The one bounded re-framing round is already used — provide an explicit note instead."
+      });
+      return;
+    }
+    renderRubberDuckRejectExpanded(detail, panel, { message: `Failed: ${err.message}` });
+  }
+}
+
+// --- Settings toggle ----------------------------------------------------------
+
+async function renderRubberDuckToggle() {
+  const checkbox = document.getElementById("rubber-duck-toggle");
+  const statusEl = document.getElementById("rubber-duck-status");
+  statusEl.textContent = "";
+  try {
+    const settings = await api("/api/settings/rubber-duck");
+    checkbox.checked = !!settings.enabled;
+  } catch (err) {
+    statusEl.textContent = `Could not load: ${err.message}`;
+  }
+}
+
+document.getElementById("rubber-duck-toggle").addEventListener("change", async (e) => {
+  const statusEl = document.getElementById("rubber-duck-status");
+  const desired = e.target.checked;
+  try {
+    const settings = await api("/api/settings/rubber-duck", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: desired })
+    });
+    statusEl.textContent = settings.enabled ? "Rubber-duck mode is ON." : "Rubber-duck mode is OFF.";
+  } catch (err) {
+    e.target.checked = !desired; // revert on failure
+    statusEl.textContent = `Failed to update: ${err.message}`;
+  }
+});
 
 // ---------------------------------------------------------------------------
 // boot

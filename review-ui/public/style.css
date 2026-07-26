@@ -236,7 +236,40 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .debt-tags li { padding: 0.15rem 0; color: var(--text-muted); }
 .debt-tags li .cycle-label { color: var(--text); font-weight: 600; margin-right: 0.4rem; }
 
+/* --- New Import (Phase 8) --- */
+.writeup-textarea {
+  width: 100%; font: inherit; font-size: 0.95rem; padding: 0.7rem 0.8rem; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); resize: vertical;
+}
+.import-actions { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.75rem; }
+
+/* --- First Reactions / framing selection (Phase 8) --- */
+.framing-cards { display: flex; flex-direction: column; gap: 0.6rem; margin: 0.75rem 0 1rem; }
+.framing-card {
+  display: flex; align-items: flex-start; gap: 0.65rem; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--card-bg); padding: 0.75rem 0.9rem; cursor: pointer;
+}
+.framing-card:has(input:checked) { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: -1px; }
+.framing-card input[type="radio"] { margin-top: 0.2rem; flex: none; }
+.framing-card-body { flex: 1; }
+.framing-card-id { font-size: 0.75rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.framing-card-sentence { font-size: 0.98rem; margin-top: 0.15rem; }
+.framing-blend { margin-bottom: 0.5rem; }
+.framing-blend label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.3rem; }
+.framing-blend input {
+  width: 100%; font-size: 0.9rem; padding: 0.45rem 0.6rem; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text);
+}
+
+/* --- rubber-duck reject panel (Phase 8, on the Review screen) --- */
+.rubber-duck-panel { margin-top: 0.6rem; }
+.rubber-duck-panel:empty { margin: 0; }
+.quick-pick-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.5rem; }
+.rubber-duck-message { margin-bottom: 0.4rem; color: var(--amber); }
+
 /* --- Settings --- */
+.toggle-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.95rem; cursor: pointer; }
+.toggle-row input { width: 1.05rem; height: 1.05rem; }
 .settings-card { border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem; }
 .status-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 0.35rem; }
 .status-dot--unknown { background: var(--text-muted); }
