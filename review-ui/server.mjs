@@ -43,7 +43,7 @@ import { fileURLToPath } from "node:url";
 import { listWorlds } from "../wf-mcp-server/lib/data-dir.mjs";
 import { loadSnapshot } from "../wf-mcp-server/lib/snapshot.mjs";
 import { resolveWorld, resolveDir } from "../wf-mcp-server/lib/resolve.mjs";
-import { findEntity } from "../wf-mcp-server/lib/graph.mjs";
+import { findEntity, neighborhood } from "../wf-mcp-server/lib/graph.mjs";
 
 import { loadBatch, listBatches } from "../mutation-engine/review-state.mjs";
 import { summarizeBatch } from "../mutation-engine/grain.mjs";
@@ -213,6 +213,214 @@ function pendingEntitiesPayload(w, dir) {
     name: findEntity(entities, entityId)?.name ?? entityId,
     entries: readAvailablePending(w, entityId)
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7 -- graph data route (task 7.1). Thin composition over EXISTING
+// primitives only, per the task's own instruction: wf-mcp-server/lib/graph.mjs's
+// neighborhood() for BFS (no second graph-walk), mutation-ops.mjs's
+// flaggedEntityIdSet (itself just human-review.mjs's findUnreviewedEntities,
+// already used above by /api/unreviewed-entities) for the unreviewed
+// channel, pending-ledger.mjs's listPendingEntities (already used above by
+// /api/pending-entities) for the deferred-debt channel. No new business
+// logic beyond request shaping lives here.
+// ---------------------------------------------------------------------------
+
+const GRAPH_STATUS_FILTER_TOKENS = new Set(["unreviewed", "deferred-debt"]);
+
+/**
+ * Parse a `filter` query param into the Set of active status tokens, or
+ * `null` for "show everything" (`filter=all`, the explicit escape hatch).
+ * Omitting the param entirely defaults to BOTH tokens -- the confirmed
+ * flagged-only default the standalone Graph view (task 7.4) must ship with.
+ */
+function parseGraphFilter(raw) {
+  if (raw === "all") return null;
+  const tokens = (raw ? raw.split(",") : ["unreviewed", "deferred-debt"])
+    .map((t) => t.trim())
+    .filter((t) => GRAPH_STATUS_FILTER_TOKENS.has(t));
+  return new Set(tokens.length ? tokens : ["unreviewed", "deferred-debt"]);
+}
+
+/**
+ * Full-graph degree map (entityId -> edge count), built once over the
+ * WHOLE snapshot's edges -- a node's hub-ness is a real property of the
+ * persisted graph, not an artifact of how much context happens to be
+ * fetched around it in any one request.
+ */
+function graphDegreeMap(edges) {
+  const m = new Map();
+  for (const e of edges) {
+    m.set(e.sourceId, (m.get(e.sourceId) ?? 0) + 1);
+    m.set(e.targetId, (m.get(e.targetId) ?? 0) + 1);
+  }
+  return m;
+}
+
+function graphNodePayload(entity, { degrees, flaggedIds, debtIds, proposed }) {
+  return {
+    id: entity.id,
+    name: entity.name ?? entity.id,
+    type: entity.type ?? "unknown",
+    degree: degrees.get(entity.id) ?? 0,
+    flaggedUnreviewed: flaggedIds.has(entity.id),
+    hasDeferredDebt: debtIds.has(entity.id),
+    ...(proposed !== undefined ? { proposed } : {})
+  };
+}
+
+function graphEdgePayload(edge, { proposed }) {
+  return {
+    id: edge.id,
+    sourceId: edge.sourceId,
+    targetId: edge.targetId,
+    relationshipType: edge.relationshipType ?? "unspecified",
+    label: edge.label,
+    ...(proposed !== undefined ? { proposed } : {})
+  };
+}
+
+/**
+ * Batch-scoped graph payload: this batch's own proposed entities/edges
+ * (every entity/edge touched by one of its mutations, regardless of
+ * accept/reject/pending status -- accepting doesn't write to the graph
+ * until sync, so even an accepted mutation is still "proposed" here) plus
+ * their one-hop (or `depth`-hop) PERSISTED neighbors, via neighborhood().
+ *
+ * A create with no persisted counterpart yet gets a synthetic node keyed
+ * `new:<mutationId>` -- writeup-import (graph-import/writeup-import.mjs)
+ * pre-assigns a real id to every entity it creates, but texture.mjs's
+ * LLM-authored creates are NOT guaranteed to (schema.mjs's `Mutation.id` is
+ * optional), so this route can't assume every entity mutation carries a
+ * resolved id the way Phase 5's own id-stability fix could.
+ */
+function graphPayloadForBatch(w, dir, batchId, depth) {
+  const batch = loadBatch(w, batchId);
+  let entities = [];
+  let edges = [];
+  try {
+    ({ entities, edges } = loadSnapshot(dir, w).snapshot);
+  } catch {
+    // No persisted snapshot yet (a brand-new world) -- the batch's own
+    // proposed nodes still render, just with no persisted context.
+  }
+  const entityMap = new Map(entities.map((e) => [e.id, e]));
+  const edgeMap = new Map(edges.map((e) => [e.id, e]));
+
+  const proposedEntityIds = new Set(); // real + synthetic keys
+  const syntheticEntities = new Map(); // key -> {id, name, type}
+  const proposedEdgeIds = new Set();
+  const syntheticEdges = new Map(); // key -> {id, sourceId, targetId, relationshipType, label}
+  const seedRealIds = new Set(); // real persisted ids to expand neighborhood() from
+
+  for (const m of batch.mutations) {
+    if (m.op === "upsert_entity" || m.op === "delete_entity") {
+      const key = m.id ?? `new:${m.mutationId}`;
+      proposedEntityIds.add(key);
+      if (m.id && entityMap.has(m.id)) {
+        seedRealIds.add(m.id);
+      } else {
+        syntheticEntities.set(key, {
+          id: key,
+          name: m.entityContext?.name ?? m.data?.name ?? key,
+          type: m.data?.type ?? "unknown"
+        });
+      }
+    } else if (m.op === "upsert_edge" || m.op === "delete_edge") {
+      const existingEdge = m.id ? edgeMap.get(m.id) : undefined;
+      const sourceId = m.data?.sourceId ?? existingEdge?.sourceId;
+      const targetId = m.data?.targetId ?? existingEdge?.targetId;
+      if (!sourceId || !targetId) continue; // can't place an edge we can't resolve both endpoints for
+      const key = m.id ?? `new-edge:${m.mutationId}`;
+      proposedEdgeIds.add(key);
+      syntheticEdges.set(key, {
+        id: key,
+        sourceId,
+        targetId,
+        relationshipType: m.data?.relationshipType ?? existingEdge?.relationshipType ?? "unspecified",
+        label: m.data?.label ?? existingEdge?.label
+      });
+      for (const endpointId of [sourceId, targetId]) {
+        if (entityMap.has(endpointId)) {
+          seedRealIds.add(endpointId);
+        } else if (!syntheticEntities.has(endpointId) && !proposedEntityIds.has(endpointId)) {
+          // An edge endpoint this batch never directly mutates as an entity
+          // and that isn't in the live snapshot either -- shouldn't happen
+          // in practice (every producer creates/stubs both endpoints before
+          // an edge referencing them), but render a minimal placeholder
+          // rather than a dangling edge if it ever does.
+          syntheticEntities.set(endpointId, { id: endpointId, name: endpointId, type: "unknown" });
+        }
+        proposedEntityIds.add(endpointId);
+      }
+    }
+  }
+
+  // Expand context: PERSISTED neighbors of every real seed entity this
+  // batch touches -- reusing neighborhood(), one call per seed, merged.
+  const contextEntities = new Map();
+  const contextEdges = new Map();
+  for (const seedId of seedRealIds) {
+    const nb = neighborhood(entities, edges, seedId, depth);
+    for (const e of nb.entities) contextEntities.set(e.id, e);
+    for (const e of nb.edges) contextEdges.set(e.id, e);
+  }
+
+  const degrees = graphDegreeMap(edges);
+  const flaggedIds = flaggedEntityIdSet(w);
+  const debtIds = new Set(listPendingEntities(w));
+
+  const nodesById = new Map();
+  for (const e of syntheticEntities.values()) {
+    nodesById.set(e.id, graphNodePayload(e, { degrees, flaggedIds, debtIds, proposed: true }));
+  }
+  for (const e of contextEntities.values()) {
+    nodesById.set(e.id, graphNodePayload(e, { degrees, flaggedIds, debtIds, proposed: proposedEntityIds.has(e.id) }));
+  }
+
+  const edgesById = new Map();
+  for (const e of syntheticEdges.values()) {
+    edgesById.set(e.id, graphEdgePayload(e, { proposed: true }));
+  }
+  for (const e of contextEdges.values()) {
+    if (!edgesById.has(e.id)) edgesById.set(e.id, graphEdgePayload(e, { proposed: proposedEdgeIds.has(e.id) }));
+  }
+
+  return { nodes: [...nodesById.values()], edges: [...edgesById.values()] };
+}
+
+/**
+ * Standalone whole-graph payload (tasks 7.1/7.4): every persisted entity,
+ * filtered by status. Omitting `filter` entirely defaults to the CONFIRMED
+ * flagged-only default (unreviewed OR deferred-debt) -- "show everything"
+ * is an explicit `filter=all`, never the unstated default.
+ */
+function graphPayloadStandalone(w, dir, filterRaw) {
+  let entities = [];
+  let edges = [];
+  try {
+    ({ entities, edges } = loadSnapshot(dir, w).snapshot);
+  } catch {
+    return { nodes: [], edges: [] };
+  }
+  const degrees = graphDegreeMap(edges);
+  const flaggedIds = flaggedEntityIdSet(w);
+  const debtIds = new Set(listPendingEntities(w));
+  const activeFilters = parseGraphFilter(filterRaw); // null = show everything
+
+  const selected = entities.filter((e) => {
+    if (!activeFilters) return true;
+    return (activeFilters.has("unreviewed") && flaggedIds.has(e.id)) ||
+           (activeFilters.has("deferred-debt") && debtIds.has(e.id));
+  });
+  const selectedIds = new Set(selected.map((e) => e.id));
+
+  const nodes = selected.map((e) => graphNodePayload(e, { degrees, flaggedIds, debtIds }));
+  const visibleEdges = edges
+    .filter((e) => selectedIds.has(e.sourceId) && selectedIds.has(e.targetId))
+    .map((e) => graphEdgePayload(e, {}));
+
+  return { nodes, edges: visibleEdges };
 }
 
 // --- routing -----------------------------------------------------------------
@@ -471,6 +679,21 @@ async function handleApi(req, res, url, parts) {
       { entities, edges, elapsedTimeDescriptor: body.elapsedTimeDescriptor }
     );
     return sendJson(res, 200, result);
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 7 -- graph data route (task 7.1).
+  // GET /api/graph?world=...&dataDir=...&batchId=...&depth=...   (batch-scoped, with persisted one-hop context)
+  // GET /api/graph?world=...&dataDir=...&filter=...              (standalone whole-graph; filter omitted -> flagged-only default)
+  // ---------------------------------------------------------------------
+  if (method === "GET" && parts.length === 2 && parts[1] === "graph") {
+    const w = resolveWorld(q.get("world"));
+    const dir = resolveDir(q.get("dataDir"));
+    if (q.get("batchId")) {
+      const depth = q.get("depth") ? Number(q.get("depth")) : 1;
+      return sendJson(res, 200, graphPayloadForBatch(w, dir, q.get("batchId"), depth));
+    }
+    return sendJson(res, 200, graphPayloadStandalone(w, dir, q.get("filter")));
   }
 
   // ---------------------------------------------------------------------
