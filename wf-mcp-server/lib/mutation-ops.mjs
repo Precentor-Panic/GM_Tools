@@ -27,6 +27,10 @@ import { acceptMutations, rollbackBatch } from "../../mutation-engine/rollback.m
 import { applyLedgerOutcome } from "../../mutation-engine/pending-ledger.mjs";
 import { narrateBatch, narrateEntity } from "../../mutation-engine/narrate.mjs";
 import { supersedeEntityNarration, getCurrentEntityNarration, getEntityNarrationHistory } from "../../mutation-engine/entity-narration.mjs";
+// Phase 11 task 11.4: staleness-on-remutation reuses this SAME accept choke
+// point (acceptMutationIds below) that Phase 10 task 10.3 already used for
+// narration invalidation -- a clean fit, no second hook point added.
+import { markPrepContentStale } from "../../mutation-engine/prep-content.mjs";
 import { applyHeadless } from "../../graph-import/headless-apply.mjs";
 import {
   importWriteup,
@@ -241,6 +245,17 @@ export function acceptMutationIds(w, batchId, mutationIds, opts = {}) {
   // otherwise-stale narration presenting as current.
   for (const entityId of entityIdsForMutations(batch, mutationIds)) {
     supersedeEntityNarration(w, entityId);
+  }
+
+  // Phase 11 task 11.4: the same reasoning as the narration supersede just
+  // above, applied to prep content instead -- an entity just accepted again
+  // has its CORE fields mutated, so any existing PrepContent may no longer
+  // reflect its current state. markPrepContentStale flips status only
+  // (never touches `fields`) and is a safe no-op for an entity with no prep
+  // content at all -- fires regardless of accept scope, same as the
+  // narration hook, since the entity was mutated either way.
+  for (const entityId of entityIdsForMutations(batch, mutationIds)) {
+    markPrepContentStale(w, entityId);
   }
 
   const reviewedSet = new Set(reviewedMutationIds ?? mutationIds);
