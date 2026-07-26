@@ -102,6 +102,53 @@ await test("POST /api/batches/:id/narrate on a fully-accepted batch SUCCEEDS and
   console.log(`\n    --- narration prose ---\n    ${narrate.body.prose.replace(/\n/g, "\n    ")}\n`);
 });
 
+await test("Phase 10: POST /api/batches/:id/narrate-entity produces genuinely different real prose for two entities in the SAME batch, both durably persisted (real API call)", async () => {
+  const batch = createBatch(WORLD, { mode: "manual" }, "a fateful evening", [
+    {
+      op: "upsert_entity",
+      id: "alvor",
+      data: { description: "Shaken, staring at smoke rising from the mill." },
+      rationale: "The mill fire directly threatens Alvor's livelihood.",
+      batchId: "placeholder",
+      sourceKind: "manual",
+      entityContext: { name: "Alvor", importance: 0.6, tags: [] }
+    },
+    {
+      op: "upsert_entity",
+      id: "riverwood",
+      data: { description: "A pall of smoke hangs over the mill district." },
+      rationale: "The fire is visible from across the village.",
+      batchId: "placeholder",
+      sourceKind: "manual",
+      entityContext: { name: "Riverwood", importance: 0.7, tags: [] }
+    }
+  ]);
+  const accept = await postJson(`/api/batches/${batch.id}/accept`, { world: WORLD, scope: "batch" });
+  assert.equal(accept.status, 200);
+
+  const alvorMutationId = batch.mutations.find((m) => m.id === "alvor").mutationId;
+  const riverwoodMutationId = batch.mutations.find((m) => m.id === "riverwood").mutationId;
+
+  const alvorNarrate = await postJson(`/api/batches/${batch.id}/narrate-entity`, { world: WORLD, mutationId: alvorMutationId });
+  assert.equal(alvorNarrate.status, 200, `expected 200; got ${JSON.stringify(alvorNarrate.body)}`);
+  assert.equal(alvorNarrate.body.entityId, "alvor");
+  console.log(`\n    --- alvor narration ---\n    ${alvorNarrate.body.prose.replace(/\n/g, "\n    ")}\n`);
+
+  const riverwoodNarrate = await postJson(`/api/batches/${batch.id}/narrate-entity`, { world: WORLD, mutationId: riverwoodMutationId });
+  assert.equal(riverwoodNarrate.status, 200, `expected 200; got ${JSON.stringify(riverwoodNarrate.body)}`);
+  assert.equal(riverwoodNarrate.body.entityId, "riverwood");
+  console.log(`\n    --- riverwood narration ---\n    ${riverwoodNarrate.body.prose.replace(/\n/g, "\n    ")}\n`);
+
+  assert.notEqual(alvorNarrate.body.prose, riverwoodNarrate.body.prose, "THE REGRESSION CHECK: two different entities in one batch must get different narrations, not the same cached text");
+
+  // Persistence: durably readable back via the GET routes, surviving what
+  // would be a page reload in the real frontend.
+  const alvorCurrent = await getJson(`/api/entities/alvor/narration?world=${WORLD}`);
+  assert.equal(alvorCurrent.body.narration.prose, alvorNarrate.body.prose);
+  const riverwoodCurrent = await getJson(`/api/entities/riverwood/narration?world=${WORLD}`);
+  assert.equal(riverwoodCurrent.body.narration.prose, riverwoodNarrate.body.prose);
+});
+
 await test("POST /api/pending-entities/:id/resolve produces a real synthesized diff and clears the ledger entries (real API call)", async () => {
   writePending(WORLD, "riverwood", {
     causeTag: "Riverwood: a stranger arrives asking after the old mill (cycle 1)",

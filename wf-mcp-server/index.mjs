@@ -66,7 +66,10 @@ import {
   proposeFromWriteupOp,
   selectFramingForNewBatch,
   selectFramingForExistingBatch,
-  rejectWithLoopOp
+  rejectWithLoopOp,
+  narrateEntityOp,
+  getEntityNarrationOp,
+  getEntityNarrationHistoryOp
 } from "./lib/mutation-ops.mjs";
 
 const server = new McpServer({ name: "world-fabric", version: "0.1.0" });
@@ -736,6 +739,105 @@ server.registerTool(
       const w = resolveWorld(world);
       const result = await narrateOp(w, { batchId, note });
       return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// ======================================================================================
+// Phase 10 -- per-entity narration & persistence (mutation-engine/narrate.mjs's
+// narrateEntity, mutation-engine/entity-narration.mjs's durable history store).
+// This is now the DEFAULT narration path (review-ui uses these, not
+// wf_narrate_batch above) -- see plans/phase-10-review.md for the root cause
+// this replaces: whole-batch narration meant every row in a batch showed the
+// same text, "regenerate" recycled that same generic text, and nothing ever
+// persisted across a page reload. wf_narrate_batch itself is unchanged and
+// still available for a whole-scene summary if that's ever independently
+// useful.
+// ======================================================================================
+
+// --- wf_narrate_entity ---------------------------------------------------------------------
+
+server.registerTool(
+  "wf_narrate_entity",
+  {
+    title: "Narrate ONE accepted mutation as in-fiction, player-facing prose, grounded in its real graph neighbors",
+    description:
+      "Generates 2-3 paragraphs of narration for a SINGLE mutation within a batch (mutation-engine/narrate.mjs's " +
+      "narrateEntity), not the whole batch -- the per-entity replacement for wf_narrate_batch. Grounds the prompt " +
+      "in the targeted entity's own real, immediate graph neighbors (depth-1 adjacency) instead of an empty " +
+      "location/area pair, so the result is specific to this entity rather than a generic scene-setting framing. " +
+      "Hard-gated exactly like wf_narrate_batch, but at ENTITY grain: only the targeted mutation must be " +
+      "status:'accepted' -- sibling mutations elsewhere in the batch being pending/rejected does not block this " +
+      "call. On success, the result is persisted durably via mutation-engine/entity-narration.mjs (a genuine " +
+      "history, not an overwritten 'latest' value) -- survives a page reload, and remains recallable via " +
+      "wf_get_entity_narration_history even after a later regenerate or re-mutation supersedes it. Pass `note` to " +
+      "regenerate with steering guidance -- this creates a NEW history entry, it does not overwrite the prior one " +
+      "in place. Requires ANTHROPIC_API_KEY in this server process's own environment, same as wf_propose_mutations.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      batchId: z.string(),
+      mutationId: z.string().describe("Which mutation within the batch to narrate (StoredMutation.mutationId, not the target entity id)."),
+      note: z.string().optional().describe(
+        "Steering note for regenerating this entity's narration with different tone/guidance. Produces a NEW " +
+        "history entry (the prior one is marked superseded, never deleted), not an in-place overwrite."
+      )
+    }
+  },
+  async ({ world, dataDir, batchId, mutationId, note }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const result = await narrateEntityOp(dir, w, { batchId, mutationId, note });
+      return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_get_entity_narration -----------------------------------------------------------------
+
+server.registerTool(
+  "wf_get_entity_narration",
+  {
+    title: "Get an entity's current (not superseded) narration, if any",
+    description:
+      "Reads mutation-engine/entity-narration.mjs's store for the one narration entry with status:'current' for " +
+      "this entity, or null if it has never been narrated (or its only narration has since been superseded by a " +
+      "re-mutation or regenerate with nothing yet replacing it). Does not call the model or spend a token -- a " +
+      "pure read. Use wf_get_entity_narration_history for the entity's full history including superseded entries.",
+    inputSchema: { world: worldParam, entityId: z.string() }
+  },
+  async ({ world, entityId }) => {
+    try {
+      const w = resolveWorld(world);
+      return text(getEntityNarrationOp(w, { entityId }));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_get_entity_narration_history ----------------------------------------------------------
+
+server.registerTool(
+  "wf_get_entity_narration_history",
+  {
+    title: "Get an entity's FULL narration history, including superseded entries",
+    description:
+      "Reads mutation-engine/entity-narration.mjs's full history array for this entity -- every narration ever " +
+      "generated for it, oldest first, each marked 'current' or 'superseded'. Nothing is ever deleted: a prior " +
+      "accepted narration remains recallable here even after a newer one exists or the entity has since been " +
+      "re-mutated. Returns an empty array for an entity that has never been narrated -- not an error.",
+    inputSchema: { world: worldParam, entityId: z.string() }
+  },
+  async ({ world, entityId }) => {
+    try {
+      const w = resolveWorld(world);
+      return text(getEntityNarrationHistoryOp(w, { entityId }));
     } catch (err) {
       return errorText(err);
     }

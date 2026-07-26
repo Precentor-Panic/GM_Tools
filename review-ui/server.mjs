@@ -65,7 +65,10 @@ import {
   proposeFromWriteupOp,
   selectFramingForNewBatch,
   selectFramingForExistingBatch,
-  rejectWithLoopOp
+  rejectWithLoopOp,
+  narrateEntityOp,
+  getEntityNarrationOp,
+  getEntityNarrationHistoryOp
 } from "../wf-mcp-server/lib/mutation-ops.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -370,6 +373,45 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world);
     const result = await narrateOp(w, { batchId: parts[2], note: body.note });
     return sendJson(res, 200, result);
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 10 -- per-entity narration & persistence (task 10.4). This is now
+  // the DEFAULT narration path the frontend uses (task 10.5); the whole-batch
+  // /narrate route above is left unchanged and still works if ever needed.
+  // ---------------------------------------------------------------------
+
+  // POST /api/batches/:batchId/narrate-entity  { world, dataDir, mutationId, note }
+  // Entity-grain gate (mutation-engine/narrate.mjs's assertMutationNarratable,
+  // via narrateEntity): only the targeted mutationId must be status:'accepted'
+  // -- a sibling mutation elsewhere in the batch being pending/rejected does
+  // NOT block this call, unlike the whole-batch /narrate route above. On
+  // success the result is durably persisted (mutation-engine/entity-narration.mjs)
+  // before this route ever responds.
+  if (method === "POST" && parts.length === 4 && parts[1] === "batches" && parts[3] === "narrate-entity") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
+    const w = resolveWorld(body.world);
+    if (!body.mutationId) throw new Error("POST .../narrate-entity requires a `mutationId`.");
+    const result = await narrateEntityOp(dir, w, { batchId: parts[2], mutationId: body.mutationId, note: body.note });
+    return sendJson(res, 200, result);
+  }
+
+  // GET /api/entities/:entityId/narration?world=...
+  // The current (status:'current') narration for one entity, or {narration:null}
+  // if it has never been narrated (or was superseded with nothing yet
+  // replacing it) -- a pure read, no model call.
+  if (method === "GET" && parts.length === 4 && parts[1] === "entities" && parts[3] === "narration") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, getEntityNarrationOp(w, { entityId: parts[2] }));
+  }
+
+  // GET /api/entities/:entityId/narration-history?world=...
+  // The entity's FULL history (current + every superseded entry) -- backs
+  // review-ui's per-row "view history" affordance (task 10.5).
+  if (method === "GET" && parts.length === 4 && parts[1] === "entities" && parts[3] === "narration-history") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, getEntityNarrationHistoryOp(w, { entityId: parts[2] }));
   }
 
   // POST /api/batches/:batchId/sync  { world, dataDir }
