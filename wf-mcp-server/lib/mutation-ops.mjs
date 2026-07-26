@@ -30,13 +30,20 @@ import { applyHeadless } from "../../graph-import/headless-apply.mjs";
 import {
   importWriteup,
   regenerateWriteupImport,
-  WriteupImportRegenerateScopeError
+  proposeFramingsFromWriteup,
+  composeFramingNote,
+  recordFramingRound,
+  resolveRejectLoop,
+  QUICK_PICK_REASONS,
+  WriteupImportRegenerateScopeError,
+  FramingRoundLimitError
 } from "../../graph-import/writeup-import.mjs";
 import {
   markHumanReviewed,
   recordUnreviewedAccept,
   findUnreviewedEntities
 } from "../../mutation-engine/human-review.mjs";
+import { getUserSettings } from "../../mutation-engine/user-settings.mjs";
 
 // --- small pure helpers --------------------------------------------------
 
@@ -391,6 +398,185 @@ export async function regenerateOp(dir, w, { batchId, scope, id, note }) {
   };
 }
 
+// --- Phase 8: rubber-duck mode ----------------------------------------------
+
+/**
+ * wf_propose_from_writeup's actual dispatch logic (Phase 8 task 8.4) --
+ * shared verbatim by the MCP tool and review-ui's route, per this module's
+ * own "front-ends are thin wrappers" convention.
+ *
+ * THE READ-ONCE INVARIANT: getUserSettings() is called EXACTLY ONCE here, at
+ * the moment of writeup submission -- never again anywhere else in this
+ * phase's code for this batch's lifetime. When rubber-duck mode is off, this
+ * is a straight pass-through to importWriteup() with no wrapping and no
+ * extra fields -- byte-identical to Phase 5's existing single-shot
+ * behavior. When it's on, phase A returns only the 3 framings (no batch
+ * created yet) plus the read settings snapshot, carried forward by the
+ * caller to selectFramingForNewBatch below rather than re-read there.
+ *
+ * @param {string} dir
+ * @param {string} w
+ * @param {{text:string, mode?:"merge"|"replace"}} args
+ * @returns {Promise<object>} either importWriteup()'s own result shape (rubber-duck off) or
+ *   {phase:'framing', framings, writeupText, mode, rubberDuck} (rubber-duck on)
+ */
+export async function proposeFromWriteupOp(dir, w, { text: writeupText, mode }) {
+  const settings = getUserSettings(); // READ ONCE -- see this function's own doc comment
+  if (!settings.rubberDuckMode.enabled) {
+    const { entities, edges, entityTypes } = loadSnapshot(dir, w).snapshot;
+    return importWriteup(w, writeupText, { entities, edges, entityTypes }, { mode });
+  }
+  const { framings } = await proposeFramingsFromWriteup(writeupText, {});
+  return {
+    phase: "framing",
+    framings,
+    writeupText,
+    mode: mode ?? "merge",
+    rubberDuck: { enabled: true, updatedAt: settings.rubberDuckMode.updatedAt }
+  };
+}
+
+/**
+ * wf_select_framing's "no batchId" branch: the reviewer's very first
+ * framing pick, right after proposeFromWriteupOp's phase A. Composes the
+ * note (composeFramingNote), runs the EXISTING importWriteup() unchanged
+ * except for that composed note, and records the completed framing round
+ * (framingHistory entry #1) on the freshly-created batch.
+ *
+ * `rubberDuck` must be the EXACT snapshot object echoed back by phase A --
+ * this function does NOT call getUserSettings() itself (the read-once
+ * invariant: a mid-review toggle flip between phase A and this call must
+ * not retroactively change what gets stamped on the new batch).
+ *
+ * @param {string} dir
+ * @param {string} w
+ * @param {{writeupText:string, mode?:string, framings:Array, selection:object, rubberDuck:{enabled:boolean, updatedAt:string|null}}} args
+ */
+export async function selectFramingForNewBatch(dir, w, { writeupText, mode, framings, selection, rubberDuck }) {
+  if (!rubberDuck || typeof rubberDuck.enabled !== "boolean") {
+    throw new Error(
+      "selectFramingForNewBatch requires `rubberDuck` -- the settings snapshot echoed back by " +
+      "wf_propose_from_writeup's phase-A response, carried forward unchanged rather than re-read here."
+    );
+  }
+  const note = composeFramingNote(selection);
+  const { entities, edges, entityTypes } = loadSnapshot(dir, w).snapshot;
+  const result = await importWriteup(w, writeupText, { entities, edges, entityTypes }, {
+    mode,
+    llmOpts: { note },
+    extraScope: { rubberDuck }
+  });
+  const batch = loadBatch(w, result.batchId);
+  recordFramingRound(batch, { framings, selection, note });
+  const saved = saveBatch(w, batch);
+  return { ...result, framingRound: saved.scope.framingHistory.length };
+}
+
+/**
+ * wf_select_framing's "batchId given" branch: the reviewer's pick after a
+ * plain-reject-triggered re-framing round (see rejectWithLoopOp below).
+ * Reuses the EXISTING regenerateOp (its writeup-import scope='batch'
+ * dispatch) unchanged, then records the completed re-framing round
+ * (framingHistory entry #2) -- this is what actually enforces the "bounded
+ * to one round" property end-to-end: MAX_FRAMING_ROUNDS is checked against
+ * framingHistory.length, which only grows here and in
+ * selectFramingForNewBatch above, never anywhere else.
+ *
+ * @param {string} dir
+ * @param {string} w
+ * @param {{batchId:string, framings:Array, selection:object}} args
+ */
+export async function selectFramingForExistingBatch(dir, w, { batchId, framings, selection }) {
+  const preBatch = loadBatch(w, batchId);
+  if (!preBatch.scope?.rubberDuck?.enabled) {
+    throw new Error(
+      `Batch "${batchId}" was not created with rubber-duck mode on (batch.scope.rubberDuck.enabled is not true) ` +
+      `-- re-framing an existing batch only applies to a rubber-duck-mode writeup-import batch.`
+    );
+  }
+  const note = composeFramingNote(selection);
+  const regenResult = await regenerateOp(dir, w, { batchId, scope: "batch", note });
+  const batch = loadBatch(w, batchId);
+  recordFramingRound(batch, { framings, selection, note });
+  const saved = saveBatch(w, batch);
+  return { ...regenResult, framingRound: saved.scope.framingHistory.length };
+}
+
+/**
+ * The reject-loop's actual wiring (Phase 8 task 8.4): wf_reject / review-ui's
+ * reject route both call THIS instead of the plain rejectOp, so the
+ * dispatch is identical for both front-ends. Always marks the targeted
+ * mutation(s) rejected first (via the EXISTING, unchanged rejectOp) --
+ * rejecting is always real, regardless of what happens next.
+ *
+ * Three distinct outcomes, matching writeup-import.mjs's resolveRejectLoop
+ * exactly (see that function's own doc comment for the full state machine):
+ *   - not a rubber-duck writeup-import batch, OR scope='entity': the
+ *     reject-loop never applies -- returns rejectOp's result completely
+ *     unwrapped (no extra field), so normal mode's silent reject-and-wait,
+ *     and an individual-mutation reject even in rubber-duck mode, are BOTH
+ *     byte-identical to the pre-Phase-8 behavior.
+ *   - rubber-duck batch, scope='batch'/'region', explicit note: rejectOp's
+ *     result plus `rubberDuckLoop: {kind:'regenerate', ...}` -- the batch's
+ *     mutations get replaced immediately via the existing regenerateOp,
+ *     never touching the framing path.
+ *   - rubber-duck batch, scope='batch'/'region', quickPickReason, budget
+ *     available: rejectOp's result plus `rubberDuckLoop: {kind:'reframe',
+ *     framings}` -- no batch mutation replace yet; the caller still needs to
+ *     call selectFramingForExistingBatch once the reviewer picks one.
+ *   - same, but the bounded round budget is already spent: throws
+ *     FramingRoundLimitError (propagates to the caller's own error mapping;
+ *     review-ui maps this to a 409, see server.mjs's statusForError).
+ *
+ * @param {string} dir
+ * @param {string} w
+ * @param {{batchId:string, scope:'batch'|'region'|'entity', id?:string, note?:string, quickPickReason?:string}} args
+ */
+export async function rejectWithLoopOp(dir, w, { batchId, scope, id, note, quickPickReason }) {
+  const batch = loadBatch(w, batchId);
+  const isRubberDuckWriteupBatch =
+    !!batch.scope?.rubberDuck?.enabled &&
+    batch.mutations.length > 0 &&
+    batch.mutations.every((m) => m.sourceKind === "writeup-import");
+  // Deliberately batch/region only, mirroring regenerateWriteupImport's own
+  // whole-batch-only design (a writeup-import batch always has exactly one
+  // region -- see writeup-import.mjs's own top-of-file note) -- rejecting a
+  // SINGLE entity out of an extraction isn't "I don't like this whole first
+  // pass," it's discarding one item, and stays a normal, unlooped reject
+  // even in rubber-duck mode.
+  const loopEligibleScope = scope === "batch" || scope === "region";
+
+  if (!isRubberDuckWriteupBatch || !loopEligibleScope) {
+    return rejectOp(w, { batchId, scope, id });
+  }
+
+  if (!note && !quickPickReason) {
+    throw new Error(
+      `Batch "${batchId}" is a rubber-duck-mode writeup-import batch. A scope='${scope}' reject requires either ` +
+      `\`note\` (an explicit reason -- skips straight to regenerate) or \`quickPickReason\` (one of: ` +
+      `${Object.keys(QUICK_PICK_REASONS).join(", ")} -- triggers a new bounded framing round).`
+    );
+  }
+
+  const baseResult = rejectOp(w, { batchId, scope, id });
+  const decision = await resolveRejectLoop(batch, { note, quickPickReason }, {});
+
+  if (decision.kind === "regenerate") {
+    const regenResult = await regenerateOp(dir, w, { batchId, scope: "batch", note: decision.note });
+    return {
+      ...baseResult,
+      rubberDuckLoop: {
+        kind: "regenerate",
+        note: decision.note,
+        regenerated: regenResult.regenerated,
+        batchStatus: regenResult.batchStatus
+      }
+    };
+  }
+
+  return { ...baseResult, rubberDuckLoop: { kind: "reframe", framings: decision.framings } };
+}
+
 // --- narrate ---------------------------------------------------------------
 
 export async function narrateOp(w, { batchId, note, currentLocation, reachableAreas }) {
@@ -469,4 +655,4 @@ export async function rollbackOp(dir, w, { batchId }) {
   };
 }
 
-export { WriteupImportRegenerateScopeError };
+export { WriteupImportRegenerateScopeError, FramingRoundLimitError };

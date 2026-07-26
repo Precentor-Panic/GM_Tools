@@ -36,8 +36,16 @@ import { orchestrateBatch, attachDiffs } from "../time-skip/run.mjs";
 
 // Phase 5 — import-from-writeup: propose a WFI-shaped document from freeform
 // text (task 5.1), dry-run it through importGraph and convert the result into
-// a normal review batch (task 5.2).
-import { importWriteup } from "../graph-import/writeup-import.mjs";
+// a normal review batch (task 5.2). The actual dispatch logic (proposeFromWriteupOp,
+// selectFramingForNewBatch/ExistingBatch) now lives in ./lib/mutation-ops.mjs,
+// which imports graph-import/writeup-import.mjs's importWriteup directly --
+// nothing in THIS file needs to import it anymore.
+
+// Phase 8 — rubber-duck creative mode: the framing-proposal step sits in
+// front of Phase 5's pipeline above (unchanged when rubber-duck mode is
+// off). See ./lib/mutation-ops.mjs's own doc comments for the full
+// two-phase flow and the reject-loop state machine.
+import { getUserSettings, setRubberDuckMode } from "../mutation-engine/user-settings.mjs";
 
 // Phase 4 task 4.2 — unreviewed-accumulation tracking (read-only surface;
 // the accept/reject-time bookkeeping itself lives in lib/mutation-ops.mjs now).
@@ -51,11 +59,14 @@ import {
   applyMutationsToFoundry,
   reviewGrainOp,
   acceptOp,
-  rejectOp,
   regenerateOp,
   narrateOp,
   syncOp,
-  rollbackOp
+  rollbackOp,
+  proposeFromWriteupOp,
+  selectFramingForNewBatch,
+  selectFramingForExistingBatch,
+  rejectWithLoopOp
 } from "./lib/mutation-ops.mjs";
 
 const server = new McpServer({ name: "world-fabric", version: "0.1.0" });
@@ -373,7 +384,14 @@ server.registerTool(
       "as an existing populated one. `mode='replace'` only changes how THIS PREVIEW classifies create-vs-existing " +
       "(importGraph's own replace semantics) -- the actual commit at wf_sync_to_foundry time always applies each " +
       "mutation individually and never wipes anything not mentioned in the batch. Requires ANTHROPIC_API_KEY in " +
-      "this server process's own environment, same as wf_propose_mutations.",
+      "this server process's own environment, same as wf_propose_mutations. PHASE 8 -- rubber-duck mode: if the " +
+      "GM's global setting (wf_get_rubber_duck_mode) is OFF, this behaves EXACTLY as above, single call, single " +
+      "batch, unchanged from Phase 5. If it's ON, this call instead returns `{phase:'framing', framings, " +
+      "writeupText, mode, rubberDuck}` -- three cheap one-sentence interpretive framings (graph-import/" +
+      "writeup-import.mjs's proposeFramingsFromWriteup, a faster/cheaper model tier) and NO batch is created yet. " +
+      "Pick one (or blend) and call wf_select_framing next, passing `writeupText`, `framings`, `selection`, and " +
+      "the exact `rubberDuck` object echoed back here -- this is a stateless MCP tool call, so the caller carries " +
+      "these values forward rather than this server holding session state.",
     inputSchema: {
       world: worldParam,
       dataDir: dataDirParam,
@@ -385,9 +403,108 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
-      const { entities, edges, entityTypes } = loadSnapshot(dir, w).snapshot;
-      const result = await importWriteup(w, writeupText, { entities, edges, entityTypes }, { mode });
+      const result = await proposeFromWriteupOp(dir, w, { text: writeupText, mode });
       return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_select_framing (Phase 8) ----------------------------------------------------
+
+const framingItemSchema = z.object({ id: z.enum(["a", "b", "c"]), sentence: z.string() });
+const framingSelectionSchema = z.object({
+  primary: framingItemSchema.describe("The framing the reviewer picked as primary."),
+  blend: z.string().optional().describe("Optional freeform blend line, e.g. 'also pull in elements of framing C: ...'.")
+});
+
+server.registerTool(
+  "wf_select_framing",
+  {
+    title: "Select (or blend) a framing to steer writeup extraction (Phase 8 rubber-duck mode)",
+    description:
+      "Phase B of the rubber-duck-mode two-phase flow started by wf_propose_from_writeup. Composes the " +
+      "reviewer's `selection` into a steering note (reusing the EXISTING note/regenerate mechanism -- no new " +
+      "prompt slot) and runs the real extraction. Two mutually exclusive modes, selected by which of " +
+      "`writeupText`/`batchId` is given: (1) `writeupText` set, `batchId` omitted -- the reviewer's FIRST framing " +
+      "pick, right after wf_propose_from_writeup's phase A; creates a brand-new batch (also requires `rubberDuck`, " +
+      "the exact snapshot object echoed back by that phase-A call -- carried forward, never re-read live here, " +
+      "per the read-once invariant). (2) `batchId` set, `writeupText` omitted -- the reviewer's pick after a " +
+      "PLAIN reject on an existing rubber-duck batch triggered a new framing round (see wf_reject); replaces that " +
+      "batch's mutations wholesale via the existing regenerate path. Either way, `framings` (the 3 shown to the " +
+      "reviewer) is recorded onto the batch's audit trail (batch.scope.framingHistory) alongside the selection " +
+      "and composed note -- this is also what enforces the bounded one-re-framing-round rule end to end. Requires " +
+      "ANTHROPIC_API_KEY, same as wf_propose_from_writeup.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      writeupText: z.string().optional().describe("Required (with `rubberDuck`) when `batchId` is omitted -- the original writeup text, echoed back by wf_propose_from_writeup's phase A."),
+      batchId: z.string().optional().describe("Required when `writeupText` is omitted -- re-framing an existing batch after a plain reject."),
+      mode: z.enum(["merge", "replace"]).optional().describe("Only used on the writeupText path. Default 'merge'."),
+      framings: z.array(framingItemSchema).length(3).describe("The exact 3 framings shown to the reviewer -- recorded for the audit trail."),
+      selection: framingSelectionSchema,
+      rubberDuck: z
+        .object({ enabled: z.boolean(), updatedAt: z.string().nullable() })
+        .optional()
+        .describe("Required on the writeupText path -- the exact object echoed back by wf_propose_from_writeup's phase A.")
+    }
+  },
+  async ({ world, dataDir, writeupText, batchId, mode, framings, selection, rubberDuck }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      if (batchId) {
+        const result = await selectFramingForExistingBatch(dir, w, { batchId, framings, selection });
+        return text(result);
+      }
+      if (!writeupText) {
+        throw new Error("wf_select_framing requires either `batchId` (re-framing an existing batch) or `writeupText` (a first framing pick).");
+      }
+      const result = await selectFramingForNewBatch(dir, w, { writeupText, mode, framings, selection, rubberDuck });
+      return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_get_rubber_duck_mode / wf_set_rubber_duck_mode (Phase 8) ---------------------
+
+server.registerTool(
+  "wf_get_rubber_duck_mode",
+  {
+    title: "Get the global rubber-duck-mode setting",
+    description:
+      "Reads mutation-engine/user-settings.mjs's standing global toggle (not per-world, not per-import). When " +
+      "on, wf_propose_from_writeup's first response is 3 cheap interpretive framings instead of the real " +
+      "extraction -- see wf_propose_from_writeup's own description. This is a live read of the CURRENT setting; " +
+      "an already-created writeup-import batch is unaffected by any later change (it carries its own stamped " +
+      "batch.scope.rubberDuck snapshot from the moment it was submitted).",
+    inputSchema: {}
+  },
+  async () => {
+    try {
+      return text(getUserSettings().rubberDuckMode);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_set_rubber_duck_mode",
+  {
+    title: "Set the global rubber-duck-mode setting",
+    description:
+      "Flips mutation-engine/user-settings.mjs's standing global toggle. Takes effect for the NEXT " +
+      "wf_propose_from_writeup submission only -- any batch already in review keeps whatever value was in " +
+      "effect when it was submitted (batch.scope.rubberDuck), never retroactively affected by this call.",
+    inputSchema: { enabled: z.boolean() }
+  },
+  async ({ enabled }) => {
+    try {
+      return text(setRubberDuckMode(enabled).rubberDuckMode);
     } catch (err) {
       return errorText(err);
     }
@@ -479,18 +596,35 @@ server.registerTool(
       "review of the entities touched (a deliberate reject is still an examined diff) -- updates " +
       "lastHumanReviewedAt. Scope 'batch' does not (consistent with wf_accept), but also does NOT accumulate an " +
       "unreviewed-accept count, since a rejected mutation never lands on the graph -- there's no unreviewed " +
-      "content debt left behind by a reject.",
+      "content debt left behind by a reject. PHASE 8 -- rubber-duck mode's reject loop: for a batch created with " +
+      "rubber-duck mode on (batch.scope.rubberDuck.enabled), a scope='batch'/'region' reject requires either " +
+      "`note` or `quickPickReason` and behaves differently from normal mode's silent reject-and-wait -- an " +
+      "EXPLICIT `note` skips straight to the existing regenerate path (response includes " +
+      "`rubberDuckLoop:{kind:'regenerate',...}`); a `quickPickReason` (one of: wrong-emphasis, wrong-scope, " +
+      "missing-something, not-feeling-it-yet) triggers a new bounded round of framings (response includes " +
+      "`rubberDuckLoop:{kind:'reframe', framings}` -- call wf_select_framing with `batchId` set next). A SECOND " +
+      "quickPickReason reject on the same batch is refused (FramingRoundLimitError) -- the reviewer must supply " +
+      "an explicit `note` instead. Scope='entity', or any batch not in rubber-duck mode, is completely unaffected " +
+      "by all of the above -- exactly the pre-Phase-8 behavior, no new fields in the response.",
     inputSchema: {
       world: worldParam,
+      dataDir: dataDirParam,
       batchId: z.string(),
       scope: z.enum(["batch", "region", "entity"]),
-      id: scopeIdParam
+      id: scopeIdParam,
+      note: z.string().optional().describe(
+        "Phase 8 rubber-duck mode only: an explicit reason. Skips the framing loop entirely, straight to regenerate."
+      ),
+      quickPickReason: z.enum(["wrong-emphasis", "wrong-scope", "missing-something", "not-feeling-it-yet"]).optional().describe(
+        "Phase 8 rubber-duck mode only: a quick-pick reason (no free text). Triggers a new bounded framing round."
+      )
     }
   },
-  async ({ world, batchId, scope, id }) => {
+  async ({ world, dataDir, batchId, scope, id, note, quickPickReason }) => {
     try {
+      const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
-      const result = rejectOp(w, { batchId, scope, id });
+      const result = await rejectWithLoopOp(dir, w, { batchId, scope, id, note, quickPickReason });
       return text(result);
     } catch (err) {
       return errorText(err);

@@ -50,18 +50,22 @@ import { summarizeBatch } from "../mutation-engine/grain.mjs";
 import { findUnreviewedEntities, DEFAULT_MAX_AGE_DAYS, DEFAULT_MAX_UNREVIEWED_ACCEPTS } from "../mutation-engine/human-review.mjs";
 import { listPendingEntities, readAvailablePending } from "../mutation-engine/pending-ledger.mjs";
 import { resolvePending } from "../time-skip/resolve-pending.mjs";
+import { getUserSettings, setRubberDuckMode } from "../mutation-engine/user-settings.mjs";
 
 import {
   flaggedEntityIdSet,
   reviewGrainOp,
   acceptOp,
-  rejectOp,
   acceptMutationIds,
   rejectMutationIds,
   regenerateOp,
   narrateOp,
   syncOp,
-  rollbackOp
+  rollbackOp,
+  proposeFromWriteupOp,
+  selectFramingForNewBatch,
+  selectFramingForExistingBatch,
+  rejectWithLoopOp
 } from "../wf-mcp-server/lib/mutation-ops.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -89,6 +93,10 @@ function statusForError(err) {
   if (err.name === "NarrationGateError") return 409; // batch not fully accepted -- a real conflict with narrate's precondition, not a bad request shape
   if (err.name === "ConcurrentWriteError") return 409; // another writer holds the lock right now -- retryable
   if (err.name === "WriteupImportRegenerateScopeError") return 400;
+  // Phase 8: the bounded re-framing round is already spent -- a real
+  // conflict with the reject-loop's own precondition (needs a note now),
+  // not a malformed request.
+  if (err.name === "FramingRoundLimitError") return 409;
   if (/no (batch|region|entity|world|snapshot) found/i.test(err.message ?? "")) return 404;
   if (/not found/i.test(err.message ?? "")) return 404;
   return 400; // everything else thrown by this codebase's library modules is a deliberate, caller-facing validation error, not a crash
@@ -279,11 +287,22 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, result);
   }
 
-  // POST /api/batches/:batchId/reject  { world, scope, id }
+  // POST /api/batches/:batchId/reject  { world, dataDir, scope, id, note, quickPickReason }
+  // Phase 8: dispatches through rejectWithLoopOp, which is a byte-identical
+  // pass-through to the old plain-reject behavior for every batch that
+  // isn't a rubber-duck-mode writeup-import batch at scope='batch'/'region'
+  // -- see mutation-ops.mjs's own doc comment for the full state machine.
   if (method === "POST" && parts.length === 4 && parts[1] === "batches" && parts[3] === "reject") {
     const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
     const w = resolveWorld(body.world);
-    const result = rejectOp(w, { batchId: parts[2], scope: body.scope, id: body.id });
+    const result = await rejectWithLoopOp(dir, w, {
+      batchId: parts[2],
+      scope: body.scope,
+      id: body.id,
+      note: body.note,
+      quickPickReason: body.quickPickReason
+    });
     return sendJson(res, 200, result);
   }
 
@@ -409,6 +428,69 @@ async function handleApi(req, res, url, parts) {
       { depth: body.depth, maxNeighbors: body.maxNeighbors },
       { entities, edges, elapsedTimeDescriptor: body.elapsedTimeDescriptor }
     );
+    return sendJson(res, 200, result);
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 8 — rubber-duck mode: settings + the two-phase writeup flow.
+  // ---------------------------------------------------------------------
+
+  // GET /api/settings/rubber-duck
+  if (method === "GET" && parts.length === 3 && parts[1] === "settings" && parts[2] === "rubber-duck") {
+    return sendJson(res, 200, getUserSettings().rubberDuckMode);
+  }
+
+  // POST /api/settings/rubber-duck  { enabled }
+  if (method === "POST" && parts.length === 3 && parts[1] === "settings" && parts[2] === "rubber-duck") {
+    const body = await readBody(req);
+    if (typeof body.enabled !== "boolean") {
+      throw new Error("POST /api/settings/rubber-duck requires a boolean `enabled` field.");
+    }
+    return sendJson(res, 200, setRubberDuckMode(body.enabled).rubberDuckMode);
+  }
+
+  // POST /api/writeup-propose  { world, dataDir, text, mode }
+  // Phase A of the two-phase flow (mirrors wf_propose_from_writeup). Rubber-duck
+  // OFF: returns importWriteup()'s own result unchanged, a real batch is created.
+  // Rubber-duck ON: returns {phase:'framing', framings, writeupText, mode, rubberDuck} --
+  // no batch created yet.
+  if (method === "POST" && parts.length === 2 && parts[1] === "writeup-propose") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
+    const w = resolveWorld(body.world);
+    if (typeof body.text !== "string" || !body.text.trim()) {
+      throw new Error("POST /api/writeup-propose requires a non-empty `text` field.");
+    }
+    const result = await proposeFromWriteupOp(dir, w, { text: body.text, mode: body.mode });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/writeup-select-framing  { world, dataDir, writeupText?, batchId?, mode, framings, selection, rubberDuck? }
+  // Phase B: either creates a new batch (writeupText path, the reviewer's
+  // first pick) or replaces an existing batch's mutations (batchId path,
+  // the reviewer's pick after a plain-reject-triggered re-framing round).
+  if (method === "POST" && parts.length === 2 && parts[1] === "writeup-select-framing") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
+    const w = resolveWorld(body.world);
+    if (body.batchId) {
+      const result = await selectFramingForExistingBatch(dir, w, {
+        batchId: body.batchId,
+        framings: body.framings,
+        selection: body.selection
+      });
+      return sendJson(res, 200, result);
+    }
+    if (!body.writeupText) {
+      throw new Error("POST /api/writeup-select-framing requires either `batchId` or `writeupText`.");
+    }
+    const result = await selectFramingForNewBatch(dir, w, {
+      writeupText: body.writeupText,
+      mode: body.mode,
+      framings: body.framings,
+      selection: body.selection,
+      rubberDuck: body.rubberDuck
+    });
     return sendJson(res, 200, result);
   }
 
