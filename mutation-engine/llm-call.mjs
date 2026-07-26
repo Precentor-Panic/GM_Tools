@@ -40,7 +40,18 @@ export function parseJsonResponse(text) {
 
 /**
  * Call an Anthropic-SDK-shaped client with a single user-role text prompt,
- * returning the first text content block's text (or "" if none).
+ * returning the raw text plus whether the response was cut off by hitting
+ * max_tokens before the model finished (stop_reason === "max_tokens").
+ *
+ * Exposing truncation explicitly matters: a truncated response is usually
+ * still handed to a JSON parser downstream, which produces a generic,
+ * confusing SyntaxError ("unexpected end of JSON input", "unterminated
+ * string", etc. depending on exactly where the cut lands) that looks like a
+ * quoting/escaping problem with the input text but is actually just "the
+ * budget was too small for this answer" -- a real bug found via first hands-on
+ * use of writeup-import (Phase 8): the same short, special-character-free
+ * writeup still failed with "unexpected end of JSON output", which is only
+ * explicable by truncation, not malformed input.
  *
  * @param {string} prompt
  * @param {object} opts
@@ -52,9 +63,9 @@ export function parseJsonResponse(text) {
  *                                 this function has no opinion on what model to default to,
  *                                 since different call sites want different defaults
  * @param {number} [opts.maxTokens]
- * @returns {Promise<string>}
+ * @returns {Promise<{text: string, truncated: boolean}>}
  */
-export async function callModel(prompt, opts) {
+export async function callModelDetailed(prompt, opts) {
   const client = opts.client ?? new Anthropic({ apiKey: opts.apiKey });
   const response = await client.messages.create({
     model: opts.model,
@@ -62,5 +73,20 @@ export async function callModel(prompt, opts) {
     messages: [{ role: "user", content: prompt }]
   });
   const textBlock = (response.content ?? []).find((b) => b.type === "text");
-  return textBlock?.text ?? "";
+  return { text: textBlock?.text ?? "", truncated: response.stop_reason === "max_tokens" };
+}
+
+/**
+ * Convenience wrapper over callModelDetailed for callers that don't (yet)
+ * check truncation themselves -- returns just the text, same as before this
+ * was split out. Prefer callModelDetailed for any new call site that retries
+ * on failure, since truncation should bump the token budget, not just resend
+ * the same prompt with a "please fix it" note (which cannot fix a budget
+ * problem).
+ *
+ * @returns {Promise<string>}
+ */
+export async function callModel(prompt, opts) {
+  const { text } = await callModelDetailed(prompt, opts);
+  return text;
 }

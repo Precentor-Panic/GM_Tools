@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, openSync, closeSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, openSync, closeSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +13,12 @@ process.env.GM_TOOLS_REVIEW_STATE_DIR = join(scratchDir, "review-state");
 process.env.GM_TOOLS_USER_SETTINGS_DIR = join(scratchDir, "user-settings");
 
 const REPO_DEFAULT_ROOT = join(new URL("../user-settings", import.meta.url).pathname);
+// Snapshot BEFORE importing/running anything, not "must not exist" -- the
+// repo's real default directory legitimately has real content once the tool
+// is actually used (a real settings.json from toggling rubber-duck mode in
+// review-ui), so the meaningful guarantee is "this test file didn't ADD
+// anything to it," not "it's empty/absent."
+const before = existsSync(REPO_DEFAULT_ROOT) ? new Set(readdirSync(REPO_DEFAULT_ROOT)) : new Set();
 
 const { getUserSettings, setRubberDuckMode, userSettingsRoot, ConcurrentWriteError } =
   await import("../mutation-engine/user-settings.mjs");
@@ -93,7 +99,9 @@ test("concurrent write: an existing lock file causes setRubberDuckMode to throw 
 });
 
 test("no write in this file leaked into the repo's real default user-settings/ directory (the Phase 4 lesson)", () => {
-  assert.ok(!existsSync(REPO_DEFAULT_ROOT), `${REPO_DEFAULT_ROOT} must not exist after a fully-isolated test run`);
+  const after = existsSync(REPO_DEFAULT_ROOT) ? new Set(readdirSync(REPO_DEFAULT_ROOT)) : new Set();
+  const added = [...after].filter((f) => !before.has(f));
+  assert.deepEqual(added, [], `this test run must not add new entries to ${REPO_DEFAULT_ROOT}, found: ${added}`);
 });
 
 console.log(`\n${passed} passed`);

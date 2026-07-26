@@ -53,6 +53,10 @@ function test(name, fn) {
   );
 }
 
+// A response entry is normally a plain string (or a function of params -> string).
+// It can also be `{ text, stopReason }` to simulate a real Anthropic stop_reason
+// other than a normal finish -- used to test the truncation-handling path
+// (see callModelDetailed in mutation-engine/llm-call.mjs).
 function mockClient(responses) {
   let call = 0;
   const calls = [];
@@ -63,7 +67,14 @@ function mockClient(responses) {
         calls.push(params);
         const resp = responses[Math.min(call, responses.length - 1)];
         call++;
-        return { content: [{ type: "text", text: typeof resp === "function" ? resp(params) : resp }] };
+        if (resp && typeof resp === "object" && !Array.isArray(resp) && "text" in resp) {
+          const text = typeof resp.text === "function" ? resp.text(params) : resp.text;
+          return { content: [{ type: "text", text }], stop_reason: resp.stopReason ?? "end_turn" };
+        }
+        return {
+          content: [{ type: "text", text: typeof resp === "function" ? resp(params) : resp }],
+          stop_reason: "end_turn"
+        };
       }
     }
   };
@@ -161,6 +172,39 @@ test("proposeWfiFromWriteup: retries once on an invalid entity type, succeeds on
   const client = mockClient([invalidType, validType]);
   const proposal = await proposeWfiFromWriteup("Alvor.", { client });
   assert.equal(proposal.entities[0].type, "person");
+});
+
+test("proposeWfiFromWriteup: a truncated first attempt (stop_reason max_tokens) doubles the token budget and retries, rather than resending the same budget", async () => {
+  const goodResponse = JSON.stringify({
+    entities: [{ name: "Alvor", type: "person", rationale: "Recovered after truncation." }],
+    edges: []
+  });
+  const client = mockClient([
+    { text: "{\"entities\": [ {\"name\": \"Alvor\", \"typ", stopReason: "max_tokens" },
+    goodResponse
+  ]);
+  const proposal = await proposeWfiFromWriteup("Alvor is the smith.", { client, maxTokens: 100 });
+  assert.equal(proposal.entities[0].rationale, "Recovered after truncation.");
+  assert.equal(client.calls.length, 2);
+  assert.equal(client.calls[0].max_tokens, 100, "first attempt uses the requested budget");
+  assert.equal(client.calls[1].max_tokens, 200, "second attempt doubles the budget after truncation, not a blind retry");
+});
+
+test("proposeWfiFromWriteup: truncated on both attempts throws an error that says so, not a generic JSON parse error", async () => {
+  const client = mockClient([
+    { text: "{\"entities\": [", stopReason: "max_tokens" },
+    { text: "{\"entities\": [", stopReason: "max_tokens" }
+  ]);
+  await assert.rejects(
+    proposeWfiFromWriteup("some writeup text", { client, maxTokens: 100 }),
+    (err) => {
+      assert.equal(err.name, "WriteupImportValidationError");
+      assert.match(err.message, /truncated/i);
+      assert.match(err.lastError.message, /truncated/i);
+      return true;
+    }
+  );
+  assert.equal(client.calls[1].max_tokens, 200);
 });
 
 test("proposeWfiFromWriteup: throws a typed WriteupImportValidationError after a second failure, does not silently drop the proposal", async () => {
@@ -521,6 +565,24 @@ test("proposeFramingsFromWriteup: a well-formed writeup produces exactly 3 frami
   for (const f of result.framings) assert.ok(f.sentence && f.sentence.length > 0);
 });
 
+test("proposeFramingsFromWriteup: a truncated first attempt doubles the token budget and retries, same truncation-handling as proposeWfiFromWriteup", async () => {
+  const goodResponse = JSON.stringify({
+    framings: [
+      { id: "a", sentence: "x" },
+      { id: "b", sentence: "y" },
+      { id: "c", sentence: "z" }
+    ]
+  });
+  const client = mockClient([
+    { text: "{\"framings\": [ {\"id\": \"a\"", stopReason: "max_tokens" },
+    goodResponse
+  ]);
+  const result = await proposeFramingsFromWriteup("Some writeup.", { client, maxTokens: 50 });
+  assert.equal(result.framings.length, 3);
+  assert.equal(client.calls[0].max_tokens, 50);
+  assert.equal(client.calls[1].max_tokens, 100);
+});
+
 test("proposeFramingsFromWriteup: uses DEFAULT_FRAMING_MODEL and a small maxTokens by default, not DEFAULT_WRITEUP_IMPORT_MODEL's settings", async () => {
   let capturedParams;
   const client = mockClient([
@@ -604,6 +666,13 @@ test("composeFramingNote: a pick plus a blend line includes both", () => {
   });
   assert.match(note, /A political-intrigue reading\./);
   assert.match(note, /also pull in the ruins from framing B/);
+});
+
+test("composeFramingNote: a custom (option 'd') primary not aligned with any of the generated a/b/c framings is accepted -- the primary's id is never constrained to the model's own set", () => {
+  const note = composeFramingNote({
+    primary: { id: "d", sentence: "None of those -- this is actually a heist story about the vault beneath the market." }
+  });
+  assert.match(note, /heist story about the vault beneath the market/);
 });
 
 test("composeFramingNote: throws a clear error without a valid primary selection", () => {

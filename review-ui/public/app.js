@@ -418,7 +418,7 @@ function renderRowActionArea(entity, actionArea) {
     regenBox.className = "regenerate-box";
     const input = document.createElement("input");
     input.type = "text";
-    input.placeholder = "Steering note for regenerate&hellip;";
+    input.placeholder = "Steering note for regenerate…";
     const regenBtn = document.createElement("button");
     regenBtn.className = "btn";
     regenBtn.textContent = "Regenerate";
@@ -486,7 +486,7 @@ function renderNarrationArea(actionArea) {
   btn.textContent = "Narrate This Scene";
   btn.addEventListener("click", async () => {
     btn.disabled = true;
-    btn.textContent = "Narrating&hellip;";
+    btn.textContent = "Narrating…";
     try {
       const result = await api(`/api/batches/${reviewState.batchId}/narrate`, {
         method: "POST",
@@ -519,7 +519,7 @@ function appendNarrationCard(actionArea, prose) {
   regen.className = "narration-regenerate";
   const input = document.createElement("input");
   input.type = "text";
-  input.placeholder = "Regenerate narration with a note&hellip;";
+  input.placeholder = "Regenerate narration with a note…";
   const btn = document.createElement("button");
   btn.className = "btn";
   btn.textContent = "Regenerate";
@@ -730,7 +730,7 @@ function renderDebtBody(entity, body) {
   resolveBtn.textContent = "Resolve Now";
   resolveBtn.addEventListener("click", async () => {
     resolveBtn.disabled = true;
-    resolveBtn.textContent = "Resolving&hellip;";
+    resolveBtn.textContent = "Resolving…";
     try {
       const result = await api(`/api/pending-entities/${encodeURIComponent(entity.entityId)}/resolve`, {
         method: "POST",
@@ -875,7 +875,7 @@ document.getElementById("btn-import-submit").addEventListener("click", async () 
     return;
   }
   btn.disabled = true;
-  statusEl.textContent = "Reading the writeup&hellip;";
+  statusEl.textContent = "Reading the writeup…";
   try {
     const result = await api("/api/writeup-propose", {
       method: "POST",
@@ -941,6 +941,39 @@ function renderFramingView() {
     label.append(radio, body);
     cardsEl.appendChild(label);
   }
+
+  // Option (d): none of the above -- a fully custom framing the reviewer
+  // writes themselves, not anchored to any of the three generated readings.
+  // Distinct from the blend line below, which only ever supplements a
+  // picked a/b/c primary -- this replaces the primary entirely.
+  const customLabel = document.createElement("label");
+  customLabel.className = "framing-card framing-card--custom";
+  const customRadio = document.createElement("input");
+  customRadio.type = "radio";
+  customRadio.name = "framing-pick";
+  customRadio.value = "__custom__";
+  const customBody = document.createElement("div");
+  customBody.className = "framing-card-body";
+  const customIdEl = document.createElement("div");
+  customIdEl.className = "framing-card-id";
+  customIdEl.textContent = "(d)";
+  const customInput = document.createElement("input");
+  customInput.type = "text";
+  customInput.id = "framing-custom-input";
+  customInput.placeholder = "None of these — describe your own direction";
+  customInput.addEventListener("input", () => {
+    if (customInput.value.trim()) {
+      customRadio.checked = true;
+      submitBtn.disabled = false;
+    }
+  });
+  customRadio.addEventListener("change", () => {
+    submitBtn.disabled = !customInput.value.trim();
+    if (customRadio.checked) customInput.focus();
+  });
+  customBody.append(customIdEl, customInput);
+  customLabel.append(customRadio, customBody);
+  cardsEl.appendChild(customLabel);
 }
 
 document.getElementById("btn-framing-submit").addEventListener("click", async () => {
@@ -952,7 +985,17 @@ document.getElementById("btn-framing-submit").addEventListener("click", async ()
     statusEl.textContent = "Pick a framing first.";
     return;
   }
-  const primary = importFlowState.framings.find((f) => f.id === picked.value);
+  let primary;
+  if (picked.value === "__custom__") {
+    const customText = document.getElementById("framing-custom-input").value.trim();
+    if (!customText) {
+      statusEl.textContent = "Write your own direction first.";
+      return;
+    }
+    primary = { id: "d", sentence: customText };
+  } else {
+    primary = importFlowState.framings.find((f) => f.id === picked.value);
+  }
   const blend = document.getElementById("framing-blend-input").value.trim();
   const selection = { primary, ...(blend ? { blend } : {}) };
 
@@ -966,7 +1009,7 @@ document.getElementById("btn-framing-submit").addEventListener("click", async ()
   }
 
   btn.disabled = true;
-  statusEl.textContent = "Running the real extraction&hellip; this can take a while.";
+  statusEl.textContent = "Running the real extraction… this can take a while.";
   try {
     const result = await api("/api/writeup-select-framing", {
       method: "POST",
@@ -1043,7 +1086,7 @@ function renderRubberDuckRejectExpanded(detail, panel, opts = {}) {
   noteRow.className = "regenerate-box";
   const input = document.createElement("input");
   input.type = "text";
-  input.placeholder = noteOnly ? "An explicit reason (required now)&hellip;" : "Or reject with an explicit reason&hellip;";
+  input.placeholder = noteOnly ? "An explicit reason (required now)…" : "Or reject with an explicit reason…";
   const noteBtn = document.createElement("button");
   noteBtn.className = "btn btn--reject";
   noteBtn.textContent = "Reject with Note";

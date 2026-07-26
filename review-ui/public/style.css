@@ -254,6 +254,11 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .framing-card-body { flex: 1; }
 .framing-card-id { font-size: 0.75rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 .framing-card-sentence { font-size: 0.98rem; margin-top: 0.15rem; }
+.framing-card--custom .framing-card-body { display: flex; align-items: center; }
+.framing-card--custom input[type="text"] {
+  width: 100%; font-size: 0.95rem; padding: 0.35rem 0.5rem; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); margin-left: 0.5rem;
+}
 .framing-blend { margin-bottom: 0.5rem; }
 .framing-blend label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.3rem; }
 .framing-blend input {

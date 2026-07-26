@@ -4,6 +4,20 @@ review-state/*/
 time-skip-status/*/
 !time-skip-status/.gitkeep
 
+# The other three flat-file data stores (mutation-engine/human-review.mjs,
+# pending-ledger.mjs, user-settings.mjs) follow the same convention as the
+# two above but were missing from here -- a real gap found via first hands-on
+# use of Phase 8 (toggling rubber-duck mode wrote a real user-settings/
+# directory that git status then reported as untracked).
+human-review/*
+!human-review/.gitkeep
+
+pending-resolution/*/
+!pending-resolution/.gitkeep
+
+user-settings/*
+!user-settings/.gitkeep
+
 node_modules/
 
 # never commit API keys / secrets

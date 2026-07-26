@@ -42,7 +42,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { callModel, fillTemplate as fillTemplateShared, parseJsonResponse } from "../mutation-engine/llm-call.mjs";
+import { callModelDetailed, fillTemplate as fillTemplateShared, parseJsonResponse } from "../mutation-engine/llm-call.mjs";
 import { createBatch } from "../mutation-engine/review-state.mjs";
 import { summarizeBatch, renderHeadline } from "../mutation-engine/grain.mjs";
 import { attachDiffs } from "../time-skip/run.mjs";
@@ -55,6 +55,15 @@ const PROMPT_TEMPLATE = readFileSync(join(__dirname, "..", "prompts", "writeup-i
 const FRAMING_PROMPT_TEMPLATE = readFileSync(join(__dirname, "..", "prompts", "writeup-framing.md"), "utf8");
 
 export const DEFAULT_WRITEUP_IMPORT_MODEL = "claude-sonnet-5";
+// A real writeup can produce a dozen-plus entities/edges, each with a full
+// attribute set and a rationale -- the original 4096-token default was too
+// small for that and silently truncated real, non-degenerate writeups (found
+// via first hands-on use, not a synthetic test: the model's honest answer
+// just didn't fit, and the retry loop was resending the identical budget, so
+// it failed the same way twice). See proposeWfiFromWriteup's truncation
+// handling below, which now also doubles this on a truncated first attempt
+// rather than only ever using this fixed value.
+export const DEFAULT_WRITEUP_IMPORT_MAX_TOKENS = 8192;
 // Phase 8 task 8.1: a deliberately cheaper/faster model tier for the framing
 // call specifically — per the design doc, a visibly-fast first reaction is
 // itself part of signaling "this is a glance, not the real answer" (Phase 3
@@ -239,15 +248,33 @@ export async function proposeWfiFromWriteup(writeupText, opts = {}) {
   let prompt = basePrompt;
   let lastError;
   let lastRaw;
+  let maxTokens = opts.maxTokens ?? DEFAULT_WRITEUP_IMPORT_MAX_TOKENS;
   const maxAttempts = 2;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const raw = await callModel(prompt, {
+    const { text: raw, truncated } = await callModelDetailed(prompt, {
       ...opts,
       model: opts.model ?? DEFAULT_WRITEUP_IMPORT_MODEL,
-      maxTokens: opts.maxTokens ?? 4096
+      maxTokens
     });
     lastRaw = raw;
+
+    if (truncated) {
+      // Truncation is a budget problem, not a content problem -- resending
+      // the same prompt with the same maxTokens would just truncate at the
+      // same point again. Double the budget and retry with the SAME prompt
+      // (no point pasting back a response we know is incomplete).
+      lastError = new Error(
+        `Model response was truncated at max_tokens=${maxTokens} before it finished -- the proposal was ` +
+        `larger than the token budget allowed.`
+      );
+      if (attempt < maxAttempts) {
+        maxTokens *= 2;
+        continue;
+      }
+      break;
+    }
+
     try {
       const parsed = parseJsonResponse(raw);
       const validated = RawWfiProposal.parse(parsed);
@@ -318,17 +345,34 @@ export async function proposeFramingsFromWriteup(writeupText, opts = {}) {
   let prompt = basePrompt;
   let lastError;
   let lastRaw;
+  // Three short sentences: small on purpose, per task 8.1's "deliberately
+  // cheap by construction" instruction, not just a fast model tier. Still
+  // truncation-checked (see proposeWfiFromWriteup's own comment on why) --
+  // low-risk at this size, but a bad blend/steering note could in principle
+  // push a reply past 512 tokens, and a silent truncation would be a much
+  // more confusing failure than just doubling the budget once.
+  let maxTokens = opts.maxTokens ?? 512;
   const maxAttempts = 2;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const raw = await callModel(prompt, {
+    const { text: raw, truncated } = await callModelDetailed(prompt, {
       ...opts,
       model: opts.model ?? DEFAULT_FRAMING_MODEL,
-      // Three short sentences: small on purpose, per task 8.1's "deliberately
-      // cheap by construction" instruction, not just a fast model tier.
-      maxTokens: opts.maxTokens ?? 512
+      maxTokens
     });
     lastRaw = raw;
+
+    if (truncated) {
+      lastError = new Error(
+        `Model response was truncated at max_tokens=${maxTokens} before it finished.`
+      );
+      if (attempt < maxAttempts) {
+        maxTokens *= 2;
+        continue;
+      }
+      break;
+    }
+
     try {
       const parsed = parseJsonResponse(raw);
       const validated = FramingsResponse.parse(parsed);
