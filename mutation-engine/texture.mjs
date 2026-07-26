@@ -27,12 +27,22 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { Mutation, MutationOp } from "./schema.mjs";
-import { callModel, fillTemplate as fillTemplateShared, parseJsonResponse } from "./llm-call.mjs";
+import { callModelDetailed, fillTemplate as fillTemplateShared, parseJsonResponse } from "./llm-call.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPT_TEMPLATE = readFileSync(join(__dirname, "..", "prompts", "texture.md"), "utf8");
 
 export const DEFAULT_TEXTURE_MODEL = "claude-sonnet-5";
+// A busy region (several affected entities/edges, each producing its own
+// mutation with a `data` payload and a `rationale`) can genuinely exceed
+// llm-call.mjs's shared 2048-token default -- this call site never overrode
+// that default explicitly before, so it was exposed to exactly the same
+// silent-truncation failure mode graph-import/writeup-import.mjs's
+// proposeWfiFromWriteup had before its own fix (see that module's own
+// DEFAULT_WRITEUP_IMPORT_MAX_TOKENS comment and mutation-engine/llm-call.mjs's
+// callModelDetailed doc comment for the full story). Given an explicit
+// default here and truncation-aware doubling below, matching that fix.
+export const DEFAULT_TEXTURE_MAX_TOKENS = 4096;
 
 export class TextureValidationError extends Error {
   constructor(message, { attempts, lastError, rawResponse } = {}) {
@@ -193,7 +203,13 @@ function fillTemplate(vars) {
 
 /**
  * Texture a single region: one Anthropic API call, validate -> retry-once
- * -> typed-error-on-second-failure.
+ * -> typed-error-on-second-failure. A truncated response (stop_reason
+ * max_tokens) is detected explicitly and treated as its own retry-worthy
+ * case: the token budget doubles for the retry rather than resending the
+ * identical prompt with the identical budget (which would just truncate at
+ * the same point again) -- see graph-import/writeup-import.mjs's
+ * proposeWfiFromWriteup for the real-world bug this convention was
+ * established to fix.
  *
  * @param {{regionId:string, entityIds:string[], deltas:Array}} region
  * @param {object} ctx
@@ -243,11 +259,35 @@ export async function textureRegion(region, ctx, opts = {}) {
   let prompt = basePrompt;
   let lastError;
   let lastRaw;
+  let maxTokens = opts.maxTokens ?? DEFAULT_TEXTURE_MAX_TOKENS;
   const maxAttempts = 2;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const raw = await callModel(prompt, { ...opts, model: opts.model ?? DEFAULT_TEXTURE_MODEL });
+    const { text: raw, truncated } = await callModelDetailed(prompt, {
+      ...opts,
+      model: opts.model ?? DEFAULT_TEXTURE_MODEL,
+      maxTokens
+    });
     lastRaw = raw;
+
+    if (truncated) {
+      // Same reasoning as proposeWfiFromWriteup's own truncation handling --
+      // a truncated response is a budget problem, not a content problem, so
+      // resending the identical prompt with the identical maxTokens would
+      // just truncate at the same point again. Double the budget and retry
+      // with the SAME prompt (no point pasting back a response we know is
+      // incomplete).
+      lastError = new Error(
+        `Model response was truncated at max_tokens=${maxTokens} before it finished -- the mutation set for ` +
+        `region "${region.regionId}" was larger than the token budget allowed.`
+      );
+      if (attempt < maxAttempts) {
+        maxTokens *= 2;
+        continue;
+      }
+      break;
+    }
+
     try {
       const parsed = parseJsonResponse(raw);
       const rawMutations = RawMutationArray.parse(parsed);

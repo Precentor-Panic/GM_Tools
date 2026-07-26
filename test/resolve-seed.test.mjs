@@ -31,6 +31,11 @@ const entities = [
 ];
 const edges = [];
 
+// A response entry is normally a plain string (or a function of params -> string).
+// It can also be `{ text, stopReason }` to simulate a real Anthropic stop_reason
+// other than a normal finish -- used to test the truncation-handling path
+// (see callModelDetailed in mutation-engine/llm-call.mjs), matching the
+// convention test/writeup-import.test.mjs's own mockClient established.
 function mockClient(responses) {
   let call = 0;
   const calls = [];
@@ -41,7 +46,14 @@ function mockClient(responses) {
         calls.push(params);
         const resp = responses[Math.min(call, responses.length - 1)];
         call++;
-        return { content: [{ type: "text", text: typeof resp === "function" ? resp(params) : resp }] };
+        if (resp && typeof resp === "object" && !Array.isArray(resp) && "text" in resp) {
+          const text = typeof resp.text === "function" ? resp.text(params) : resp.text;
+          return { content: [{ type: "text", text }], stop_reason: resp.stopReason ?? "end_turn" };
+        }
+        return {
+          content: [{ type: "text", text: typeof resp === "function" ? resp(params) : resp }],
+          stop_reason: "end_turn"
+        };
       }
     }
   };
@@ -162,6 +174,37 @@ test("resolveSeed: no-match is NOT retried (it's a final result, not a validatio
   ]);
   await assert.rejects(resolveSeed("an unrelated event", { entities, edges }, { client }));
   assert.equal(client.calls.length, 1, "no-match should not trigger a second attempt");
+});
+
+test("resolveSeed: a truncated first attempt (stop_reason max_tokens) doubles the token budget and retries, rather than resending the same budget (matches graph-import/writeup-import.mjs's fix for the same bug class)", async () => {
+  const goodResponse = JSON.stringify({ resolution: "single", entityId: "alvor", rationale: "Recovered after truncation." });
+  const client = mockClient([
+    { text: "{\"resolution\": \"single\", \"entityId", stopReason: "max_tokens" },
+    goodResponse
+  ]);
+  const result = await resolveSeed("the smith is attacked", { entities, edges }, { client, maxTokens: 50 });
+  assert.equal(result.rationale, "Recovered after truncation.");
+  assert.equal(client.calls.length, 2);
+  assert.equal(client.calls[0].max_tokens, 50, "first attempt uses the requested budget");
+  assert.equal(client.calls[1].max_tokens, 100, "second attempt doubles the budget after truncation, not a blind retry");
+});
+
+test("resolveSeed: truncated on both attempts throws a SeedResolutionError that says so, not a generic JSON parse error", async () => {
+  const client = mockClient([
+    { text: "{\"resolution\": \"single\"", stopReason: "max_tokens" },
+    { text: "{\"resolution\": \"single\"", stopReason: "max_tokens" }
+  ]);
+  await assert.rejects(
+    resolveSeed("something happens", { entities, edges }, { client, maxTokens: 50 }),
+    (err) => {
+      assert.ok(err instanceof SeedResolutionError);
+      assert.equal(err.kind, "invalid-response");
+      assert.match(err.message, /truncated/i);
+      assert.equal(client.calls.length, 2);
+      assert.equal(client.calls[1].max_tokens, 100);
+      return true;
+    }
+  );
 });
 
 test("resolveSeed: throws a typed SeedResolutionError after a second validation failure, does not silently drop the request", async () => {

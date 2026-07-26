@@ -25,6 +25,11 @@ function test(name, fn) {
   );
 }
 
+// A response entry is normally a plain string (or a function of params -> string).
+// It can also be `{ text, stopReason }` to simulate a real Anthropic stop_reason
+// other than a normal finish -- used to test the truncation-handling path
+// (see callModelDetailed in mutation-engine/llm-call.mjs), matching the
+// convention test/writeup-import.test.mjs's own mockClient established.
 function mockClient(responses) {
   let call = 0;
   const calls = [];
@@ -35,7 +40,14 @@ function mockClient(responses) {
         calls.push(params);
         const resp = responses[Math.min(call, responses.length - 1)];
         call++;
-        return { content: [{ type: "text", text: typeof resp === "function" ? resp(params) : resp }] };
+        if (resp && typeof resp === "object" && !Array.isArray(resp) && "text" in resp) {
+          const text = typeof resp.text === "function" ? resp.text(params) : resp.text;
+          return { content: [{ type: "text", text }], stop_reason: resp.stopReason ?? "end_turn" };
+        }
+        return {
+          content: [{ type: "text", text: typeof resp === "function" ? resp(params) : resp }],
+          stop_reason: "end_turn"
+        };
       }
     }
   };
@@ -200,6 +212,40 @@ test("narrateBatch: regenerate-with-note passes the note through to the prompt",
 test("narrateBatch: throws NarrationError on an empty model response rather than returning blank prose", async () => {
   const client = mockClient(["   "]);
   await assert.rejects(() => narrateBatch(acceptedBatch(), {}, { client }), NarrationError);
+});
+
+// --------------------------------------------------- narrateBatch: truncation (found in QA pass alongside
+// texture.mjs/resolve-seed.mjs's version of the same bug class -- narrateBatch is uniquely dangerous here
+// since raw.trim() is non-empty for prose cut off mid-sentence, so without this check a truncated narration
+// would silently reach a player at the table looking complete, with no error at all)
+
+test("narrateBatch: a truncated first attempt (stop_reason max_tokens) doubles the token budget and retries, rather than silently returning cut-off prose", async () => {
+  const client = mockClient([
+    { text: "The forge falls silent as word spreads", stopReason: "max_tokens" },
+    "The forge falls silent as word spreads through Riverwood, complete this time."
+  ]);
+  const result = await narrateBatch(acceptedBatch(), {}, { client, maxTokens: 50 });
+  assert.equal(result.prose, "The forge falls silent as word spreads through Riverwood, complete this time.");
+  assert.equal(client.calls.length, 2);
+  assert.equal(client.calls[0].max_tokens, 50, "first attempt uses the requested budget");
+  assert.equal(client.calls[1].max_tokens, 100, "second attempt doubles the budget after truncation, not a blind retry");
+});
+
+test("narrateBatch: truncated on both attempts throws a NarrationError that says so, not a silently-truncated result", async () => {
+  const client = mockClient([
+    { text: "The forge falls silent", stopReason: "max_tokens" },
+    { text: "The forge falls silent as word spreads", stopReason: "max_tokens" }
+  ]);
+  await assert.rejects(
+    narrateBatch(acceptedBatch(), {}, { client, maxTokens: 50 }),
+    (err) => {
+      assert.ok(err instanceof NarrationError);
+      assert.match(err.message, /truncated/i);
+      assert.equal(client.calls.length, 2);
+      assert.equal(client.calls[1].max_tokens, 100);
+      return true;
+    }
+  );
 });
 
 test("DEFAULT_NARRATE_MODEL is claude-sonnet-5, matching this project's other LLM call sites", () => {

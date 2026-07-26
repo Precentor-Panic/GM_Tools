@@ -26,7 +26,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { callModel, fillTemplate as fillTemplateShared, parseJsonResponse } from "../mutation-engine/llm-call.mjs";
+import { callModelDetailed, fillTemplate as fillTemplateShared, parseJsonResponse } from "../mutation-engine/llm-call.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPT_TEMPLATE = readFileSync(join(__dirname, "..", "prompts", "resolve-seed.md"), "utf8");
@@ -107,18 +107,39 @@ export async function resolveSeed(eventDescription, snapshot, opts = {}) {
   let prompt = basePrompt;
   let lastError;
   let lastRaw;
+  // maxTokens default (1024) preserved explicitly here, distinct from
+  // llm-call.mjs's own 2048 default -- a resolution response is much
+  // shorter than a texturing response, no reason to share that default.
+  let maxTokens = opts.maxTokens ?? 1024;
   const maxAttempts = 2;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    // maxTokens default (1024) preserved explicitly here, distinct from
-    // llm-call.mjs's own 2048 default -- a resolution response is much
-    // shorter than a texturing response, no reason to share that default.
-    const raw = await callModel(prompt, {
+    const { text: raw, truncated } = await callModelDetailed(prompt, {
       ...opts,
       model: opts.model ?? DEFAULT_RESOLVE_SEED_MODEL,
-      maxTokens: opts.maxTokens ?? 1024
+      maxTokens
     });
     lastRaw = raw;
+
+    if (truncated) {
+      // Same truncation-vs-content-problem reasoning as texture.mjs's
+      // textureRegion / graph-import/writeup-import.mjs's
+      // proposeWfiFromWriteup -- most plausible trigger here is a genuinely
+      // large 'ambiguous' candidate list (many plausible entities, each with
+      // its own reason string), not a malformed response. Double the budget
+      // and retry with the SAME prompt rather than resend the identical
+      // budget and truncate at the same point again.
+      lastError = new Error(
+        `Model response was truncated at max_tokens=${maxTokens} before it finished -- the resolution for ` +
+        `"${eventDescription}" was larger than the token budget allowed.`
+      );
+      if (attempt < maxAttempts) {
+        maxTokens *= 2;
+        continue;
+      }
+      break;
+    }
+
     try {
       const parsed = parseJsonResponse(raw);
       const validated = RawResolution.parse(parsed);

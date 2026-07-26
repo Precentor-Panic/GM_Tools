@@ -34,15 +34,29 @@ const edges = [
   { id: "e4", sourceId: "alvor", targetId: "gerdur", relationshipType: "kinship", strength: 0.8 }
 ];
 
+// A response entry is normally a plain string (or a function of params -> string).
+// It can also be `{ text, stopReason }` to simulate a real Anthropic stop_reason
+// other than a normal finish -- used to test the truncation-handling path
+// (see callModelDetailed in mutation-engine/llm-call.mjs), matching the
+// convention test/writeup-import.test.mjs's own mockClient established.
 function mockClient(responses) {
   let call = 0;
+  const calls = [];
   return {
-    calls: [],
+    calls,
     messages: {
       create: async (params) => {
+        calls.push(params);
         const resp = responses[Math.min(call, responses.length - 1)];
         call++;
-        return { content: [{ type: "text", text: typeof resp === "function" ? resp(params) : resp }] };
+        if (resp && typeof resp === "object" && !Array.isArray(resp) && "text" in resp) {
+          const text = typeof resp.text === "function" ? resp.text(params) : resp.text;
+          return { content: [{ type: "text", text }], stop_reason: resp.stopReason ?? "end_turn" };
+        }
+        return {
+          content: [{ type: "text", text: typeof resp === "function" ? resp(params) : resp }],
+          stop_reason: "end_turn"
+        };
       }
     }
   };
@@ -144,6 +158,48 @@ test("textureRegion: retries once on schema-invalid JSON (missing rationale), su
   );
   assert.equal(mutations.length, 1);
   assert.equal(mutations[0].rationale, "Fixed.");
+});
+
+test("textureRegion: a truncated first attempt (stop_reason max_tokens) doubles the token budget and retries, rather than resending the same budget (matches graph-import/writeup-import.mjs's fix for the same bug class)", async () => {
+  const goodResponse = JSON.stringify([
+    { op: "upsert_entity", id: "alvor", data: {}, rationale: "Recovered after truncation." }
+  ]);
+  const client = mockClient([
+    { text: "[{\"op\": \"upsert_entity\", \"id\": \"alvor", stopReason: "max_tokens" },
+    goodResponse
+  ]);
+  const region = { regionId: "region-0", entityIds: ["alvor"], deltas: [] };
+  const mutations = await textureRegion(
+    region,
+    { entities, edges, world: "wf-test", batchId: "batch1", sourceKind: "manual" },
+    { client, maxTokens: 100 }
+  );
+  assert.equal(mutations[0].rationale, "Recovered after truncation.");
+  assert.equal(client.calls.length, 2);
+  assert.equal(client.calls[0].max_tokens, 100, "first attempt uses the requested budget");
+  assert.equal(client.calls[1].max_tokens, 200, "second attempt doubles the budget after truncation, not a blind retry");
+});
+
+test("textureRegion: truncated on both attempts throws a TextureValidationError that says so, not a generic JSON parse error", async () => {
+  const client = mockClient([
+    { text: "[{\"op\": \"upsert_entity\"", stopReason: "max_tokens" },
+    { text: "[{\"op\": \"upsert_entity\"", stopReason: "max_tokens" }
+  ]);
+  const region = { regionId: "region-0", entityIds: ["alvor"], deltas: [] };
+  await assert.rejects(
+    textureRegion(
+      region,
+      { entities, edges, world: "wf-test", batchId: "batch1", sourceKind: "manual" },
+      { client, maxTokens: 100 }
+    ),
+    (err) => {
+      assert.ok(err instanceof TextureValidationError);
+      assert.match(err.message, /truncated/i);
+      assert.equal(client.calls.length, 2);
+      assert.equal(client.calls[1].max_tokens, 200);
+      return true;
+    }
+  );
 });
 
 test("textureRegion: throws a typed TextureValidationError after a second failure, does not silently drop the batch", async () => {

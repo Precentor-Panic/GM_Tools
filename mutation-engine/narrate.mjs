@@ -14,8 +14,13 @@
  * plain prose, not a JSON array validated against schema.mjs's Mutation
  * shape. Since this output never touches the graph, there is no schema to
  * validate against and therefore no retry-on-validation-failure loop the
- * way textureRegion has one — a single call, trimmed, with only an
- * empty-response guard.
+ * way textureRegion has one — trimmed, with only an empty-response guard.
+ * It DOES still retry once on truncation (stop_reason max_tokens), same as
+ * every other LLM call site in this codebase: a truncated response is a
+ * budget problem, not a content problem, and here specifically a silent one
+ * (raw.trim() is non-empty for prose cut off mid-sentence), so it gets
+ * caught explicitly rather than reaching a player at the table looking
+ * complete.
  *
  * HARD CONSTRAINT (matches this project's standing no-silent-auto-write
  * invariant, applied to narration instead of mutation): narration only ever
@@ -30,7 +35,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { callModel, fillTemplate as fillTemplateShared } from "./llm-call.mjs";
+import { callModelDetailed, fillTemplate as fillTemplateShared } from "./llm-call.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPT_TEMPLATE = readFileSync(join(__dirname, "..", "prompts", "narrate.md"), "utf8");
@@ -166,17 +171,46 @@ export async function narrateBatch(batch, ctx = {}, opts = {}) {
     steeringNote: note ? `Additional guidance from the GM for this narration -- follow it: ${note}` : ""
   });
 
-  const raw = await callModel(prompt, {
-    ...opts,
-    model: opts.model ?? DEFAULT_NARRATE_MODEL,
-    // A narration response is short prose (2-3 paragraphs), not a JSON
-    // payload describing many entities the way texture.mjs's response can
-    // be -- 1024 (resolve-seed.mjs's default) is closer to right than
-    // llm-call.mjs's 2048 shared default, but still pass explicitly rather
-    // than rely on the shared default, same reasoning resolve-seed.mjs gives
-    // for its own explicit override.
-    maxTokens: opts.maxTokens ?? 1024
-  });
+  // A narration response is short prose (2-3 paragraphs), not a JSON
+  // payload describing many entities the way texture.mjs's response can
+  // be -- 1024 (resolve-seed.mjs's default) is closer to right than
+  // llm-call.mjs's 2048 shared default, but still pass explicitly rather
+  // than rely on the shared default, same reasoning resolve-seed.mjs gives
+  // for its own explicit override.
+  let maxTokens = opts.maxTokens ?? 1024;
+
+  // narrateBatch is otherwise deliberately single-call (see this module's
+  // top-of-file doc comment: prose has no schema to validate, so there's no
+  // validation-failure retry loop the way textureRegion has one). Truncation
+  // is a DIFFERENT concern from validation failure, though, and a truncated
+  // narration is uniquely dangerous here: raw.trim() below is still
+  // non-empty for a story cut off mid-sentence, so without this check a
+  // truncated narration would silently reach a player at the table as if it
+  // were the complete text, with no error at all -- worse than the generic
+  // "unexpected end of JSON" failure mode this same truncation check fixed
+  // in graph-import/writeup-import.mjs, because there nobody could mistake a
+  // thrown error for a genuine result. One bounded retry with a doubled
+  // budget, matching every other LLM call site's truncation handling in this
+  // codebase.
+  let raw = "";
+  let truncated = false;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    ({ text: raw, truncated } = await callModelDetailed(prompt, {
+      ...opts,
+      model: opts.model ?? DEFAULT_NARRATE_MODEL,
+      maxTokens
+    }));
+    if (!truncated) break;
+    if (attempt < 2) maxTokens *= 2;
+  }
+
+  if (truncated) {
+    throw new NarrationError(
+      `Narration call for batch "${batch.id}" was truncated at max_tokens=${maxTokens} on both attempts -- the ` +
+      `narration was larger than the token budget allowed.`,
+      { batchId: batch.id, rawResponse: raw }
+    );
+  }
 
   const prose = raw.trim();
   if (!prose) {
