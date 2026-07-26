@@ -86,6 +86,7 @@ function renderCurrentView() {
   else if (view === "import") renderImportView();
   else if (view === "framing") renderFramingView();
   else if (view === "graph") renderGraphStandaloneView();
+  else if (view === "entity") renderEntityDetail(arg);
 }
 
 window.addEventListener("hashchange", renderCurrentView);
@@ -1259,7 +1260,12 @@ async function refreshGraphStandalone() {
       if (!batchId) return;
       pendingScrollToEntityId = nodeId;
       navigate("review", batchId);
-    }
+    },
+    // Phase 11 task 11.5: the entry point into "develop this node" -- only
+    // ever wired here, on the STANDALONE graph's popover. Batch Review's own
+    // List/Graph toggle (renderReviewGraph, mode:'batch') never passes this
+    // callback at all, so the button structurally cannot appear there.
+    onDevelopNode: (nodeId) => navigate("entity", nodeId)
   });
 }
 
@@ -1613,6 +1619,450 @@ document.getElementById("rubber-duck-toggle").addEventListener("change", async (
     statusEl.textContent = `Failed to update: ${err.message}`;
   }
 });
+
+// ---------------------------------------------------------------------------
+// Phase 11 — per-node content generation ("develop this node"). Reached ONLY
+// from the standalone Graph view's node popover (graph-view.js's
+// onDevelopNode, wired in refreshGraphStandalone above) -- deliberately
+// NEVER from Batch Review (List or Graph mode), matching the design doc's
+// "triggered after commit, not in Batch Review" requirement. This whole
+// section is a single-entity flow: propose framings -> pick/blend -> generate
+// -> accept -> per-field regenerate. No bulk/multi-entity affordance exists
+// anywhere here (a hard design constraint, not a nice-to-have) -- every
+// action below always targets exactly one entityId.
+// ---------------------------------------------------------------------------
+
+// Ephemeral client-side flow state for the currently-viewed entity's framing
+// pick, mirroring importFlowState's own role for writeup-import (Phase 8):
+// this is a genuinely stateless two-request flow server-side (no batch/
+// object persisted until generation actually runs), so the client is what
+// remembers "what did propose-framings/reframe just show me."
+let prepFlowState = null; // {entityId, framings, priorRoundCount} | null
+
+const PREP_FIELD_LABELS = {
+  descriptionAppearance: "Description / Appearance",
+  personalityMannerisms: "Personality & Mannerisms",
+  motivationGoal: "Motivation / Goal",
+  secret: "Secret",
+  potentialRolls: "Potential Rolls",
+  hook: "Hook",
+  descriptionAtmosphere: "Description / Atmosphere",
+  notableFeatures: "Notable Features",
+  potentialEncounter: "Potential Encounter",
+  publicFaceGoals: "Public Face / Goals",
+  internalConflictSecret: "Internal Conflict / Secret",
+  resourcesReach: "Resources / Reach",
+  hookConsequence: "Hook / Consequence",
+  appearance: "Appearance",
+  mechanicalProperties: "Mechanical / Plot Properties",
+  originSecret: "Origin / Secret",
+  discovery: "Discovery",
+  publicAccount: "Public Account",
+  actualTruth: "Actual Truth",
+  rippleConsequences: "Ripple Consequences",
+  description: "Description",
+  howItSurfaces: "How It Surfaces"
+};
+
+async function renderEntityDetail(entityId) {
+  const nameEl = document.getElementById("entity-detail-name");
+  const metaEl = document.getElementById("entity-detail-meta");
+  const bodyEl = document.getElementById("entity-detail-body");
+  nameEl.textContent = "Loading…";
+  metaEl.textContent = "";
+  bodyEl.innerHTML = "";
+
+  if (!entityId) {
+    nameEl.textContent = "No entity selected.";
+    metaEl.textContent = "Open this from the Graph view.";
+    return;
+  }
+  if (!CURRENT_WORLD) {
+    nameEl.textContent = "No world configured yet.";
+    return;
+  }
+
+  // Leaving one entity's in-progress framing pick behind when navigating to
+  // another -- flow state is scoped to whichever entity it belongs to.
+  if (prepFlowState && prepFlowState.entityId !== entityId) prepFlowState = null;
+
+  let entity;
+  try {
+    ({ entity } = await api(`/api/entities/${encodeURIComponent(entityId)}${withWorld()}`));
+  } catch (err) {
+    nameEl.textContent = "Entity not found";
+    metaEl.textContent = err.message;
+    return;
+  }
+
+  nameEl.textContent = entity.name;
+  metaEl.textContent = entity.type + (entity.description ? ` — ${entity.description}` : "");
+
+  await renderPrepContentSection(entity, bodyEl);
+}
+
+async function renderPrepContentSection(entity, container) {
+  container.innerHTML = `<p class="hint">Loading prep content…</p>`;
+
+  if (prepFlowState && prepFlowState.entityId === entity.id) {
+    renderPrepFramingPicker(entity, container, prepFlowState);
+    return;
+  }
+
+  let prepContent = null;
+  try {
+    const result = await api(`/api/entities/${encodeURIComponent(entity.id)}/prep${withWorld()}`);
+    prepContent = result.prepContent;
+  } catch {
+    // treat a fetch failure the same as "never developed" -- still offer the develop button
+  }
+
+  if (!container.isConnected) return; // navigated away while this fetch was in flight
+
+  if (!prepContent) {
+    renderDevelopButton(entity, container);
+    return;
+  }
+  renderPrepContentCard(entity, container, prepContent);
+}
+
+function renderDevelopButton(entity, container) {
+  container.innerHTML = "";
+  const intro = document.createElement("p");
+  intro.className = "hint";
+  intro.textContent = "No prep content yet for this entity — description, secrets, potential rolls, and hooks, tailored to its type.";
+  container.appendChild(intro);
+
+  const btn = document.createElement("button");
+  btn.className = "btn btn--accept";
+  btn.textContent = "Develop This Node";
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.textContent = "Reading the graph…";
+    try {
+      const result = await api(`/api/entities/${encodeURIComponent(entity.id)}/prep/propose-framings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: CURRENT_WORLD })
+      });
+      prepFlowState = { entityId: entity.id, framings: result.framings, priorRoundCount: result.framingRound };
+      renderPrepFramingPicker(entity, container, prepFlowState);
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = "Develop This Node";
+      showToast(`Failed: ${err.message}`);
+    }
+  });
+  container.appendChild(btn);
+}
+
+/**
+ * The framing-pick step -- reuses Phase 8's exact "First Reactions" visual
+ * pattern (.framing-cards/.framing-card CSS, the same radio-card + custom
+ * "(d) none of these" affordance) rather than inventing a second one, per
+ * task 11.5's explicit instruction.
+ */
+function renderPrepFramingPicker(entity, container, flow) {
+  container.innerHTML = "";
+
+  const intro = document.createElement("p");
+  intro.className = "hint";
+  intro.textContent = "Three quick angles on this entity. Pick one, or blend, then generate the full prep content.";
+  container.appendChild(intro);
+
+  const cardsEl = document.createElement("div");
+  cardsEl.className = "framing-cards";
+
+  for (const framing of flow.framings) {
+    const label = document.createElement("label");
+    label.className = "framing-card";
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "prep-framing-pick";
+    radio.value = framing.id;
+    const body = document.createElement("div");
+    body.className = "framing-card-body";
+    const idEl = document.createElement("div");
+    idEl.className = "framing-card-id";
+    idEl.textContent = `(${framing.id})`;
+    const sentenceEl = document.createElement("div");
+    sentenceEl.className = "framing-card-sentence";
+    sentenceEl.textContent = framing.sentence;
+    body.append(idEl, sentenceEl);
+    label.append(radio, body);
+    cardsEl.appendChild(label);
+  }
+
+  const customLabel = document.createElement("label");
+  customLabel.className = "framing-card framing-card--custom";
+  const customRadio = document.createElement("input");
+  customRadio.type = "radio";
+  customRadio.name = "prep-framing-pick";
+  customRadio.value = "__custom__";
+  const customBody = document.createElement("div");
+  customBody.className = "framing-card-body";
+  const customIdEl = document.createElement("div");
+  customIdEl.className = "framing-card-id";
+  customIdEl.textContent = "(d)";
+  const customInput = document.createElement("input");
+  customInput.type = "text";
+  customInput.id = "prep-framing-custom-input";
+  customInput.placeholder = "None of these — describe your own direction";
+  customBody.append(customIdEl, customInput);
+  customLabel.append(customRadio, customBody);
+  cardsEl.appendChild(customLabel);
+  container.appendChild(cardsEl);
+
+  const blendWrap = document.createElement("div");
+  blendWrap.className = "framing-blend";
+  const blendLabel = document.createElement("label");
+  blendLabel.setAttribute("for", "prep-framing-blend-input");
+  blendLabel.textContent = "Also blend in (optional):";
+  const blendInput = document.createElement("input");
+  blendInput.type = "text";
+  blendInput.id = "prep-framing-blend-input";
+  blendInput.placeholder = "e.g. also bring in the debt angle";
+  blendWrap.append(blendLabel, blendInput);
+  container.appendChild(blendWrap);
+
+  const actions = document.createElement("div");
+  actions.className = "import-actions";
+  const genBtn = document.createElement("button");
+  genBtn.className = "btn btn--accept";
+  genBtn.textContent = "Generate";
+  genBtn.disabled = true;
+  const statusEl = document.createElement("span");
+  statusEl.className = "hint";
+  actions.append(genBtn, statusEl);
+  container.appendChild(actions);
+
+  function updateGenEnabled() {
+    const picked = cardsEl.querySelector("input:checked");
+    genBtn.disabled = !picked || (picked.value === "__custom__" && !customInput.value.trim());
+  }
+  cardsEl.addEventListener("change", updateGenEnabled);
+  customInput.addEventListener("input", () => {
+    if (customInput.value.trim()) customRadio.checked = true;
+    updateGenEnabled();
+  });
+
+  genBtn.addEventListener("click", async () => {
+    const picked = cardsEl.querySelector("input:checked");
+    if (!picked) return;
+    let primary;
+    if (picked.value === "__custom__") {
+      const customText = customInput.value.trim();
+      if (!customText) { statusEl.textContent = "Write your own direction first."; return; }
+      primary = { id: "d", sentence: customText };
+    } else {
+      primary = flow.framings.find((f) => f.id === picked.value);
+    }
+    const blend = blendInput.value.trim();
+    const selection = { primary, ...(blend ? { blend } : {}) };
+
+    genBtn.disabled = true;
+    statusEl.textContent = "Generating… this can take a while.";
+    try {
+      const doc = await api(`/api/entities/${encodeURIComponent(entity.id)}/prep/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: CURRENT_WORLD, selection })
+      });
+      prepFlowState = null;
+      renderPrepContentCard(entity, container, doc);
+    } catch (err) {
+      genBtn.disabled = false;
+      statusEl.textContent = `Failed: ${err.message}`;
+    }
+  });
+
+  const reframeRow = document.createElement("div");
+  reframeRow.className = "import-actions";
+  const reframeBtn = document.createElement("button");
+  reframeBtn.className = "btn";
+  reframeBtn.textContent = "None of these — try again";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "link-btn";
+  cancelBtn.textContent = "Cancel";
+  reframeRow.append(reframeBtn, cancelBtn);
+  container.appendChild(reframeRow);
+
+  reframeBtn.addEventListener("click", async () => {
+    reframeBtn.disabled = true;
+    try {
+      const result = await api(`/api/entities/${encodeURIComponent(entity.id)}/prep/reframe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: CURRENT_WORLD, priorRoundCount: flow.priorRoundCount })
+      });
+      prepFlowState = { entityId: entity.id, framings: result.framings, priorRoundCount: result.framingRound };
+      renderPrepFramingPicker(entity, container, prepFlowState);
+    } catch (err) {
+      reframeBtn.disabled = false;
+      if (err.status === 409) {
+        showToast("Already used the one bounded re-try — pick one of the current framings, or write your own.");
+      } else {
+        showToast(`Failed: ${err.message}`);
+      }
+    }
+  });
+
+  cancelBtn.addEventListener("click", () => {
+    prepFlowState = null;
+    renderDevelopButton(entity, container);
+  });
+}
+
+const PREP_STATUS_LABEL = {
+  proposed: "Draft — not yet accepted",
+  accepted: "Accepted",
+  stale: "Accepted"
+};
+
+function summarizeFraming(framingUsed) {
+  // framingUsed is the full composed steering note (composePrepFramingNote's
+  // output, e.g. `The reviewer's chosen framing for developing this entity:
+  // "..." Steer the generated content toward this reading.`) -- pull out
+  // just the quoted sentence for a compact one-line summary here.
+  const match = /"([^"]+)"/.exec(framingUsed || "");
+  return match ? match[1] : framingUsed || "(no framing recorded)";
+}
+
+/** Renders the type-specific fields, per-field regenerate controls (once accepted), and the accept/discard bar (while still 'proposed'). */
+function renderPrepContentCard(entity, container, doc) {
+  container.innerHTML = "";
+
+  if (doc.status === "stale") {
+    const badge = document.createElement("div");
+    badge.className = "prep-stale-badge";
+    badge.textContent = "This entity has changed since this prep content was written — it may be out of date. Nothing below was deleted; regenerate a field to refresh it.";
+    container.appendChild(badge);
+  }
+
+  const meta = document.createElement("div");
+  meta.className = "hint prep-content-meta";
+  meta.textContent = `${PREP_STATUS_LABEL[doc.status] ?? doc.status} · framed as: "${summarizeFraming(doc.framingUsed)}"`;
+  container.appendChild(meta);
+
+  const fieldsWrap = document.createElement("div");
+  fieldsWrap.className = "prep-fields";
+  for (const [fieldName, value] of Object.entries(doc.fields)) {
+    fieldsWrap.appendChild(renderPrepField(entity, doc, container, fieldName, value));
+  }
+  container.appendChild(fieldsWrap);
+
+  if (doc.status === "proposed") {
+    const actions = document.createElement("div");
+    actions.className = "row-actions";
+
+    const acceptBtn = document.createElement("button");
+    acceptBtn.className = "btn btn--accept";
+    acceptBtn.textContent = "Accept";
+    acceptBtn.addEventListener("click", async () => {
+      acceptBtn.disabled = true;
+      try {
+        const updated = await api(`/api/entities/${encodeURIComponent(entity.id)}/prep/accept`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: CURRENT_WORLD })
+        });
+        showToast("Prep content accepted.");
+        renderPrepContentCard(entity, container, updated);
+      } catch (err) {
+        acceptBtn.disabled = false;
+        showToast(`Failed: ${err.message}`);
+      }
+    });
+
+    const discardBtn = document.createElement("button");
+    discardBtn.className = "btn btn--reject";
+    discardBtn.textContent = "Discard Draft";
+    discardBtn.addEventListener("click", async () => {
+      if (!confirm("Discard this draft? It was never accepted, so nothing about the entity itself changes.")) return;
+      try {
+        await api(`/api/entities/${encodeURIComponent(entity.id)}/prep/discard`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: CURRENT_WORLD })
+        });
+        showToast("Draft discarded.");
+        renderDevelopButton(entity, container);
+      } catch (err) {
+        showToast(`Failed: ${err.message}`);
+      }
+    });
+
+    actions.append(acceptBtn, discardBtn);
+    container.appendChild(actions);
+  }
+}
+
+/** One field's card: label, rendered value (plain text, or a roll list for an array field), and — only once accepted, per the design doc's "field-granular regeneration after the initial full-block accept" — its own independent regenerate control. */
+function renderPrepField(entity, doc, container, fieldName, value) {
+  const card = document.createElement("div");
+  card.className = "prep-field-card";
+
+  const label = document.createElement("div");
+  label.className = "prep-field-label";
+  label.textContent = PREP_FIELD_LABELS[fieldName] ?? fieldName;
+  card.appendChild(label);
+
+  const valueEl = document.createElement("div");
+  valueEl.className = "prep-field-value";
+  if (Array.isArray(value)) {
+    if (value.length) {
+      const ul = document.createElement("ul");
+      ul.className = "prep-roll-list";
+      for (const roll of value) {
+        const li = document.createElement("li");
+        li.innerHTML = `<strong>${escapeHtml(roll.skill)}</strong> DC ${escapeHtml(String(roll.dc))} — ${escapeHtml(roll.purpose)}`;
+        ul.appendChild(li);
+      }
+      valueEl.appendChild(ul);
+    } else {
+      valueEl.textContent = "(none)";
+    }
+  } else {
+    valueEl.textContent = value;
+  }
+  card.appendChild(valueEl);
+
+  if (doc.status !== "proposed") {
+    const regenBox = document.createElement("div");
+    regenBox.className = "regenerate-box";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = "Steering note for this field (optional)…";
+    const btn = document.createElement("button");
+    btn.className = "btn";
+    btn.textContent = "Regenerate";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.textContent = "Regenerating…";
+      try {
+        const updated = await api(`/api/entities/${encodeURIComponent(entity.id)}/prep/regenerate-field`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: CURRENT_WORLD, fieldName, note: input.value })
+        });
+        // Re-render the WHOLE card from the server's updated doc (the
+        // source of truth) -- confirms visually and structurally that only
+        // this one field changed, since every OTHER field's own markup is
+        // rebuilt from the exact same values it already had.
+        renderPrepContentCard(entity, container, updated);
+        showToast(`Regenerated "${PREP_FIELD_LABELS[fieldName] ?? fieldName}" — every other field left untouched.`);
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = "Regenerate";
+        showToast(`Failed: ${err.message}`);
+      }
+    });
+    regenBox.append(input, btn);
+    card.appendChild(regenBox);
+  }
+
+  return card;
+}
 
 // ---------------------------------------------------------------------------
 // boot

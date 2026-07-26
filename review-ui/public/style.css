@@ -366,6 +366,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .graph-popover-rationale { margin-bottom: 0.45rem; }
 .graph-popover-actions { display: flex; gap: 0.4rem; margin-bottom: 0.4rem; }
 .graph-popover-showinlist { display: block; }
+.graph-popover-develop { display: block; margin-top: 0.15rem; font-weight: 600; }
 
 .graph-legend { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 0.4rem 0 0.6rem; font-size: 0.78rem; color: var(--text-muted); }
 .graph-legend-item { display: inline-flex; align-items: center; gap: 0.3rem; }
@@ -379,6 +380,29 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   background: var(--bg); color: var(--text); min-width: 200px;
 }
 .graph-node-count { color: var(--text-muted); font-size: 0.82rem; }
+
+/* --- Phase 11: entity detail / prep content ("develop this node") --- */
+#entity-detail-meta { text-transform: capitalize; margin-bottom: 0.75rem; }
+.prep-content-body { margin-top: 0.5rem; }
+
+/* Quiet marker, not an alarming one -- matching this project's established
+   "mild interrupt" convention for status flags elsewhere (the unreviewed-
+   accumulation amber border/dot), but deliberately less shouty than a full
+   banner: a thin amber-left-bordered note, same visual family as
+   .accum-note/.mutation-row.flagged rather than a bright warning box. */
+.prep-stale-badge {
+  border-left: 3px solid var(--amber); background: var(--amber-bg); color: var(--text);
+  border-radius: 4px; padding: 0.5rem 0.7rem; margin-bottom: 0.75rem; font-size: 0.88rem;
+}
+
+.prep-content-meta { margin-bottom: 0.75rem; }
+
+.prep-fields { display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 0.75rem; }
+.prep-field-card { border: 1px solid var(--border); border-radius: 8px; padding: 0.65rem 0.8rem; background: var(--card-bg); }
+.prep-field-label { font-weight: 600; font-size: 0.82rem; color: var(--text-muted); margin-bottom: 0.3rem; }
+.prep-field-value { font-size: 0.95rem; line-height: 1.5; white-space: pre-wrap; }
+.prep-roll-list { margin: 0; padding-left: 1.1rem; }
+.prep-roll-list li { margin-bottom: 0.2rem; }
 
 @media (max-width: 560px) {
   main { padding: 1rem 0.6rem 4rem; }

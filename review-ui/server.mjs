@@ -494,6 +494,19 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { world: w, batches: listBatches(w) });
   }
 
+  // GET /api/entities/:entityId?world=&dataDir=  -- a single committed entity's own
+  // record from the live snapshot (name/type/description/etc.), no edges/narration/prep
+  // attached. Backs Phase 11's entity-detail view header (task 11.5); the narration and
+  // prep-content sub-resources below are fetched separately by the same page.
+  if (method === "GET" && parts.length === 3 && parts[1] === "entities") {
+    const w = resolveWorld(q.get("world"));
+    const dir = resolveDir(q.get("dataDir"));
+    const { entities } = loadSnapshot(dir, w).snapshot;
+    const entity = findEntity(entities, parts[2]);
+    if (!entity) throw new Error(`No committed entity "${parts[2]}" found in world "${w}"'s live snapshot.`);
+    return sendJson(res, 200, { entity });
+  }
+
   // GET /api/batches/:batchId
   if (method === "GET" && parts.length === 3 && parts[1] === "batches") {
     const w = resolveWorld(q.get("world"));

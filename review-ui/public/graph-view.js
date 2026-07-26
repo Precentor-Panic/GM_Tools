@@ -228,6 +228,7 @@ function truncateLabel(s, n = 16) {
  * @param {(mutationId:string) => void} [opts.onReject]
  * @param {(nodeId:string) => void} [opts.onShowInList]         batch mode, or standalone when the node belongs to an open batch
  * @param {(nodeId:string) => {batchId:string}|null} [opts.findOpenBatchForNode]  standalone mode only
+ * @param {(nodeId:string) => void} [opts.onDevelopNode]        Phase 11, standalone mode ONLY -- "Develop this node" popover link, never rendered in batch mode
  */
 export function renderGraph(container, graph, opts = {}) {
   const mode = opts.mode ?? "standalone";
@@ -478,6 +479,23 @@ function showPopover(container, node, pos, opts) {
     link.textContent = "Show in list \u2192";
     link.addEventListener("click", () => { opts.onShowInList?.(showInListTarget); closePopover(container); });
     el.appendChild(link);
+  }
+
+  // Phase 11 task 11.5: "Develop this node" -- the entry point into the new
+  // per-entity prep-content pipeline. Deliberately STANDALONE-MODE ONLY: a
+  // batch-mode node (Batch Review's own List/Graph toggle) is a proposed-or-
+  // not-yet-committed mutation, and the design doc is explicit that
+  // "develop this node" is reached from an already-settled, already-
+  // committed entity, NOT a Batch Review row/node action. This `mode ===
+  // "standalone"` guard is the actual mechanism that keeps it off Batch
+  // Review, not just a convention -- there is no code path in this file
+  // that renders this button for mode==='batch'.
+  if (mode === "standalone" && opts.onDevelopNode) {
+    const developLink = document.createElement("button");
+    developLink.className = "link-btn graph-popover-develop";
+    developLink.textContent = "Develop this node \u2192";
+    developLink.addEventListener("click", () => { opts.onDevelopNode(node.id); closePopover(container); });
+    el.appendChild(developLink);
   }
 
   container.appendChild(el);
