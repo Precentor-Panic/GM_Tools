@@ -246,6 +246,59 @@ function findLastRollbackableBatch(w) {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Task 14.8 (QA-pass finding): scan-for-mentioned-entities had no
+// cancellation and no duplicate-request guard -- navigating away while a
+// scan was in flight didn't cancel it server-side (it silently completed
+// and created a batch the user never saw appear), and the natural "nothing
+// seemed to happen, let me click it again" retry created a second, fully
+// redundant batch, wasting an LLM call.
+//
+// Server-side half of the fix (paired with an AbortController on the
+// frontend, review-ui/public/app.js): a lightweight, IN-MEMORY (this
+// process only -- not a new persisted data store, proportionate to the
+// actual risk per the task's own "don't over-engineer a general
+// request-deduplication framework" guidance) guard against firing a second
+// genuinely-identical scan (same world, same source entity, same text)
+// while one is still in flight OR was very recently completed -- returns
+// the SAME result instead of starting a new one.
+// ---------------------------------------------------------------------------
+const SCAN_DEDUPE_WINDOW_MS = 10_000; // "very recently completed" -- long enough to absorb a confused retry-click, short enough to never mask a genuinely new request
+const recentScans = new Map(); // key -> { promise, settledAt: number|null }
+
+function scanDedupeKey(w, entityId, text) {
+  return `${w}::${entityId}::${text}`;
+}
+
+/**
+ * Runs `runScan()` (the real scanMentionsOp call) UNLESS an identical scan
+ * (same key) is already in flight or settled within SCAN_DEDUPE_WINDOW_MS,
+ * in which case the same promise/result is reused. `runScan` is a thunk
+ * (not eagerly invoked) so a deduped call never triggers a second LLM call
+ * even speculatively.
+ */
+function dedupedScan(w, entityId, text, runScan) {
+  const key = scanDedupeKey(w, entityId, text);
+  const existing = recentScans.get(key);
+  const now = Date.now();
+  if (existing && (existing.settledAt === null || now - existing.settledAt < SCAN_DEDUPE_WINDOW_MS)) {
+    return existing.promise;
+  }
+  const promise = runScan();
+  const entry = { promise, settledAt: null };
+  recentScans.set(key, entry);
+  promise.then(
+    () => { entry.settledAt = Date.now(); },
+    () => { recentScans.delete(key); } // a failed scan should NOT be cached -- a real retry after an error must actually retry
+  );
+  return promise;
+}
+
+// Exported for direct, deterministic unit testing of the dedup mechanism
+// itself (no real LLM call needed -- see test/scan-dedupe.test.mjs)
+// separately from the real-API end-to-end proof in routes-live.smoke.mjs.
+export { dedupedScan, recentScans as __testOnlyRecentScans };
+
 /**
  * GET /api/unreviewed-entities payload: every flagged entity, plus a real
  * display name looked up from the live snapshot -- task 14.6 (QA-pass
@@ -983,6 +1036,11 @@ async function handleApi(req, res, url, parts) {
   // ---------------------------------------------------------------------
 
   // POST /api/entities/:entityId/scan-mentions  { world, dataDir, text }
+  // Task 14.8: a rapid double-trigger of the SAME scan (same world/entity/
+  // text) -- whether a genuine double-click, a confused retry after
+  // navigating away mid-request, or two tabs -- reuses the same in-flight
+  // or very-recently-settled result instead of paying for and creating a
+  // second, fully redundant batch. See dedupedScan's own doc comment.
   if (method === "POST" && parts.length === 4 && parts[1] === "entities" && parts[3] === "scan-mentions") {
     const body = await readBody(req);
     const dir = resolveDir(body.dataDir);
@@ -990,7 +1048,7 @@ async function handleApi(req, res, url, parts) {
     if (typeof body.text !== "string" || !body.text.trim()) {
       throw new Error("POST .../scan-mentions requires a non-empty `text` field.");
     }
-    const result = await scanMentionsOp(dir, w, { entityId: parts[2], text: body.text });
+    const result = await dedupedScan(w, parts[2], body.text, () => scanMentionsOp(dir, w, { entityId: parts[2], text: body.text }));
     return sendJson(res, 200, result);
   }
 

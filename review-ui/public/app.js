@@ -71,7 +71,29 @@ function navigate(view, arg) {
   location.hash = arg ? `${view}/${arg}` : view;
 }
 
+// ---------------------------------------------------------------------------
+// Task 14.8: scan-for-mentioned-entities cancellation. A single shared slot
+// (not a per-call-site variable) since at most one scan is ever meaningfully
+// "the current one" from the GM's perspective, and navigating away should
+// cancel whichever scan (popover shortcut or the prep-content page's own
+// button) happens to be in flight.
+// ---------------------------------------------------------------------------
+let activeScanController = null;
+
+function cancelActiveScan() {
+  if (activeScanController) {
+    activeScanController.abort();
+    activeScanController = null;
+  }
+}
+
 function renderCurrentView() {
+  // Navigating to ANY new view cancels an in-flight scan request -- the
+  // real gap this fixes: a scan left running server-side after the user
+  // navigated away silently completed and created a batch they never saw
+  // appear, with no way to know it happened short of stumbling onto it
+  // later in the Queue.
+  cancelActiveScan();
   const { view, arg } = parseHash();
   for (const section of document.querySelectorAll(".view")) {
     section.classList.toggle("active", section.id === `view-${view}`);
@@ -1643,6 +1665,9 @@ async function handleDeleteEdge(edgeId) {
 
 /** Task 12.5's secondary trigger ("Scan this node's content" from the node popover) -- scans the entity's OWN description field, the only text the graph popover has ready access to without a second fetch. */
 async function handleScanMentionsFromPopover(entityId) {
+  const controller = new AbortController();
+  cancelActiveScan(); // at most one meaningful in-flight scan at a time
+  activeScanController = controller;
   try {
     const { entity } = await api(`/api/entities/${encodeURIComponent(entityId)}${withWorld()}`);
     const text = [entity.description, entity.summary].filter(Boolean).join("\n\n");
@@ -1653,11 +1678,15 @@ async function handleScanMentionsFromPopover(entityId) {
     const result = await api(`/api/entities/${encodeURIComponent(entityId)}/scan-mentions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ world: CURRENT_WORLD, text })
+      body: JSON.stringify({ world: CURRENT_WORLD, text }),
+      signal: controller.signal
     });
     navigate("review", result.batchId);
   } catch (err) {
+    if (err.name === "AbortError") return; // navigated away -- deliberate cancellation, not a real failure
     showToast(`Scan failed: ${err.message}`);
+  } finally {
+    if (activeScanController === controller) activeScanController = null;
   }
 }
 
@@ -2626,6 +2655,9 @@ function renderPrepContentCard(entity, container, doc) {
     scanBtn.addEventListener("click", async () => {
       scanBtn.disabled = true;
       scanBtn.textContent = "Scanning…";
+      const controller = new AbortController();
+      cancelActiveScan(); // at most one meaningful in-flight scan at a time
+      activeScanController = controller;
       try {
         const text = Object.values(doc.fields)
           .map((v) => (Array.isArray(v) ? v.map((r) => `${r.skill} (DC ${r.dc}): ${r.purpose}`).join("; ") : v))
@@ -2633,13 +2665,17 @@ function renderPrepContentCard(entity, container, doc) {
         const result = await api(`/api/entities/${encodeURIComponent(entity.id)}/scan-mentions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ world: CURRENT_WORLD, text })
+          body: JSON.stringify({ world: CURRENT_WORLD, text }),
+          signal: controller.signal
         });
         navigate("review", result.batchId);
       } catch (err) {
+        if (err.name === "AbortError") return; // navigated away -- deliberate cancellation, not a real failure
         scanBtn.disabled = false;
         scanBtn.textContent = "Scan for Mentioned Entities";
         showToast(`Scan failed: ${err.message}`);
+      } finally {
+        if (activeScanController === controller) activeScanController = null;
       }
     });
     scanRow.appendChild(scanBtn);

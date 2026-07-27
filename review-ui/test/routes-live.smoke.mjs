@@ -207,6 +207,27 @@ await test("Task 14.7: POST /api/entities/:id/narrate (standalone entity page, n
   assert.equal(current.body.narration.prose, narrate.body.prose);
 });
 
+await test("Task 14.8: a rapid double-trigger of POST /api/entities/:id/scan-mentions (same entity, same text) produces exactly ONE batch, not two (real API call)", async () => {
+  const text = "Alvor mentioned a traveling merchant named Corwin who passes through Riverwood every few weeks.";
+
+  // Fire both requests essentially simultaneously -- the exact "double-click,
+  // or a confused retry right after navigating away mid-request" shape.
+  const [first, second] = await Promise.all([
+    postJson("/api/entities/alvor/scan-mentions", { world: WORLD, text }),
+    postJson("/api/entities/alvor/scan-mentions", { world: WORLD, text })
+  ]);
+
+  assert.equal(first.status, 200, `expected 200; got ${JSON.stringify(first.body)}`);
+  assert.equal(second.status, 200, `expected 200; got ${JSON.stringify(second.body)}`);
+  assert.equal(first.body.batchId, second.body.batchId, "both requests should resolve to the SAME batch, not two separate ones");
+
+  // Confirm directly against the batch list -- only one scan-produced batch
+  // should exist for this world, not two.
+  const { body: batches } = await getJson(`/api/batches?world=${WORLD}`);
+  const scanBatches = batches.batches.filter((b) => b.id === first.body.batchId);
+  assert.equal(scanBatches.length, 1, "exactly one batch should exist with this id");
+});
+
 await new Promise((resolve) => server.close(resolve));
 rmSync(scratchDir, { recursive: true, force: true });
 
