@@ -47,9 +47,18 @@ import { withLock, ConcurrentWriteError } from "./review-state.mjs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "entity-narration");
 
-export const SCHEMA_VERSION = 1;
+// Bumped 1 -> 2 for Phase 12 task 12.6 (narration reset): EntityNarrationEntry
+// gained an optional `origin` field ("reset" for a task-12.6 reset entry,
+// absent/undefined for every ordinary narrateEntity()-produced entry) so a
+// reset's deliberately-empty prose is distinguishable from a hypothetical
+// future genuinely-empty narration, both in the history list and by
+// manual-edit-ops.mjs's undo (which needs to tell "this is the reset marker
+// I'm about to supersede" apart from anything else). Purely additive -- old
+// entries (no `origin` key at all) still parse unchanged.
+export const SCHEMA_VERSION = 2;
 
 export const EntityNarrationStatus = z.enum(["current", "superseded"]);
+export const EntityNarrationOrigin = z.enum(["reset"]);
 
 export const EntityNarrationEntry = z.object({
   narrationId: z.string(),
@@ -57,6 +66,7 @@ export const EntityNarrationEntry = z.object({
   createdAt: z.string(),
   sourceMutationId: z.string().optional(),
   sourceBatchId: z.string().optional(),
+  origin: EntityNarrationOrigin.optional(),
   status: EntityNarrationStatus
 }).strict();
 
@@ -106,13 +116,13 @@ function writeHistory(world, entityId, entries) {
  *
  * @param {string} world
  * @param {string} entityId
- * @param {{prose:string, sourceMutationId?:string, sourceBatchId?:string}} data
+ * @param {{prose:string, sourceMutationId?:string, sourceBatchId?:string, origin?:'reset'}} data
  * @param {object} [opts]
  * @param {() => string} [opts.makeId]   narration id generator, injectable for tests
  * @param {string} [opts.now]            injectable ISO timestamp, for deterministic tests
  * @returns {object[]} the entity's full, updated history
  */
-export function saveEntityNarration(world, entityId, { prose, sourceMutationId, sourceBatchId }, opts = {}) {
+export function saveEntityNarration(world, entityId, { prose, sourceMutationId, sourceBatchId, origin }, opts = {}) {
   const makeId = opts.makeId ?? makeNarrationId;
   const now = opts.now ?? new Date().toISOString();
   const existing = getEntityNarrationHistory(world, entityId).map((e) =>
@@ -124,6 +134,7 @@ export function saveEntityNarration(world, entityId, { prose, sourceMutationId, 
     createdAt: now,
     ...(sourceMutationId ? { sourceMutationId } : {}),
     ...(sourceBatchId ? { sourceBatchId } : {}),
+    ...(origin ? { origin } : {}),
     status: "current"
   };
   return writeHistory(world, entityId, [...existing, entry]);

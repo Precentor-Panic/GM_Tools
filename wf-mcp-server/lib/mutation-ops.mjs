@@ -50,6 +50,8 @@ import {
   findUnreviewedEntities
 } from "../../mutation-engine/human-review.mjs";
 import { getUserSettings } from "../../mutation-engine/user-settings.mjs";
+// Phase 12 task 12.5 -- scan for mentioned entities.
+import { scanForMentionedEntities } from "../../graph-import/scan-mentions.mjs";
 
 // --- small pure helpers --------------------------------------------------
 
@@ -624,6 +626,53 @@ export async function rejectWithLoopOp(dir, w, { batchId, scope, id, note, quick
   }
 
   return { ...baseResult, rubberDuckLoop: { kind: "reframe", framings: decision.framings } };
+}
+
+// --- Phase 12 task 12.5: scan for mentioned entities -----------------------
+
+/**
+ * review-ui's "Scan for mentioned entities" trigger (the entity content-
+ * generation panel's own button, and the node popover's "Scan this node's
+ * content" shortcut — same underlying action per the design doc, two entry
+ * points). Loads the live snapshot itself (same layering as
+ * proposeFromWriteupOp above) so scan-mentions.mjs stays Foundry/file-bridge
+ * agnostic, matching every other library module's own convention.
+ *
+ * @param {string} dir
+ * @param {string} w
+ * @param {{entityId:string, text:string}} args
+ */
+export async function scanMentionsOp(dir, w, { entityId, text }) {
+  const { entities, edges, entityTypes } = loadSnapshot(dir, w).snapshot;
+  return scanForMentionedEntities(w, entityId, text, { entities, edges, entityTypes });
+}
+
+/**
+ * Edit a still-PENDING mutation's own `data` fields before accept -- task
+ * 12.5's "editable relationship-type dropdown" requirement for a
+ * scan-for-mentioned-entities LINK row, generalized as a small reusable
+ * primitive rather than a scan-mentions-specific one-off (the same
+ * capability is reasonable for any pending mutation's data, not just this
+ * one field on this one batch kind). Refuses to touch anything but a
+ * pending mutation -- an accepted/rejected/rolled-back mutation is already
+ * settled, editing it after the fact would be silently rewriting history.
+ *
+ * @param {string} w
+ * @param {{batchId:string, mutationId:string, data:object}} args  `data` is merged onto the mutation's existing data (partial patch)
+ * @returns {object} the updated batch
+ */
+export function patchPendingMutationData(w, { batchId, mutationId, data }) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("patchPendingMutationData requires a `data` object.");
+  }
+  const batch = loadBatch(w, batchId);
+  const entry = batch.mutations.find((m) => m.mutationId === mutationId);
+  if (!entry) throw new Error(`No mutation with mutationId="${mutationId}" in batch "${batchId}" (world "${w}")`);
+  if (entry.status !== "pending") {
+    throw new Error(`Mutation "${mutationId}" is not pending (status: "${entry.status}") -- cannot edit its data.`);
+  }
+  entry.data = { ...(entry.data ?? {}), ...data };
+  return saveBatch(w, batch);
 }
 
 // --- narrate ---------------------------------------------------------------

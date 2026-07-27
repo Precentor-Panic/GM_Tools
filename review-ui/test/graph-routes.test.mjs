@@ -214,3 +214,40 @@ test("standalone /api/graph only returns edges whose BOTH endpoints are in the f
   // flagged, so no edge should be returned at all.
   assert.equal(body.edges.length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// Phase 12 task 12.2 -- new node/edge metadata fields (importance, session-
+// staleness, foundryRef presence, status/playerKnown/canonLocked/role).
+// ---------------------------------------------------------------------------
+
+test("Phase 12: node payload carries importance/hasFoundryRef/status/playerKnown/canonLocked/role", async () => {
+  const { body } = await getJson(`/api/graph?world=${WORLD}&filter=all`);
+  const alvor = body.nodes.find((n) => n.id === "alvor");
+  assert.equal(alvor.importance, 0.5);
+  assert.equal(alvor.hasFoundryRef, false);
+  // The fixture's applyHeadless calls never set these four Phase-12 fields
+  // explicitly, so interchange.mjs's normalizeEntity defaults apply:
+  // person -> status:"alive", role:"npc"; playerKnown always null; canonLocked always false.
+  assert.equal(alvor.status, "alive");
+  assert.equal(alvor.role, "npc");
+  assert.equal(alvor.playerKnown, null);
+  assert.equal(alvor.canonLocked, false);
+});
+
+test("Phase 12: edge payload carries strength/valence/notes, needed by the new edge popover", async () => {
+  const { body } = await getJson(`/api/graph?world=${WORLD}&filter=all`);
+  const edge = body.edges.find((e) => e.sourceId === "alvor" && e.targetId === "gerdur");
+  assert.ok(edge, "expected the alvor<->gerdur fixture edge");
+  assert.equal(typeof edge.strength, "number");
+  assert.ok("valence" in edge);
+  assert.ok("notes" in edge);
+});
+
+test("Phase 12: a place entity gets a place-appropriate default status (not person's 'alive')", async () => {
+  const { body } = await getJson(`/api/graph?world=${WORLD}&filter=all`);
+  const guard = body.nodes.find((n) => n.id === "riverwood-guard");
+  assert.ok(guard, "expected riverwood-guard fixture entity");
+  // riverwood-guard is type:"faction" in this fixture -- faction defaults to "active".
+  assert.equal(guard.status, "active");
+  assert.equal(guard.role, null, "role only applies to person entities");
+});

@@ -68,8 +68,29 @@ import {
   rejectWithLoopOp,
   narrateEntityOp,
   getEntityNarrationOp,
-  getEntityNarrationHistoryOp
+  getEntityNarrationHistoryOp,
+  scanMentionsOp,
+  patchPendingMutationData
 } from "../wf-mcp-server/lib/mutation-ops.mjs";
+
+// Phase 12 tasks 12.3/12.4/12.6 -- manual node/edge create/edit/delete,
+// the single-slot "Undo Last Manual Edit" mechanism, and narration reset.
+// Deliberately NOT exposed as MCP tools -- see manual-edit-ops.mjs's own
+// top-of-file doc comment for why (manual edits bypass the review gate by
+// design; an LLM-driven MCP call reaching this same unreviewed write path
+// would undermine the no-silent-auto-write invariant this whole project is
+// built around).
+import {
+  addNodeOp,
+  addEdgeOp,
+  editNodeOp,
+  editEdgeOp,
+  deleteNodeOp,
+  deleteEdgeOp,
+  resetEntityNarrationOp,
+  undoLastManualEditOp,
+  getManualUndoStatusOp
+} from "../wf-mcp-server/lib/manual-edit-ops.mjs";
 
 // Phase 11 -- per-node content generation ("develop this node"). A
 // deliberately separate operations module from mutation-ops.mjs above (see
@@ -277,7 +298,33 @@ function graphDegreeMap(edges) {
   return m;
 }
 
-function graphNodePayload(entity, { degrees, flaggedIds, debtIds, proposed }) {
+// Phase 12 task 12.2: matches foundry_worldFabric's own
+// game.settings default for SETTINGS.staleThreshold (see
+// llm-context.mjs's own `staleThreshold = 3` default and
+// graph-service.mjs's `?? 3` fallback) -- a best-effort constant, not a
+// live per-world read. Metadata nomination #5 ("surface already-existing
+// fields") was explicitly confirmed GM_Tools-side-only/no-schema-change,
+// so exporting the live per-world override into the snapshot meta is out
+// of scope here; this reproduces WF's OWN default rather than inventing a
+// different one.
+const DEFAULT_STALE_THRESHOLD = 3;
+
+/** Same recency-staleness formula as llm-context.mjs's budgetedContext (session-count based, not wall-clock). */
+function isSessionStale(entity, sessionNumber) {
+  return sessionNumber > 0 && entity.sessionSeen != null && (sessionNumber - entity.sessionSeen) >= DEFAULT_STALE_THRESHOLD;
+}
+
+/**
+ * Phase 12 task 12.2: adds importance, session-staleness, foundryRef
+ * presence, and the four new World Fabric entity fields (status/
+ * playerKnown/canonLocked/role, task 12.1) to the existing node payload --
+ * pure additive UI wiring over already-fetchable snapshot data, no new
+ * backend logic. A synthetic/proposed-only entity (a batch-mode create with
+ * no persisted counterpart, or an in-flight manual-edit placeholder) simply
+ * has these come back `null`/`false`, same as every other already-optional
+ * field this function produces.
+ */
+function graphNodePayload(entity, { degrees, flaggedIds, debtIds, proposed, sessionNumber }) {
   return {
     id: entity.id,
     name: entity.name ?? entity.id,
@@ -285,6 +332,15 @@ function graphNodePayload(entity, { degrees, flaggedIds, debtIds, proposed }) {
     degree: degrees.get(entity.id) ?? 0,
     flaggedUnreviewed: flaggedIds.has(entity.id),
     hasDeferredDebt: debtIds.has(entity.id),
+    importance: typeof entity.importance === "number" ? entity.importance : null,
+    hasFoundryRef: !!entity.foundryRef,
+    sessionStale: isSessionStale(entity, sessionNumber ?? 0),
+    lastSession: entity.lastSession ?? null,
+    description: entity.description ?? "",
+    status: entity.status ?? null,
+    playerKnown: entity.playerKnown ?? null,
+    canonLocked: entity.canonLocked ?? false,
+    role: entity.role ?? null,
     ...(proposed !== undefined ? { proposed } : {})
   };
 }
@@ -296,6 +352,12 @@ function graphEdgePayload(edge, { proposed }) {
     targetId: edge.targetId,
     relationshipType: edge.relationshipType ?? "unspecified",
     label: edge.label,
+    // Phase 12 task 12.2/12.3: the edge popover (new work) needs these to
+    // render/pre-fill an edit form -- absent from Phase 7's original
+    // read-only payload, which only ever rendered a line + optional arrow.
+    strength: typeof edge.strength === "number" ? edge.strength : null,
+    valence: edge.valence ?? null,
+    notes: edge.notes ?? null,
     ...(proposed !== undefined ? { proposed } : {})
   };
 }
@@ -318,8 +380,11 @@ function graphPayloadForBatch(w, dir, batchId, depth) {
   const batch = loadBatch(w, batchId);
   let entities = [];
   let edges = [];
+  let sessionNumber = 0;
   try {
-    ({ entities, edges } = loadSnapshot(dir, w).snapshot);
+    const loaded = loadSnapshot(dir, w);
+    ({ entities, edges } = loaded.snapshot);
+    sessionNumber = loaded.meta?.sessionNumber ?? 0;
   } catch {
     // No persisted snapshot yet (a brand-new world) -- the batch's own
     // proposed nodes still render, just with no persisted context.
@@ -392,10 +457,10 @@ function graphPayloadForBatch(w, dir, batchId, depth) {
 
   const nodesById = new Map();
   for (const e of syntheticEntities.values()) {
-    nodesById.set(e.id, graphNodePayload(e, { degrees, flaggedIds, debtIds, proposed: true }));
+    nodesById.set(e.id, graphNodePayload(e, { degrees, flaggedIds, debtIds, proposed: true, sessionNumber }));
   }
   for (const e of contextEntities.values()) {
-    nodesById.set(e.id, graphNodePayload(e, { degrees, flaggedIds, debtIds, proposed: proposedEntityIds.has(e.id) }));
+    nodesById.set(e.id, graphNodePayload(e, { degrees, flaggedIds, debtIds, proposed: proposedEntityIds.has(e.id), sessionNumber }));
   }
 
   const edgesById = new Map();
@@ -418,8 +483,11 @@ function graphPayloadForBatch(w, dir, batchId, depth) {
 function graphPayloadStandalone(w, dir, filterRaw) {
   let entities = [];
   let edges = [];
+  let sessionNumber = 0;
   try {
-    ({ entities, edges } = loadSnapshot(dir, w).snapshot);
+    const loaded = loadSnapshot(dir, w);
+    ({ entities, edges } = loaded.snapshot);
+    sessionNumber = loaded.meta?.sessionNumber ?? 0;
   } catch {
     return { nodes: [], edges: [] };
   }
@@ -435,7 +503,7 @@ function graphPayloadStandalone(w, dir, filterRaw) {
   });
   const selectedIds = new Set(selected.map((e) => e.id));
 
-  const nodes = selected.map((e) => graphNodePayload(e, { degrees, flaggedIds, debtIds }));
+  const nodes = selected.map((e) => graphNodePayload(e, { degrees, flaggedIds, debtIds, sessionNumber }));
   const visibleEdges = edges
     .filter((e) => selectedIds.has(e.sourceId) && selectedIds.has(e.targetId))
     .map((e) => graphEdgePayload(e, {}));
@@ -742,6 +810,126 @@ async function handleApi(req, res, url, parts) {
       return sendJson(res, 200, graphPayloadForBatch(w, dir, q.get("batchId"), depth));
     }
     return sendJson(res, 200, graphPayloadStandalone(w, dir, q.get("filter")));
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 12 tasks 12.3/12.4 — manual node/edge create/edit/delete, and
+  // "Undo Last Manual Edit". Every write here is IMMEDIATE, no review gate
+  // (plans/phase-12-review.md decision 1) -- deliberately NOT exposed as MCP
+  // tools, see manual-edit-ops.mjs's own doc comment.
+  // ---------------------------------------------------------------------
+
+  // POST /api/graph/nodes  { world, dataDir, name, type, description?, importance?, tags?, status?, playerKnown?, canonLocked?, role? }
+  if (method === "POST" && parts.length === 3 && parts[1] === "graph" && parts[2] === "nodes") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
+    const w = resolveWorld(body.world);
+    const result = await addNodeOp(dir, w, body);
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/graph/edges  { world, dataDir, sourceId, targetId, relationshipType?, label?, strength?, valence?, notes? }
+  if (method === "POST" && parts.length === 3 && parts[1] === "graph" && parts[2] === "edges") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
+    const w = resolveWorld(body.world);
+    const result = await addEdgeOp(dir, w, body);
+    return sendJson(res, 200, result);
+  }
+
+  // PATCH-style: POST /api/graph/nodes/:entityId  { world, dataDir, data:{...} }
+  if (method === "POST" && parts.length === 4 && parts[1] === "graph" && parts[2] === "nodes") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
+    const w = resolveWorld(body.world);
+    const result = await editNodeOp(dir, w, { entityId: parts[3], data: body.data });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/graph/edges/:edgeId  { world, dataDir, data:{...} }
+  if (method === "POST" && parts.length === 4 && parts[1] === "graph" && parts[2] === "edges") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
+    const w = resolveWorld(body.world);
+    const result = await editEdgeOp(dir, w, { edgeId: parts[3], data: body.data });
+    return sendJson(res, 200, result);
+  }
+
+  // DELETE /api/graph/nodes/:entityId  { world, dataDir } (query or body — accept both, body is simpler for fetch())
+  if (method === "DELETE" && parts.length === 4 && parts[1] === "graph" && parts[2] === "nodes") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir ?? q.get("dataDir"));
+    const w = resolveWorld(body.world ?? q.get("world"));
+    const result = await deleteNodeOp(dir, w, { entityId: parts[3] });
+    return sendJson(res, 200, result);
+  }
+
+  // DELETE /api/graph/edges/:edgeId  { world, dataDir }
+  if (method === "DELETE" && parts.length === 4 && parts[1] === "graph" && parts[2] === "edges") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir ?? q.get("dataDir"));
+    const w = resolveWorld(body.world ?? q.get("world"));
+    const result = await deleteEdgeOp(dir, w, { edgeId: parts[3] });
+    return sendJson(res, 200, result);
+  }
+
+  // GET /api/manual-undo?world=...  -- toolbar/toast status, read-only, never consumes the slot
+  if (method === "GET" && parts.length === 2 && parts[1] === "manual-undo") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, getManualUndoStatusOp(w));
+  }
+
+  // POST /api/manual-undo  { world, dataDir }  -- consumes and applies the single undo slot
+  if (method === "POST" && parts.length === 2 && parts[1] === "manual-undo") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
+    const w = resolveWorld(body.world);
+    const result = await undoLastManualEditOp(dir, w);
+    return sendJson(res, 200, result);
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 12 task 12.6 — narration reset. Covered by the same undo
+  // mechanism above (a reset's undo is a narrationUndo action, not a
+  // graphMutations one — see manual-edit-ops.mjs's resetEntityNarrationOp).
+  // ---------------------------------------------------------------------
+
+  // POST /api/entities/:entityId/narration/reset  { world }
+  if (method === "POST" && parts.length === 5 && parts[1] === "entities" && parts[3] === "narration" && parts[4] === "reset") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const result = resetEntityNarrationOp(w, { entityId: parts[2] });
+    return sendJson(res, 200, result);
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 12 task 12.5 — scan for mentioned entities. Routes through the
+  // EXISTING batch/accept/reject/regenerate flow (decision 3) -- this is a
+  // normal review-state.mjs batch, not the manual-edit immediate-write path.
+  // ---------------------------------------------------------------------
+
+  // POST /api/entities/:entityId/scan-mentions  { world, dataDir, text }
+  if (method === "POST" && parts.length === 4 && parts[1] === "entities" && parts[3] === "scan-mentions") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
+    const w = resolveWorld(body.world);
+    if (typeof body.text !== "string" || !body.text.trim()) {
+      throw new Error("POST .../scan-mentions requires a non-empty `text` field.");
+    }
+    const result = await scanMentionsOp(dir, w, { entityId: parts[2], text: body.text });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/batches/:batchId/mutations/:mutationId/patch-data  { world, data:{...} }
+  // The "editable relationship-type dropdown" primitive (task 12.5's
+  // [DECIDED] shape) for a still-PENDING mutation -- generalized as a small
+  // reusable capability rather than scan-mentions-specific, but only ever
+  // wired into the frontend for scan-mention rows in this phase.
+  if (method === "POST" && parts.length === 6 && parts[1] === "batches" && parts[3] === "mutations" && parts[5] === "patch-data") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const result = patchPendingMutationData(w, { batchId: parts[2], mutationId: parts[4], data: body.data });
+    return sendJson(res, 200, { ok: true, batchId: result.id });
   }
 
   // ---------------------------------------------------------------------

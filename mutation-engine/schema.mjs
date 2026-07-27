@@ -34,7 +34,19 @@ import { z } from "zod";
 // dry-run merge preview of an LLM-proposed WFI document against freeform
 // text, as opposed to a graph-native propagate/decay/resolve pass). Purely
 // additive — old batch files still parse unchanged.
-export const SCHEMA_VERSION = 3;
+//
+// Bumped 3 -> 4 for Phase 12 task 12.5 (scan for mentioned entities):
+// SourceKind gained 'mention-scan' (mutations produced by graph-import/
+// scan-mentions.mjs's LLM-assisted scan of a block of text -- usually Phase
+// 11 generated prep content -- for entity mentions, reusing writeup-import's
+// own name+type dedup matching). Distinct from 'writeup-import' because its
+// origin (one entity's own generated content, not a freeform campaign
+// writeup) and its mutation shape (edge-only for a matched-existing mention,
+// entity+edge for a genuinely new one -- see that module's own doc comment)
+// are both meaningfully different, and this project's own convention is
+// that a mutation's origin should always be auditable months later. Purely
+// additive; old batch files still parse unchanged.
+export const SCHEMA_VERSION = 4;
 
 // Same op set wf-mcp-server/index.mjs's wf_apply_mutations already accepts.
 export const MutationOp = z.enum([
@@ -66,7 +78,8 @@ export const SourceKind = z.enum([
   "seeded-propagation",
   "manual",
   "deferred-resolution",
-  "writeup-import"
+  "writeup-import",
+  "mention-scan"
 ]);
 
 export const Mutation = z.object({
