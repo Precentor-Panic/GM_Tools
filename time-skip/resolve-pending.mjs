@@ -141,11 +141,45 @@ export async function resolvePending(world, requestedEntityId, resolveOpts = {},
 
   // 6. Create the review batch, recording which ledger entries it resolves.
   const diffedMutations = attachDiffs(mutations, entities, edges);
-  const resolvedPendingEntries = resolvedIdsWithEntries.map((entityId) => ({
-    regionId: RESOLVE_REGION_ID,
-    entityId,
-    entryIds: entryIdsByEntity.get(entityId)
-  }));
+  //
+  // Task 14.3 (QA-pass finding, deferred-debt neighbor leak): resolvedIdsWithEntries
+  // is every entity that had ledger entries GOING IN as context -- the
+  // requested entity plus every capped neighbor. It is NOT the same set as
+  // "entities the LLM actually produced a mutation for": textureRegion's one
+  // call is free to address only some of the folded-in backlog, especially
+  // for a lower-impact neighbor that was mostly just useful context. Every
+  // mutation in this batch shares the SAME regionId (RESOLVE_REGION_ID), and
+  // applyLedgerOutcome (pending-ledger.mjs) resolves a record purely by
+  // regionId match on ANY accepted mutation in that region -- so recording a
+  // resolvedPendingEntries entry for an entity that got zero mutations meant
+  // its real, still-unaddressed backlog silently vanished the moment ANY
+  // mutation in the batch (e.g. just the requested entity's own) was
+  // accepted. Fix: only record a resolvedPendingEntries entry for an entity
+  // this batch's mutations genuinely target -- via `m.id` for entity ops, or
+  // via the edge's real endpoints (resolved against the live snapshot, same
+  // as review-ui/server.mjs's graphPayloadForBatch already does) for edge
+  // ops. An entity that was folded in as context but received no mutation
+  // keeps its ledger entries untouched, unchanged by this batch's outcome.
+  const edgeMap = new Map(edges.map((e) => [e.id, e]));
+  const touchedEntityIds = new Set();
+  for (const m of diffedMutations) {
+    if (m.op === "upsert_entity" || m.op === "delete_entity") {
+      if (m.id) touchedEntityIds.add(m.id);
+    } else if (m.op === "upsert_edge" || m.op === "delete_edge") {
+      const existingEdge = m.id ? edgeMap.get(m.id) : undefined;
+      const sourceId = m.data?.sourceId ?? existingEdge?.sourceId;
+      const targetId = m.data?.targetId ?? existingEdge?.targetId;
+      if (sourceId) touchedEntityIds.add(sourceId);
+      if (targetId) touchedEntityIds.add(targetId);
+    }
+  }
+  const resolvedPendingEntries = resolvedIdsWithEntries
+    .filter((entityId) => touchedEntityIds.has(entityId))
+    .map((entityId) => ({
+      regionId: RESOLVE_REGION_ID,
+      entityId,
+      entryIds: entryIdsByEntity.get(entityId)
+    }));
   const batch = createBatch(
     world,
     { mode: "resolve-pending", requestedEntityId, depth, maxNeighbors },
@@ -155,9 +189,15 @@ export async function resolvePending(world, requestedEntityId, resolveOpts = {},
   );
 
   // 7. Lock the resolved entries out of a second concurrent resolve while
-  // this batch is pending review.
-  for (const [entityId, entryIds] of entryIdsByEntity) {
-    markProposed(world, entityId, entryIds);
+  // this batch is pending review. Task 14.3: iterate resolvedPendingEntries
+  // (the filtered, genuinely-touched set), not entryIdsByEntity (every
+  // entity folded in as context) -- an entity that received zero mutations
+  // was never actually proposed against, so it must stay fully 'pending'
+  // and available for a future resolve, not locked into 'proposed' with no
+  // accept/reject outcome that will ever unlock it again (applyLedgerOutcome
+  // only ever visits entities present in resolvedPendingEntries).
+  for (const record of resolvedPendingEntries) {
+    markProposed(world, record.entityId, record.entryIds);
   }
 
   const summary = summarizeBatch(batch);

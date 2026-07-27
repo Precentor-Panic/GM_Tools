@@ -8,8 +8,9 @@ process.env.GM_TOOLS_REVIEW_STATE_DIR = join(scratchDir, "review-state");
 process.env.GM_TOOLS_PENDING_LEDGER_DIR = join(scratchDir, "pending-resolution");
 
 const { resolvePending, DEFAULT_MAX_NEIGHBORS, RESOLVE_REGION_ID } = await import("../time-skip/resolve-pending.mjs");
-const { readPending } = await import("../mutation-engine/pending-ledger.mjs");
+const { readPending, applyLedgerOutcome } = await import("../mutation-engine/pending-ledger.mjs");
 const { loadBatch } = await import("../mutation-engine/review-state.mjs");
+const { acceptMutations } = await import("../mutation-engine/rollback.mjs");
 
 let passed = 0;
 async function test(name, fn) {
@@ -81,17 +82,23 @@ await test("resolvePending: THE FAN-OUT CAP -- 15 pending-bearing 1-hop neighbor
     });
   }
 
-  const client = mockClient((params) => genericMutationResponse(["hub"])); // response content doesn't need to be exhaustive for this test
+  // The top 8 by impactScore are n15..n8 (impactScores 0.75 down to 0.40).
+  const expectedTop8 = Array.from({ length: 8 }, (_, i) => `n${15 - i}`);
+  const expectedExcluded = Array.from({ length: 7 }, (_, i) => `n${7 - i}`); // n7..n1
+
+  // Task 14.3: the mock must actually return a mutation for every entity
+  // this test expects to end up genuinely resolved (hub + the top 8) --
+  // resolvePending no longer treats "folded in as context" as equivalent to
+  // "genuinely addressed." A neighbor with no mutation in the response
+  // would correctly stay 'pending', not 'proposed' (see the dedicated
+  // task 14.3 regression test below for that exact scenario).
+  const client = mockClient(() => genericMutationResponse(["hub", ...expectedTop8]));
   const result = await resolvePending(WORLD_FANOUT, "hub", {}, { entities: fanoutEntities, edges: fanoutEdges, textureOpts: { client } });
 
   assert.equal(DEFAULT_MAX_NEIGHBORS, 8, "sanity: default cap is 8");
   assert.equal(result.cappedNeighborCount, 8, "exactly 8 neighbors should be folded into the resolve");
   assert.equal(result.excludedNeighborCount, 7, "the remaining 7 pending-bearing neighbors should be excluded by the cap");
   assert.equal(client.calls.length, 1, "the fan-out cap must still cost exactly ONE API call, not one per neighbor");
-
-  // The top 8 by impactScore are n15..n8 (impactScores 0.75 down to 0.40).
-  const expectedTop8 = Array.from({ length: 8 }, (_, i) => `n${15 - i}`);
-  const expectedExcluded = Array.from({ length: 7 }, (_, i) => `n${7 - i}`); // n7..n1
 
   for (const id of expectedTop8) {
     assert.ok(result.resolvedEntityIds.includes(id), `${id} should be among the resolved (highest-impact) entities`);
@@ -178,6 +185,87 @@ await test("resolvePending: renders entries sorted chronologically by cycleDescr
   const batch = loadBatch(WORLD_CHRONO, result.batchId);
   assert.equal(batch.resolvedPendingEntries.length, 1);
   assert.equal(batch.resolvedPendingEntries[0].entryIds.length, 3, "all 3 of chrono's pending entries should be part of this one resolution");
+});
+
+// ------------------------------------------------------------------ task 14.3: deferred-debt neighbor leak
+
+const WORLD_LEAK = "resolve-pending-neighbor-leak-world";
+const leakEntities = [
+  { id: "anchor", name: "Anchor", type: "person", importance: 0.6 },
+  { id: "silent-neighbor", name: "Silent Neighbor", type: "person", importance: 0.5 }
+];
+const leakEdges = [{ id: "e-anchor-silent", sourceId: "anchor", targetId: "silent-neighbor", relationshipType: "social", strength: 0.5 }];
+
+await test("resolvePending (task 14.3 regression): a fan-out neighbor that ends up with ZERO mutations keeps its ledger entries, unaffected by accepting the rest of the batch", async () => {
+  const { writePending } = await import("../mutation-engine/pending-ledger.mjs");
+  writePending(WORLD_LEAK, "anchor", { causeTag: "anchor's own backlog", impactScore: 0.9, sourceBatchId: "batch_anchor", cycleDescriptor: "month 1" });
+  writePending(WORLD_LEAK, "silent-neighbor", { causeTag: "silent neighbor's own backlog", impactScore: 0.8, sourceBatchId: "batch_silent", cycleDescriptor: "month 1" });
+
+  // The mock only produces a mutation for "anchor" -- exactly the reported
+  // scenario: silent-neighbor is folded into context (its impact score is
+  // high enough to be capped in) but the LLM's one call doesn't address it.
+  const client = mockClient(() => genericMutationResponse(["anchor"]));
+  const result = await resolvePending(WORLD_LEAK, "anchor", {}, { entities: leakEntities, edges: leakEdges, textureOpts: { client } });
+
+  // silent-neighbor was genuinely folded in (both entities' ledgers were
+  // available context), but only anchor got a real mutation.
+  assert.ok(result.resolvedEntityIds.includes("silent-neighbor"), "silent-neighbor should have been folded in as a candidate");
+  assert.equal(result.mutationCount, 1, "only one mutation (anchor's) should exist in the resulting batch");
+
+  const batch = loadBatch(WORLD_LEAK, result.batchId);
+  const recordedEntityIds = batch.resolvedPendingEntries.map((r) => r.entityId);
+  assert.deepEqual(recordedEntityIds, ["anchor"], "resolvedPendingEntries should ONLY include the entity that genuinely got a mutation");
+
+  // silent-neighbor's ledger entry must NOT have been locked into 'proposed'
+  // either -- it was never actually proposed against, so a future resolve
+  // must still be able to reach it.
+  const silentBefore = readPending(WORLD_LEAK, "silent-neighbor");
+  assert.equal(silentBefore.length, 1);
+  assert.equal(silentBefore[0].status, "pending", "silent-neighbor's entry must stay 'pending', not get locked as 'proposed', since it was never genuinely addressed");
+
+  // Now accept anchor's mutation -- mirroring wf-mcp-server's real
+  // acceptMutationIds sequence (acceptMutations, then applyLedgerOutcome).
+  const anchorMutationId = batch.mutations.find((m) => m.id === "anchor").mutationId;
+  const accepted = acceptMutations(WORLD_LEAK, batch.id, [anchorMutationId], leakEntities, leakEdges);
+  applyLedgerOutcome(accepted, [anchorMutationId], "accepted");
+
+  // anchor's own backlog is now genuinely resolved (removed from the ledger).
+  assert.equal(readPending(WORLD_LEAK, "anchor").length, 0, "anchor's ledger entries should be cleared -- it genuinely got a mutation that was accepted");
+
+  // THE ACTUAL REGRESSION: silent-neighbor's entries must survive, unchanged,
+  // even though a mutation elsewhere in the SAME batch/region was accepted.
+  const silentAfter = readPending(WORLD_LEAK, "silent-neighbor");
+  assert.equal(silentAfter.length, 1, "silent-neighbor's pending-ledger entry must survive accepting the rest of the batch");
+  assert.equal(silentAfter[0].status, "pending", "silent-neighbor's entry must still be 'pending' and available for a future resolve");
+  assert.deepEqual(silentAfter[0], silentBefore[0], "silent-neighbor's entry must be byte-identical to before -- completely untouched");
+});
+
+await test("resolvePending (task 14.3, entities that GENUINELY get mutations are still correctly resolved on accept)", async () => {
+  const world = "resolve-pending-genuine-resolve-world";
+  const entities = [
+    { id: "anchor2", name: "Anchor2", type: "person", importance: 0.6 },
+    { id: "engaged-neighbor", name: "Engaged Neighbor", type: "person", importance: 0.7 }
+  ];
+  const edges = [{ id: "e2", sourceId: "anchor2", targetId: "engaged-neighbor", relationshipType: "social", strength: 0.5 }];
+  const { writePending } = await import("../mutation-engine/pending-ledger.mjs");
+  writePending(world, "anchor2", { causeTag: "x", impactScore: 0.9, sourceBatchId: "b1", cycleDescriptor: "month 1" });
+  writePending(world, "engaged-neighbor", { causeTag: "y", impactScore: 0.85, sourceBatchId: "b2", cycleDescriptor: "month 1" });
+
+  // BOTH entities genuinely get mutations this time.
+  const client = mockClient(() => genericMutationResponse(["anchor2", "engaged-neighbor"]));
+  const result = await resolvePending(world, "anchor2", {}, { entities, edges, textureOpts: { client } });
+  assert.equal(result.mutationCount, 2);
+
+  const batch = loadBatch(world, result.batchId);
+  const recordedEntityIds = batch.resolvedPendingEntries.map((r) => r.entityId).sort();
+  assert.deepEqual(recordedEntityIds, ["anchor2", "engaged-neighbor"]);
+
+  const mutationIds = batch.mutations.map((m) => m.mutationId);
+  const accepted = acceptMutations(world, batch.id, mutationIds, entities, edges);
+  applyLedgerOutcome(accepted, mutationIds, "accepted");
+
+  assert.equal(readPending(world, "anchor2").length, 0, "anchor2's backlog is genuinely resolved");
+  assert.equal(readPending(world, "engaged-neighbor").length, 0, "engaged-neighbor's backlog is ALSO genuinely resolved -- it really did get a mutation");
 });
 
 // ------------------------------------------------------------------ no-op / error path
