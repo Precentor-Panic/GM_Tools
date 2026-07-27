@@ -857,6 +857,7 @@ function showPopover(container, node, pos, opts) {
   }
 
   container.appendChild(el);
+  clampPopoverIntoView(container, el);
 
   // Close on outside click (deferred one tick so this same click doesn't immediately close it).
   setTimeout(() => {
@@ -922,6 +923,65 @@ function positionPopoverAt(container, el, layoutPoint) {
   const scaleY = svgRect.height / dims.h;
   el.style.left = `${(svgRect.left - containerRect.left) + layoutPoint.x * scaleX}px`;
   el.style.top = `${(svgRect.top - containerRect.top) + layoutPoint.y * scaleY}px`;
+}
+
+/**
+ * Task 14.5 (QA-pass finding): positionPopoverAt above anchors a popover's
+ * TOP-LEFT corner exactly at the click/node point, with no awareness of the
+ * popover's own size or how much of the container's CURRENTLY VISIBLE
+ * viewport remains below/right of that point -- confirmed via real
+ * bounding-box measurement that a node in the lower part of a populated
+ * (scrolled) graph produces an edit form whose bottom portion (routinely
+ * ~300-400px tall, 5+ form fields) renders outside the immediately visible
+ * area, with no affordance to discover it (the container's own mouse-wheel
+ * gesture is captured for zoom, not scroll -- see the wheel handler below --
+ * so there is no obvious way to reveal it).
+ *
+ * Call this AFTER the popover element has both (a) all its real content
+ * appended (so its natural rendered size is known) and (b) been appended
+ * to `container` (so getBoundingClientRect() reflects real layout) --
+ * every call site below does so immediately after its own
+ * `container.appendChild(el)`. Shifts the ALREADY-SET left/top (computed by
+ * positionPopoverAt, in the container's own scroll-independent coordinate
+ * space) by exactly the overflow measured against the container's real,
+ * currently-visible viewport rect -- i.e. "flip" up/left just enough that
+ * the popover's far edge lands back at the visible boundary, never
+ * requiring the reader to guess a scroll gesture to reach Save. Falls back
+ * to clamping against the browser viewport itself when the popover is
+ * simply too large for the container's own visible area (rare, but a
+ * form must never end up with its top-left corner -- and therefore Save,
+ * which every form places near the bottom -- pushed further off-screen by
+ * the clamp itself).
+ */
+function clampPopoverIntoView(container, el) {
+  const containerRect = container.getBoundingClientRect();
+  const elRect = el.getBoundingClientRect();
+  if (!elRect.width || !elRect.height) return; // not actually rendered (e.g. detached/hidden) -- nothing to clamp
+
+  let dx = 0;
+  let dy = 0;
+
+  const overflowRight = elRect.right - containerRect.right;
+  if (overflowRight > 0) dx -= overflowRight;
+  const overflowBottom = elRect.bottom - containerRect.bottom;
+  if (overflowBottom > 0) dy -= overflowBottom;
+
+  // Re-check the shift above hasn't now pushed the popover's OWN top-left
+  // (and therefore its title / first field) past the container's visible
+  // top-left edge -- a popover taller/wider than the visible viewport
+  // itself must still keep its top edge reachable, even if its bottom
+  // can't fully fit.
+  const shiftedLeft = elRect.left + dx;
+  if (shiftedLeft < containerRect.left) dx += containerRect.left - shiftedLeft;
+  const shiftedTop = elRect.top + dy;
+  if (shiftedTop < containerRect.top) dy += containerRect.top - shiftedTop;
+
+  if (!dx && !dy) return;
+
+  const curLeft = parseFloat(el.style.left) || 0;
+  const curTop = parseFloat(el.style.top) || 0;
+  el.style.left = `${curLeft + dx}px`;
+  el.style.top = `${curTop + dy}px`;
 }
 
 function wireFormDismiss(container, el) {
@@ -1047,6 +1107,7 @@ export function showCreateNodeForm(container, point, opts) {
   el.appendChild(createBtn);
 
   container.appendChild(el);
+  clampPopoverIntoView(container, el);
   wireFormDismiss(container, el);
   nameInput.focus();
 }
@@ -1128,6 +1189,7 @@ function showNodeEditForm(container, node, pos, opts) {
   el.appendChild(saveBtn);
 
   container.appendChild(el);
+  clampPopoverIntoView(container, el);
   wireFormDismiss(container, el);
 }
 
@@ -1257,6 +1319,7 @@ function showEdgePopover(container, edge, opts, { startInEdit = false } = {}) {
   el.appendChild(editRow);
 
   container.appendChild(el);
+  clampPopoverIntoView(container, el);
   wireFormDismiss(container, el);
 }
 
@@ -1325,6 +1388,7 @@ function showEdgeEditForm(container, edge, midpoint, opts, { isNew }) {
   // convention, since the edge write already happened before this form ever opened.
 
   container.appendChild(el);
+  clampPopoverIntoView(container, el);
   wireFormDismiss(container, el);
 }
 
