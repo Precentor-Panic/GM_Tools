@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { previewMentionScan, DEFAULT_MENTION_RELATIONSHIP } from "../graph-import/scan-mentions.mjs";
+import {
+  previewMentionScan,
+  DEFAULT_MENTION_RELATIONSHIP,
+  nameSimilarity,
+  findFuzzyEntityMatch,
+  applyFuzzyPrepass,
+  FUZZY_MATCH_THRESHOLD
+} from "../graph-import/scan-mentions.mjs";
 
 /**
  * Phase 12 task 12.5 -- deterministic (no API call) coverage for
@@ -130,6 +137,110 @@ test("multiple genuinely new mentions each get their own distinct entity + edge 
     assert.ok(createIds.has(e.data.targetId), "every edge must target one of the two real created ids, not a stale placeholder");
   }
   assert.equal(new Set(edgesOut.map((e) => e.data.targetId)).size, 2, "two distinct new entities must get two distinct edges, not collapsed into one");
+});
+
+// ---------------------------------------------------------------------------
+// Phase 13 task 13.4: the lightweight deterministic pre-pass.
+// ---------------------------------------------------------------------------
+
+test("nameSimilarity: a dropped filler word scores well above threshold (token-overlap signal)", () => {
+  const score = nameSimilarity("Gorrim Smith", "Gorrim the Smith");
+  assert.ok(score >= FUZZY_MATCH_THRESHOLD, `expected >= ${FUZZY_MATCH_THRESHOLD}, got ${score}`);
+});
+
+test("nameSimilarity: a one-character spelling variant on a single-word name scores well above threshold (edit-distance signal)", () => {
+  const score = nameSimilarity("Osrik", "Osric");
+  assert.ok(score >= FUZZY_MATCH_THRESHOLD, `expected >= ${FUZZY_MATCH_THRESHOLD}, got ${score}`);
+});
+
+test("THE REQUIRED NEGATIVE CASE: two genuinely different but similarly-spelled single-word names score LOW, well under threshold", () => {
+  const score = nameSimilarity("Kael", "Kaelen");
+  assert.ok(score < FUZZY_MATCH_THRESHOLD, `expected < ${FUZZY_MATCH_THRESHOLD} (these must NOT be treated as a near-miss), got ${score}`);
+});
+
+test("nameSimilarity: two names sharing no tokens and not both single-word score 0, not a near-miss", () => {
+  assert.equal(nameSimilarity("Gorrim the Smith", "Aela the Huntress"), 0);
+});
+
+test("findFuzzyEntityMatch: skips an EXACT match (that's findExisting's own job, not the pre-pass's)", () => {
+  const existing = [{ id: "kael-1", name: "Kael", type: "person" }];
+  assert.equal(findFuzzyEntityMatch("Kael", "person", existing), null);
+});
+
+test("findFuzzyEntityMatch: never matches across a DIFFERENT type, even with an identical name", () => {
+  const existing = [{ id: "kael-place", name: "Kael", type: "place" }];
+  assert.equal(findFuzzyEntityMatch("Kael", "person", existing), null);
+});
+
+test("findFuzzyEntityMatch: only the genuinely plausible candidate is returned, an implausible one alongside it is ignored", () => {
+  const existing = [
+    { id: "a", name: "Roderick", type: "person" }, // implausible -- must not qualify at all
+    { id: "b", name: "Gorrim the Smith", type: "person" } // a real near-miss for "Gorrim Smith"
+  ];
+  const match = findFuzzyEntityMatch("Gorrim Smith", "person", existing);
+  assert.ok(match);
+  assert.equal(match.entity.id, "b");
+});
+
+test("findFuzzyEntityMatch: between two genuinely plausible candidates, the higher-scoring one wins", () => {
+  // Both are one-edit-distance variants of the mention "Osrik", at
+  // different similarity ratios: "Osric" differs at 1 of 5 positions
+  // (1 - 1/5 = 0.8); "Osrikk" differs by one inserted char over 6
+  // (1 - 1/6 = 0.833), the higher of the two.
+  const candidates = [
+    { id: "close", name: "Osric", type: "person" },
+    { id: "closer", name: "Osrikk", type: "person" }
+  ];
+  const match = findFuzzyEntityMatch("Osrik", "person", candidates);
+  assert.ok(match);
+  assert.equal(match.entity.id, "closer", `expected the higher-scoring candidate to win; got ${JSON.stringify(match)}`);
+});
+
+test("applyFuzzyPrepass: THE POSITIVE CASE -- a deliberately-constructed near-miss the LLM's exact name+type dedup would miss becomes a LINK, not a create", () => {
+  const snapshot = {
+    entities: [
+      { id: "riverwood-1", name: "Riverwood", type: "place", importance: 0.8 },
+      { id: "gorrim-1", name: "Gorrim the Smith", type: "person", importance: 0.5 }
+    ],
+    edges: [],
+    entityTypes: []
+  };
+  const mentions = [{ name: "Gorrim Smith", type: "person", description: "A blacksmith." }]; // missing "the" -- exact dedup alone would miss this
+  const { mutations, linkCount, newCount } = previewMentionScan(mentions, "riverwood-1", snapshot);
+
+  assert.equal(linkCount, 1, "the pre-pass must resolve this near-miss to a LINK");
+  assert.equal(newCount, 0, "must NOT also propose a duplicate create");
+  assert.equal(mutations.length, 1);
+  assert.equal(mutations[0].op, "upsert_edge");
+  assert.equal(mutations[0].data.targetId, "gorrim-1", "must link to the REAL existing entity, not a new one");
+  assert.match(mutations[0].rationale, /name-similarity pre-pass/i, "the rationale should be honest that this came from the fuzzy pre-pass, not an exact match");
+});
+
+test("applyFuzzyPrepass: THE REQUIRED NEGATIVE CASE -- two genuinely different, similarly-named entities are NOT incorrectly merged", () => {
+  const existingEntities = [{ id: "kael-1", name: "Kael", type: "person", importance: 0.5 }];
+  const mentions = [{ name: "Kaelen", type: "person", description: "A completely different person who merely has a similar-sounding name." }];
+  const prepassed = applyFuzzyPrepass(mentions, existingEntities);
+  assert.equal(prepassed[0].name, "Kaelen", "the mention's name must be left UNCHANGED -- no false-positive rewrite to the existing entity's name");
+  assert.equal(prepassed[0].fuzzyMatchedFrom, undefined);
+
+  // End-to-end through previewMentionScan too: must genuinely propose Kaelen
+  // as a NEW entity, not silently link it to Kael.
+  const { mutations, linkCount, newCount } = previewMentionScan(mentions, "kael-1", {
+    entities: existingEntities,
+    edges: [],
+    entityTypes: []
+  });
+  assert.equal(linkCount, 0);
+  assert.equal(newCount, 1);
+  const createMutation = mutations.find((m) => m.op === "upsert_entity");
+  assert.equal(createMutation.data.name, "Kaelen", "a genuinely new, distinct entity must still be created -- not merged into Kael");
+});
+
+test("applyFuzzyPrepass: an already-exact match is left completely untouched (no interference with the existing exact-match path)", () => {
+  const existingEntities = [{ id: "kael-1", name: "Kael", type: "person" }];
+  const mentions = [{ name: "Kael", type: "person" }];
+  const prepassed = applyFuzzyPrepass(mentions, existingEntities);
+  assert.deepEqual(prepassed, mentions, "an exact match must pass through byte-identical -- the pre-pass has nothing to add here");
 });
 
 console.log(`\n${passed} test(s) passed.`);

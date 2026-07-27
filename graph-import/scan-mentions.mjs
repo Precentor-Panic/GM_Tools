@@ -185,11 +185,166 @@ export async function proposeMentionedEntities(scanText, sourceEntity, opts = {}
   });
 }
 
+// ---------------------------------------------------------------------------
+// Phase 13 task 13.4: lightweight deterministic pre-pass. The project owner's
+// own observation: generated content tends to already use "the right names"
+// (it's grounded in real graph context per Phase 10/11's adjacency-aware
+// generation), so a cheap, deterministic, non-LLM check over the existing
+// graph's entity names should catch SOME matches that only get proposed as
+// new today because the LLM's own extracted name is an imperfect match for
+// what's actually a real existing entity (a dropped filler word, a minor
+// spelling variant) -- exactly the class of thing findExisting's own EXACT
+// case-insensitive name+type comparison (interchange.mjs) can never catch by
+// construction. Runs ALONGSIDE the exact matcher, never replacing it, and
+// exists specifically to REDUCE (not eliminate) how often task 13.3's
+// "Link to existing instead" correction is needed -- imperfect matching is
+// expected and fine; 13.3 covers the rest.
+// ---------------------------------------------------------------------------
+
+// A small, fixed stopword list for common filler words in a name/title (not
+// a language-detection feature -- just enough to stop "Gorrim the Smith"
+// vs "Gorrim Smith" from reading as two different sets of significant words).
+const NAME_STOPWORDS = new Set(["the", "a", "an", "of", "de", "van", "der"]);
+
+function normalizeNameTokens(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t && !NAME_STOPWORDS.has(t));
+}
+
+/** Classic Levenshtein edit distance -- small, dependency-free, no external library per gm-tools-conventions' dependency discipline. */
+function levenshteinDistance(a, b) {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp = new Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prevDiag = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prevDiag : 1 + Math.min(prevDiag, dp[j], dp[j - 1]);
+      prevDiag = tmp;
+    }
+  }
+  return dp[n];
+}
+
+/**
+ * A simple, explainable 0..1 name-similarity score, taking the BETTER of two
+ * cheap signals rather than one alone (each catches a different real-world
+ * near-miss shape, confirmed by this module's own test cases):
+ *   - token-Jaccard over significant (stopword-stripped) words -- catches a
+ *     dropped/added filler word ("Gorrim the Smith" vs "Gorrim Smith").
+ *   - single-token edit-distance ratio -- catches a minor spelling variant
+ *     on an otherwise one-word name ("Osrik" vs "Osric"), which token-Jaccard
+ *     alone would score as a complete (0%) mismatch since neither token
+ *     equals the other exactly.
+ * Two SIMILAR-LOOKING but genuinely different short names ("Kael" vs
+ * "Kaelen") deliberately score LOW here -- neither signal considers a
+ * same-length-ish but distinct single word a near-miss of a completely
+ * different single word once the edit distance is a large fraction of its
+ * length, and there is no shared significant token between them either.
+ */
+export function nameSimilarity(nameA, nameB) {
+  const tokensA = normalizeNameTokens(nameA);
+  const tokensB = normalizeNameTokens(nameB);
+  if (!tokensA.length || !tokensB.length) return 0;
+
+  const setA = new Set(tokensA), setB = new Set(tokensB);
+  const intersectionSize = [...setA].filter((t) => setB.has(t)).length;
+  const unionSize = new Set([...setA, ...setB]).size;
+  const jaccard = unionSize ? intersectionSize / unionSize : 0;
+
+  let typoRatio = 0;
+  if (tokensA.length === 1 && tokensB.length === 1) {
+    const [a] = tokensA, [b] = tokensB;
+    const dist = levenshteinDistance(a, b);
+    typoRatio = 1 - dist / Math.max(a.length, b.length);
+  }
+
+  return Math.max(jaccard, typoRatio);
+}
+
+// Deliberately conservative -- a false-positive LINK (silently merging two
+// genuinely different entities) is a much worse outcome than a
+// false-negative (missing a real near-miss, which task 13.3's manual "Link
+// to existing instead" correction already covers). Confirmed against this
+// module's own test cases: high enough that "Kael" vs "Kaelen" (two
+// genuinely different people who merely sound alike, similarity ~0.67)
+// does NOT qualify, while "Gorrim Smith" vs "Gorrim the Smith" (a dropped
+// filler word, similarity 1.0 after stopword-stripped token comparison) and
+// a single-character spelling variant on an otherwise one-word name
+// (similarity ~0.8) both comfortably do.
+export const FUZZY_MATCH_THRESHOLD = 0.75;
+
+/**
+ * For one mention, find the best SAME-TYPE existing-entity near-miss at or
+ * above FUZZY_MATCH_THRESHOLD, skipping anything that's already an EXACT
+ * case-insensitive name+type match (that's findExisting's own job, not this
+ * pre-pass's) -- null if nothing plausible is found.
+ *
+ * @param {string} mentionName
+ * @param {string} mentionType
+ * @param {object[]} existingEntities
+ * @returns {{entity:object, score:number}|null}
+ */
+export function findFuzzyEntityMatch(mentionName, mentionType, existingEntities) {
+  let best = null;
+  let bestScore = 0;
+  for (const e of existingEntities) {
+    if (e.type !== mentionType || !e.name) continue;
+    if (e.name.trim().toLowerCase() === String(mentionName).trim().toLowerCase()) continue;
+    const score = nameSimilarity(mentionName, e.name);
+    if (score >= FUZZY_MATCH_THRESHOLD && score > bestScore) {
+      best = e;
+      bestScore = score;
+    }
+  }
+  return best ? { entity: best, score: bestScore } : null;
+}
+
+/**
+ * Applies the pre-pass to a whole mentions array. The ONLY intervention this
+ * makes: for a mention with no EXACT name+type match but a plausible fuzzy
+ * one, REWRITE that mention's `name` to the existing entity's OWN exact
+ * stored name (recording the original under `fuzzyMatchedFrom` for a
+ * friendlier rationale) before handing off to previewWriteupImport's exact
+ * matcher below. This is deliberately NOT a second classify-and-shape code
+ * path: rewriting the name so the EXISTING exact matcher (findExisting,
+ * completely unmodified) resolves it as a real match is what makes a
+ * fuzzy-matched mention produce EXACTLY the same LINK mutation shape a
+ * genuine exact match would have -- "prefer it (a link) over a blind
+ * create," achieved by influencing the input, not duplicating logic.
+ *
+ * @param {Array<{name:string, type:string, description?:string}>} mentions
+ * @param {object[]} existingEntities
+ * @returns {Array<{name:string, type:string, description?:string, fuzzyMatchedFrom?:string}>}
+ */
+export function applyFuzzyPrepass(mentions, existingEntities) {
+  const exactNameTypeKeys = new Set(
+    existingEntities.filter((e) => e.name && e.type).map((e) => `${e.type}::${e.name.trim().toLowerCase()}`)
+  );
+  return mentions.map((mention) => {
+    const exactKey = `${mention.type}::${String(mention.name).trim().toLowerCase()}`;
+    if (exactNameTypeKeys.has(exactKey)) return mention; // already an exact match -- nothing for this pre-pass to do
+    const fuzzy = findFuzzyEntityMatch(mention.name, mention.type, existingEntities);
+    if (!fuzzy) return mention;
+    return { ...mention, name: fuzzy.entity.name, fuzzyMatchedFrom: mention.name };
+  });
+}
+
 /**
  * Task 12.5's dedup + mutation-shaping step: classify each mention as LINK
  * or PROPOSE-NEW by reusing writeup-import.mjs's previewWriteupImport (which
  * reuses importGraph's own findExisting), then build the genuinely different
  * mutation set each kind requires (see this module's own top-of-file note).
+ * Phase 13 task 13.4's fuzzy pre-pass (applyFuzzyPrepass, above) runs first,
+ * so a near-miss name gets a real chance to resolve as a LINK via the same
+ * exact-match path a genuine match would take.
  *
  * @param {Array<{name:string, type:string, description?:string}>} mentions
  * @param {string} sourceEntityId  the entity whose content was scanned — every produced edge originates here
@@ -213,6 +368,7 @@ export function previewMentionScan(mentions, sourceEntityId, existingSnapshot, o
   }
 
   const existingEntityIdSet = new Set(existing.entities.map((e) => e.id));
+  const prepassedMentions = applyFuzzyPrepass(mentions, existing.entities);
 
   // The one and only place THIS module reuses writeup-import's real name+type
   // dedup -- no edges passed in (mentions carry no edges of their own; every
@@ -223,11 +379,13 @@ export function previewMentionScan(mentions, sourceEntityId, existingSnapshot, o
   // at its default and zero edges in the input, no stub entities are ever
   // created either).
   const proposal = {
-    entities: mentions.map((m) => ({
+    entities: prepassedMentions.map((m, i) => ({
       name: m.name,
       type: m.type,
       description: m.description,
-      rationale: `Mentioned in ${sourceEntity.name}'s content.`
+      rationale: m.fuzzyMatchedFrom
+        ? `Mentioned in ${sourceEntity.name}'s content as "${m.fuzzyMatchedFrom}" — matched to the existing entity "${m.name}" by the deterministic name-similarity pre-pass (task 13.4).`
+        : `Mentioned in ${sourceEntity.name}'s content.`
     })),
     edges: []
   };
@@ -239,6 +397,7 @@ export function previewMentionScan(mentions, sourceEntityId, existingSnapshot, o
 
   entityMutations.forEach((entityMutation, i) => {
     const mention = mentions[i];
+    const prepassed = prepassedMentions[i];
     const matchedExisting = existingEntityIdSet.has(entityMutation.id);
 
     if (matchedExisting) {
@@ -246,10 +405,13 @@ export function previewMentionScan(mentions, sourceEntityId, existingSnapshot, o
       // upsert_entity at all. This is the structural difference from the
       // propose-new branch below, not a label difference.
       linkCount++;
+      const rationale = prepassed.fuzzyMatchedFrom
+        ? `"${mention.name}" is mentioned in ${sourceEntity.name}'s content and closely matches the existing entity "${entityMutation.data.name}" (caught by the deterministic name-similarity pre-pass, not an exact name match) — proposing a link rather than a duplicate.`
+        : `"${mention.name}" is mentioned in ${sourceEntity.name}'s content and already exists in the graph as this entity — proposing a link rather than a duplicate.`;
       mutations.push({
         op: "upsert_edge",
         data: { sourceId: sourceEntityId, targetId: entityMutation.id, relationshipType: DEFAULT_MENTION_RELATIONSHIP },
-        rationale: `"${mention.name}" is mentioned in ${sourceEntity.name}'s content and already exists in the graph as this entity — proposing a link rather than a duplicate.`,
+        rationale,
         batchId: "placeholder",
         sourceKind: "mention-scan",
         regionId: MENTION_SCAN_REGION_ID,
