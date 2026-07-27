@@ -103,7 +103,27 @@ export function rollbackBatch(world, batchId) {
   const restoreMutations = [];
   const skipped = [];
 
-  for (const entry of batch.mutations) {
+  // Iterate in REVERSE chronological order when building restoreMutations
+  // (task 14.1, QA-pass finding). headless-apply.mjs's mergedWfiRecord does
+  // a shallow merge onto whatever the current state is AT APPLY TIME, and
+  // multiple restore mutations targeting the same entity/edge id apply in
+  // array order with the last one winning. Two accepted mutations touching
+  // the same field on the same entity (e.g. a manual edit followed by its
+  // own later undo, per Phase 13.1's auto-batching) each captured a
+  // preState at their own accept time -- the EARLIER mutation's preState is
+  // the truest "original" state, the LATER mutation's preState is merely
+  // "the state right before that later edit" (less historical). Building
+  // restoreMutations in original chronological order put the later (less
+  // historical) preState last, so it won and silently left the earlier
+  // change in place while still reporting every mutation rolled back.
+  // Reversing means the earliest mutation's preState is pushed last, so it
+  // applies last and correctly wins -- restoring the whole chain back to
+  // the state before the FIRST mutation, not just before the last one.
+  // Does not change which entries are considered "accepted" or their final
+  // status, only the order restoreMutations are built in -- the common
+  // single-mutation-per-entity case (each entry targets a distinct id) is
+  // unaffected, since there's no collision for order to matter.
+  for (const entry of [...batch.mutations].reverse()) {
     if (entry.status !== "accepted") continue;
 
     if (entry.preState === undefined) {

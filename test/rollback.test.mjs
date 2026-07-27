@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +8,7 @@ process.env.GM_TOOLS_REVIEW_STATE_DIR = scratchDir;
 
 const { createBatch, loadBatch } = await import("../mutation-engine/review-state.mjs");
 const { acceptMutations, rollbackBatch } = await import("../mutation-engine/rollback.mjs");
+const { bootstrapSnapshot, applyHeadless } = await import("../graph-import/headless-apply.mjs");
 
 let passed = 0;
 function test(name, fn) {
@@ -171,6 +172,103 @@ test("rollback: only accepted mutations are considered; pending/rejected are lef
 
   const reloaded = loadBatch(WORLD, batch.id);
   assert.equal(reloaded.mutations.find((m) => m.mutationId === "m1").status, "pending", "unaccepted mutation should be untouched by rollback");
+});
+
+test("rollback (task 14.1 regression): two accepted mutations touching the SAME field on the SAME entity restore to the state BEFORE THE FIRST mutation, not just before the last one", () => {
+  // This drives the REAL graph-import/headless-apply.mjs apply path (not the
+  // test file's own simplified applyMutation stand-in above) -- the actual
+  // root cause was headless-apply's shallow/full-record merge combined with
+  // restoreMutations' array order, so the regression test needs to exercise
+  // that real code, not a simulation of it.
+  const snapshotPath = join(scratchDir, "worlds", "rollback-14-1", "world-fabric-snapshot.json");
+  bootstrapSnapshot(snapshotPath, { worldId: "rollback-14-1" });
+
+  const originalEntity = {
+    id: "gorrim",
+    name: "Gorrim",
+    type: "person",
+    importance: 0.5,
+    description: "A blacksmith."
+  };
+  applyHeadless(snapshotPath, [
+    { op: "upsert_entity", id: "gorrim", data: originalEntity }
+  ]);
+  // importGraph's normalizeEntity fills in default scalar fields (status,
+  // tags, namespace, etc.) beyond what this test cares about -- capture the
+  // real on-disk normalized form as the "original" to compare rollback
+  // against, rather than the pre-normalization literal.
+  const normalizedOriginal = JSON.parse(readFileSync(snapshotPath, "utf8")).snapshot.entities.find((e) => e.id === "gorrim");
+
+  const batch = createBatch(
+    WORLD,
+    {},
+    undefined,
+    [
+      {
+        op: "upsert_entity",
+        id: "gorrim",
+        data: { description: "Shaken after the raid." }, // manual edit
+        rationale: "The raid shook him.",
+        batchId: "placeholder",
+        sourceKind: "manual"
+      },
+      {
+        op: "upsert_entity",
+        id: "gorrim",
+        data: { description: "Back at the forge, unbothered." }, // e.g. a later undo/re-edit of the SAME field
+        rationale: "He got over it.",
+        batchId: "placeholder",
+        sourceKind: "manual"
+      }
+    ],
+    { makeId: () => "batch_rollback_14_1" }
+  );
+
+  // Accept m0 first, capturing the true original state, then actually apply
+  // it -- mirroring how Phase 13.1's auto-batching accepts+applies each
+  // manual edit immediately rather than deferring both to one later sync.
+  let currentEntities = [normalizedOriginal];
+  let accepted = acceptMutations(WORLD, batch.id, ["m0"], currentEntities, []);
+  const m0Entry = accepted.mutations.find((m) => m.mutationId === "m0");
+  assert.deepEqual(m0Entry.preState, normalizedOriginal, "m0's captured preState should be the true original");
+  applyHeadless(snapshotPath, [{ op: "upsert_entity", id: "gorrim", data: m0Entry.data }]);
+
+  let onDisk = JSON.parse(readFileSync(snapshotPath, "utf8"));
+  const afterM0 = onDisk.snapshot.entities.find((e) => e.id === "gorrim");
+  assert.equal(afterM0.description, "Shaken after the raid.");
+
+  // Accept m1 second, capturing state AFTER m0 was applied (less historical
+  // than m0's own preState), then apply it too.
+  currentEntities = onDisk.snapshot.entities;
+  accepted = acceptMutations(WORLD, batch.id, ["m1"], currentEntities, []);
+  const m1Entry = accepted.mutations.find((m) => m.mutationId === "m1");
+  assert.deepEqual(m1Entry.preState, afterM0, "m1's captured preState should reflect the state AFTER m0 was applied");
+  applyHeadless(snapshotPath, [{ op: "upsert_entity", id: "gorrim", data: { description: "Back at the forge, unbothered." } }]);
+
+  onDisk = JSON.parse(readFileSync(snapshotPath, "utf8"));
+  const afterM1 = onDisk.snapshot.entities.find((e) => e.id === "gorrim");
+  assert.equal(afterM1.description, "Back at the forge, unbothered.");
+
+  // Rollback: compute restoreMutations for the whole batch (both accepted
+  // entries) and apply them in ONE call, exactly like
+  // wf-mcp-server/lib/mutation-ops.mjs's real rollback route does.
+  const { restoreMutations, skipped } = rollbackBatch(WORLD, batch.id);
+  assert.equal(skipped.length, 0);
+  assert.equal(restoreMutations.length, 2, "both accepted mutations should produce a restore entry");
+
+  applyHeadless(snapshotPath, restoreMutations);
+
+  onDisk = JSON.parse(readFileSync(snapshotPath, "utf8"));
+  const restored = onDisk.snapshot.entities.find((e) => e.id === "gorrim");
+  assert.deepEqual(
+    restored,
+    normalizedOriginal,
+    "after rollback, the live state must match the state BEFORE THE FIRST mutation (m0), not just before the last one (m1)"
+  );
+
+  const reloaded = loadBatch(WORLD, batch.id);
+  assert.equal(reloaded.mutations.find((m) => m.mutationId === "m0").status, "rolled-back");
+  assert.equal(reloaded.mutations.find((m) => m.mutationId === "m1").status, "rolled-back");
 });
 
 console.log(`\n${passed} passed`);
