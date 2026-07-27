@@ -187,6 +187,16 @@
   </div>
 
   <div class="settings-card">
+    <h2 class="section-label">Create New World</h2>
+    <p class="hint">For a genuinely new campaign with no prior Foundry world at all. Creates an empty standalone snapshot, immediately selectable and usable for New Import.</p>
+    <div class="new-world-row">
+      <input id="new-world-id" type="text" placeholder="world id, e.g. my-campaign">
+      <button id="btn-create-world" class="btn btn--accept">Create World</button>
+    </div>
+    <div id="new-world-status" class="hint"></div>
+  </div>
+
+  <div class="settings-card">
     <h2 class="section-label">Rubber-Duck Mode</h2>
     <p class="hint">When on, submitting a writeup first shows three quick interpretive framings to pick from &mdash; then the real extraction runs, steered by that choice. A standing personal setting, not a per-import toggle.</p>
     <label class="toggle-row"><input type="checkbox" id="rubber-duck-toggle"> Enabled</label>

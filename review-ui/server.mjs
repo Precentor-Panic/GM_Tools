@@ -41,9 +41,10 @@ import { join, extname, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { listWorlds } from "../wf-mcp-server/lib/data-dir.mjs";
-import { loadSnapshot } from "../wf-mcp-server/lib/snapshot.mjs";
+import { loadSnapshot, snapshotFilePath } from "../wf-mcp-server/lib/snapshot.mjs";
 import { resolveWorld, resolveDir } from "../wf-mcp-server/lib/resolve.mjs";
 import { findEntity, neighborhood } from "../wf-mcp-server/lib/graph.mjs";
+import { bootstrapSnapshot } from "../graph-import/headless-apply.mjs";
 
 import { loadBatch, listBatches } from "../mutation-engine/review-state.mjs";
 import { summarizeBatch } from "../mutation-engine/grain.mjs";
@@ -142,6 +143,7 @@ function statusForError(err) {
   // Phase 11: same conflict, one level down (a single entity's prep-content
   // framing round, not a whole writeup-import batch).
   if (err.name === "PrepFramingRoundLimitError") return 409;
+  if (/already exists/i.test(err.message ?? "")) return 409; // task 14.2: creating a world id that's already taken
   if (/no (batch|region|entity|world|snapshot) found/i.test(err.message ?? "")) return 404;
   if (/not found/i.test(err.message ?? "")) return 404;
   return 400; // everything else thrown by this codebase's library modules is a deliberate, caller-facing validation error, not a crash
@@ -557,6 +559,32 @@ async function handleApi(req, res, url, parts) {
   if (method === "GET" && parts.length === 2 && parts[1] === "worlds") {
     const dir = resolveDir(q.get("dataDir"));
     return sendJson(res, 200, { dataDir: dir, worlds: listWorlds(dir) });
+  }
+
+  // POST /api/worlds  { world, dataDir }
+  // Task 14.2: bootstrapSnapshot() (graph-import/headless-apply.mjs) already
+  // existed and was already tested, but was never called from any production
+  // code path -- a genuinely new campaign with no prior Foundry world had no
+  // UI affordance to create one at all, a hard wall on New Import. This wires
+  // it into a real, reachable route: create an empty standalone snapshot for
+  // a brand-new world id, which listWorlds() (GET /api/worlds, above) picks
+  // up immediately since it just checks for an on-disk snapshot file.
+  if (method === "POST" && parts.length === 2 && parts[1] === "worlds") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
+    const worldId = typeof body.world === "string" ? body.world.trim() : "";
+    if (!worldId || !/^[a-zA-Z0-9_-]+$/.test(worldId)) {
+      throw new Error(
+        "POST /api/worlds requires a non-empty `world` id using only letters, digits, hyphens, and underscores " +
+        "(it becomes a directory name on disk)."
+      );
+    }
+    const snapPath = snapshotFilePath(dir, worldId);
+    if (existsSync(snapPath)) {
+      throw new Error(`World "${worldId}" already exists at ${snapPath} -- pick a different id, or select it from the existing worlds list instead.`);
+    }
+    bootstrapSnapshot(snapPath, { worldId });
+    return sendJson(res, 200, { world: worldId, dataDir: dir, created: true });
   }
 
   // GET /api/batches
