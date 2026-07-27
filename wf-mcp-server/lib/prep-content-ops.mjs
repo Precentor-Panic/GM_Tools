@@ -27,6 +27,7 @@
 import { loadSnapshot } from "./snapshot.mjs";
 import { findEntity } from "./graph.mjs";
 import { buildAdjacencyContext, DEFAULT_ENTITY_NARRATE_DEPTH } from "../../mutation-engine/narrate.mjs";
+import { markHumanReviewed } from "../../mutation-engine/human-review.mjs";
 import {
   proposeFramingsForEntity,
   requestPrepReframing,
@@ -101,9 +102,25 @@ export function getPrepContentOp(w, { entityId }) {
   return { entityId, prepContent: getPrepContent(w, entityId) };
 }
 
-/** wf_accept_prep_content: the initial full-block accept -- required before field-granular regeneration is meaningful (the design doc's living-doc requirement). */
+/**
+ * wf_accept_prep_content: the initial full-block accept -- required before
+ * field-granular regeneration is meaningful (the design doc's living-doc
+ * requirement).
+ *
+ * Task 14.4 (QA-pass finding): every OTHER write path in this project
+ * (mutation-ops.mjs's scoped accept, manual-edit-ops.mjs's six write
+ * functions) calls markHumanReviewed for a genuinely scoped, deliberate GM
+ * action -- this one never did, at all, leaving a developed-and-accepted
+ * entity indistinguishable from one nobody has ever opened. Developing an
+ * entity's content and explicitly accepting it is real, deliberate
+ * engagement with that specific entity (the Phase 4 distinction: a scoped
+ * accept counts as review, a whole-batch accept-all does not) -- there is
+ * no "batch" concept here at all, so this is unambiguously the scoped case.
+ */
 export function acceptPrepContentOp(w, { entityId }) {
-  return acceptPrepContent(w, entityId);
+  const result = acceptPrepContent(w, entityId);
+  markHumanReviewed(w, [entityId]);
+  return result;
 }
 
 /** wf_discard_prep_content: discard a not-yet-accepted 'proposed' draft outright -- the reject half of "propose -> review -> accept/reject". Refuses to discard accepted/stale content (prep-content.mjs's own guard). */
