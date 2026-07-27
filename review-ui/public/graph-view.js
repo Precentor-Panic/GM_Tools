@@ -352,6 +352,95 @@ export function renderGraph(container, graph, opts = {}) {
 
   container.appendChild(svg);
   wireRubberBandSelection(container, svg, graph.nodes, positions, mode, opts);
+  applyZoom(container, svg, container._graphZoom ?? 1);
+  wireZoomControls(container);
+}
+
+// ---------------------------------------------------------------------------
+// zoom/pan (real-usage feedback: the fixed 420px box read as "very small"
+// with no way to see more detail or move around a dense graph). Deliberately
+// implemented as a CSS size change on the SVG element itself, inside a
+// scrollable container -- NOT a viewBox/transform change -- specifically so
+// the existing screen<->layout coordinate math in showPopover() and
+// wireRubberBandSelection() (both already ratio-based off
+// getBoundingClientRect() vs LAYOUT_W/LAYOUT_H) keeps working completely
+// unchanged and correct at any zoom level, with zero risk to that
+// already-hardened code. Panning is native browser scroll once the SVG is
+// larger than its container -- no custom drag-to-pan gesture, so there's no
+// conflict with batch mode's own background-drag rubber-band select.
+// ---------------------------------------------------------------------------
+
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 3;
+const ZOOM_STEP = 0.25;
+const ZOOM_BASE_HEIGHT = 420; // matches .graph-svg's CSS default at zoom 1
+
+function applyZoom(container, svg, zoom) {
+  const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom));
+  container._graphZoom = clamped;
+  svg.style.width = `${clamped * 100}%`;
+  svg.style.height = `${Math.round(ZOOM_BASE_HEIGHT * clamped)}px`;
+  const label = container.querySelector(".graph-zoom-label");
+  if (label) label.textContent = `${Math.round(clamped * 100)}%`;
+}
+
+function wireZoomControls(container) {
+  let bar = container.querySelector(".graph-zoom-controls");
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.className = "graph-zoom-controls";
+    const zoomBy = (delta) => {
+      const svg = container.querySelector(".graph-svg");
+      if (svg) applyZoom(container, svg, (container._graphZoom ?? 1) + delta);
+    };
+    const outBtn = document.createElement("button");
+    outBtn.type = "button";
+    outBtn.className = "graph-zoom-btn";
+    outBtn.textContent = "−";
+    outBtn.title = "Zoom out";
+    outBtn.addEventListener("click", () => zoomBy(-ZOOM_STEP));
+    const label = document.createElement("span");
+    label.className = "graph-zoom-label";
+    label.textContent = "100%";
+    const inBtn = document.createElement("button");
+    inBtn.type = "button";
+    inBtn.className = "graph-zoom-btn";
+    inBtn.textContent = "+";
+    inBtn.title = "Zoom in";
+    inBtn.addEventListener("click", () => zoomBy(ZOOM_STEP));
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.className = "graph-zoom-btn graph-zoom-reset";
+    resetBtn.textContent = "Reset";
+    resetBtn.title = "Reset zoom";
+    resetBtn.addEventListener("click", () => {
+      const svg = container.querySelector(".graph-svg");
+      if (svg) applyZoom(container, svg, 1);
+    });
+    bar.append(outBtn, label, inBtn, resetBtn);
+  }
+  // The zoom bar must survive renderGraph()'s `container.innerHTML = ""`
+  // teardown-and-rebuild-on-every-refresh (same reason wireRubberBandSelection
+  // guards its own window listeners) -- re-append every call rather than
+  // relying on it having stuck around, since it definitely didn't.
+  container.appendChild(bar);
+
+  // Ctrl/Cmd+wheel zooms; plain wheel is left alone so normal page/container
+  // scroll (the actual pan mechanism once zoomed in) isn't hijacked. Bound
+  // once per container, same de-dup pattern as the rubber-band listeners.
+  if (!container._graphWheelWired) {
+    container._graphWheelWired = true;
+    container.addEventListener(
+      "wheel",
+      (evt) => {
+        if (!evt.ctrlKey && !evt.metaKey) return;
+        evt.preventDefault();
+        const svg = container.querySelector(".graph-svg");
+        if (svg) applyZoom(container, svg, (container._graphZoom ?? 1) + (evt.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
+      },
+      { passive: false }
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

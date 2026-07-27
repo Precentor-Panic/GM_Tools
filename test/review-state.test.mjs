@@ -123,6 +123,16 @@ test("listBatches: returns lightweight summaries, newest first", () => {
   const a = list.find((b) => b.id === "batch_list_a");
   assert.equal(a.mutationCount, 2);
   assert.equal(a.pendingCount, 2);
+  assert.equal(a.acceptedCount, 0);
+});
+
+test("listBatches: acceptedCount reflects real per-mutation status, distinct from pendingCount", () => {
+  const batch = createBatch(WORLD, { mode: "manual" }, "1 session", sampleMutations(), { makeId: () => "batch_list_counts" });
+  updateMutationStatus(WORLD, batch.id, batch.mutations[0].mutationId, "accepted");
+  updateMutationStatus(WORLD, batch.id, batch.mutations[1].mutationId, "rejected");
+  const summary = listBatches(WORLD).find((b) => b.id === "batch_list_counts");
+  assert.equal(summary.pendingCount, 0);
+  assert.equal(summary.acceptedCount, 1);
 });
 
 test("listBatches: empty for a world with no batches yet", () => {

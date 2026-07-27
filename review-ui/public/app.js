@@ -144,7 +144,14 @@ async function renderQueue() {
 
   // GM's stated sort: explicitly-requested work (open batches, newest first --
   // listBatches already returns newest-first) before auto-flagged accumulation.
-  const openBatches = batches.filter((b) => b.status === "open");
+  // status==='open' alone isn't enough: a batch only ever transitions to
+  // 'synced'/'rolled-back', never anything on "every mutation rejected" --
+  // real usage feedback ("I can't dispose of the previously queued mistake")
+  // traced to a fully-rejected batch staying listed here forever with
+  // nothing left to actually do. A batch belongs here only if it still has
+  // a pending decision OR accepted-but-unsynced work; "everything rejected"
+  // now quietly drops off on its own instead of needing a dismiss action.
+  const openBatches = batches.filter((b) => b.status === "open" && (b.pendingCount > 0 || b.acceptedCount > 0));
 
   if (!openBatches.length && !flagged.length) {
     emptyEl.hidden = false;
@@ -180,6 +187,34 @@ async function renderQueue() {
       headline.className = "queue-item-headline";
       headline.innerHTML = `<span class="flag-dot"></span>${escapeHtml(f.entityId)} — ${flagReasonLabel(f)}`;
       row.appendChild(headline);
+
+      // Real gap found via hands-on use: this list was previously read-only
+      // -- an entity with no currently-open batch touching it had no way to
+      // be acknowledged at all and just sat here indefinitely. A plain
+      // dismiss, no batch/review context required.
+      const dismissBtn = document.createElement("button");
+      dismissBtn.className = "btn btn--ghost queue-flagged-dismiss";
+      dismissBtn.textContent = "Mark Reviewed";
+      dismissBtn.addEventListener("click", async () => {
+        dismissBtn.disabled = true;
+        try {
+          await api(`/api/unreviewed-entities/${encodeURIComponent(f.entityId)}/mark-reviewed`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ world: CURRENT_WORLD })
+          });
+          li.remove();
+          if (!flaggedList.children.length) flaggedWrap.hidden = true;
+          if (!batchesList.children.length && !flaggedList.children.length) {
+            emptyEl.hidden = false;
+          }
+        } catch (err) {
+          dismissBtn.disabled = false;
+          dismissBtn.title = `Failed: ${err.message}`;
+        }
+      });
+      row.appendChild(dismissBtn);
+
       li.appendChild(row);
       flaggedList.appendChild(li);
     }
@@ -1164,12 +1199,16 @@ document.getElementById("btn-undo-last").addEventListener("click", async () => {
 // the entity happens to belong to a currently-open batch.
 // ---------------------------------------------------------------------------
 
-let graphStandaloneShowAll = false;
+// Real usage feedback: defaulting to flagged-only meant re-hitting "Show
+// everything" on every single visit. Flipped per direct request -- start
+// from the whole graph, use the two checkboxes to narrow down FROM there,
+// rather than starting narrow and escaping out to everything.
+let graphStandaloneShowAll = true;
 
 function renderGraphStandaloneView() {
-  graphStandaloneShowAll = false;
-  document.getElementById("graph-filter-unreviewed").checked = true;
-  document.getElementById("graph-filter-debt").checked = true;
+  graphStandaloneShowAll = true;
+  document.getElementById("graph-filter-unreviewed").checked = false;
+  document.getElementById("graph-filter-debt").checked = false;
   document.getElementById("graph-search").value = "";
   refreshGraphStandalone();
 }

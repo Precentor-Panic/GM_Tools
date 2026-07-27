@@ -200,6 +200,23 @@ test("POST /api/batches/:id/accept scope='batch' (accept-all) does NOT mark enti
   assert.ok(flaggedIds.includes(batch.idA) && flaggedIds.includes(batch.idB), "a whole-batch accept-all must NOT count as review -- both entities should still be flagged");
 });
 
+test("POST /api/unreviewed-entities/:entityId/mark-reviewed dismisses a flag with no batch context required -- real gap found via hands-on use (a flagged entity with no open batch had no way to be acknowledged)", async () => {
+  const batch = makeTwoMutationBatch();
+  await postJson(`/api/batches/${batch.id}/accept`, { world: WORLD, scope: "batch" });
+
+  const before = await getJson(`/api/unreviewed-entities?world=${WORLD}`);
+  assert.ok(before.body.entities.map((e) => e.entityId).includes(batch.idA), "precondition: idA must be flagged before dismissal");
+
+  const { status, body } = await postJson(`/api/unreviewed-entities/${batch.idA}/mark-reviewed`, { world: WORLD });
+  assert.equal(status, 200);
+  assert.equal(body.marked, true);
+
+  const after = await getJson(`/api/unreviewed-entities?world=${WORLD}`);
+  const afterIds = after.body.entities.map((e) => e.entityId);
+  assert.ok(!afterIds.includes(batch.idA), "idA must no longer be flagged after mark-reviewed");
+  assert.ok(afterIds.includes(batch.idB), "idB was untouched -- must still be flagged");
+});
+
 test("bulk-accept with an explicit reviewedMutationIds subset splits reviewed vs unreviewed per mutation", async () => {
   const batch = makeTwoMutationBatch();
   const { status, body } = await postJson(`/api/batches/${batch.id}/bulk-accept`, {

@@ -206,7 +206,16 @@ export function listBatches(world) {
         scope: batch.scope,
         elapsedTimeDescriptor: batch.elapsedTimeDescriptor,
         mutationCount: batch.mutations.length,
-        pendingCount: batch.mutations.filter((m) => m.status === "pending").length
+        pendingCount: batch.mutations.filter((m) => m.status === "pending").length,
+        // Real gap found via hands-on use: review-ui's Queue only ever
+        // filtered on status:'open', so a batch where the GM rejected every
+        // single mutation stayed listed under "Awaiting review" forever --
+        // batch.status only ever transitions to 'synced'/'rolled-back', never
+        // anything on reject-everything. acceptedCount lets the Queue tell
+        // "still has pending decisions OR has accepted-but-unsynced work"
+        // (still belongs in the list) apart from "everything was rejected,
+        // genuinely nothing left to do" (should disappear on its own).
+        acceptedCount: batch.mutations.filter((m) => m.status === "accepted").length
       };
     })
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)); // newest first

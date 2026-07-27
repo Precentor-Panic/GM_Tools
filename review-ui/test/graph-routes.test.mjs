@@ -168,18 +168,25 @@ test("standalone /api/graph with filter=unreviewed returns only flagged entities
   assert.ok(!ids.includes("gerdur"), "gerdur was explicitly marked reviewed -- must NOT be included under filter=unreviewed");
 });
 
-test("standalone /api/graph DEFAULT (filter omitted) genuinely reduces the returned node count vs filter=all", async () => {
-  const flaggedOnly = await getJson(`/api/graph?world=${WORLD}`);
+test("standalone /api/graph DEFAULT (filter omitted) returns EVERYTHING, same as filter=all -- reversed from task 7.4's original flagged-only default per real-usage feedback", async () => {
+  const omitted = await getJson(`/api/graph?world=${WORLD}`);
   const everything = await getJson(`/api/graph?world=${WORLD}&filter=all`);
-  assert.equal(flaggedOnly.status, 200);
+  assert.equal(omitted.status, 200);
   assert.equal(everything.status, 200);
-  assert.ok(
-    flaggedOnly.body.nodes.length < everything.body.nodes.length,
-    `default (flagged-only) node count (${flaggedOnly.body.nodes.length}) should be strictly smaller than filter=all's (${everything.body.nodes.length}) -- ` +
-    `the server itself must be doing the filtering, not returning everything for the client to hide`
+  assert.deepEqual(
+    omitted.body.nodes.map((n) => n.id).sort(),
+    everything.body.nodes.map((n) => n.id).sort(),
+    "omitting the filter param must return the identical node set to filter=all"
   );
   const everythingIds = everything.body.nodes.map((n) => n.id);
-  assert.ok(everythingIds.includes("far-away-npc"), "filter=all must include even a fully disconnected entity");
+  assert.ok(everythingIds.includes("far-away-npc"), "the default must include even a fully disconnected entity");
+});
+
+test("standalone /api/graph with an unrecognized filter value falls back to show-everything, not flagged-only", async () => {
+  const { status, body } = await getJson(`/api/graph?world=${WORLD}&filter=bogus`);
+  const everything = await getJson(`/api/graph?world=${WORLD}&filter=all`);
+  assert.equal(status, 200);
+  assert.deepEqual(body.nodes.map((n) => n.id).sort(), everything.body.nodes.map((n) => n.id).sort());
 });
 
 test("a node can carry BOTH flaggedUnreviewed AND hasDeferredDebt at once -- two independent channels, not a combined enum", async () => {

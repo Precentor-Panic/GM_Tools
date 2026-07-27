@@ -47,7 +47,7 @@ import { findEntity, neighborhood } from "../wf-mcp-server/lib/graph.mjs";
 
 import { loadBatch, listBatches } from "../mutation-engine/review-state.mjs";
 import { summarizeBatch } from "../mutation-engine/grain.mjs";
-import { findUnreviewedEntities, DEFAULT_MAX_AGE_DAYS, DEFAULT_MAX_UNREVIEWED_ACCEPTS } from "../mutation-engine/human-review.mjs";
+import { findUnreviewedEntities, markHumanReviewed, DEFAULT_MAX_AGE_DAYS, DEFAULT_MAX_UNREVIEWED_ACCEPTS } from "../mutation-engine/human-review.mjs";
 import { listPendingEntities, readAvailablePending } from "../mutation-engine/pending-ledger.mjs";
 import { resolvePending } from "../time-skip/resolve-pending.mjs";
 import { getUserSettings, setRubberDuckMode } from "../mutation-engine/user-settings.mjs";
@@ -249,16 +249,17 @@ const GRAPH_STATUS_FILTER_TOKENS = new Set(["unreviewed", "deferred-debt"]);
 
 /**
  * Parse a `filter` query param into the Set of active status tokens, or
- * `null` for "show everything" (`filter=all`, the explicit escape hatch).
- * Omitting the param entirely defaults to BOTH tokens -- the confirmed
- * flagged-only default the standalone Graph view (task 7.4) must ship with.
+ * `null` for "show everything." Task 7.4 originally shipped with
+ * flagged-only as the default (filter omitted); real usage reversed that --
+ * having to hit "Show everything" on every single visit was the actual
+ * complaint. Omitting the param (or passing `all`, or a param with no
+ * recognizable tokens) now all mean "show everything"; only an explicit,
+ * recognized token list narrows the result.
  */
 function parseGraphFilter(raw) {
-  if (raw === "all") return null;
-  const tokens = (raw ? raw.split(",") : ["unreviewed", "deferred-debt"])
-    .map((t) => t.trim())
-    .filter((t) => GRAPH_STATUS_FILTER_TOKENS.has(t));
-  return new Set(tokens.length ? tokens : ["unreviewed", "deferred-debt"]);
+  if (!raw || raw === "all") return null;
+  const tokens = raw.split(",").map((t) => t.trim()).filter((t) => GRAPH_STATUS_FILTER_TOKENS.has(t));
+  return tokens.length ? new Set(tokens) : null;
 }
 
 /**
@@ -689,6 +690,21 @@ async function handleApi(req, res, url, parts) {
       defaults: { maxAgeDays: DEFAULT_MAX_AGE_DAYS, maxUnreviewedAccepts: DEFAULT_MAX_UNREVIEWED_ACCEPTS },
       entities: flagged
     });
+  }
+
+  // POST /api/unreviewed-entities/:entityId/mark-reviewed  { world }
+  // Real gap found via hands-on use: a flagged entity only ever cleared by
+  // being individually expanded inside SOME open batch that happened to
+  // touch it -- an entity with no current open batch (or one the GM doesn't
+  // want to open just to dismiss a flag) had no way to be acknowledged at
+  // all, so it sat in "Long-unreviewed entities" indefinitely. This is a
+  // standalone dismiss, no batch context required -- markHumanReviewed()
+  // itself never depended on one.
+  if (method === "POST" && parts.length === 4 && parts[1] === "unreviewed-entities" && parts[3] === "mark-reviewed") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    markHumanReviewed(w, [parts[2]]);
+    return sendJson(res, 200, { world: w, entityId: parts[2], marked: true });
   }
 
   // GET /api/pending-entities

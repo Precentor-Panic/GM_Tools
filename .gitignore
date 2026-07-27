@@ -23,6 +23,13 @@ user-settings/*
 entity-narration/*/
 !entity-narration/.gitkeep
 
+# Phase 11: mutation-engine/prep-content.mjs, same per-world-subdir
+# convention. Missing here on first landing -- same class of gap already
+# caught once for human-review/pending-resolution/user-settings; found again
+# via real usage (a real prep-content/wf-test/ directory showing untracked).
+prep-content/*/
+!prep-content/.gitkeep
+
 node_modules/
 
 # never commit API keys / secrets
