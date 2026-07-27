@@ -30,6 +30,13 @@ entity-narration/*/
 prep-content/*/
 !prep-content/.gitkeep
 
+# Phase 12: mutation-engine/manual-undo.mjs, flat per-world file like
+# human-review/user-settings above. Same recurring class of gap -- every
+# new data store in this project has needed this added by hand once real
+# usage exercises it for the first time.
+manual-undo/*
+!manual-undo/.gitkeep
+
 node_modules/
 
 # never commit API keys / secrets

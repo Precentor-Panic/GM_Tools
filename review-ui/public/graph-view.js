@@ -830,6 +830,24 @@ function selectEl(choices, current) {
 }
 
 /**
+ * Every manual-edit write in this module (create/edit/delete node, edit/
+ * delete edge) goes through the same dual-path apply as the Sync button
+ * (review-ui/public/app.js's btn-sync-now) -- confirmed via a real timed
+ * test that this genuinely takes ~7s (it polls for a live Foundry client
+ * before falling back to headless), not an instant round trip. Without
+ * this, every one of these forms would sit with a disabled button and no
+ * feedback for 7 seconds, reading as stuck -- the exact bug the Sync
+ * button's own "Still working..." message was added to fix. Reused here
+ * rather than duplicating that timeout/message logic five times.
+ */
+function withSlowNotice(statusEl, maybePromise) {
+  const timer = setTimeout(() => {
+    statusEl.textContent = "Still working — checking whether a live Foundry client is open for this world…";
+  }, 1500);
+  return Promise.resolve(maybePromise).finally(() => clearTimeout(timer));
+}
+
+/**
  * Task 12.3: "+ Add Node" placement-mode click -> this form, anchored at the
  * clicked point. Fields per the design doc's exact list: name, type,
  * optional description. Esc/click-outside cancels with nothing written.
@@ -873,7 +891,7 @@ export function showCreateNodeForm(container, point, opts) {
     createBtn.disabled = true;
     statusEl.textContent = "";
     try {
-      await opts.onCreateNode?.(point, { name, type: typeSelect.value, description: descInput.value.trim() || undefined });
+      await withSlowNotice(statusEl, opts.onCreateNode?.(point, { name, type: typeSelect.value, description: descInput.value.trim() || undefined }));
       el.remove();
     } catch (err) {
       createBtn.disabled = false;
@@ -954,7 +972,7 @@ function showNodeEditForm(container, node, pos, opts) {
     };
     if (node.type === "person") data.role = roleSelect.value === "—" ? null : roleSelect.value;
     try {
-      await opts.onEditNode?.(node.id, data);
+      await withSlowNotice(statusEl, opts.onEditNode?.(node.id, data));
       el.remove();
     } catch (err) {
       saveBtn.disabled = false;
@@ -987,7 +1005,7 @@ function showNodeDeleteConfirm(container, node, popoverEl, opts) {
   confirmBtn.addEventListener("click", async () => {
     confirmBtn.disabled = true;
     try {
-      await opts.onDeleteNode?.(node.id);
+      await withSlowNotice(msg, opts.onDeleteNode?.(node.id));
       closePopover(container);
     } catch (err) {
       confirmBtn.disabled = false;
@@ -1077,7 +1095,7 @@ function showEdgePopover(container, edge, opts, { startInEdit = false } = {}) {
     confirmBtn.addEventListener("click", async () => {
       confirmBtn.disabled = true;
       try {
-        await opts.onDeleteEdge?.(edge.id);
+        await withSlowNotice(msg, opts.onDeleteEdge?.(edge.id));
         closePopover(container);
       } catch (err) {
         confirmBtn.disabled = false;
@@ -1145,7 +1163,7 @@ function showEdgeEditForm(container, edge, midpoint, opts, { isNew }) {
       notes: notesInput.value.trim() || null
     };
     try {
-      await opts.onEditEdge?.(edge.id, data);
+      await withSlowNotice(statusEl, opts.onEditEdge?.(edge.id, data));
       el.remove();
     } catch (err) {
       saveBtn.disabled = false;
@@ -1355,6 +1373,13 @@ function wireEdgeDrawing(container, svg, nodes, positions, opts) {
     if (!targetId || targetId === sourceId) {
       return; // release on empty space (or back onto itself) cancels -- task 12.3's own [DECIDED] shape, no self-loops
     }
+    // Known gap, not fixed here: this write goes through the same ~7s
+    // dual-path apply as every other manual edit (see withSlowNotice above),
+    // but a drag-release has no visible form/status element to attach a
+    // "still working" message to the way the five button-driven forms do --
+    // the user just sees nothing happen for several seconds before the type
+    // prompt appears. Left as-is rather than force a partial UI treatment
+    // (e.g. a toast) without a clear place to anchor it.
     Promise.resolve(currentOpts.onDrawEdge?.(sourceId, targetId))
       .then((result) => {
         // Task 12.3: "release on another node creates the edge immediately
