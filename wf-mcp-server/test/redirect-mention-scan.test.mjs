@@ -159,6 +159,21 @@ await test("redirect refuses a LINK row (already correct by definition) and a no
   );
 });
 
+await test("self-review remediation: entityContext reflects the TARGET entity's own real name/type, not the stale mention's guess", () => {
+  const batch = buildScanBatch([{ name: "Gorrim the Smith", type: "person", description: "A blacksmith." }]);
+  const createEntry = batch.mutations.find((m) => m.op === "upsert_entity");
+  redirectMentionScanRowToExistingOp(dataDir, WORLD, {
+    batchId: batch.id,
+    mutationId: createEntry.mutationId,
+    existingEntityId: "mira"
+    // deliberately no existingEntityName -- must fall back to the REAL entity's own name
+  });
+  const updated = loadBatch(WORLD, batch.id);
+  const row = updated.mutations[0];
+  assert.equal(row.entityContext.name, "Mira", "must use the real target entity's own name, not the id or a stale value");
+  assert.equal(row.entityContext.type, "person", "must reflect the TARGET's own real type");
+});
+
 await test("self-review remediation: redirect refuses a nonexistent existingEntityId rather than silently pointing the mutation at garbage", () => {
   const batch = buildScanBatch([{ name: "Gorrim the Smith", type: "person" }]);
   const createEntry = batch.mutations.find((m) => m.op === "upsert_entity");

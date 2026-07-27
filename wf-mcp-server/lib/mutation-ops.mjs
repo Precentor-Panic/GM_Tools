@@ -713,7 +713,8 @@ export function patchPendingMutationData(w, { batchId, mutationId, data }) {
 export function redirectMentionScanRowToExistingOp(dir, w, { batchId, mutationId, existingEntityId, existingEntityName }) {
   if (!existingEntityId) throw new Error("redirectMentionScanRowToExistingOp requires existingEntityId.");
   const { entities } = loadSnapshot(dir, w).snapshot;
-  if (!entities.some((e) => e.id === existingEntityId)) {
+  const existingEntity = entities.find((e) => e.id === existingEntityId);
+  if (!existingEntity) {
     throw new Error(`No entity "${existingEntityId}" found in the live graph -- cannot redirect to a nonexistent entity.`);
   }
   const batch = loadBatch(w, batchId);
@@ -747,11 +748,16 @@ export function redirectMentionScanRowToExistingOp(dir, w, { batchId, mutationId
     targetId: existingEntityId,
     relationshipType: siblingEdge.data.relationshipType ?? DEFAULT_MENTION_RELATIONSHIP
   };
-  createEntry.rationale = `Redirected: linked to the existing entity "${existingEntityName ?? existingEntityId}" instead of proposing a duplicate.`;
+  createEntry.rationale = `Redirected: linked to the existing entity "${existingEntityName ?? existingEntity.name ?? existingEntityId}" instead of proposing a duplicate.`;
   createEntry.entityContext = {
     scanResultKind: "link",
-    name: existingEntityName ?? existingEntityId,
-    type: createEntry.entityContext?.type
+    // Self-review remediation: the TARGET entity's own real name/type (same
+    // convention scan-mentions.mjs's own LINK branch already uses), not the
+    // stale mention's -- a GM redirecting to a genuinely different-typed
+    // entity than what the LLM originally guessed must see that entity's
+    // OWN real type reflected here, not a leftover label.
+    name: existingEntity.name ?? existingEntityName ?? existingEntityId,
+    type: existingEntity.type
   };
   createEntry.diff = undefined; // still pending (checked above), so no preState to worry about clearing either
 
