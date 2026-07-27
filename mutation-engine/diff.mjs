@@ -21,7 +21,15 @@ const ENTITY_DIFF_FIELDS = [
   "tags",
   "attributes",
   "foundryRef",
-  "namespace"
+  "namespace",
+  // Phase 12 (GM_Tools task 12.1): World Fabric's four new entity fields --
+  // included so any batch touching them (writeup-import, scan-for-mentioned-
+  // entities, or a future texture.mjs prompt update) renders a real diff row
+  // instead of silently invisible field-level changes.
+  "status",
+  "playerKnown",
+  "canonLocked",
+  "role"
 ];
 
 // Edge fields diffEdge compares.

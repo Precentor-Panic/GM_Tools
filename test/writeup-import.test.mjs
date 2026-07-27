@@ -402,6 +402,28 @@ test("previewWriteupImport: an entity with no importance/tags/attributes still p
   assert.equal(mutations[0].data.importance, 0.3, "importGraph's normalizeEntity default");
 });
 
+test("previewWriteupImport: Phase 12 task 12.1 -- a proposal entity carrying status/playerKnown/canonLocked/role flows through into the resulting mutation's data, and defaults apply when omitted", () => {
+  const existingSnapshot = { entities: [], edges: [], entityTypes: EXISTING_ENTITY_TYPES };
+  const proposal = {
+    entities: [
+      { name: "Farkas", type: "person", role: "pc", status: "alive", playerKnown: true, rationale: "A player character introduced in the writeup." },
+      { name: "A New Rumor", type: "concept", rationale: "No status/role/etc. supplied -- should still get importGraph's own type-appropriate defaults." }
+    ],
+    edges: []
+  };
+  const { mutations } = previewWriteupImport(proposal, existingSnapshot);
+  const farkas = mutations.find((m) => m.data.name === "Farkas");
+  assert.equal(farkas.data.role, "pc");
+  assert.equal(farkas.data.status, "alive");
+  assert.equal(farkas.data.playerKnown, true);
+  assert.equal(farkas.data.canonLocked, false, "importGraph's normalizeEntity default -- proposal never set it");
+
+  const rumor = mutations.find((m) => m.data.name === "A New Rumor");
+  assert.equal(rumor.data.status, null, "concept has no lifecycle concept -- defaultStatusForType returns null");
+  assert.equal(rumor.data.role, null, "role is person-only");
+  assert.equal(rumor.data.playerKnown, null);
+});
+
 test("previewWriteupImport: mode='replace' does not crash and still classifies every proposed entity as a create (importGraph's own replace semantics)", () => {
   const existingSnapshot = {
     entities: [{ id: "existing-gerdur", name: "Gerdur", type: "person", importance: 0.4, tags: [], attributes: {} }],

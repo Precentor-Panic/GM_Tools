@@ -157,6 +157,16 @@ export class WriteupImportRegenerateScopeError extends Error {
 // reused here rather than inventing a second list.
 const EntityType = z.enum(["person", "place", "faction", "object", "event", "concept"]);
 
+// Phase 12 (GM_Tools task 12.1): the four new World Fabric entity fields
+// (foundry_worldFabric/scripts/constants.mjs's STATUS_OPTIONS_BY_TYPE/
+// PERSON_ROLES), added here as OPTIONAL fields only -- extraction quality
+// must not come to depend on the model guessing these (per the task's own
+// "additive, optional fields only, don't make extraction depend on them"
+// instruction). `status` is left a plain string (not a per-type enum) since
+// this schema has no way to cross-validate against `type` at the field
+// level; previewWriteupImport's downstream normalizeEntity call is where an
+// out-of-vocabulary guess would actually land, same tolerance the rest of
+// this schema already has for freeform LLM output.
 const RawWfiEntity = z.object({
   name: z.string().min(1),
   type: EntityType,
@@ -165,6 +175,10 @@ const RawWfiEntity = z.object({
   importance: z.number().min(0).max(1).optional(),
   tags: z.array(z.string()).optional(),
   attributes: z.record(z.string(), z.any()).optional(),
+  status: z.string().optional(),
+  playerKnown: z.boolean().optional(),
+  canonLocked: z.boolean().optional(),
+  role: z.enum(["pc", "npc"]).optional(),
   rationale: z.string()
 });
 
@@ -405,8 +419,19 @@ function entityKey(type, name) {
 // so a writeup-import mutation's `data` shape matches what every other
 // producer in this codebase already writes.
 function entityMutationData(entity) {
-  const { name, type, description, summary, importance, imageUrl, tags, attributes, foundryRef, namespace } = entity;
-  return { name, type, description, summary, importance, imageUrl, tags, attributes, foundryRef, namespace };
+  const {
+    name, type, description, summary, importance, imageUrl, tags, attributes, foundryRef, namespace,
+    // Phase 12 (GM_Tools task 12.1): only included when the LLM proposal (or
+    // an existing matched entity's already-set value, via importGraph's own
+    // merge) actually carries one -- `entity` here is importGraph's result,
+    // so an absent field is `undefined` and simply won't be enumerated by
+    // the object literal below regardless.
+    status, playerKnown, canonLocked, role
+  } = entity;
+  return {
+    name, type, description, summary, importance, imageUrl, tags, attributes, foundryRef, namespace,
+    status, playerKnown, canonLocked, role
+  };
 }
 
 // Edge mutation `data` — EDGE_DIFF_FIELDS plus sourceId/targetId, which a
