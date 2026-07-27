@@ -225,6 +225,11 @@ function scopeLabel(scope) {
   if (!scope) return "manual";
   if (scope.mode === "seed") return `seed @ ${scope.anchorId ?? "?"}`;
   if (scope.mode === "resolve-pending") return `resolved backlog @ ${scope.requestedEntityId ?? "?"}`;
+  // Phase 13 task 13.1: the ongoing accumulator batch behind manual graph
+  // edits (wf-mcp-server/lib/manual-edit-ops.mjs's MANUAL_EDIT_SCOPE_MODE) --
+  // shown in the Queue like any other open batch with accepted-but-unsynced
+  // work, since it genuinely is one.
+  if (scope.mode === "manual-edit") return "manual graph edits (not yet synced)";
   return scope.mode || "batch";
 }
 
@@ -307,6 +312,9 @@ function batchExplainerText(scope) {
   }
   if (mode === "mention-scan") {
     return `This batch scanned ${scope.sourceEntityName ?? "an entity"}'s content for other entities it mentions — links to ones that already exist, and proposals for ones that don't.`;
+  }
+  if (mode === "manual-edit") {
+    return "This batch collects manual graph edits you made directly (create/edit/delete on the Graph screen) — already written to the standalone snapshot; Sync pushes them to a live Foundry client too, if one has this world open.";
   }
   return "";
 }
@@ -1359,6 +1367,59 @@ async function performUndo() {
 
 document.getElementById("btn-graph-undo")?.addEventListener("click", performUndo);
 
+/**
+ * Phase 13 task 13.1: the standalone Graph view's own sync bar, mirroring
+ * the Review screen's #review-sync-bar/renderSyncBar/btn-sync-now exactly
+ * (same markup pattern, same "Still working…" slow-notice convention) --
+ * just pointed at the world's ongoing manual-edit batch (GET
+ * /api/manual-edit-sync-status) instead of the currently-open reviewed
+ * batch, and reusing the SAME /api/batches/:batchId/sync route (unmodified)
+ * to actually push.
+ */
+async function refreshGraphSyncBar() {
+  const bar = document.getElementById("graph-sync-bar");
+  const statusEl = document.getElementById("graph-sync-status");
+  if (!bar || !CURRENT_WORLD) { if (bar) bar.hidden = true; return; }
+  try {
+    const { batchId, unsyncedCount } = await api(`/api/manual-edit-sync-status${withWorld()}`);
+    if (!unsyncedCount) { bar.hidden = true; return; }
+    bar.hidden = false;
+    bar.dataset.batchId = batchId;
+    statusEl.textContent = `${unsyncedCount} manual edit${unsyncedCount === 1 ? "" : "s"} not yet synced to Foundry.`;
+  } catch {
+    bar.hidden = true;
+  }
+}
+
+document.getElementById("btn-graph-sync-now")?.addEventListener("click", async () => {
+  const bar = document.getElementById("graph-sync-bar");
+  const btn = document.getElementById("btn-graph-sync-now");
+  const statusEl = document.getElementById("graph-sync-status");
+  const batchId = bar?.dataset.batchId;
+  if (!batchId) return;
+  btn.disabled = true;
+  btn.textContent = "Syncing…";
+  const slowNotice = setTimeout(() => {
+    statusEl.textContent = "Still working — checking whether a live Foundry client is open for this world…";
+  }, 1500);
+  try {
+    const result = await api(`/api/batches/${batchId}/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: CURRENT_WORLD })
+    });
+    recordSyncPath(result.path);
+    showToast(`Synced ${result.syncedCount ?? 0} manual edit${result.syncedCount === 1 ? "" : "s"} to the graph (${result.path}).`);
+    await refreshGraphSyncBar();
+  } catch (err) {
+    statusEl.textContent = `Sync failed: ${err.message}`;
+  } finally {
+    clearTimeout(slowNotice);
+    btn.disabled = false;
+    btn.textContent = "Sync to Foundry";
+  }
+});
+
 document.getElementById("btn-graph-add-node")?.addEventListener("click", () => {
   const container = document.getElementById("graph-standalone");
   if (!container) return;
@@ -1432,6 +1493,7 @@ async function handleDrawEdge(sourceId, targetId) {
   LAST_GRAPH_EDGES.push(edge);
   showToast("Edge created.", performUndo);
   await refreshUndoStatus();
+  await refreshGraphSyncBar();
   return { edge };
 }
 
@@ -1546,6 +1608,7 @@ async function refreshGraphStandalone() {
 
   LAST_GRAPH_EDGES = edges;
   await refreshUndoStatus();
+  await refreshGraphSyncBar();
 
   // Best-effort: which open batch (if any) a given entity belongs to, so
   // the popover can offer "Show in list" -- this is a status dashboard, not

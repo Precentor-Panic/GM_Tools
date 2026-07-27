@@ -8,14 +8,43 @@
  * whole reason this project's no-silent-auto-write invariant exists —
  * mutation-engine/entity-narration.mjs.
  *
- * Every write below goes through the SAME live-then-headless apply path
- * every other write in this project uses
- * (wf-mcp-server/lib/mutation-ops.mjs's applyMutationsWithHeadlessFallback)
- * — a manual edit is structurally the same kind of write as a synced batch
- * mutation, just without a review-state.mjs Batch wrapping it first, so it
- * reuses that machinery directly rather than reinventing a second apply
- * path (per gm-tools-conventions' "front-ends are thin wrappers" and "reuse
- * existing primitives" rules).
+ * PHASE 13 TASK 13.1 REWRITE: every write below used to go straight through
+ * the SAME live-then-headless dual-path apply the Sync button uses
+ * (applyMutationsWithHeadlessFallback), which meant every single micro-edit
+ * independently paid the full ~7s live-Foundry-poll cost -- confirmed the
+ * root cause of "manual edits take way too long" via direct investigation
+ * (plans/phase-13-tasks.md). Every write now goes through
+ * `applyManualMutations` below instead: it appends the mutation(s) to the
+ * world's ONE ongoing "manual-edit" review-state.mjs batch (created lazily,
+ * reused across edits until synced), marks them accepted immediately via
+ * rollback.mjs's OWN acceptMutations (the same primitive a normal batch
+ * accept uses -- also gets a manual edit real pre-state capture and
+ * rollback-batch eligibility for free), and applies HEADLESSLY RIGHT AWAY
+ * (graph-import/headless-apply.mjs's applyHeadless -- NOT the dual-path
+ * function) for near-instant feedback, no live-Foundry-poll cost at all on
+ * this path.
+ *
+ * Pushing a manual edit through to a live Foundry client is now a
+ * SEPARATE, DEFERRED, EXPLICIT action, mirroring the existing batch
+ * accept→sync pattern per the project owner's own direct request ("like we
+ * do with the other updates"): because the batch's mutations are
+ * status:'accepted' while the BATCH ITSELF stays status:'open', the
+ * existing Queue rule (review-state.mjs's listBatches/acceptedCount) already
+ * surfaces it as needing attention, and the EXISTING Sync button/route
+ * (wf-mcp-server/lib/mutation-ops.mjs's syncOp, completely UNMODIFIED by
+ * this phase) already knows how to push an open batch's accepted-but-
+ * unsynced mutations through the real live-first applyMutationsWithHeadlessFallback
+ * -- this is a genuine reuse, exercised for real (not assumed) by
+ * wf-mcp-server/test/manual-edit-sync.test.mjs, which proves a later sync
+ * attempt actually writes to and polls the real world-fabric-mutations.json
+ * bridge file, not a no-op headless re-write.
+ *
+ * A manual edit is structurally the same kind of write as a synced batch
+ * mutation, just auto-accepted at creation instead of sitting at 'pending'
+ * first (manual edits don't go through a review step at all, per Phase 12's
+ * decision 1) -- reusing review-state.mjs's batch machinery directly rather
+ * than reinventing a second apply/sync path (per gm-tools-conventions'
+ * "front-ends are thin wrappers" and "reuse existing primitives" rules).
  *
  * ID PRE-ASSIGNMENT: every create below (addNodeOp/addEdgeOp) generates its
  * own id BEFORE ever writing, and stamps it onto BOTH the mutation's
@@ -38,9 +67,9 @@
  * node's OWN pre-delete state AND every one of its cascade-deleted edges'
  * pre-delete state, and stores them together as ONE mutations array -- so
  * undo re-creates the node and every cascaded edge in a single
- * applyMutationsWithHeadlessFallback call, satisfying the design doc's
- * explicit "delete node with its cascade as ONE atomic undo unit"
- * requirement structurally, not just by intention.
+ * applyManualMutations call, satisfying the design doc's explicit "delete
+ * node with its cascade as ONE atomic undo unit" requirement structurally,
+ * not just by intention.
  *
  * REVIEW-STATE INTERACTION: every write also calls markHumanReviewed() on
  * the entity id(s) it touches -- per the design doc's explicit "manually-
@@ -55,8 +84,12 @@
  * simpler and more obviously correct than special-casing only the edit
  * path.
  */
-import { loadSnapshot } from "./snapshot.mjs";
-import { applyMutationsWithHeadlessFallback } from "./mutation-ops.mjs";
+import { loadSnapshot, snapshotFilePath } from "./snapshot.mjs";
+import { nextMutationIndex } from "./mutation-ops.mjs";
+import { createBatch, loadBatch, saveBatch, listBatches } from "../../mutation-engine/review-state.mjs";
+import { acceptMutations } from "../../mutation-engine/rollback.mjs";
+import { StoredMutation } from "../../mutation-engine/schema.mjs";
+import { applyHeadless } from "../../graph-import/headless-apply.mjs";
 import { markHumanReviewed } from "../../mutation-engine/human-review.mjs";
 import { markPrepContentStale } from "../../mutation-engine/prep-content.mjs";
 import {
@@ -65,6 +98,65 @@ import {
   getCurrentEntityNarration
 } from "../../mutation-engine/entity-narration.mjs";
 import { setUndoSlot, consumeUndoSlot, getUndoSlot } from "../../mutation-engine/manual-undo.mjs";
+
+// Every manual edit since the last sync/rollback lands in the SAME batch,
+// found by this scope.mode tag -- see this module's own top-of-file doc
+// comment for why (this is what makes "N manual edits not yet synced" a
+// single coherent count/action, and what lets the existing Sync button work
+// against it unmodified).
+export const MANUAL_EDIT_SCOPE_MODE = "manual-edit";
+
+/** Find this world's currently-open manual-edit batch, or start a fresh one. */
+function findOrCreateManualEditBatch(w) {
+  const open = listBatches(w).find((b) => b.status === "open" && b.scope?.mode === MANUAL_EDIT_SCOPE_MODE);
+  if (open) return loadBatch(w, open.id);
+  return createBatch(w, { mode: MANUAL_EDIT_SCOPE_MODE }, undefined, []);
+}
+
+/**
+ * The actual write mechanism behind every manual write below (create/edit/
+ * delete node/edge, and undo's own inverse) -- see this module's top-of-file
+ * doc comment for the full "why". Applies ALL of `mutationCores` as ONE
+ * atomic headless write (required for deleteNodeOp's cascade: the node's
+ * own re-create AND every cascaded edge's re-create must land in a single
+ * applyHeadless call, exactly as before this phase's change), after
+ * appending them to the world's ongoing manual-edit batch and marking them
+ * accepted (rollback.mjs's acceptMutations, which captures pre-state from
+ * the SAME pre-write entities/edges snapshot this function loads once,
+ * before any of these mutations apply -- matching that function's own "capture
+ * before the mutation is ever applied" contract).
+ *
+ * @param {string} dir
+ * @param {string} w
+ * @param {Array<{op:string, id?:string, data?:object, rationale:string}>} mutationCores
+ * @returns {{batchId:string, mutationIds:string[], headlessResult:object}}
+ */
+function applyManualMutations(dir, w, mutationCores) {
+  const batch = findOrCreateManualEditBatch(w);
+  const mutationIds = [];
+  for (const core of mutationCores) {
+    const mutationId = `m${nextMutationIndex(batch)}`;
+    batch.mutations.push(
+      StoredMutation.parse({ ...core, batchId: batch.id, mutationId, sourceKind: core.sourceKind ?? "manual", status: "pending" })
+    );
+    mutationIds.push(mutationId);
+  }
+  saveBatch(w, batch);
+
+  const { entities, edges } = loadSnapshot(dir, w).snapshot;
+  acceptMutations(w, batch.id, mutationIds, entities, edges);
+
+  const snapshotPath = snapshotFilePath(dir, w);
+  const headlessResult = applyHeadless(snapshotPath, mutationCores.map((c) => ({ op: c.op, id: c.id, data: c.data })));
+
+  return { batchId: batch.id, mutationIds, headlessResult };
+}
+
+/** Single-mutation convenience wrapper over applyManualMutations. */
+function applyManualMutation(dir, w, mutationCore) {
+  const { batchId, mutationIds, headlessResult } = applyManualMutations(dir, w, [mutationCore]);
+  return { batchId, mutationId: mutationIds[0], headlessResult };
+}
 
 /**
  * Same `wf_<ts36>_<random>` convention headless-apply.mjs's own
@@ -120,7 +212,7 @@ export async function addNodeOp(dir, w, fields = {}) {
   const id = makeManualId();
   const data = { id, name, type, ...pickFields(fields, ENTITY_EDITABLE_FIELDS.filter((f) => f !== "name" && f !== "type")) };
 
-  await applyMutationsWithHeadlessFallback(dir, w, [{ op: "upsert_entity", id, data }]);
+  applyManualMutation(dir, w, { op: "upsert_entity", id, data, rationale: `Manual edit: node "${name}" created.` });
   markHumanReviewed(w, [id]);
 
   setUndoSlot(w, {
@@ -152,7 +244,7 @@ export async function addEdgeOp(dir, w, fields = {}) {
   const relationshipType = fields.relationshipType ?? "unspecified";
   const data = { id, sourceId, targetId, relationshipType, ...pickFields(fields, EDGE_EDITABLE_FIELDS.filter((f) => f !== "relationshipType")) };
 
-  await applyMutationsWithHeadlessFallback(dir, w, [{ op: "upsert_edge", id, data }]);
+  applyManualMutation(dir, w, { op: "upsert_edge", id, data, rationale: `Manual edit: edge created (${relationshipType}).` });
   markHumanReviewed(w, [sourceId, targetId]);
 
   setUndoSlot(w, {
@@ -184,7 +276,7 @@ export async function editNodeOp(dir, w, { entityId, data } = {}) {
   const patch = pickFields(data, ENTITY_EDITABLE_FIELDS);
   if (!Object.keys(patch).length) throw new Error("editNodeOp: no recognized editable fields in `data`.");
 
-  await applyMutationsWithHeadlessFallback(dir, w, [{ op: "upsert_entity", id: entityId, data: patch }]);
+  applyManualMutation(dir, w, { op: "upsert_entity", id: entityId, data: patch, rationale: `Manual edit: "${before.name}" edited.` });
   markHumanReviewed(w, [entityId]);
   supersedeEntityNarration(w, entityId);
   markPrepContentStale(w, entityId);
@@ -216,7 +308,7 @@ export async function editEdgeOp(dir, w, { edgeId, data } = {}) {
   const patch = pickFields(data, EDGE_EDITABLE_FIELDS);
   if (!Object.keys(patch).length) throw new Error("editEdgeOp: no recognized editable fields in `data`.");
 
-  await applyMutationsWithHeadlessFallback(dir, w, [{ op: "upsert_edge", id: edgeId, data: patch }]);
+  applyManualMutation(dir, w, { op: "upsert_edge", id: edgeId, data: patch, rationale: `Manual edit: edge (${before.relationshipType}) edited.` });
   markHumanReviewed(w, [before.sourceId, before.targetId]);
 
   setUndoSlot(w, {
@@ -249,7 +341,11 @@ export async function deleteNodeOp(dir, w, { entityId } = {}) {
   if (!before) throw new Error(`No entity "${entityId}" found in the live graph.`);
   const cascadeEdges = edges.filter((e) => e.sourceId === entityId || e.targetId === entityId);
 
-  await applyMutationsWithHeadlessFallback(dir, w, [{ op: "delete_entity", id: entityId }]);
+  applyManualMutation(dir, w, {
+    op: "delete_entity",
+    id: entityId,
+    rationale: `Manual edit: "${before.name}" deleted (with ${cascadeEdges.length} connected edge${cascadeEdges.length === 1 ? "" : "s"}).`
+  });
   supersedeEntityNarration(w, entityId);
   markPrepContentStale(w, entityId);
 
@@ -278,7 +374,7 @@ export async function deleteEdgeOp(dir, w, { edgeId } = {}) {
   const before = edges.find((e) => e.id === edgeId);
   if (!before) throw new Error(`No edge "${edgeId}" found in the live graph.`);
 
-  await applyMutationsWithHeadlessFallback(dir, w, [{ op: "delete_edge", id: edgeId }]);
+  applyManualMutation(dir, w, { op: "delete_edge", id: edgeId, rationale: `Manual edit: edge (${before.relationshipType}) deleted.` });
 
   setUndoSlot(w, {
     kind: "delete_edge",
@@ -326,10 +422,27 @@ export function resetEntityNarrationOp(w, { entityId } = {}) {
 /**
  * The single-slot undo consumer. Reads and CLEARS the slot atomically first
  * (mutation-engine/manual-undo.mjs's consumeUndoSlot), then applies the
- * inverse -- either a graph-mutations array (via the same live-then-headless
- * apply path every write in this module uses) or a narration-history append
+ * inverse -- either a graph-mutations array or a narration-history append
  * (entity-narration.mjs's own saveEntityNarration/supersedeEntityNarration,
  * no new mechanism).
+ *
+ * PHASE 13: undo's own graph-mutations inverse now goes through the SAME
+ * applyManualMutations (headless-immediate, appended to the ongoing
+ * manual-edit batch) every other write in this module uses -- deliberately
+ * NOT the old dual-path live-first function. Routing undo through the live
+ * bridge independently of the batch it's undoing would be a real
+ * correctness risk, not just a speed one: if a live Foundry client happened
+ * to be open, undo's inverse could apply THERE while the original
+ * (still-unsynced, still-accepted-in-the-manual-edit-batch) mutation it's
+ * undoing never got removed from that batch -- a LATER sync of that batch
+ * would then re-apply the original change on top of the live undo,
+ * resurrecting exactly what was just undone. Keeping undo on the same
+ * headless-immediate+batch-accumulation path sidesteps this entirely: both
+ * the original write and its undo end up as two ordinary entries in the
+ * SAME batch (create then delete, say), and syncing that batch later
+ * replays both in order for a net-zero live effect -- always consistent
+ * with the headless snapshot's own already-correct end state, at the cost
+ * of one syncable no-op instead of a rewritten history.
  *
  * @param {string} dir
  * @param {string} w
@@ -340,7 +453,7 @@ export async function undoLastManualEditOp(dir, w) {
   if (!action) return { status: "empty", note: "Nothing to undo." };
 
   if (action.graphMutations) {
-    await applyMutationsWithHeadlessFallback(dir, w, action.graphMutations);
+    applyManualMutations(dir, w, action.graphMutations.map((m) => ({ ...m, rationale: `Undo: ${action.description}` })));
     // Symmetry with the original write: whatever this undo just re-created/
     // re-set never shows up freshly flagged amber either.
     const touchedIds = [...new Set(action.graphMutations.map((m) => m.id).filter(Boolean))];
@@ -367,4 +480,25 @@ export async function undoLastManualEditOp(dir, w) {
 export function getManualUndoStatusOp(w) {
   const action = getUndoSlot(w);
   return { available: !!action, action };
+}
+
+// --- deferred-sync status (Phase 13 task 13.1) ------------------------------
+
+/**
+ * Read-only: the standalone Graph view's "N manual edits not yet synced to
+ * Foundry" affordance -- mirrors the Review screen's existing sync-bar
+ * pattern (review-ui's #review-sync-bar/renderSyncBar), just pointed at the
+ * world's ongoing manual-edit batch (see findOrCreateManualEditBatch above)
+ * instead of a specific already-open reviewed batch. Syncing itself reuses
+ * the EXISTING /api/batches/:batchId/sync route (mutation-ops.mjs's syncOp)
+ * completely unmodified -- this function only reports what to point that
+ * route at.
+ *
+ * @param {string} w
+ * @returns {{batchId:string|null, unsyncedCount:number}}
+ */
+export function getManualEditSyncStatusOp(w) {
+  const open = listBatches(w).find((b) => b.status === "open" && b.scope?.mode === MANUAL_EDIT_SCOPE_MODE);
+  if (!open || !open.acceptedCount) return { batchId: null, unsyncedCount: 0 };
+  return { batchId: open.id, unsyncedCount: open.acceptedCount };
 }

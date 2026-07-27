@@ -126,6 +126,14 @@
     <span id="graph-undo-status" class="hint"></span>
   </div>
 
+  <!-- Phase 13 task 13.1: manual edits now write instantly to the standalone
+       snapshot; pushing them to a live Foundry client is this separate,
+       explicit action -- mirrors #review-sync-bar's exact pattern/markup. -->
+  <div id="graph-sync-bar" class="sync-bar" hidden>
+    <span id="graph-sync-status" class="hint"></span>
+    <button id="btn-graph-sync-now" class="btn btn--accept">Sync to Foundry</button>
+  </div>
+
   <div class="graph-filter-bar">
     <label><input type="checkbox" id="graph-filter-unreviewed" checked> Unreviewed</label>
     <label><input type="checkbox" id="graph-filter-debt" checked> Deferred debt</label>

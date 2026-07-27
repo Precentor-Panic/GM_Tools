@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, before, after } from "node:test";
@@ -11,10 +11,12 @@ import { test, before, after } from "node:test";
  * HTTP requests against an in-process server.listen(0), a fixture world
  * seeded via applyHeadless directly.
  *
- * Runs a background fake mutation-watcher (same convention
- * wf-mcp-server/test/manual-edit-ops.test.mjs already established, one
- * level down at the HTTP boundary here) so every write below takes the fast
- * live-simulated path instead of the full 7s poll-then-headless window.
+ * PHASE 13 TASK 13.1: every write below now goes straight to the headless
+ * snapshot immediately (manual-edit-ops.mjs's applyManualMutations) --
+ * unlike this file's pre-Phase-13 version, no fake mutation-watcher loop is
+ * needed at all, since these writes never touch world-fabric-mutations.json
+ * in the first place. The deferred-sync/live-bridge mechanism itself is
+ * covered separately by wf-mcp-server/test/manual-edit-sync.test.mjs.
  */
 const scratchDir = mkdtempSync(join(tmpdir(), "gm-tools-manual-edit-routes-test-"));
 const dataDir = join(scratchDir, "foundrydata");
@@ -29,33 +31,17 @@ process.env.WF_DATA_DIR = dataDir;
 const WORLD = "manual-edit-routes-test-world";
 process.env.WF_DEFAULT_WORLD = WORLD;
 
-const { snapshotFilePath, mutationsPath } = await import("../../wf-mcp-server/lib/snapshot.mjs");
+const { snapshotFilePath } = await import("../../wf-mcp-server/lib/snapshot.mjs");
 const { bootstrapSnapshot, applyHeadless } = await import("../../graph-import/headless-apply.mjs");
 const { createReviewServer } = await import("../server.mjs");
 
 const snapPath = snapshotFilePath(dataDir, WORLD);
-const mutPath = mutationsPath(dataDir, WORLD);
 bootstrapSnapshot(snapPath, { worldId: WORLD });
 applyHeadless(snapPath, [
   { op: "upsert_entity", data: { id: "farkas", name: "Farkas", type: "person", importance: 0.5 } },
   { op: "upsert_entity", data: { id: "the-forge", name: "The Forge", type: "place", importance: 0.6 } },
   { op: "upsert_edge", data: { id: "farkas-forge-edge", sourceId: "farkas", targetId: "the-forge", relationshipType: "presence" } }
 ]);
-
-let watcherStopped = false;
-const watcherLoop = (async () => {
-  while (!watcherStopped) {
-    if (existsSync(mutPath)) {
-      const contents = readFileSync(mutPath, "utf8").trim();
-      if (contents !== "[]" && contents !== "") {
-        const mutations = JSON.parse(contents);
-        if (Array.isArray(mutations) && mutations.length) applyHeadless(snapPath, mutations);
-        writeFileSync(mutPath, "[]", "utf8");
-      }
-    }
-    await new Promise((r) => setTimeout(r, 30));
-  }
-})();
 
 let server;
 let base;
@@ -68,8 +54,6 @@ before(async () => {
 
 after(async () => {
   await new Promise((resolve) => server.close(resolve));
-  watcherStopped = true;
-  await watcherLoop;
   rmSync(scratchDir, { recursive: true, force: true });
 });
 
@@ -194,6 +178,45 @@ test("POST /api/entities/:entityId/narration/reset appends an empty version and 
 test("POST /api/entities/:entityId/scan-mentions with empty text is a clean 400, no API call", async () => {
   const { status } = await postJson("/api/entities/farkas/scan-mentions", { world: WORLD, dataDir, text: "" });
   assert.equal(status, 400);
+});
+
+// ---------------------------------------------------------------------------
+// Phase 13 task 13.1 -- deferred sync's "N manual edits not yet synced"
+// route, and the existing (unmodified) /sync route reused against it.
+// ---------------------------------------------------------------------------
+
+test("GET /api/manual-edit-sync-status reports 0/null when nothing is unsynced", async () => {
+  // Uses a fresh world so this test is independent of whatever the manual-
+  // edit batch above this point in the file has accumulated.
+  const freshWorld = "manual-edit-routes-sync-status-world";
+  const freshSnap = snapshotFilePath(dataDir, freshWorld);
+  bootstrapSnapshot(freshSnap, { worldId: freshWorld });
+
+  const { status, body } = await getJson(`/api/manual-edit-sync-status?world=${freshWorld}`);
+  assert.equal(status, 200);
+  assert.equal(body.batchId, null);
+  assert.equal(body.unsyncedCount, 0);
+});
+
+test("GET /api/manual-edit-sync-status counts accumulated manual edits, and POST .../sync (the EXISTING route) clears it", async () => {
+  const freshWorld = "manual-edit-routes-sync-status-world-2";
+  const freshSnap = snapshotFilePath(dataDir, freshWorld);
+  bootstrapSnapshot(freshSnap, { worldId: freshWorld });
+
+  await postJson("/api/graph/nodes", { world: freshWorld, name: "Sync Status Node A", type: "concept" });
+  await postJson("/api/graph/nodes", { world: freshWorld, name: "Sync Status Node B", type: "concept" });
+
+  const before = await getJson(`/api/manual-edit-sync-status?world=${freshWorld}`);
+  assert.equal(before.body.unsyncedCount, 2);
+  assert.ok(before.body.batchId);
+
+  const sync = await postJson(`/api/batches/${before.body.batchId}/sync`, { world: freshWorld, dataDir });
+  assert.equal(sync.status, 200);
+  assert.equal(sync.body.syncedCount, 2);
+
+  const after = await getJson(`/api/manual-edit-sync-status?world=${freshWorld}`);
+  assert.equal(after.body.unsyncedCount, 0, "the sync-bar's own affordance must clear once synced");
+  assert.equal(after.body.batchId, null);
 });
 
 console.log("manual-edit-routes.test.mjs: all node:test cases registered.");

@@ -89,7 +89,8 @@ import {
   deleteEdgeOp,
   resetEntityNarrationOp,
   undoLastManualEditOp,
-  getManualUndoStatusOp
+  getManualUndoStatusOp,
+  getManualEditSyncStatusOp
 } from "../wf-mcp-server/lib/manual-edit-ops.mjs";
 
 // Phase 11 -- per-node content generation ("develop this node"). A
@@ -871,6 +872,15 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world ?? q.get("world"));
     const result = await deleteEdgeOp(dir, w, { edgeId: parts[3] });
     return sendJson(res, 200, result);
+  }
+
+  // GET /api/manual-edit-sync-status?world=...  -- Phase 13 task 13.1: "N
+  // manual edits not yet synced to Foundry" affordance. Syncing reuses the
+  // EXISTING /api/batches/:batchId/sync route below (syncOp) unmodified --
+  // this route only reports which batchId to point that route at.
+  if (method === "GET" && parts.length === 2 && parts[1] === "manual-edit-sync-status") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, getManualEditSyncStatusOp(w));
   }
 
   // GET /api/manual-undo?world=...  -- toolbar/toast status, read-only, never consumes the slot

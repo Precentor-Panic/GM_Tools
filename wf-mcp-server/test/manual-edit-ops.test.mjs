@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,12 +14,15 @@ import { join } from "node:path";
  * one layer down from the HTTP boundary (review-ui/test/manual-edit-routes.test.mjs
  * covers the HTTP layer itself).
  *
- * Runs a background fake mutation-watcher loop (same convention
- * sync-headless.test.mjs already established) so every write below takes
- * the FAST live-Foundry-simulated path rather than waiting out the full 7s
- * poll-then-headless-fallback window on every single call -- except one
- * test near the end which deliberately pauses the watcher to prove the
- * headless fallback path also works correctly for a representative action.
+ * PHASE 13 TASK 13.1: every write below now goes straight to the headless
+ * snapshot immediately (no live-Foundry-poll at all) -- so unlike this
+ * file's pre-Phase-13 version, no fake mutation-watcher loop is needed here
+ * at all; every assertion below observes the snapshot synchronously. The
+ * live-bridge/deferred-sync mechanism itself (the thing that DOES still
+ * need a simulated watcher) is covered separately and in depth by
+ * wf-mcp-server/test/manual-edit-sync.test.mjs -- this file stays focused on
+ * "do the six write kinds and undo still work correctly," re-verified after
+ * Phase 13's write-path change per the task's own explicit instruction.
  */
 const scratchDir = mkdtempSync(join(tmpdir(), "gm-tools-manual-edit-ops-test-"));
 const dataDir = join(scratchDir, "foundrydata");
@@ -30,9 +33,10 @@ process.env.GM_TOOLS_PREP_CONTENT_DIR = join(scratchDir, "prep-content");
 process.env.GM_TOOLS_MANUAL_UNDO_DIR = join(scratchDir, "manual-undo");
 process.env.WF_DATA_DIR = dataDir;
 
-const { snapshotFilePath, mutationsPath, loadSnapshot } = await import("../lib/snapshot.mjs");
+const { snapshotFilePath, loadSnapshot } = await import("../lib/snapshot.mjs");
 const { bootstrapSnapshot, applyHeadless } = await import("../../graph-import/headless-apply.mjs");
 const { getUndoSlot } = await import("../../mutation-engine/manual-undo.mjs");
+const { listBatches } = await import("../../mutation-engine/review-state.mjs");
 const { saveEntityNarration, getCurrentEntityNarration, getEntityNarrationHistory } =
   await import("../../mutation-engine/entity-narration.mjs");
 const {
@@ -44,48 +48,19 @@ const {
   deleteEdgeOp,
   resetEntityNarrationOp,
   undoLastManualEditOp,
-  getManualUndoStatusOp
+  getManualUndoStatusOp,
+  getManualEditSyncStatusOp,
+  MANUAL_EDIT_SCOPE_MODE
 } = await import("../lib/manual-edit-ops.mjs");
 
 const WORLD = "manual-edit-ops-test-world";
 const snapPath = snapshotFilePath(dataDir, WORLD);
-const mutPath = mutationsPath(dataDir, WORLD);
 bootstrapSnapshot(snapPath, { worldId: WORLD });
 applyHeadless(snapPath, [
   { op: "upsert_entity", data: { id: "kael", name: "Kael", type: "person", importance: 0.5 } },
   { op: "upsert_entity", data: { id: "the-anvil", name: "The Anvil Inn", type: "place", importance: 0.6 } },
   { op: "upsert_edge", data: { id: "kael-anvil-edge", sourceId: "kael", targetId: "the-anvil", relationshipType: "presence" } }
 ]);
-
-// Fake mutation watcher: mirrors graph-service.mjs's own startMutationWatcher
-// (poll, apply, clear to "[]" once populated) so applyMutationsWithHeadlessFallback's
-// live-path poll resolves in well under a second instead of waiting out its
-// full 7s window on every call. Unlike sync-headless.test.mjs's simpler
-// simulation (which only clears the file and explicitly does NOT touch the
-// snapshot, since that test only asserts on path='live'/'headless' status),
-// THIS test needs the snapshot to genuinely reflect each write so its
-// before/after entity-state assertions are real -- so this fake watcher
-// actually applies the mutations (via the SAME applyHeadless() a real
-// in-browser GraphService.applyMutations()+exportSnapshot() would produce an
-// equivalent on-disk result to) before clearing the file, rather than a
-// no-op clear.
-let watcherActive = true;
-let stopWatcher = false;
-const watcherLoop = (async () => {
-  while (!stopWatcher) {
-    if (watcherActive && existsSync(mutPath)) {
-      const contents = readFileSync(mutPath, "utf8").trim();
-      if (contents !== "[]" && contents !== "") {
-        const mutations = JSON.parse(contents);
-        if (Array.isArray(mutations) && mutations.length) {
-          applyHeadless(snapPath, mutations);
-        }
-        writeFileSync(mutPath, "[]", "utf8");
-      }
-    }
-    await new Promise((r) => setTimeout(r, 30));
-  }
-})();
 
 function entities() {
   return loadSnapshot(dataDir, WORLD).snapshot.entities;
@@ -339,13 +314,14 @@ await test("getManualUndoStatusOp reflects an empty vs. populated slot without c
   await undoLastManualEditOp(dataDir, WORLD);
 });
 
-// ---------------------------------------------------------------- headless fallback path (one representative case)
+// ---------------------------------------------------------------- Phase 13 task 13.1: headless-immediate write path
 
-await test("headless fallback: when no live client picks up the mutation, addNodeOp still applies correctly (and is still undoable)", async () => {
-  watcherActive = false; // simulate "Foundry closed" for this one call
+await test("every manual write applies directly to the headless snapshot with no live-Foundry-poll wait -- addNodeOp completes in well under a second", async () => {
   const before = entities().length;
+  const start = Date.now();
   const result = await addNodeOp(dataDir, WORLD, { name: "Headless-Path Node", type: "concept" });
-  watcherActive = true;
+  const elapsedMs = Date.now() - start;
+  assert.ok(elapsedMs < 1000, `expected well under 1000ms; took ${elapsedMs}ms`);
   assert.equal(entities().length, before + 1);
   assert.ok(findEntity(result.entityId));
   const undoResult = await undoLastManualEditOp(dataDir, WORLD);
@@ -353,7 +329,31 @@ await test("headless fallback: when no live client picks up the mutation, addNod
   assert.equal(findEntity(result.entityId), undefined);
 });
 
+await test("manual writes accumulate into ONE open manual-edit batch (never synced across this whole file, per this project's own accumulate-until-sync design), auto-accepted at creation, surfaced by getManualEditSyncStatusOp", async () => {
+  // This world's manual-edit batch has been accumulating since the very
+  // first write earlier in this file (it's never synced here -- that's
+  // covered separately by manual-edit-sync.test.mjs), so this test asserts
+  // on DELTAS, not absolute counts.
+  const openBefore = listBatches(WORLD).find((b) => b.scope?.mode === MANUAL_EDIT_SCOPE_MODE && b.status === "open");
+  const countBefore = openBefore?.acceptedCount ?? 0;
+
+  await addNodeOp(dataDir, WORLD, { name: "Accumulator Node A", type: "concept" });
+  await addNodeOp(dataDir, WORLD, { name: "Accumulator Node B", type: "concept" });
+
+  const stillOnlyOneOpenManualEditBatch = listBatches(WORLD).filter((b) => b.scope?.mode === MANUAL_EDIT_SCOPE_MODE && b.status === "open");
+  assert.equal(stillOnlyOneOpenManualEditBatch.length, 1, "every manual edit in this world, across every test, lands in the SAME single open batch, not a new one each time");
+  const openAfter = stillOnlyOneOpenManualEditBatch[0];
+  assert.equal(openAfter.acceptedCount, countBefore + 2, "two more manual edits must add exactly two more accepted mutations to the SAME batch");
+  assert.equal(openAfter.status, "open", "the batch itself stays open even though its mutations are accepted -- this is what keeps it in the Queue/sync-bar until an explicit Sync");
+
+  const status = getManualEditSyncStatusOp(WORLD);
+  assert.equal(status.batchId, openAfter.id);
+  assert.equal(status.unsyncedCount, countBefore + 2);
+
+  // Clean up via undo (twice -- last-write-wins slot, one action per undo call).
+  await undoLastManualEditOp(dataDir, WORLD);
+  await undoLastManualEditOp(dataDir, WORLD);
+});
+
 console.log(`\n${passed} test(s) passed.`);
-stopWatcher = true;
-await watcherLoop;
 rmSync(scratchDir, { recursive: true, force: true });
