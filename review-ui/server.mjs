@@ -68,6 +68,7 @@ import {
   selectFramingForExistingBatch,
   rejectWithLoopOp,
   narrateEntityOp,
+  narrateEntityStandaloneOp,
   getEntityNarrationOp,
   getEntityNarrationHistoryOp,
   scanMentionsOp,
@@ -143,6 +144,7 @@ function statusForError(err) {
   // Phase 11: same conflict, one level down (a single entity's prep-content
   // framing round, not a whole writeup-import batch).
   if (err.name === "PrepFramingRoundLimitError") return 409;
+  if (err.name === "NoNarratableBatchError") return 404; // task 14.7: no accepted mutation exists yet for this entity
   if (/already exists/i.test(err.message ?? "")) return 409; // task 14.2: creating a world id that's already taken
   if (/no (batch|region|entity|world|snapshot) found/i.test(err.message ?? "")) return 404;
   if (/not found/i.test(err.message ?? "")) return 404;
@@ -770,6 +772,20 @@ async function handleApi(req, res, url, parts) {
   if (method === "GET" && parts.length === 4 && parts[1] === "entities" && parts[3] === "narration-history") {
     const w = resolveWorld(q.get("world"));
     return sendJson(res, 200, getEntityNarrationHistoryOp(w, { entityId: parts[2] }));
+  }
+
+  // POST /api/entities/:entityId/narrate  { world, dataDir, note }
+  // Task 14.7: "Narrate This" from the standalone entity page, which has no
+  // batchId of its own to call narrate-entity with directly. Looks up the
+  // most recent batch/mutation that genuinely addressed this entity and
+  // narrates that (narrateEntityStandaloneOp); throws NoNarratableBatchError
+  // (mapped to a clean 404 below, never a silent no-op) if nothing ever has.
+  if (method === "POST" && parts.length === 4 && parts[1] === "entities" && parts[3] === "narrate") {
+    const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
+    const w = resolveWorld(body.world);
+    const result = await narrateEntityStandaloneOp(dir, w, { entityId: parts[2], note: body.note });
+    return sendJson(res, 200, result);
   }
 
   // POST /api/batches/:batchId/sync  { world, dataDir }

@@ -21,7 +21,7 @@ import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { loadSnapshot, mutationsPath, snapshotFilePath } from "./snapshot.mjs";
 
 import { textureRegion } from "../../mutation-engine/texture.mjs";
-import { loadBatch, saveBatch, updateMutationStatus } from "../../mutation-engine/review-state.mjs";
+import { loadBatch, saveBatch, updateMutationStatus, listBatches } from "../../mutation-engine/review-state.mjs";
 import { summarizeBatch, renderHeadline, renderRegionDiff, renderEntityDiff } from "../../mutation-engine/grain.mjs";
 import { acceptMutations, rollbackBatch } from "../../mutation-engine/rollback.mjs";
 import { applyLedgerOutcome } from "../../mutation-engine/pending-ledger.mjs";
@@ -790,6 +790,73 @@ export async function narrateEntityOp(dir, w, { batchId, mutationId, note }) {
   const batch = loadBatch(w, batchId);
   const { entities, edges } = loadSnapshot(dir, w).snapshot;
   return narrateEntity(batch, mutationId, { world: w, entities, edges, note }, {});
+}
+
+// --- Task 14.7: "Narrate This" from the standalone entity page --------------
+
+/**
+ * Thrown by narrateEntityStandaloneOp when no batch has ever recorded an
+ * accepted mutation for the requested entity -- mapped to a clean 404 by
+ * review-ui/server.mjs's statusForError, matching every other typed-error
+ * convention in this file (NarrationGateError, FramingRoundLimitError, ...).
+ * The whole point of this class existing is task 14.7's hard requirement:
+ * never silently do nothing when there's nothing narratable -- the caller
+ * gets a real, catchable signal to show a clear message with, not a generic
+ * 500 or an empty success response.
+ */
+export class NoNarratableBatchError extends Error {
+  constructor(message, { entityId } = {}) {
+    super(message);
+    this.name = "NoNarratableBatchError";
+    this.entityId = entityId;
+  }
+}
+
+/**
+ * The most recent (newest-first, per listBatches' own established order)
+ * batch carrying an ACCEPTED mutation that genuinely targets this entity --
+ * an upsert_entity/delete_entity op whose own `id` matches. Deliberately
+ * excludes edge mutations that merely reference this entity as an endpoint:
+ * task 14.7 is "narrate what changed about THIS entity," and an edge
+ * mutation's own rationale is naturally framed around the relationship, not
+ * this entity's own state -- narrateEntity's summary is built from exactly
+ * the one targeted mutation, so picking an edge mutation here would produce
+ * a narration that reads like it's about the wrong thing.
+ */
+function findMostRecentAcceptedMutationForEntity(w, entityId) {
+  for (const summary of listBatches(w)) {
+    const batch = loadBatch(w, summary.id);
+    const entry = batch.mutations.find(
+      (m) => m.id === entityId && (m.op === "upsert_entity" || m.op === "delete_entity") && m.status === "accepted"
+    );
+    if (entry) return { batch, mutationId: entry.mutationId };
+  }
+  return null;
+}
+
+/**
+ * review-ui's standalone entity-detail page has no batch context of its own
+ * to call narrateEntityOp with directly (unlike Batch Review's per-row
+ * "Narrate This", which always knows its own batchId/mutationId) -- this is
+ * the entity-page equivalent: look up the most recent batch/mutation that
+ * genuinely addressed this entity and reuse narrateEntity() exactly as the
+ * batch-scoped path already does (approach (a) from the task's own design
+ * reasoning -- reuses existing infrastructure rather than inventing a
+ * second, simpler-but-different kind of narration). No MCP tool wraps this
+ * -- review-ui/server.mjs's standalone entity route is the only caller.
+ */
+export async function narrateEntityStandaloneOp(dir, w, { entityId, note }) {
+  const found = findMostRecentAcceptedMutationForEntity(w, entityId);
+  if (!found) {
+    throw new NoNarratableBatchError(
+      `No accepted mutation for entity "${entityId}" exists in any batch yet -- there's nothing to narrate. ` +
+      `"Narrate This" describes what recently changed about an entity, so it needs at least one accepted ` +
+      `mutation touching it first (via Batch Review, a manual edit, or an import that mentions it).`,
+      { entityId }
+    );
+  }
+  const { entities, edges } = loadSnapshot(dir, w).snapshot;
+  return narrateEntity(found.batch, found.mutationId, { world: w, entities, edges, note }, {});
 }
 
 /** wf_get_entity_narration / review-ui's per-row narration fetch: the one entry with status:'current', or null if never narrated (or superseded with nothing to replace it yet). */

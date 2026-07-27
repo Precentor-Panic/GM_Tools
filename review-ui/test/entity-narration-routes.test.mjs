@@ -156,3 +156,27 @@ test("an unknown route still returns a clean 404 alongside the new entity-narrat
   const { status } = await getJson("/api/entities/x/not-a-real-route");
   assert.equal(status, 404);
 });
+
+// ---------------------------------------------------------------------------
+// Task 14.7: "Narrate This" from the standalone entity page (no batch
+// context of its own). The GATE case (nothing narratable) is fully
+// deterministic -- it fails before any model call is ever made, same as
+// every other narration gate in this file. The SUCCESS case (a real batch
+// exists) requires narrateEntity()'s actual model call, covered by the
+// sibling routes-live.smoke.mjs's own real-API test.
+// ---------------------------------------------------------------------------
+
+test("POST /api/entities/:id/narrate on an entity with NO accepted mutation anywhere is a clean 404, not a silent no-op or a crash", async () => {
+  const { status, body } = await postJson("/api/entities/completely-untouched-entity/narrate", { world: WORLD });
+  assert.equal(status, 404);
+  assert.equal(body.name, "NoNarratableBatchError");
+  assert.match(body.error, /nothing to narrate/i);
+});
+
+test("POST /api/entities/:id/narrate is ALSO a clean 404 when the entity has a mutation that's still pending (not yet accepted)", async () => {
+  const batch = makeTwoMutationBatch();
+  // Neither m0 nor m1 has been accepted yet.
+  const { status, body } = await postJson(`/api/entities/${batch.idA}/narrate`, { world: WORLD });
+  assert.equal(status, 404);
+  assert.equal(body.name, "NoNarratableBatchError");
+});

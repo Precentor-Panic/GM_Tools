@@ -2227,6 +2227,48 @@ async function renderEntityDetail(entityId) {
  * a lighter-weight reset confirm than delete's, per the design doc's own
  * wording.
  */
+/**
+ * Task 14.7: the "Narrate This" button + status row for the standalone
+ * entity-detail page. Never silently does nothing on failure -- a clean
+ * 404 (NoNarratableBatchError, "nothing accepted for this entity yet") gets
+ * its own clear, specific message rather than a generic "failed" string,
+ * matching the task's own hard requirement.
+ */
+function appendNarrateThisButton(entity, wrap) {
+  const row = document.createElement("div");
+  row.className = "narrate-this-row";
+  const btn = document.createElement("button");
+  btn.className = "btn btn--ghost";
+  btn.textContent = "Narrate This";
+  const statusEl = document.createElement("span");
+  statusEl.className = "hint";
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    statusEl.textContent = "";
+    const slowNotice = setTimeout(() => {
+      statusEl.textContent = "Still working — narration calls typically take several seconds…";
+    }, 1500);
+    try {
+      await api(`/api/entities/${encodeURIComponent(entity.id)}/narrate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: CURRENT_WORLD })
+      });
+      clearTimeout(slowNotice);
+      showToast("Narrated.");
+      await renderEntityNarrationSection(entity); // re-fetch + re-render, including this same button
+    } catch (err) {
+      clearTimeout(slowNotice);
+      btn.disabled = false;
+      statusEl.textContent = err.status === 404 && err.body?.name === "NoNarratableBatchError"
+        ? "Nothing to narrate yet — this entity has no accepted change in any batch. Accept a mutation touching it first (via Batch Review, a manual edit, or an import), then try again."
+        : `Narrate failed: ${err.message}`;
+    }
+  });
+  row.append(btn, statusEl);
+  wrap.appendChild(row);
+}
+
 async function renderEntityNarrationSection(entity) {
   const wrap = document.getElementById("entity-detail-narration");
   wrap.innerHTML = "";
@@ -2240,6 +2282,15 @@ async function renderEntityNarrationSection(entity) {
   label.className = "section-label";
   label.textContent = "Narration";
   wrap.appendChild(label);
+
+  // Task 14.7 (QA-pass finding): "Narrate This" was completely unreachable
+  // from this page -- narrateEntity() needs a specific accepted mutation
+  // within a specific batch, and this page has no batch context of its own.
+  // POST /api/entities/:id/narrate (server-side) looks up the most recent
+  // batch that genuinely addressed this entity and narrates that. Always
+  // rendered here (whether or not a current narration already exists) --
+  // works the same as a fresh narrate OR a deliberate re-narrate.
+  appendNarrateThisButton(entity, wrap);
 
   // Real gap found via visual verification: this function used to `return`
   // early right here for the "no current narration" case (including

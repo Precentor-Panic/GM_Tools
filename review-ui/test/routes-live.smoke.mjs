@@ -180,6 +180,33 @@ await test("POST /api/pending-entities/:id/resolve produces a real synthesized d
   assert.ok(!after.body.entities.find((e) => e.entityId === "riverwood"), "riverwood's entries should be locked out of the AVAILABLE list once proposed for resolve");
 });
 
+await test("Task 14.7: POST /api/entities/:id/narrate (standalone entity page, no batch context) finds the most recent accepted batch and narrates it (real API call)", async () => {
+  const batch = createBatch(WORLD, { mode: "manual" }, "a quiet afternoon", [
+    {
+      op: "upsert_entity",
+      id: "alvor",
+      data: { description: "Back at the forge, hammering out a new set of horseshoes." },
+      rationale: "A quiet day of ordinary work.",
+      batchId: "placeholder",
+      sourceKind: "manual",
+      entityContext: { name: "Alvor", importance: 0.6, tags: [] }
+    }
+  ]);
+  const accept = await postJson(`/api/batches/${batch.id}/accept`, { world: WORLD, scope: "batch" });
+  assert.equal(accept.status, 200);
+
+  const narrate = await postJson("/api/entities/alvor/narrate", { world: WORLD });
+  assert.equal(narrate.status, 200, `expected 200; got ${JSON.stringify(narrate.body)}`);
+  assert.equal(narrate.body.entityId, "alvor");
+  assert.equal(narrate.body.batchId, batch.id, "should have found and narrated THIS batch (the one with the accepted mutation)");
+  assert.ok(typeof narrate.body.prose === "string" && narrate.body.prose.length > 0, "should return real, non-empty prose");
+  console.log(`\n    --- standalone entity-page narration prose ---\n    ${narrate.body.prose.replace(/\n/g, "\n    ")}\n`);
+
+  // Durably persisted, same as the batch-scoped narrate-entity path.
+  const current = await getJson(`/api/entities/alvor/narration?world=${WORLD}`);
+  assert.equal(current.body.narration.prose, narrate.body.prose);
+});
+
 await new Promise((resolve) => server.close(resolve));
 rmSync(scratchDir, { recursive: true, force: true });
 
