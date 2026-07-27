@@ -12,11 +12,15 @@ import { join } from "node:path";
  * then exercises redirectMentionScanRowToExistingOp against it.
  */
 const scratchDir = mkdtempSync(join(tmpdir(), "gm-tools-redirect-mention-scan-test-"));
+const dataDir = join(scratchDir, "foundrydata");
 process.env.GM_TOOLS_REVIEW_STATE_DIR = join(scratchDir, "review-state");
+process.env.WF_DATA_DIR = dataDir;
 
 const { previewMentionScan } = await import("../../graph-import/scan-mentions.mjs");
 const { createBatch, loadBatch } = await import("../../mutation-engine/review-state.mjs");
 const { redirectMentionScanRowToExistingOp, acceptMutationIds } = await import("../lib/mutation-ops.mjs");
+const { snapshotFilePath } = await import("../lib/snapshot.mjs");
+const { bootstrapSnapshot, applyHeadless } = await import("../../graph-import/headless-apply.mjs");
 
 const WORLD = "redirect-mention-scan-test-world";
 
@@ -28,6 +32,14 @@ const existingSnapshot = {
   edges: [],
   entityTypes: []
 };
+
+// A real snapshot file is needed too now -- redirectMentionScanRowToExistingOp
+// validates existingEntityId against the live graph (self-review remediation:
+// defense-in-depth against a direct/buggy caller pointing a redirect at a
+// nonexistent id), matching addEdgeOp's own established validation convention.
+const snapPath = snapshotFilePath(dataDir, WORLD);
+bootstrapSnapshot(snapPath, { worldId: WORLD });
+applyHeadless(snapPath, existingSnapshot.entities.map((e) => ({ op: "upsert_entity", data: e })));
 
 let idCounter = 0;
 const makeId = () => `wf_test_${idCounter++}`;
@@ -68,7 +80,7 @@ await test('redirectMentionScanRowToExistingOp: converts the CREATE row into a g
   const createEntry = batch.mutations.find((m) => m.op === "upsert_entity");
   const originalMutationId = createEntry.mutationId;
 
-  const result = redirectMentionScanRowToExistingOp(WORLD, {
+  const result = redirectMentionScanRowToExistingOp(dataDir, WORLD, {
     batchId: batch.id,
     mutationId: originalMutationId,
     existingEntityId: "mira",
@@ -92,7 +104,7 @@ await test("redirecting then accepting the batch creates the edge, NOT a duplica
   const batch = buildScanBatch([{ name: "Gorrim the Smith", type: "person", description: "A blacksmith." }]);
   const createEntry = batch.mutations.find((m) => m.op === "upsert_entity");
 
-  redirectMentionScanRowToExistingOp(WORLD, {
+  redirectMentionScanRowToExistingOp(dataDir, WORLD, {
     batchId: batch.id,
     mutationId: createEntry.mutationId,
     existingEntityId: "mira"
@@ -120,7 +132,7 @@ await test("redirect refuses a non-pending row", () => {
     edges: existingSnapshot.edges
   });
   assert.throws(
-    () => redirectMentionScanRowToExistingOp(WORLD, { batchId: batch.id, mutationId: createEntry.mutationId, existingEntityId: "mira" }),
+    () => redirectMentionScanRowToExistingOp(dataDir, WORLD, { batchId: batch.id, mutationId: createEntry.mutationId, existingEntityId: "mira" }),
     /not pending/
   );
 });
@@ -130,7 +142,7 @@ await test("redirect refuses a LINK row (already correct by definition) and a no
   const linkEntry = linkBatch.mutations.find((m) => m.op === "upsert_edge");
   assert.equal(linkEntry.entityContext.scanResultKind, "link");
   assert.throws(
-    () => redirectMentionScanRowToExistingOp(WORLD, { batchId: linkBatch.id, mutationId: linkEntry.mutationId, existingEntityId: "kael" }),
+    () => redirectMentionScanRowToExistingOp(dataDir, WORLD, { batchId: linkBatch.id, mutationId: linkEntry.mutationId, existingEntityId: "kael" }),
     /propose new/
   );
 
@@ -142,8 +154,17 @@ await test("redirect refuses a LINK row (already correct by definition) and a no
     { makeId: () => `batch_redirect_test_manual_${idCounter++}` }
   );
   assert.throws(
-    () => redirectMentionScanRowToExistingOp(WORLD, { batchId: manualBatch.id, mutationId: manualBatch.mutations[0].mutationId, existingEntityId: "kael" }),
+    () => redirectMentionScanRowToExistingOp(dataDir, WORLD, { batchId: manualBatch.id, mutationId: manualBatch.mutations[0].mutationId, existingEntityId: "kael" }),
     /not a mention-scan batch/
+  );
+});
+
+await test("self-review remediation: redirect refuses a nonexistent existingEntityId rather than silently pointing the mutation at garbage", () => {
+  const batch = buildScanBatch([{ name: "Gorrim the Smith", type: "person" }]);
+  const createEntry = batch.mutations.find((m) => m.op === "upsert_entity");
+  assert.throws(
+    () => redirectMentionScanRowToExistingOp(dataDir, WORLD, { batchId: batch.id, mutationId: createEntry.mutationId, existingEntityId: "no-such-entity" }),
+    /No entity "no-such-entity" found/
   );
 });
 

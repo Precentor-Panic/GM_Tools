@@ -949,11 +949,12 @@ async function handleApi(req, res, url, parts) {
   // to an already-existing entity instead of creating a duplicate.
   if (method === "POST" && parts.length === 6 && parts[1] === "batches" && parts[3] === "mutations" && parts[5] === "redirect-to-existing") {
     const body = await readBody(req);
+    const dir = resolveDir(body.dataDir);
     const w = resolveWorld(body.world);
     if (typeof body.existingEntityId !== "string" || !body.existingEntityId.trim()) {
       throw new Error("POST .../redirect-to-existing requires a non-empty `existingEntityId`.");
     }
-    const result = redirectMentionScanRowToExistingOp(w, {
+    const result = redirectMentionScanRowToExistingOp(dir, w, {
       batchId: parts[2],
       mutationId: parts[4],
       existingEntityId: body.existingEntityId,

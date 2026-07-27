@@ -698,12 +698,24 @@ export function patchPendingMutationData(w, { batchId, mutationId, data }) {
  * never be created -- leaving exactly ONE mutation for this mention, a real
  * `upsert_edge` targeting the chosen existing id, not a modified create.
  *
+ * Validates `existingEntityId` against the real live snapshot (matching
+ * this project's own established defensive convention -- e.g.
+ * manual-edit-ops.mjs's addEdgeOp validates sourceId/targetId the same
+ * way) rather than trusting the caller: the frontend's own picker only ever
+ * offers real fetched entities, but a direct/buggy caller shouldn't be able
+ * to silently point a mutation at a nonexistent id.
+ *
+ * @param {string} dir
  * @param {string} w
  * @param {{batchId:string, mutationId:string, existingEntityId:string, existingEntityName?:string}} args
  * @returns {{batchId:string, mutationId:string, redirectedTo:string}}
  */
-export function redirectMentionScanRowToExistingOp(w, { batchId, mutationId, existingEntityId, existingEntityName }) {
+export function redirectMentionScanRowToExistingOp(dir, w, { batchId, mutationId, existingEntityId, existingEntityName }) {
   if (!existingEntityId) throw new Error("redirectMentionScanRowToExistingOp requires existingEntityId.");
+  const { entities } = loadSnapshot(dir, w).snapshot;
+  if (!entities.some((e) => e.id === existingEntityId)) {
+    throw new Error(`No entity "${existingEntityId}" found in the live graph -- cannot redirect to a nonexistent entity.`);
+  }
   const batch = loadBatch(w, batchId);
   if (batch.scope?.mode !== "mention-scan") {
     throw new Error(`Batch "${batchId}" is not a mention-scan batch -- "link to existing instead" only applies there.`);
