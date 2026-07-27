@@ -288,7 +288,17 @@ function dedupedScan(w, entityId, text, runScan) {
   const entry = { promise, settledAt: null };
   recentScans.set(key, entry);
   promise.then(
-    () => { entry.settledAt = Date.now(); },
+    () => {
+      entry.settledAt = Date.now();
+      // Self-review remediation: without this, a successfully-settled entry
+      // would sit in `recentScans` for the server process's ENTIRE lifetime
+      // (only ever unreachable, never removed) -- an unbounded-growth leak
+      // over a long-running session with many distinct (world, entity,
+      // text) scans. Bound it to roughly "the current dedupe window's worth
+      // of history" instead -- only remove THIS entry, and only if nothing
+      // newer has already replaced it under the same key.
+      setTimeout(() => { if (recentScans.get(key) === entry) recentScans.delete(key); }, SCAN_DEDUPE_WINDOW_MS).unref?.();
+    },
     () => { recentScans.delete(key); } // a failed scan should NOT be cached -- a real retry after an error must actually retry
   );
   return promise;
