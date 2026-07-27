@@ -391,6 +391,57 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .graph-legend-item { display: inline-flex; align-items: center; gap: 0.3rem; }
 .graph-legend-swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 
+/* --- Phase 12: interactive graph editor --- */
+.graph-editor-toolbar { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; }
+.graph-editor-toolbar .btn--ghost:disabled { opacity: 0.4; }
+
+.entity-detail-narration { margin: 0.75rem 0 1rem; }
+.entity-detail-narration .narration-reset-row { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.4rem; }
+.entity-detail-narration .narration-reset-confirm { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.4rem; }
+
+/* --- Phase 12 task 12.5: scan-for-mentioned-entities badges (Batch Review) --- */
+.scan-badge {
+  display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.7rem; font-weight: 700;
+  padding: 0.05rem 0.4rem; border-radius: 999px; margin-right: 0.4rem; text-transform: uppercase; letter-spacing: 0.02em;
+}
+.scan-badge--link { background: var(--pill-accepted-bg); color: var(--pill-accepted-text); }
+.scan-badge--new { background: var(--amber-bg); color: var(--amber); }
+.mutation-row.scan-link { border-left-color: var(--accent); }
+.mutation-row.scan-new { border-left-color: var(--amber); }
+.scan-accept-split { display: flex; gap: 0.5rem; margin: 0.4rem 0 0.6rem; flex-wrap: wrap; }
+
+/* placement mode ("+ Add Node" armed, waiting for a click) -- crosshair
+   cursor + a dimmed canvas, per the design doc's [DECIDED] shape. */
+.graph-view-container.graph-placement-active { cursor: crosshair; }
+.graph-view-container.graph-placement-active .graph-svg { opacity: 0.55; }
+
+.graph-edge-hitarea { stroke: transparent; stroke-width: 12; cursor: pointer; }
+.graph-edge-draw-line { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4,3; pointer-events: none; }
+
+.graph-popover-metablock {
+  font-size: 0.76rem; color: var(--text-muted); background: var(--card-bg);
+  border-radius: 5px; padding: 0.3rem 0.45rem; margin-bottom: 0.45rem; line-height: 1.5;
+}
+.graph-popover-editrow { display: flex; align-items: center; gap: 0.3rem; margin-top: 0.3rem; flex-wrap: wrap; }
+.graph-popover-editrow .icon-btn { font-size: 0.85rem; padding: 0.15rem 0.4rem; border: 1px solid var(--border); border-radius: 5px; }
+.graph-popover-edit-btn:hover { background: var(--card-bg); }
+.graph-popover-delete-btn { color: var(--reject); }
+.graph-popover-delete-btn:hover { background: var(--amber-bg); }
+.graph-popover-scan-btn { font-weight: 600; }
+
+.graph-create-form, .graph-edit-form { min-width: 220px; max-width: 300px; }
+.graph-form-field { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.4rem; }
+.graph-form-field input[type="text"], .graph-form-field input[type="number"],
+.graph-form-field select, .graph-form-field textarea {
+  font-size: 0.85rem; padding: 0.3rem 0.45rem; border-radius: 5px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font-family: inherit; resize: vertical;
+}
+.graph-form-field--checkbox { flex-direction: row; align-items: center; gap: 0.4rem; }
+.graph-form-field--checkbox input { width: 1rem; height: 1rem; }
+.graph-form-status { min-height: 1em; margin: 0.2rem 0; color: var(--reject); }
+
+.graph-delete-confirm { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.3rem; }
+
 /* --- standalone Graph nav view (task 7.4) --- */
 .graph-filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-bottom: 0.6rem; }
 .graph-filter-bar label { display: flex; align-items: center; gap: 0.3rem; font-size: 0.88rem; cursor: pointer; }

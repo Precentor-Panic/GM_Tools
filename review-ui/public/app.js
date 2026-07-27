@@ -4,7 +4,7 @@
 // standalone Graph nav view -- imported as an ES module (index.html's
 // <script> tag was switched to type="module" for this).
 "use strict";
-import { renderGraph } from "./graph-view.js";
+import { renderGraph, showCreateNodeForm, armPlacementMode, seedNodePosition, removeNodePosition } from "./graph-view.js";
 
 // ---------------------------------------------------------------------------
 // world selection
@@ -305,7 +305,63 @@ function batchExplainerText(scope) {
   if (mode === "resolve-pending") {
     return "This batch resolves a backlog of deferred changes for an entity you asked about, synthesized across every cycle that touched it.";
   }
+  if (mode === "mention-scan") {
+    return `This batch scanned ${scope.sourceEntityName ?? "an entity"}'s content for other entities it mentions — links to ones that already exist, and proposals for ones that don't.`;
+  }
   return "";
+}
+
+/**
+ * Phase 12 task 12.5: "Split any 'Accept All' into Accept all links / Accept
+ * all new entities so a bulk accept can't blur the distinction" -- rendered
+ * ONLY for a mention-scan batch (checked via detail.batch.scope.mode, the
+ * same field batchExplainerText already keys off), replacing nothing --
+ * this sits ALONGSIDE the existing generic action bar (Select All/None,
+ * Accept/Reject Selected), which still works normally for a mixed or
+ * partial selection.
+ */
+function renderScanAcceptSplit(detail) {
+  const existing = document.getElementById("scan-accept-split");
+  existing?.remove();
+  if (detail.batch.scope?.mode !== "mention-scan") return;
+
+  const bar = document.createElement("div");
+  bar.id = "scan-accept-split";
+  bar.className = "scan-accept-split";
+
+  const allEntities = detail.regions.flatMap((r) => r.entities);
+  const linkIds = allEntities.filter((e) => e.scanResultKind === "link" && e.status === "pending").map((e) => e.mutationId);
+  const newIds = allEntities.filter((e) => e.scanResultKind === "new" && e.status === "pending").map((e) => e.mutationId);
+
+  const linkBtn = document.createElement("button");
+  linkBtn.className = "btn btn--accept";
+  linkBtn.textContent = `Accept All Links (${linkIds.length})`;
+  linkBtn.disabled = !linkIds.length;
+  linkBtn.addEventListener("click", () => acceptMutationIdsBulk(linkIds));
+
+  const newBtn = document.createElement("button");
+  newBtn.className = "btn btn--accept";
+  newBtn.textContent = `Accept All New Entities (${newIds.length})`;
+  newBtn.disabled = !newIds.length;
+  newBtn.addEventListener("click", () => acceptMutationIdsBulk(newIds));
+
+  bar.append(linkBtn, newBtn);
+  document.getElementById("review-actionbar").insertAdjacentElement("afterend", bar);
+}
+
+async function acceptMutationIdsBulk(mutationIds) {
+  if (!mutationIds.length) return;
+  try {
+    await api(`/api/batches/${reviewState.batchId}/bulk-accept`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: CURRENT_WORLD, mutationIds, reviewedMutationIds: mutationIds })
+    });
+    showToast(`Accepted ${mutationIds.length} mutation${mutationIds.length === 1 ? "" : "s"}.`, () => rollbackCurrentBatch());
+    await refreshReviewDetail();
+  } catch (err) {
+    showToast(`Accept failed: ${err.message}`);
+  }
 }
 
 function renderReviewFromState(openMutationIds, openEntityIdHint) {
@@ -319,6 +375,7 @@ function renderReviewFromState(openMutationIds, openEntityIdHint) {
 
   const actionBar = document.getElementById("review-actionbar");
   actionBar.style.display = detail.batch.mutationCount === 0 ? "none" : "";
+  renderScanAcceptSplit(detail);
 
   renderSyncBar(detail);
 
@@ -376,6 +433,13 @@ function buildMutationRow(entity, index, openMutationIds, openEntityIdHint) {
   row.dataset.index = String(index);
   if (entity.flaggedUnreviewed) row.classList.add("flagged");
   if (entity.collapsed) row.classList.add("boring");
+  // Phase 12 task 12.5: mandatory badge + border accent distinguishing
+  // Link-to-existing from Propose-new -- genuinely different visual
+  // treatment, not just a text difference (link icon+green vs plus
+  // icon+amber, plus a border-left accent matching the design doc's
+  // requirement).
+  if (entity.scanResultKind === "link") row.classList.add("scan-link");
+  if (entity.scanResultKind === "new") row.classList.add("scan-new");
 
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
@@ -387,8 +451,14 @@ function buildMutationRow(entity, index, openMutationIds, openEntityIdHint) {
   const summary = document.createElement("summary");
   const headline = document.createElement("span");
   headline.className = "row-headline";
+  const scanBadge = entity.scanResultKind === "link"
+    ? `<span class="scan-badge scan-badge--link">🔗 Existing</span>`
+    : entity.scanResultKind === "new"
+      ? `<span class="scan-badge scan-badge--new">➕ New</span>`
+      : "";
   headline.innerHTML =
     (entity.flaggedUnreviewed ? `<span class="flag-dot"></span>` : "") +
+    scanBadge +
     `<span class="op-label">${opLabel(entity.op)}</span>${escapeHtml(entity.name)} — ${escapeHtml(truncate(entity.rationale, 80))}`;
   const pill = document.createElement("span");
   pill.className = `status-pill status-pill--${entity.status}`;
@@ -525,6 +595,42 @@ function renderRowActionArea(entity, actionArea) {
   actionArea.innerHTML = "";
 
   if (entity.status === "pending") {
+    // Phase 12 task 12.5's [DECIDED] shape: a LINK row gets an editable
+    // relationship-type dropdown (a PROPOSE-NEW row's own type is edited via
+    // the normal diff/regenerate flow, not this control -- only the LINK
+    // case's relationship type has no other edit path at all). Changing it
+    // patches the still-pending mutation's own data immediately (auto-save
+    // on change, via the new patch-data route) so the choice is in place
+    // before Accept is ever clicked.
+    if (entity.scanResultKind === "link" && entity.op === "upsert_edge") {
+      const relBox = document.createElement("div");
+      relBox.className = "regenerate-box";
+      const relLabel = document.createElement("span");
+      relLabel.className = "hint";
+      relLabel.textContent = "Relationship type:";
+      const relSelect = document.createElement("select");
+      for (const t of ["unspecified", "kinship", "social", "fealty", "membership", "containment", "presence", "origin", "ownership", "causal", "knowledge"]) {
+        const opt = document.createElement("option");
+        opt.value = t;
+        opt.textContent = t;
+        if (t === (entity.data?.relationshipType ?? "unspecified")) opt.selected = true;
+        relSelect.appendChild(opt);
+      }
+      relSelect.addEventListener("change", async () => {
+        try {
+          await api(`/api/batches/${reviewState.batchId}/mutations/${entity.mutationId}/patch-data`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ world: CURRENT_WORLD, data: { relationshipType: relSelect.value } })
+          });
+        } catch (err) {
+          showToast(`Could not update relationship type: ${err.message}`);
+        }
+      });
+      relBox.append(relLabel, relSelect);
+      actionArea.appendChild(relBox);
+    }
+
     const regenBox = document.createElement("div");
     regenBox.className = "regenerate-box";
     const input = document.createElement("input");
@@ -1205,6 +1311,172 @@ document.getElementById("btn-undo-last").addEventListener("click", async () => {
 // rather than starting narrow and escaping out to everything.
 let graphStandaloneShowAll = true;
 
+// ---------------------------------------------------------------------------
+// Phase 12: interactive graph editor -- manual node/edge create/edit/delete
+// (immediate-write, no review gate), "Undo Last Manual Edit", scan-for-
+// mentioned-entities triggers, and narration reset. Every write below goes
+// straight to a dedicated route and is immediate -- this is the GM directly
+// authoring, not an AI proposal, per the design doc's decision 1.
+// ---------------------------------------------------------------------------
+
+const GRAPH_CACHE_KEY = "standalone";
+const DEFAULT_EDGE_TYPE = "unspecified"; // matches manual-edit-ops.mjs's own addEdgeOp default
+
+// The graph edges currently rendered in the standalone view -- kept so
+// handleDrawEdge can check "does a same-type edge already exist between
+// these two nodes" (task 12.3's re-drag rule) without a network round trip.
+let LAST_GRAPH_EDGES = [];
+
+async function refreshUndoStatus() {
+  const btn = document.getElementById("btn-graph-undo");
+  if (!btn) return;
+  if (!CURRENT_WORLD) { btn.disabled = true; return; }
+  try {
+    const { available, action } = await api(`/api/manual-undo${withWorld()}`);
+    btn.disabled = !available;
+    btn.title = available ? action.description : "Nothing to undo yet";
+  } catch {
+    btn.disabled = true;
+  }
+}
+
+async function performUndo() {
+  if (!CURRENT_WORLD) return;
+  try {
+    const result = await api("/api/manual-undo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: CURRENT_WORLD })
+    });
+    showToast(result.status === "undone" ? `Undone: ${result.description}` : "Nothing to undo.");
+  } catch (err) {
+    showToast(`Undo failed: ${err.message}`);
+  } finally {
+    await refreshUndoStatus();
+    if (parseHash().view === "graph") await refreshGraphStandalone();
+  }
+}
+
+document.getElementById("btn-graph-undo")?.addEventListener("click", performUndo);
+
+document.getElementById("btn-graph-add-node")?.addEventListener("click", () => {
+  const container = document.getElementById("graph-standalone");
+  if (!container) return;
+  armPlacementMode(container, (point) => {
+    showCreateNodeForm(container, point, {
+      onCreateNode: async (pt, fields) => {
+        const result = await api("/api/graph/nodes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: CURRENT_WORLD, ...fields })
+        });
+        seedNodePosition(GRAPH_CACHE_KEY, result.entityId, pt.x, pt.y);
+        showToast(`Node "${result.name}" created.`, performUndo);
+        await refreshUndoStatus();
+        await refreshGraphStandalone();
+      }
+    });
+  });
+});
+
+async function handleEditNode(entityId, data) {
+  await api(`/api/graph/nodes/${encodeURIComponent(entityId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: CURRENT_WORLD, data })
+  });
+  showToast("Node updated.", performUndo);
+  await refreshUndoStatus();
+  await refreshGraphStandalone();
+}
+
+async function handleDeleteNode(entityId) {
+  const result = await api(`/api/graph/nodes/${encodeURIComponent(entityId)}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: CURRENT_WORLD })
+  });
+  removeNodePosition(GRAPH_CACHE_KEY, entityId);
+  const cascadeNote = result.cascadeEdgeCount ? ` (with ${result.cascadeEdgeCount} edge${result.cascadeEdgeCount === 1 ? "" : "s"})` : "";
+  showToast(`"${result.name}" deleted${cascadeNote}.`, performUndo);
+  await refreshUndoStatus();
+  await refreshGraphStandalone();
+}
+
+/**
+ * Task 12.3's re-drag rule: re-dragging onto a pair that already has an edge
+ * of the SAME (default) relationship type opens THAT edge for editing
+ * instead of creating a duplicate. Different relationship types between the
+ * same pair remain legitimately parallel -- only checked against
+ * DEFAULT_EDGE_TYPE, since that's the only type a fresh drag ever creates.
+ * Deliberately does NOT re-render the graph before returning -- the caller
+ * (graph-view.js's wireEdgeDrawing) opens an edit-mode popover against the
+ * CURRENT (still-valid) DOM/positions immediately after this resolves; a
+ * full re-render here would tear that DOM down out from under the popover
+ * that's about to open.
+ */
+async function handleDrawEdge(sourceId, targetId) {
+  const existingSameType = LAST_GRAPH_EDGES.find(
+    (e) =>
+      e.relationshipType === DEFAULT_EDGE_TYPE &&
+      ((e.sourceId === sourceId && e.targetId === targetId) || (e.sourceId === targetId && e.targetId === sourceId))
+  );
+  if (existingSameType) return { edge: existingSameType };
+
+  const result = await api("/api/graph/edges", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: CURRENT_WORLD, sourceId, targetId, relationshipType: DEFAULT_EDGE_TYPE })
+  });
+  const edge = { id: result.edgeId, sourceId: result.sourceId, targetId: result.targetId, relationshipType: result.relationshipType, label: "", strength: 0.6, valence: "neutral", notes: null };
+  LAST_GRAPH_EDGES.push(edge);
+  showToast("Edge created.", performUndo);
+  await refreshUndoStatus();
+  return { edge };
+}
+
+async function handleEditEdge(edgeId, data) {
+  await api(`/api/graph/edges/${encodeURIComponent(edgeId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: CURRENT_WORLD, data })
+  });
+  showToast("Edge updated.", performUndo);
+  await refreshUndoStatus();
+  await refreshGraphStandalone();
+}
+
+async function handleDeleteEdge(edgeId) {
+  await api(`/api/graph/edges/${encodeURIComponent(edgeId)}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: CURRENT_WORLD })
+  });
+  showToast("Edge deleted.", performUndo);
+  await refreshUndoStatus();
+  await refreshGraphStandalone();
+}
+
+/** Task 12.5's secondary trigger ("Scan this node's content" from the node popover) -- scans the entity's OWN description field, the only text the graph popover has ready access to without a second fetch. */
+async function handleScanMentionsFromPopover(entityId) {
+  try {
+    const { entity } = await api(`/api/entities/${encodeURIComponent(entityId)}${withWorld()}`);
+    const text = [entity.description, entity.summary].filter(Boolean).join("\n\n");
+    if (!text.trim()) {
+      showToast("This node has no description/summary text to scan yet.");
+      return;
+    }
+    const result = await api(`/api/entities/${encodeURIComponent(entityId)}/scan-mentions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: CURRENT_WORLD, text })
+    });
+    navigate("review", result.batchId);
+  } catch (err) {
+    showToast(`Scan failed: ${err.message}`);
+  }
+}
+
 function renderGraphStandaloneView() {
   graphStandaloneShowAll = true;
   document.getElementById("graph-filter-unreviewed").checked = false;
@@ -1272,6 +1544,9 @@ async function refreshGraphStandalone() {
     ? `${nodes.length} node${nodes.length === 1 ? "" : "s"}`
     : `${nodes.length} of ${graph.nodes.length} nodes`;
 
+  LAST_GRAPH_EDGES = edges;
+  await refreshUndoStatus();
+
   // Best-effort: which open batch (if any) a given entity belongs to, so
   // the popover can offer "Show in list" -- this is a status dashboard, not
   // a review surface, so Accept/Reject never appear here regardless.
@@ -1292,7 +1567,7 @@ async function refreshGraphStandalone() {
 
   renderGraph(container, { nodes, edges }, {
     mode: "standalone",
-    cacheKey: "standalone",
+    cacheKey: GRAPH_CACHE_KEY,
     findOpenBatchForNode: (nodeId) => (entityToBatch.has(nodeId) ? { batchId: entityToBatch.get(nodeId) } : null),
     onShowInList: (nodeId) => {
       const batchId = entityToBatch.get(nodeId);
@@ -1304,7 +1579,22 @@ async function refreshGraphStandalone() {
     // ever wired here, on the STANDALONE graph's popover. Batch Review's own
     // List/Graph toggle (renderReviewGraph, mode:'batch') never passes this
     // callback at all, so the button structurally cannot appear there.
-    onDevelopNode: (nodeId) => navigate("entity", nodeId)
+    onDevelopNode: (nodeId) => navigate("entity", nodeId),
+    // Phase 12: the interactive editing surface -- standalone-mode only,
+    // structurally absent from Batch Review the same way onDevelopNode is
+    // (renderReviewGraph, below, never passes `editable` at all). Node
+    // CREATION is armed from the toolbar's own "+ Add Node" button (see
+    // that button's own listener, above) rather than from an opt here --
+    // renderGraph()/showPopover() never initiate placement mode themselves,
+    // only showCreateNodeForm (called directly by that listener) needs an
+    // onCreateNode callback.
+    editable: true,
+    onEditNode: handleEditNode,
+    onDeleteNode: handleDeleteNode,
+    onDrawEdge: handleDrawEdge,
+    onEditEdge: handleEditEdge,
+    onDeleteEdge: handleDeleteEdge,
+    onScanMentions: handleScanMentionsFromPopover
   });
 }
 
@@ -1737,7 +2027,101 @@ async function renderEntityDetail(entityId) {
   nameEl.textContent = entity.name;
   metaEl.textContent = entity.type + (entity.description ? ` — ${entity.description}` : "");
 
+  await renderEntityNarrationSection(entity);
   await renderPrepContentSection(entity, bodyEl);
+}
+
+/**
+ * Phase 12 task 12.6: the entity-detail view's PRIMARY location for
+ * narration display + reset (the design doc's "entity detail view
+ * (primary) and graph popover (secondary quick-path)" -- the graph
+ * popover's own quick-path isn't built in this pass, matching the phase's
+ * effort budget; the primary surface is fully functional). Fetches the
+ * entity's current narration (Phase 10's existing GET route) and renders it
+ * with Phase 6's established serif/parchment narration-card treatment, plus
+ * a lighter-weight reset confirm than delete's, per the design doc's own
+ * wording.
+ */
+async function renderEntityNarrationSection(entity) {
+  const wrap = document.getElementById("entity-detail-narration");
+  wrap.innerHTML = "";
+
+  let narration = null;
+  try {
+    ({ narration } = await api(`/api/entities/${encodeURIComponent(entity.id)}/narration${withWorld()}`));
+  } catch { /* treat a fetch failure as "no narration yet" */ }
+
+  const label = document.createElement("h2");
+  label.className = "section-label";
+  label.textContent = "Narration";
+  wrap.appendChild(label);
+
+  // Real gap found via visual verification: this function used to `return`
+  // early right here for the "no current narration" case (including
+  // immediately after a reset, whose whole point is to CLEAR current down
+  // to nothing) -- which meant the "View narration history" toggle below
+  // never even got a chance to render, so there was no way to see that the
+  // reset genuinely preserved every prior version. Both branches below now
+  // always reach the history toggle at the bottom of this function.
+  if (!narration || !narration.prose) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No current narration for this entity.";
+    wrap.appendChild(empty);
+    appendNarrationHistoryToggle({ entityId: entity.id }, wrap);
+    return;
+  }
+
+  const card = document.createElement("div");
+  card.className = "narration-card";
+  card.textContent = narration.prose;
+  wrap.appendChild(card);
+
+  const row = document.createElement("div");
+  row.className = "narration-reset-row";
+  const resetBtn = document.createElement("button");
+  resetBtn.className = "btn btn--ghost";
+  resetBtn.textContent = "Reset Narration";
+  resetBtn.addEventListener("click", () => {
+    row.innerHTML = "";
+    const confirmWrap = document.createElement("div");
+    confirmWrap.className = "narration-reset-confirm";
+    const msg = document.createElement("span");
+    msg.className = "hint";
+    msg.textContent = "Clear current narration? Previous versions remain in history.";
+    const confirmBtn = document.createElement("button");
+    confirmBtn.className = "btn btn--reject";
+    confirmBtn.textContent = "Clear";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn btn--ghost";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", () => renderEntityNarrationSection(entity));
+    confirmBtn.addEventListener("click", async () => {
+      confirmBtn.disabled = true;
+      try {
+        await api(`/api/entities/${encodeURIComponent(entity.id)}/narration/reset`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: CURRENT_WORLD })
+        });
+        showToast("Narration reset.", performUndo);
+        await refreshUndoStatus();
+        await renderEntityNarrationSection(entity);
+      } catch (err) {
+        confirmBtn.disabled = false;
+        showToast(`Reset failed: ${err.message}`);
+      }
+    });
+    confirmWrap.append(msg, confirmBtn, cancelBtn);
+    row.appendChild(confirmWrap);
+  });
+  row.appendChild(resetBtn);
+  wrap.appendChild(row);
+
+  // Reuses Phase 10's existing "View narration history" affordance verbatim
+  // (same function, same entityId-keyed route) -- proves reset never
+  // deletes anything, right on the same page a reset was just performed.
+  appendNarrationHistoryToggle({ entityId: entity.id }, wrap);
 }
 
 async function renderPrepContentSection(entity, container) {
@@ -1989,6 +2373,42 @@ function renderPrepContentCard(entity, container, doc) {
     fieldsWrap.appendChild(renderPrepField(entity, doc, container, fieldName, value));
   }
   container.appendChild(fieldsWrap);
+
+  // Phase 12 task 12.5: PRIMARY trigger, next to the already-displayed
+  // generated text -- the design doc's explicit reason this whole feature
+  // exists ("reading generated content that mentions an 'arena champion' or
+  // a quartermaster with no way to turn those into real, linked graph
+  // entities"). Only offered once content is ACCEPTED (not a still-'proposed'
+  // draft that might be discarded outright) -- scanning throwaway text for
+  // entities to create would be premature.
+  if (doc.status !== "proposed") {
+    const scanRow = document.createElement("div");
+    scanRow.className = "row-actions";
+    const scanBtn = document.createElement("button");
+    scanBtn.className = "btn";
+    scanBtn.textContent = "Scan for Mentioned Entities";
+    scanBtn.addEventListener("click", async () => {
+      scanBtn.disabled = true;
+      scanBtn.textContent = "Scanning…";
+      try {
+        const text = Object.values(doc.fields)
+          .map((v) => (Array.isArray(v) ? v.map((r) => `${r.skill} (DC ${r.dc}): ${r.purpose}`).join("; ") : v))
+          .join("\n\n");
+        const result = await api(`/api/entities/${encodeURIComponent(entity.id)}/scan-mentions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: CURRENT_WORLD, text })
+        });
+        navigate("review", result.batchId);
+      } catch (err) {
+        scanBtn.disabled = false;
+        scanBtn.textContent = "Scan for Mentioned Entities";
+        showToast(`Scan failed: ${err.message}`);
+      }
+    });
+    scanRow.appendChild(scanBtn);
+    container.appendChild(scanRow);
+  }
 
   if (doc.status === "proposed") {
     const actions = document.createElement("div");

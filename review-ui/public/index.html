@@ -115,10 +115,16 @@
   </div>
 </section>
 
-<!-- ================= GRAPH (standalone, Phase 7 task 7.4) ================= -->
+<!-- ================= GRAPH (standalone, Phase 7 task 7.4 / Phase 12 editor) ================= -->
 <section id="view-graph" class="view">
   <h1>Graph</h1>
-  <p class="hint">The whole world graph. Defaults to entities needing attention -- unreviewed or carrying deferred debt.</p>
+  <p class="hint">The whole world graph. Defaults to entities needing attention -- unreviewed or carrying deferred debt. Click "+ Add Node" then click the canvas to place one; press-and-hold-drag from a node to draw an edge to another.</p>
+
+  <div class="graph-editor-toolbar">
+    <button id="btn-graph-add-node" class="btn btn--accept">+ Add Node</button>
+    <button id="btn-graph-undo" class="btn btn--ghost" disabled title="Nothing to undo yet">Undo Last Manual Edit</button>
+    <span id="graph-undo-status" class="hint"></span>
+  </div>
 
   <div class="graph-filter-bar">
     <label><input type="checkbox" id="graph-filter-unreviewed" checked> Unreviewed</label>
@@ -132,11 +138,13 @@
   <div id="graph-standalone-empty" class="empty-state" hidden>No entities need attention right now.</div>
 </section>
 
-<!-- ================= ENTITY DETAIL / "Develop this node" (Phase 11) ================= -->
+<!-- ================= ENTITY DETAIL / "Develop this node" (Phase 11) + narration (Phase 10/12) ================= -->
 <section id="view-entity" class="view">
   <button class="link-btn" data-nav="graph">&larr; Back to Graph</button>
   <h1 id="entity-detail-name">Entity</h1>
   <div id="entity-detail-meta" class="hint"></div>
+  <div id="entity-detail-narration" class="entity-detail-narration"></div>
+  <h2 class="section-label">Prep content</h2>
   <div id="entity-detail-body" class="prep-content-body"></div>
 </section>
 

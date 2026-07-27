@@ -102,6 +102,37 @@ function savePositionCache(cacheKey, positions) {
 }
 
 /**
+ * Phase 12 task 12.3: seed a SPECIFIC node's cached position directly (e.g.
+ * right where the GM clicked to place it), bypassing the force-layout pass
+ * entirely for that node -- computeLayout() never re-runs physics for a node
+ * that already has a cached position (see its own doc comment), so calling
+ * this BEFORE the next renderGraph() call is what makes "writes immediately
+ * at the clicked position" literally true rather than aspirational. Merges
+ * into whatever's already cached rather than overwriting the whole cache.
+ */
+export function seedNodePosition(cacheKey, nodeId, x, y) {
+  const cache = loadPositionCache(cacheKey);
+  cache[nodeId] = { x, y };
+  try {
+    localStorage.setItem(cacheStorageKey(cacheKey), JSON.stringify(cache));
+  } catch {
+    // not fatal -- see savePositionCache's own comment
+  }
+}
+
+/** Phase 12 task 12.3: drop a deleted node's cached position so the cache doesn't grow unbounded with stale entries across a long session. */
+export function removeNodePosition(cacheKey, nodeId) {
+  const cache = loadPositionCache(cacheKey);
+  if (!(nodeId in cache)) return;
+  delete cache[nodeId];
+  try {
+    localStorage.setItem(cacheStorageKey(cacheKey), JSON.stringify(cache));
+  } catch {
+    // not fatal
+  }
+}
+
+/**
  * Compute (or reuse) node positions. Nodes with an existing cached position
  * keep it EXACTLY (no physics re-run at all) -- reopening the identical
  * node set never rearranges anything. Genuinely new node ids (a fresh
@@ -212,6 +243,27 @@ function truncateLabel(s, n = 16) {
   return str.length > n ? `${str.slice(0, n - 1)}\u2026` : str;
 }
 
+/**
+ * THE shared screen<->layout coordinate conversion this whole file commits
+ * to reusing everywhere a raw mouse/click coordinate needs to become a
+ * LAYOUT_W/LAYOUT_H-space point -- ratio-based off the SVG's own
+ * getBoundingClientRect(), so it stays correct at any CSS zoom level
+ * (applyZoom() only ever changes the SVG's rendered CSS size, never its
+ * viewBox). wireRubberBandSelection's own svgPoint() below is refactored to
+ * call this rather than duplicating the math; Phase 12's two new
+ * interactions that need a raw click point (wireEdgeDrawing's drag-line
+ * endpoint, armPlacementMode's node-placement click) both use this SAME
+ * function too, per this project's own explicit warning (CLAUDE.md /
+ * phase-12-tasks.md) not to invent a second coordinate-math approach.
+ */
+function svgPointFromClient(svg, clientX, clientY) {
+  const rect = svg.getBoundingClientRect();
+  return {
+    x: ((clientX - rect.left) / rect.width) * LAYOUT_W,
+    y: ((clientY - rect.top) / rect.height) * LAYOUT_H
+  };
+}
+
 // ---------------------------------------------------------------------------
 // main render entry point
 // ---------------------------------------------------------------------------
@@ -229,6 +281,21 @@ function truncateLabel(s, n = 16) {
  * @param {(nodeId:string) => void} [opts.onShowInList]         batch mode, or standalone when the node belongs to an open batch
  * @param {(nodeId:string) => {batchId:string}|null} [opts.findOpenBatchForNode]  standalone mode only
  * @param {(nodeId:string) => void} [opts.onDevelopNode]        Phase 11, standalone mode ONLY -- "Develop this node" popover link, never rendered in batch mode
+ *
+ * Phase 12 (interactive graph editor) -- ALL of the below are standalone-mode
+ * ONLY, gated behind `opts.editable`, mirroring onDevelopNode's own
+ * mode==='standalone' guard: Batch Review's List/Graph toggle never passes
+ * `editable`, so none of this new surface is even structurally reachable
+ * from a review context, matching the design doc's node-centric review vs.
+ * editing split.
+ * @param {boolean} [opts.editable]  turns on Edit/Delete popover affordances, press-and-hold edge drawing, and edge-line click-to-open
+ * @param {(point:{x:number,y:number}, fields:object) => Promise<void>} [opts.onCreateNode]
+ * @param {(entityId:string, data:object) => Promise<void>} [opts.onEditNode]
+ * @param {(entityId:string) => Promise<void>} [opts.onDeleteNode]
+ * @param {(sourceId:string, targetId:string) => Promise<{edge:object}>} [opts.onDrawEdge]  caller decides create-vs-reuse-existing-same-type-edge; resolves with the resulting edge so this module can open its popover
+ * @param {(edgeId:string, data:object) => Promise<void>} [opts.onEditEdge]
+ * @param {(edgeId:string) => Promise<void>} [opts.onDeleteEdge]
+ * @param {(nodeId:string) => void} [opts.onScanMentions]  standalone+editable only -- node popover's "Scan this node's content" shortcut (task 12.5's secondary entry point)
  */
 export function renderGraph(container, graph, opts = {}) {
   const mode = opts.mode ?? "standalone";
@@ -267,9 +334,25 @@ export function renderGraph(container, graph, opts = {}) {
 
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
 
+  const editable = mode === "standalone" && !!opts.editable;
+
   for (const e of graph.edges) {
     const a = positions.get(e.sourceId), b = positions.get(e.targetId);
     if (!a || !b) continue;
+    // A wider, invisible "hit area" line sits alongside the thin visible
+    // edge so clicking near (not exactly on) a thin 1.2px-wide line still
+    // opens its popover -- edges are the hardest-to-click element in this
+    // whole view otherwise. Only built when editable (a read-only graph has
+    // nothing an edge click would do).
+    if (editable) {
+      const hitArea = svgEl("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: "graph-edge-hitarea" });
+      hitArea.addEventListener("mousedown", (evt) => evt.stopPropagation());
+      hitArea.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        showEdgePopover(container, e, opts);
+      });
+      edgeLayer.appendChild(hitArea);
+    }
     const line = svgEl("line", {
       x1: a.x, y1: a.y, x2: b.x, y2: b.y,
       class: `graph-edge${e.proposed ? " graph-edge--proposed" : ""}`
@@ -352,6 +435,10 @@ export function renderGraph(container, graph, opts = {}) {
 
   container.appendChild(svg);
   wireRubberBandSelection(container, svg, graph.nodes, positions, mode, opts);
+  if (editable) {
+    wireEdgeDrawing(container, svg, graph.nodes, positions, opts);
+    wireDeleteKeyboardShortcut(container, opts);
+  }
   applyZoom(container, svg, container._graphZoom ?? 1);
   wireZoomControls(container);
 }
@@ -493,11 +580,14 @@ function escapeHtmlLocal(s) {
 
 function closePopover(container) {
   container.querySelector(".graph-popover")?.remove();
+  container._graphActivePopoverSubject = null;
 }
 
 function showPopover(container, node, pos, opts) {
   closePopover(container);
   const mode = opts.mode ?? "standalone";
+  const editableNode = mode === "standalone" && !!opts.editable;
+  container._graphActivePopoverSubject = editableNode ? { kind: "node", id: node.id } : null;
   const el = document.createElement("div");
   el.className = "graph-popover";
   // A real bug found only by actually clicking Reject in a browser (not
@@ -538,6 +628,40 @@ function showPopover(container, node, pos, opts) {
     rationale.className = "graph-popover-rationale";
     rationale.textContent = node.rationale;
     el.appendChild(rationale);
+  }
+
+  // Phase 12 task 12.2: surface importance/session-staleness/foundryRef
+  // presence + the four new task-12.1 fields -- a compact metadata line,
+  // never a raw JSON dump. Rendered whenever the graph payload actually
+  // carries these fields (real persisted entities do; a batch-mode synthetic
+  // "new:<mutationId>" placeholder node does not, so this quietly renders
+  // nothing for those rather than a wall of "null"s).
+  if (node.importance !== undefined && node.importance !== null) {
+    el.appendChild(buildMetaBlock(node));
+  }
+
+  if (editableNode) {
+    const editRow = document.createElement("div");
+    editRow.className = "graph-popover-editrow";
+    const editBtn = document.createElement("button");
+    editBtn.className = "icon-btn graph-popover-edit-btn";
+    editBtn.title = "Edit";
+    editBtn.textContent = "✎"; // pencil
+    editBtn.addEventListener("click", () => showNodeEditForm(container, node, pos, opts));
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "icon-btn graph-popover-delete-btn";
+    deleteBtn.title = "Delete";
+    deleteBtn.textContent = "✖"; // heavy multiplication x, used as a trash-adjacent glyph (no icon font dependency in this project)
+    deleteBtn.addEventListener("click", () => showNodeDeleteConfirm(container, node, el, opts));
+    editRow.append(editBtn, deleteBtn);
+    if (opts.onScanMentions) {
+      const scanBtn = document.createElement("button");
+      scanBtn.className = "link-btn graph-popover-scan-btn";
+      scanBtn.textContent = "Scan this node's content →";
+      scanBtn.addEventListener("click", () => { opts.onScanMentions(node.id); closePopover(container); });
+      editRow.appendChild(scanBtn);
+    }
+    el.appendChild(editRow);
   }
 
   if (mode === "batch" && node.mutationId && node.status === "pending") {
@@ -592,12 +716,491 @@ function showPopover(container, node, pos, opts) {
   // Close on outside click (deferred one tick so this same click doesn't immediately close it).
   setTimeout(() => {
     document.addEventListener("click", function onDocClick(evt) {
-      if (!el.contains(evt.target)) {
+      // composedPath() (captured by the browser at DISPATCH time, before any
+      // handler runs), not el.contains(evt.target) -- a real bug found only
+      // by actually clicking Delete in a browser: showNodeDeleteConfirm
+      // above REMOVES the delete button's own parent (.graph-popover-editrow)
+      // as part of handling this SAME click, which detaches evt.target from
+      // `el` before this listener (also bubble-phase, firing after the
+      // button's own handler) gets to check it -- el.contains(evt.target)
+      // then wrongly reports "not contained" for a click that started
+      // squarely inside the popover, closing it out from under the very
+      // confirm UI that click just opened. composedPath() reflects the
+      // ORIGINAL ancestor chain at dispatch and is immune to this.
+      if (!evt.composedPath().includes(el)) {
         el.remove();
+        container._graphActivePopoverSubject = null;
         document.removeEventListener("click", onDocClick);
       }
     });
   }, 0);
+}
+
+/** Compact "type: value · type: value" metadata line -- never a raw JSON dump, per task 12.2's own instruction. */
+function buildMetaBlock(node) {
+  const wrap = document.createElement("div");
+  wrap.className = "graph-popover-metablock";
+  const parts = [];
+  parts.push(`Importance: ${node.importance.toFixed(2)}`);
+  if (node.status) parts.push(`Status: ${node.status}`);
+  if (node.type === "person" && node.role) parts.push(node.role.toUpperCase());
+  parts.push(`Player-known: ${node.playerKnown === true ? "Yes" : node.playerKnown === false ? "No" : "Unknown"}`);
+  parts.push(node.canonLocked ? "Canon: Locked" : "Canon: Draft");
+  if (node.sessionStale) parts.push("Session-stale");
+  parts.push(node.hasFoundryRef ? "Synced to Foundry" : "Not synced to Foundry");
+  wrap.textContent = parts.join(" · ");
+  return wrap;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 12 tasks 12.2-12.4: inline create/edit forms + delete confirms for
+// both nodes and edges, drawn INSIDE the same popover element/positioning
+// convention showPopover already established (anchored, closes on Esc/
+// outside-click). Every write below is immediate (no review gate) and calls
+// straight into a caller-supplied opts.onCreateNode/onEditNode/onDeleteNode/
+// onDrawEdge/onEditEdge/onDeleteEdge callback -- this module never calls a
+// review/write API route itself, matching its own top-of-file convention.
+// ---------------------------------------------------------------------------
+
+const ENTITY_TYPE_CHOICES = ["person", "place", "faction", "object", "event", "concept"];
+const RELATIONSHIP_TYPE_CHOICES = [
+  "unspecified", "kinship", "social", "fealty", "membership", "containment",
+  "presence", "origin", "ownership", "causal", "knowledge"
+];
+
+function positionPopoverAt(container, el, layoutPoint) {
+  const svg = container.querySelector(".graph-svg");
+  const svgRect = svg.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const scaleX = svgRect.width / LAYOUT_W;
+  const scaleY = svgRect.height / LAYOUT_H;
+  el.style.left = `${(svgRect.left - containerRect.left) + layoutPoint.x * scaleX}px`;
+  el.style.top = `${(svgRect.top - containerRect.top) + layoutPoint.y * scaleY}px`;
+}
+
+function wireFormDismiss(container, el) {
+  el.addEventListener("mousedown", (evt) => evt.stopPropagation());
+  setTimeout(() => {
+    // Declared as plain `function` bindings in THIS enclosing scope (not
+    // named-function-expression args to addEventListener) specifically so
+    // each one can reference the OTHER by name -- a named function
+    // expression's own name is only bound INSIDE that function's body, not
+    // in the scope around it, so `onDocClick` referencing `onKeyDown` (to
+    // remove it once the popover is dismissed by a click) would otherwise
+    // throw a real ReferenceError, caught only by actually driving this in
+    // a browser (a Playwright pageerror), not by reading the code.
+    function onDocClick(evt) {
+      if (!evt.composedPath().includes(el)) {
+        el.remove();
+        document.removeEventListener("click", onDocClick);
+        document.removeEventListener("keydown", onKeyDown);
+      }
+    }
+    function onKeyDown(evt) {
+      if (evt.key === "Escape") {
+        el.remove();
+        document.removeEventListener("click", onDocClick);
+        document.removeEventListener("keydown", onKeyDown);
+      }
+    }
+    document.addEventListener("click", onDocClick);
+    document.addEventListener("keydown", onKeyDown);
+  }, 0);
+}
+
+function labeledInput(labelText, inputEl) {
+  const wrap = document.createElement("label");
+  wrap.className = "graph-form-field";
+  const span = document.createElement("span");
+  span.textContent = labelText;
+  wrap.append(span, inputEl);
+  return wrap;
+}
+
+function selectEl(choices, current) {
+  const sel = document.createElement("select");
+  for (const c of choices) {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c;
+    if (c === current) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  return sel;
+}
+
+/**
+ * Task 12.3: "+ Add Node" placement-mode click -> this form, anchored at the
+ * clicked point. Fields per the design doc's exact list: name, type,
+ * optional description. Esc/click-outside cancels with nothing written.
+ */
+export function showCreateNodeForm(container, point, opts) {
+  closePopover(container);
+  const el = document.createElement("div");
+  el.className = "graph-popover graph-create-form";
+  positionPopoverAt(container, el, point);
+
+  const title = document.createElement("div");
+  title.className = "graph-popover-title";
+  title.textContent = "New node";
+  el.appendChild(title);
+
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.placeholder = "Name";
+  nameInput.autofocus = true;
+  const typeSelect = selectEl(ENTITY_TYPE_CHOICES, "person");
+  const descInput = document.createElement("textarea");
+  descInput.placeholder = "Description (optional)";
+  descInput.rows = 2;
+
+  el.append(
+    labeledInput("Name", nameInput),
+    labeledInput("Type", typeSelect),
+    labeledInput("Description", descInput)
+  );
+
+  const statusEl = document.createElement("div");
+  statusEl.className = "hint graph-form-status";
+  el.appendChild(statusEl);
+
+  const createBtn = document.createElement("button");
+  createBtn.className = "btn btn--accept";
+  createBtn.textContent = "Create";
+  createBtn.addEventListener("click", async () => {
+    const name = nameInput.value.trim();
+    if (!name) { statusEl.textContent = "Name is required."; return; }
+    createBtn.disabled = true;
+    statusEl.textContent = "";
+    try {
+      await opts.onCreateNode?.(point, { name, type: typeSelect.value, description: descInput.value.trim() || undefined });
+      el.remove();
+    } catch (err) {
+      createBtn.disabled = false;
+      statusEl.textContent = `Failed: ${err.message}`;
+    }
+  });
+  el.appendChild(createBtn);
+
+  container.appendChild(el);
+  wireFormDismiss(container, el);
+  nameInput.focus();
+}
+
+/** Task 12.3: node popover's Edit (pencil) -- turns the popover into the same shape of form as create, pre-filled. */
+function showNodeEditForm(container, node, pos, opts) {
+  closePopover(container);
+  const el = document.createElement("div");
+  el.className = "graph-popover graph-edit-form";
+  positionPopoverAt(container, el, pos);
+
+  const title = document.createElement("div");
+  title.className = "graph-popover-title";
+  title.textContent = `Edit "${node.name}"`;
+  el.appendChild(title);
+
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.value = node.name;
+  const descInput = document.createElement("textarea");
+  descInput.rows = 2;
+  descInput.value = node.description ?? "";
+  const importanceInput = document.createElement("input");
+  importanceInput.type = "number";
+  importanceInput.min = "0"; importanceInput.max = "1"; importanceInput.step = "0.05";
+  importanceInput.value = node.importance ?? 0.3;
+  const statusInput = document.createElement("input");
+  statusInput.type = "text";
+  statusInput.placeholder = "e.g. alive, active, disbanded…";
+  statusInput.value = node.status ?? "";
+  const playerKnownSelect = selectEl(["unknown", "yes", "no"], node.playerKnown === true ? "yes" : node.playerKnown === false ? "no" : "unknown");
+  const canonLockedInput = document.createElement("input");
+  canonLockedInput.type = "checkbox";
+  canonLockedInput.checked = !!node.canonLocked;
+  const roleSelect = selectEl(["—", "pc", "npc"], node.role ?? "—");
+
+  el.append(
+    labeledInput("Name", nameInput),
+    labeledInput("Description", descInput),
+    labeledInput("Importance", importanceInput),
+    labeledInput("Status", statusInput),
+    labeledInput("Player-known", playerKnownSelect)
+  );
+  if (node.type === "person") el.append(labeledInput("PC/NPC", roleSelect));
+  const canonRow = document.createElement("label");
+  canonRow.className = "graph-form-field graph-form-field--checkbox";
+  const canonSpan = document.createElement("span");
+  canonSpan.textContent = "Canon-locked";
+  canonRow.append(canonLockedInput, canonSpan);
+  el.appendChild(canonRow);
+
+  const statusEl = document.createElement("div");
+  statusEl.className = "hint graph-form-status";
+  el.appendChild(statusEl);
+
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "btn btn--accept";
+  saveBtn.textContent = "Save";
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    statusEl.textContent = "";
+    const data = {
+      name: nameInput.value.trim() || node.name,
+      description: descInput.value,
+      importance: Number(importanceInput.value),
+      status: statusInput.value.trim() || null,
+      playerKnown: playerKnownSelect.value === "yes" ? true : playerKnownSelect.value === "no" ? false : null,
+      canonLocked: canonLockedInput.checked
+    };
+    if (node.type === "person") data.role = roleSelect.value === "—" ? null : roleSelect.value;
+    try {
+      await opts.onEditNode?.(node.id, data);
+      el.remove();
+    } catch (err) {
+      saveBtn.disabled = false;
+      statusEl.textContent = `Failed: ${err.message}`;
+    }
+  });
+  el.appendChild(saveBtn);
+
+  container.appendChild(el);
+  wireFormDismiss(container, el);
+}
+
+/** Task 12.3: node popover's Delete (trash) -- inline confirm showing the REAL cascade count (node.degree, computed server-side from the whole graph). */
+function showNodeDeleteConfirm(container, node, popoverEl, opts) {
+  popoverEl.querySelectorAll(".graph-popover-editrow, .graph-popover-metablock").forEach((n) => n.remove());
+  const confirmBox = document.createElement("div");
+  confirmBox.className = "graph-delete-confirm";
+  const msg = document.createElement("div");
+  const edgeCount = node.degree ?? 0;
+  msg.textContent = `Delete this node and its ${edgeCount} connected edge${edgeCount === 1 ? "" : "s"}?`;
+  const btnRow = document.createElement("div");
+  btnRow.className = "graph-popover-actions";
+  const confirmBtn = document.createElement("button");
+  confirmBtn.className = "btn btn--reject";
+  confirmBtn.textContent = "Delete";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "btn btn--ghost";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", () => closePopover(container));
+  confirmBtn.addEventListener("click", async () => {
+    confirmBtn.disabled = true;
+    try {
+      await opts.onDeleteNode?.(node.id);
+      closePopover(container);
+    } catch (err) {
+      confirmBtn.disabled = false;
+      msg.textContent = `Failed: ${err.message}`;
+    }
+  });
+  btnRow.append(confirmBtn, cancelBtn);
+  confirmBox.append(msg, btnRow);
+  popoverEl.appendChild(confirmBox);
+}
+
+/**
+ * Task 12.3: click an edge line to open its popover (mirrors the node
+ * popover's shape) -- relationshipType/label/strength/valence/notes,
+ * Edit/Delete. `startInEdit` (task 12.3's "release on another node creates
+ * the edge immediately... and simultaneously opens an inline prompt for the
+ * real type/label/strength/notes") opens straight into the edit form instead
+ * of the view-first popover.
+ */
+function showEdgePopover(container, edge, opts, { startInEdit = false } = {}) {
+  closePopover(container);
+  const svg = container.querySelector(".graph-svg");
+  const positions = container._graphEdgeDraw?.positions ?? container._graphRubberBand?.positions;
+  const a = positions?.get(edge.sourceId);
+  const b = positions?.get(edge.targetId);
+  const midpoint = a && b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : { x: LAYOUT_W / 2, y: LAYOUT_H / 2 };
+
+  container._graphActivePopoverSubject = { kind: "edge", id: edge.id };
+
+  if (startInEdit) {
+    showEdgeEditForm(container, edge, midpoint, opts, { isNew: true });
+    return;
+  }
+
+  const el = document.createElement("div");
+  el.className = "graph-popover";
+  positionPopoverAt(container, el, midpoint);
+  el.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+  const title = document.createElement("div");
+  title.className = "graph-popover-title";
+  title.textContent = edge.relationshipType;
+  el.appendChild(title);
+
+  const meta = document.createElement("div");
+  meta.className = "graph-popover-meta";
+  const metaParts = [];
+  if (edge.label && edge.label !== edge.relationshipType) metaParts.push(edge.label);
+  if (typeof edge.strength === "number") metaParts.push(`strength ${edge.strength.toFixed(2)}`);
+  if (edge.valence) metaParts.push(edge.valence);
+  meta.textContent = metaParts.join(" · ") || "(no additional detail)";
+  el.appendChild(meta);
+
+  if (edge.notes) {
+    const notes = document.createElement("div");
+    notes.className = "graph-popover-rationale";
+    notes.textContent = edge.notes;
+    el.appendChild(notes);
+  }
+
+  const editRow = document.createElement("div");
+  editRow.className = "graph-popover-editrow";
+  const editBtn = document.createElement("button");
+  editBtn.className = "icon-btn graph-popover-edit-btn";
+  editBtn.title = "Edit";
+  editBtn.textContent = "✎";
+  editBtn.addEventListener("click", () => showEdgeEditForm(container, edge, midpoint, opts, { isNew: false }));
+  const deleteBtn = document.createElement("button");
+  deleteBtn.className = "icon-btn graph-popover-delete-btn";
+  deleteBtn.title = "Delete";
+  deleteBtn.textContent = "✖";
+  deleteBtn.addEventListener("click", () => {
+    editRow.remove(); meta.remove();
+    const confirmBox = document.createElement("div");
+    confirmBox.className = "graph-delete-confirm";
+    const msg = document.createElement("div");
+    msg.textContent = "Delete this edge?";
+    const btnRow = document.createElement("div");
+    btnRow.className = "graph-popover-actions";
+    const confirmBtn = document.createElement("button");
+    confirmBtn.className = "btn btn--reject";
+    confirmBtn.textContent = "Delete";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn btn--ghost";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", () => closePopover(container));
+    confirmBtn.addEventListener("click", async () => {
+      confirmBtn.disabled = true;
+      try {
+        await opts.onDeleteEdge?.(edge.id);
+        closePopover(container);
+      } catch (err) {
+        confirmBtn.disabled = false;
+        msg.textContent = `Failed: ${err.message}`;
+      }
+    });
+    btnRow.append(confirmBtn, cancelBtn);
+    confirmBox.append(msg, btnRow);
+    el.appendChild(confirmBox);
+  });
+  editRow.append(editBtn, deleteBtn);
+  el.appendChild(editRow);
+
+  container.appendChild(el);
+  wireFormDismiss(container, el);
+}
+
+function showEdgeEditForm(container, edge, midpoint, opts, { isNew }) {
+  closePopover(container);
+  const el = document.createElement("div");
+  el.className = "graph-popover graph-edit-form";
+  positionPopoverAt(container, el, midpoint);
+
+  const title = document.createElement("div");
+  title.className = "graph-popover-title";
+  title.textContent = isNew ? "New edge" : `Edit edge`;
+  el.appendChild(title);
+
+  const typeSelect = selectEl(RELATIONSHIP_TYPE_CHOICES, edge.relationshipType ?? "unspecified");
+  const labelInput = document.createElement("input");
+  labelInput.type = "text";
+  labelInput.value = edge.label ?? "";
+  const strengthInput = document.createElement("input");
+  strengthInput.type = "number";
+  strengthInput.min = "0"; strengthInput.max = "1"; strengthInput.step = "0.05";
+  strengthInput.value = typeof edge.strength === "number" ? edge.strength : 0.6;
+  const valenceSelect = selectEl(["neutral", "positive", "negative"], edge.valence ?? "neutral");
+  const notesInput = document.createElement("textarea");
+  notesInput.rows = 2;
+  notesInput.value = edge.notes ?? "";
+
+  el.append(
+    labeledInput("Relationship type", typeSelect),
+    labeledInput("Label", labelInput),
+    labeledInput("Strength", strengthInput),
+    labeledInput("Valence", valenceSelect),
+    labeledInput("Notes", notesInput)
+  );
+
+  const statusEl = document.createElement("div");
+  statusEl.className = "hint graph-form-status";
+  el.appendChild(statusEl);
+
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "btn btn--accept";
+  saveBtn.textContent = isNew ? "Save" : "Save";
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    statusEl.textContent = "";
+    const data = {
+      relationshipType: typeSelect.value,
+      label: labelInput.value.trim(),
+      strength: Number(strengthInput.value),
+      valence: valenceSelect.value,
+      notes: notesInput.value.trim() || null
+    };
+    try {
+      await opts.onEditEdge?.(edge.id, data);
+      el.remove();
+    } catch (err) {
+      saveBtn.disabled = false;
+      statusEl.textContent = `Failed: ${err.message}`;
+    }
+  });
+  el.appendChild(saveBtn);
+  // Dismissing WITHOUT saving right after a create leaves the edge in place
+  // with its default -- task 12.3's own [DECIDED] shape ("dismissing the
+  // prompt leaves the edge in place with the default, since the edge already
+  // exists") -- no extra handling needed here beyond the normal dismiss
+  // convention, since the edge write already happened before this form ever opened.
+
+  container.appendChild(el);
+  wireFormDismiss(container, el);
+}
+
+/**
+ * Task 12.3: "+ Add Node" toolbar entry point. Arms a ONE-TIME click on the
+ * container: converts the click to a layout-space point via the SAME
+ * svgPointFromClient() ratio-math every other click-coordinate consumer in
+ * this file uses, calls `onPick`, then removes itself. `cancel()` lets the
+ * caller wire Esc-to-cancel (toolbar-level, since armPlacementMode's own
+ * lifetime is a single click, not a standing keydown listener).
+ *
+ * @param {HTMLElement} container
+ * @param {(point:{x:number,y:number}) => void} onPick
+ * @returns {{cancel: () => void}}
+ */
+export function armPlacementMode(container, onPick) {
+  container.classList.add("graph-placement-active");
+  function handler(evt) {
+    const svg = container.querySelector(".graph-svg");
+    if (!svg) return;
+    // MUST stop this exact click from continuing on to whatever it actually
+    // landed on (a node, an edge, the background) -- found via real browser
+    // testing, not obvious from reading the code: without this, capture-phase
+    // firing here only means this handler runs FIRST, not that the event
+    // stops -- it still continues on to, say, a node's own bubble-phase
+    // click->showPopover handler afterward, which calls closePopover()
+    // (removing ANY `.graph-popover`, including the create-form this handler
+    // is about to open) and shows THAT node's popover instead. One placement
+    // click must resolve to exactly one outcome.
+    evt.stopPropagation();
+    evt.preventDefault();
+    const point = svgPointFromClient(svg, evt.clientX, evt.clientY);
+    cleanup();
+    onPick(point);
+  }
+  function cleanup() {
+    container.classList.remove("graph-placement-active");
+    container.removeEventListener("click", handler, true);
+  }
+  container.addEventListener("click", handler, true); // capture phase -- fires before a node/background click's own bubble-phase handlers
+  return { cancel: cleanup };
 }
 
 // ---------------------------------------------------------------------------
@@ -630,11 +1233,7 @@ function wireRubberBandSelection(container, svg, nodes, positions, mode, opts) {
   let rectEl = null;
 
   function svgPoint(evt) {
-    const currentSvg = container._graphRubberBand.svg;
-    const rect = currentSvg.getBoundingClientRect();
-    const x = ((evt.clientX - rect.left) / rect.width) * LAYOUT_W;
-    const y = ((evt.clientY - rect.top) / rect.height) * LAYOUT_H;
-    return { x, y };
+    return svgPointFromClient(container._graphRubberBand.svg, evt.clientX, evt.clientY);
   }
 
   container.addEventListener("mousedown", (evt) => {
@@ -684,4 +1283,113 @@ function wireRubberBandSelection(container, svg, nodes, positions, mode, opts) {
 
 function cssEscape(s) {
   return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(s) : String(s).replace(/["\\]/g, "\\$&");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 12 task 12.3: press-and-hold edge drawing (standalone+editable mode
+// only -- mutually exclusive with wireRubberBandSelection, which only ever
+// wires for mode==='batch', so there is no listener conflict between the
+// two). Same "bind window-level listeners ONCE per container, read current
+// state off a small mutable record every renderGraph() re-render refreshes"
+// pattern wireRubberBandSelection above already established, for the exact
+// same reason: this container's content is torn down and rebuilt on every
+// refresh, so re-binding fresh window listeners on every render would leak.
+// ---------------------------------------------------------------------------
+
+const EDGE_DRAG_THRESHOLD = 5; // px, matches the design doc's own "~5px drag threshold, distinguishing from the existing short-click-for-popover"
+
+function wireEdgeDrawing(container, svg, nodes, positions, opts) {
+  container._graphEdgeDraw = { nodes, positions, svg, opts };
+  if (container._graphEdgeDrawWired) return;
+  container._graphEdgeDrawWired = true;
+
+  let pending = null; // {sourceId, startClientX, startClientY, active, lineEl}
+
+  // Bound on the CAPTURE phase, deliberately: every node's own mousedown
+  // handler (in the main render loop) calls evt.stopPropagation() on the
+  // BUBBLE phase to keep rubber-band-select from seeing a node-originated
+  // drag (see that handler's own comment) -- binding here in capture lets
+  // this listener see the mousedown BEFORE that stopPropagation runs,
+  // without needing to touch that existing, already-hardened handler at all.
+  container.addEventListener(
+    "mousedown",
+    (evt) => {
+      const nodeEl = evt.target.closest(".graph-node");
+      if (!nodeEl) return;
+      pending = { sourceId: nodeEl.dataset.nodeId, startClientX: evt.clientX, startClientY: evt.clientY, active: false, lineEl: null };
+    },
+    true
+  );
+
+  window.addEventListener("mousemove", (evt) => {
+    if (!pending) return;
+    const dx = evt.clientX - pending.startClientX;
+    const dy = evt.clientY - pending.startClientY;
+    const { svg: currentSvg, positions: currentPositions } = container._graphEdgeDraw;
+    if (!pending.active) {
+      if (Math.hypot(dx, dy) < EDGE_DRAG_THRESHOLD) return;
+      pending.active = true;
+      hideTooltip(container);
+      closePopover(container);
+      pending.lineEl = svgEl("line", { class: "graph-edge-draw-line" });
+      currentSvg.appendChild(pending.lineEl);
+    }
+    const a = currentPositions.get(pending.sourceId);
+    if (!a) return;
+    const cur = svgPointFromClient(currentSvg, evt.clientX, evt.clientY);
+    pending.lineEl.setAttribute("x1", a.x); pending.lineEl.setAttribute("y1", a.y);
+    pending.lineEl.setAttribute("x2", cur.x); pending.lineEl.setAttribute("y2", cur.y);
+  });
+
+  window.addEventListener("mouseup", (evt) => {
+    if (!pending) return;
+    const wasActive = pending.active;
+    const sourceId = pending.sourceId;
+    if (pending.lineEl) pending.lineEl.remove();
+    pending = null;
+    if (!wasActive) return; // a short click -- the node's own `click` handler still opens its popover normally, nothing more to do here
+
+    const { opts: currentOpts } = container._graphEdgeDraw;
+    const targetEl = document.elementFromPoint(evt.clientX, evt.clientY)?.closest(".graph-node");
+    const targetId = targetEl?.dataset.nodeId;
+    if (!targetId || targetId === sourceId) {
+      return; // release on empty space (or back onto itself) cancels -- task 12.3's own [DECIDED] shape, no self-loops
+    }
+    Promise.resolve(currentOpts.onDrawEdge?.(sourceId, targetId))
+      .then((result) => {
+        // Task 12.3: "release on another node creates the edge immediately
+        // ... and simultaneously opens an inline prompt for the real type/
+        // label/strength/notes" -- the caller (app.js) has already performed
+        // the write (or found+returned an existing same-type edge to open
+        // instead, per the re-drag-onto-existing-pair rule) by the time this
+        // resolves; this module's only remaining job is opening that edge's
+        // popover in edit mode, anchored at the midpoint.
+        if (result?.edge) showEdgePopover(container, result.edge, currentOpts, { startInEdit: true });
+      })
+      .catch(() => { /* the caller is responsible for its own user-facing error surface (e.g. a toast) */ });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Phase 12 task 12.3: Delete/Backspace as a secondary shortcut, ONLY when a
+// popover's subject is the current target -- "not a global key trap," per
+// the design doc's own [MY CALL]. `container._graphActivePopoverSubject`
+// (set by showPopover/showEdgePopover, cleared by closePopover/outside-click)
+// is the single source of truth this reads; bound once per container, same
+// de-dup convention as every other container-scoped listener in this file.
+// ---------------------------------------------------------------------------
+
+function wireDeleteKeyboardShortcut(container, opts) {
+  if (container._graphDeleteKeyWired) return;
+  container._graphDeleteKeyWired = true;
+  document.addEventListener("keydown", (evt) => {
+    if (evt.key !== "Delete" && evt.key !== "Backspace") return;
+    const subject = container._graphActivePopoverSubject;
+    if (!subject) return;
+    if (document.activeElement && ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return; // never hijack typing inside an open form field
+    const popoverEl = container.querySelector(".graph-popover");
+    if (!popoverEl) return;
+    const deleteBtn = popoverEl.querySelector(".graph-popover-delete-btn");
+    deleteBtn?.click();
+  });
 }

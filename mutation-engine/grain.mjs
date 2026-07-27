@@ -98,7 +98,12 @@ export function summarizeBatch(batch, opts = {}) {
       flaggedUnreviewed: isFlaggedUnreviewed(m, flaggedEntityIds),
       collapsed: isCollapsed(m, flaggedEntityIds),
       data: m.data ?? null,
-      diff: m.diff ?? null // populated by a caller that ran diff.mjs against a live snapshot, if any
+      diff: m.diff ?? null, // populated by a caller that ran diff.mjs against a live snapshot, if any
+      // Phase 12 task 12.5: graph-import/scan-mentions.mjs's LINK-vs-PROPOSE-NEW
+      // discriminator, surfaced so review-ui can render the mandatory badge +
+      // border accent -- null for every other mutation producer (writeup-import,
+      // texture.mjs, etc.), which never set entityContext.scanResultKind at all.
+      scanResultKind: m.entityContext?.scanResultKind ?? null
     }));
     return { regionId, entities, headline: renderRegionHeadline(regionId, entities) };
   });
