@@ -599,6 +599,84 @@ function formatDiffValue(v) {
   return escapeHtml(typeof v === "string" ? v : JSON.stringify(v));
 }
 
+/**
+ * Phase 13 task 13.3's entity picker. Reuses the standalone Graph view's own
+ * pattern (GET /api/graph?filter=all, then a client-side name/type substring
+ * filter) rather than building a third search UI/route from scratch, per the
+ * task's own explicit instruction. A simple two-step reveal (button ->
+ * search input + result list) keeps every OTHER pending row's action area
+ * from growing a search box it'll never use.
+ */
+function buildLinkToExistingControl(entity) {
+  const wrap = document.createElement("div");
+  wrap.className = "link-existing-box";
+
+  const openBtn = document.createElement("button");
+  openBtn.className = "btn btn--ghost";
+  openBtn.textContent = "Link to existing instead";
+  wrap.appendChild(openBtn);
+
+  openBtn.addEventListener("click", async () => {
+    openBtn.remove();
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.placeholder = "Search entities by name…";
+    searchInput.className = "link-existing-search";
+    const status = document.createElement("div");
+    status.className = "hint";
+    status.textContent = "Loading entities…";
+    const resultsList = document.createElement("ul");
+    resultsList.className = "link-existing-results";
+    wrap.append(searchInput, status, resultsList);
+
+    let allNodes = [];
+    try {
+      const graph = await api(`/api/graph${withWorld({ filter: "all" })}`);
+      allNodes = graph.nodes.filter((n) => n.id !== entity.entityId); // never offer linking a create to itself
+      status.textContent = `${allNodes.length} entities — type to narrow.`;
+    } catch (err) {
+      status.textContent = `Could not load entities: ${err.message}`;
+      return;
+    }
+
+    function renderResults() {
+      const q = searchInput.value.trim().toLowerCase();
+      const matches = (q ? allNodes.filter((n) => n.name.toLowerCase().includes(q) || n.type.toLowerCase().includes(q)) : allNodes).slice(0, 25);
+      resultsList.innerHTML = "";
+      for (const n of matches) {
+        const li = document.createElement("li");
+        const btn = document.createElement("button");
+        btn.className = "link-btn link-existing-pick";
+        btn.textContent = `${n.name} (${n.type})`;
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            await api(`/api/batches/${reviewState.batchId}/mutations/${entity.mutationId}/redirect-to-existing`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ world: CURRENT_WORLD, existingEntityId: n.id, existingEntityName: n.name })
+            });
+            showToast(`Redirected to link to "${n.name}" instead of creating a new entity.`);
+            await refreshReviewDetail();
+          } catch (err) {
+            btn.disabled = false;
+            status.textContent = `Redirect failed: ${err.message}`;
+          }
+        });
+        li.appendChild(btn);
+        resultsList.appendChild(li);
+      }
+      if (!matches.length) resultsList.innerHTML = `<li class="hint">No matches.</li>`;
+    }
+
+    searchInput.addEventListener("input", renderResults);
+    renderResults();
+    searchInput.focus();
+  });
+
+  return wrap;
+}
+
 function renderRowActionArea(entity, actionArea) {
   actionArea.innerHTML = "";
 
@@ -637,6 +715,17 @@ function renderRowActionArea(entity, actionArea) {
       });
       relBox.append(relLabel, relSelect);
       actionArea.appendChild(relBox);
+    }
+
+    // Phase 13 task 13.3: "Link to existing instead" -- ONLY on a "propose
+    // new" mention-scan row (an upsert_entity create the scan proposed
+    // because its own name+type dedup missed a real existing match), NEVER
+    // on a LINK row (already correct by definition) or any non-mention-scan
+    // batch. The `entity.op === "upsert_entity"` half of this guard is what
+    // keeps it off that same propose-new pair's OWN sibling edge row (which
+    // also carries scanResultKind==='new').
+    if (entity.scanResultKind === "new" && entity.op === "upsert_entity") {
+      actionArea.appendChild(buildLinkToExistingControl(entity));
     }
 
     const regenBox = document.createElement("div");

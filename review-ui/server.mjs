@@ -70,7 +70,8 @@ import {
   getEntityNarrationOp,
   getEntityNarrationHistoryOp,
   scanMentionsOp,
-  patchPendingMutationData
+  patchPendingMutationData,
+  redirectMentionScanRowToExistingOp
 } from "../wf-mcp-server/lib/mutation-ops.mjs";
 
 // Phase 12 tasks 12.3/12.4/12.6 -- manual node/edge create/edit/delete,
@@ -940,6 +941,25 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world);
     const result = patchPendingMutationData(w, { batchId: parts[2], mutationId: parts[4], data: body.data });
     return sendJson(res, 200, { ok: true, batchId: result.id });
+  }
+
+  // POST /api/batches/:batchId/mutations/:mutationId/redirect-to-existing
+  //   { world, existingEntityId, existingEntityName? }
+  // Phase 13 task 13.3: a "propose new" mention-scan row, redirected to link
+  // to an already-existing entity instead of creating a duplicate.
+  if (method === "POST" && parts.length === 6 && parts[1] === "batches" && parts[3] === "mutations" && parts[5] === "redirect-to-existing") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    if (typeof body.existingEntityId !== "string" || !body.existingEntityId.trim()) {
+      throw new Error("POST .../redirect-to-existing requires a non-empty `existingEntityId`.");
+    }
+    const result = redirectMentionScanRowToExistingOp(w, {
+      batchId: parts[2],
+      mutationId: parts[4],
+      existingEntityId: body.existingEntityId,
+      existingEntityName: body.existingEntityName
+    });
+    return sendJson(res, 200, result);
   }
 
   // ---------------------------------------------------------------------

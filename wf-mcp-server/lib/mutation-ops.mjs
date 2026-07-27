@@ -50,8 +50,10 @@ import {
   findUnreviewedEntities
 } from "../../mutation-engine/human-review.mjs";
 import { getUserSettings } from "../../mutation-engine/user-settings.mjs";
-// Phase 12 task 12.5 -- scan for mentioned entities.
-import { scanForMentionedEntities } from "../../graph-import/scan-mentions.mjs";
+// Phase 12 task 12.5 -- scan for mentioned entities. Phase 13 task 13.3
+// reuses DEFAULT_MENTION_RELATIONSHIP for the SAME default a fresh link
+// mutation would have carried, rather than inventing a second default.
+import { scanForMentionedEntities, DEFAULT_MENTION_RELATIONSHIP } from "../../graph-import/scan-mentions.mjs";
 
 // --- small pure helpers --------------------------------------------------
 
@@ -673,6 +675,76 @@ export function patchPendingMutationData(w, { batchId, mutationId, data }) {
   }
   entry.data = { ...(entry.data ?? {}), ...data };
   return saveBatch(w, batch);
+}
+
+/**
+ * Phase 13 task 13.3: "Link to existing instead" -- a still-PENDING mention-
+ * scan PROPOSE-NEW row (an `upsert_entity` create, `entityContext.
+ * scanResultKind === 'new'`) is a real correction target when the scan
+ * missed an existing-entity match; this converts it into a genuine LINK,
+ * matching the same shape scan-mentions.mjs's own LINK branch would have
+ * produced had it matched in the first place. Reuses regenerateOp's
+ * established "swap one mutation for another within a batch" shape (see
+ * that function's own doc comment) one level further specialized: instead
+ * of an LLM call producing the replacement, the reviewer's own entity pick
+ * does.
+ *
+ * The create mutation's OWN entry is converted IN PLACE (same mutationId,
+ * so any client-side open/scroll state keyed by mutationId keeps working)
+ * from `upsert_entity` into `upsert_edge` targeting the chosen existing
+ * entity; the sibling edge mutation this same scan produced (the
+ * `data.targetId === <this create's own id>` edge-to-the-would-be-new-
+ * entity) is REMOVED entirely, since it referenced an entity that will now
+ * never be created -- leaving exactly ONE mutation for this mention, a real
+ * `upsert_edge` targeting the chosen existing id, not a modified create.
+ *
+ * @param {string} w
+ * @param {{batchId:string, mutationId:string, existingEntityId:string, existingEntityName?:string}} args
+ * @returns {{batchId:string, mutationId:string, redirectedTo:string}}
+ */
+export function redirectMentionScanRowToExistingOp(w, { batchId, mutationId, existingEntityId, existingEntityName }) {
+  if (!existingEntityId) throw new Error("redirectMentionScanRowToExistingOp requires existingEntityId.");
+  const batch = loadBatch(w, batchId);
+  if (batch.scope?.mode !== "mention-scan") {
+    throw new Error(`Batch "${batchId}" is not a mention-scan batch -- "link to existing instead" only applies there.`);
+  }
+  const createEntry = batch.mutations.find((m) => m.mutationId === mutationId);
+  if (!createEntry) throw new Error(`No mutation "${mutationId}" in batch "${batchId}".`);
+  if (createEntry.op !== "upsert_entity" || createEntry.entityContext?.scanResultKind !== "new") {
+    throw new Error(`Mutation "${mutationId}" is not a "propose new" entity row -- "link to existing instead" only applies to one of those.`);
+  }
+  if (createEntry.status !== "pending") {
+    throw new Error(`Mutation "${mutationId}" is not pending (status: "${createEntry.status}") -- cannot redirect it.`);
+  }
+
+  const createdId = createEntry.id; // the not-yet-persisted id this create would have used
+  const siblingEdge = batch.mutations.find(
+    (m) => m.mutationId !== mutationId && m.op === "upsert_edge" && m.entityContext?.scanResultKind === "new" && m.data?.targetId === createdId
+  );
+  if (!siblingEdge) {
+    throw new Error(`Could not find the paired edge mutation for "${mutationId}" in batch "${batchId}" -- the batch may be malformed.`);
+  }
+  const sourceEntityId = siblingEdge.data.sourceId;
+
+  batch.mutations = batch.mutations.filter((m) => m.mutationId !== siblingEdge.mutationId);
+
+  createEntry.op = "upsert_edge";
+  createEntry.id = undefined;
+  createEntry.data = {
+    sourceId: sourceEntityId,
+    targetId: existingEntityId,
+    relationshipType: siblingEdge.data.relationshipType ?? DEFAULT_MENTION_RELATIONSHIP
+  };
+  createEntry.rationale = `Redirected: linked to the existing entity "${existingEntityName ?? existingEntityId}" instead of proposing a duplicate.`;
+  createEntry.entityContext = {
+    scanResultKind: "link",
+    name: existingEntityName ?? existingEntityId,
+    type: createEntry.entityContext?.type
+  };
+  createEntry.diff = undefined; // still pending (checked above), so no preState to worry about clearing either
+
+  saveBatch(w, batch);
+  return { batchId, mutationId, redirectedTo: existingEntityId };
 }
 
 // --- narrate ---------------------------------------------------------------

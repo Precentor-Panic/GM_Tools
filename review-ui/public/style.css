@@ -410,6 +410,17 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .mutation-row.scan-new { border-left-color: var(--amber); }
 .scan-accept-split { display: flex; gap: 0.5rem; margin: 0.4rem 0 0.6rem; flex-wrap: wrap; }
 
+/* Phase 13 task 13.3: "Link to existing instead" entity picker (a
+   "propose new" mention-scan row only). */
+.link-existing-box { margin: 0.4rem 0; }
+.link-existing-search { font-size: 0.85rem; padding: 0.3rem 0.5rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); width: 100%; max-width: 320px; margin: 0.3rem 0; }
+.link-existing-results { list-style: none; margin: 0.2rem 0 0; padding: 0; max-height: 160px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+.link-existing-results:empty { border: none; }
+.link-existing-results li { border-bottom: 1px solid var(--border); }
+.link-existing-results li:last-child { border-bottom: none; }
+.link-existing-pick { display: block; width: 100%; text-align: left; padding: 0.3rem 0.5rem; }
+.link-existing-pick:hover { background: var(--bg-alt); }
+
 /* placement mode ("+ Add Node" armed, waiting for a click) -- crosshair
    cursor + a dimmed canvas, per the design doc's [DECIDED] shape. */
 .graph-view-container.graph-placement-active { cursor: crosshair; }
