@@ -244,6 +244,25 @@ function findLastRollbackableBatch(w) {
   return null;
 }
 
+/**
+ * GET /api/unreviewed-entities payload: every flagged entity, plus a real
+ * display name looked up from the live snapshot -- task 14.6 (QA-pass
+ * finding, confirmed independently by BOTH personas). Mirrors
+ * pendingEntitiesPayload's exact same "look up from the live snapshot,
+ * degrade gracefully to the raw id if there's no snapshot yet" convention
+ * immediately below, rather than a second lookup approach.
+ */
+function unreviewedEntitiesPayload(w, dir, opts) {
+  const flagged = findUnreviewedEntities(w, opts);
+  let entities = [];
+  try {
+    ({ entities } = loadSnapshot(dir, w).snapshot);
+  } catch {
+    // No snapshot yet is fine here -- flagged entries can still be listed by id, just without a friendly name.
+  }
+  return flagged.map((f) => ({ ...f, name: findEntity(entities, f.entityId)?.name ?? f.entityId }));
+}
+
 /** GET /api/pending-entities payload: every entity with an available backlog, plus its entries and a display name. */
 function pendingEntitiesPayload(w, dir) {
   let entities = [];
@@ -780,13 +799,13 @@ async function handleApi(req, res, url, parts) {
   // GET /api/unreviewed-entities
   if (method === "GET" && parts.length === 2 && parts[1] === "unreviewed-entities") {
     const w = resolveWorld(q.get("world"));
+    const dir = resolveDir(q.get("dataDir"));
     const maxAgeDays = q.get("maxAgeDays") ? Number(q.get("maxAgeDays")) : undefined;
     const maxUnreviewedAccepts = q.get("maxUnreviewedAccepts") ? Number(q.get("maxUnreviewedAccepts")) : undefined;
-    const flagged = findUnreviewedEntities(w, { maxAgeDays, maxUnreviewedAccepts });
     return sendJson(res, 200, {
       world: w,
       defaults: { maxAgeDays: DEFAULT_MAX_AGE_DAYS, maxUnreviewedAccepts: DEFAULT_MAX_UNREVIEWED_ACCEPTS },
-      entities: flagged
+      entities: unreviewedEntitiesPayload(w, dir, { maxAgeDays, maxUnreviewedAccepts })
     });
   }
 

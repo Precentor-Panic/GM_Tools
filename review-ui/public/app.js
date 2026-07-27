@@ -185,7 +185,12 @@ async function renderQueue() {
       row.className = "queue-item";
       const headline = document.createElement("span");
       headline.className = "queue-item-headline";
-      headline.innerHTML = `<span class="flag-dot"></span>${escapeHtml(f.entityId)} — ${flagReasonLabel(f)}`;
+      // Task 14.6 (QA-pass finding, confirmed independently by BOTH
+      // personas): show the entity's real name, matching the Deferred Debt
+      // tab's own convention -- the raw id is still available as a title
+      // tooltip, not the primary label.
+      headline.innerHTML = `<span class="flag-dot"></span>${escapeHtml(f.name ?? f.entityId)} — ${flagReasonLabel(f)}`;
+      row.title = f.entityId;
       row.appendChild(headline);
 
       // Real gap found via hands-on use: this list was previously read-only

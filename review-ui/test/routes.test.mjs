@@ -200,6 +200,20 @@ test("POST /api/batches/:id/accept scope='batch' (accept-all) does NOT mark enti
   assert.ok(flaggedIds.includes(batch.idA) && flaggedIds.includes(batch.idB), "a whole-batch accept-all must NOT count as review -- both entities should still be flagged");
 });
 
+test("GET /api/unreviewed-entities includes each flagged entity's real name, not just its raw id (task 14.6 regression, confirmed independently by both QA personas)", async () => {
+  const batch = makeTwoMutationBatch();
+  await postJson(`/api/batches/${batch.id}/accept`, { world: WORLD, scope: "batch" }); // accept-all -- does NOT count as review, both entities stay flagged
+
+  const { body } = await getJson(`/api/unreviewed-entities?world=${WORLD}`);
+  const entryA = body.entities.find((e) => e.entityId === batch.idA);
+  const entryB = body.entities.find((e) => e.entityId === batch.idB);
+  assert.ok(entryA, "precondition: idA should be flagged");
+  assert.ok(entryB, "precondition: idB should be flagged");
+  assert.ok(entryA.name && entryA.name !== entryA.entityId, `entry should carry a real display name distinct from its raw id, got name="${entryA.name}"`);
+  assert.ok(entryA.name.startsWith("Alvor "), `expected the real entity name ("Alvor <suffix>"), got "${entryA.name}"`);
+  assert.ok(entryB.name.startsWith("Riverwood "), `expected the real entity name ("Riverwood <suffix>"), got "${entryB.name}"`);
+});
+
 test("POST /api/unreviewed-entities/:entityId/mark-reviewed dismisses a flag with no batch context required -- real gap found via hands-on use (a flagged entity with no open batch had no way to be acknowledged)", async () => {
   const batch = makeTwoMutationBatch();
   await postJson(`/api/batches/${batch.id}/accept`, { world: WORLD, scope: "batch" });
