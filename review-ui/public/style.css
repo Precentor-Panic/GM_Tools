@@ -415,6 +415,11 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .graph-view-container.graph-placement-active { cursor: crosshair; }
 .graph-view-container.graph-placement-active .graph-svg { opacity: 0.55; }
 
+/* Phase 13 task 13.2: real click-and-drag panning (standalone Graph view
+   only) -- an "open hand" cursor invites the drag, "grabbing" during it. */
+.graph-view-container.graph-pannable { cursor: grab; }
+.graph-view-container.graph-pannable.graph-panning { cursor: grabbing; }
+
 .graph-edge-hitarea { stroke: transparent; stroke-width: 12; cursor: pointer; }
 .graph-edge-draw-line { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4,3; pointer-events: none; }
 

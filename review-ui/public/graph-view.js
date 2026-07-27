@@ -59,10 +59,50 @@ export function isDirectionalRelationship(relationshipType) {
 // layout: dimensions + node sizing
 // ---------------------------------------------------------------------------
 
-const LAYOUT_W = 960;
-const LAYOUT_H = 620;
+// Phase 13 task 13.2: the logical layout box used to be a single fixed
+// 960x620 constant regardless of node count -- the force simulation packed
+// ANY number of nodes into that same small area, which is exactly why a
+// realistic-size graph (confirmed with a real 18-node fixture BEFORE this
+// change, see plans/phase-13-tasks.md) ended up with nodes stacked on top of
+// each other. BASE_LAYOUT_W/H is now only the FLOOR -- what a 2-3 node graph
+// still gets, byte-for-byte the same box every graph rendered before this
+// phase. layoutDimsForNodeCount grows BOTH dimensions together (so the
+// aspect ratio, and therefore preserveAspectRatio's letterboxing behavior,
+// never changes) with sqrt(nodeCount/LAYOUT_BASELINE_NODE_COUNT) -- chosen
+// so the AREA grows roughly linearly with node count, which keeps each
+// node's own "ideal spacing" (runForceLayout's `k` constant, itself
+// sqrt(area/nodeCount)) roughly CONSTANT as the graph grows, rather than
+// shrinking toward zero the way it did under the old fixed box.
+const BASE_LAYOUT_W = 960;
+const BASE_LAYOUT_H = 620;
+const LAYOUT_BASELINE_NODE_COUNT = 8; // node count at which the scale factor is exactly 1 (the historical box size)
 const MIN_R = 14;
 const MAX_R = 34;
+
+function layoutDimsForNodeCount(nodeCount) {
+  const scale = Math.max(1, Math.sqrt(Math.max(1, nodeCount) / LAYOUT_BASELINE_NODE_COUNT));
+  return { w: Math.round(BASE_LAYOUT_W * scale), h: Math.round(BASE_LAYOUT_H * scale) };
+}
+
+/**
+ * The dims actually used for a render: the node-count-based floor above,
+ * OR (if larger) a box that comfortably contains every node's own CACHED
+ * position -- a safeguard so a transient node-count dip (e.g. one node
+ * deleted, reducing the "ideal" box on this render alone) can never shrink
+ * the viewBox smaller than where already-cached, never-rearranged nodes
+ * (computeLayout's own "never rearranges" guarantee) actually sit, which
+ * would otherwise silently clip them outside the visible viewBox.
+ */
+function layoutDimsForCurrentGraph(nodeCount, existingPositions) {
+  const base = layoutDimsForNodeCount(nodeCount);
+  let maxX = 0, maxY = 0;
+  for (const p of existingPositions.values()) {
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  const PAD = MAX_R + 40;
+  return { w: Math.max(base.w, Math.round(maxX + PAD)), h: Math.max(base.h, Math.round(maxY + PAD)) };
+}
 
 function radiusForDegree(degree) {
   const r = MIN_R + Math.sqrt(Math.max(0, degree)) * 6;
@@ -140,6 +180,7 @@ export function removeNodePosition(cacheKey, nodeId) {
  * by a short force-directed pass that treats every already-positioned node
  * as fixed, so existing nodes never move just because new ones arrived.
  */
+/** @returns {{positions:Map, dims:{w:number,h:number}}} */
 function computeLayout(nodes, edges, cacheKey) {
   const cache = loadPositionCache(cacheKey);
   const positions = new Map();
@@ -152,16 +193,17 @@ function computeLayout(nodes, edges, cacheKey) {
       missingIds.push(n.id);
     }
   }
+  const dims = layoutDimsForCurrentGraph(nodes.length, positions);
   if (missingIds.length) {
-    runForceLayout(nodes, edges, positions, new Set(missingIds));
+    runForceLayout(nodes, edges, positions, new Set(missingIds), dims);
   }
   savePositionCache(cacheKey, positions);
-  return positions;
+  return { positions, dims };
 }
 
 /** A compact, hand-rolled force simulation (Fruchterman-Reingold-ish): pairwise repulsion, edge-spring attraction, weak centering. No D3, no external graph-viz library, per this project's zero-build-step/minimal-dependency convention. */
-function runForceLayout(nodes, edges, positions, mobileIds) {
-  const w = LAYOUT_W, h = LAYOUT_H;
+function runForceLayout(nodes, edges, positions, mobileIds, dims) {
+  const w = dims.w, h = dims.h;
   const cx = w / 2, cy = h / 2;
   const k = Math.sqrt((w * h) / Math.max(1, nodes.length)); // ideal spacing constant
 
@@ -244,23 +286,45 @@ function truncateLabel(s, n = 16) {
 }
 
 /**
+ * Phase 13 task 13.2: the logical layout box's size now varies per render
+ * (layoutDimsForCurrentGraph above), so every function below that used to
+ * read the module-level LAYOUT_W/LAYOUT_H constants directly instead reads
+ * the RENDERED SVG's OWN viewBox -- the single live source of truth for
+ * "how many logical units does this particular render span," via the
+ * standard SVGAnimatedRect DOM API. This is deliberately not a second copy
+ * of dims threaded through every event-handler closure in this file
+ * (armPlacementMode, wireEdgeDrawing, wireRubberBandSelection,
+ * positionPopoverAt, ...): one fewer place for a cached dims value to go
+ * stale across a re-render, and the SAME property the file's own zoom
+ * implementation already relies on -- the viewBox itself never changes on
+ * zoom (applyZoom only changes the SVG's rendered CSS size), so reading it
+ * here is exactly as zoom-level-independent as the ratio math already was.
+ */
+function currentLayoutDims(svg) {
+  const vb = svg?.viewBox?.baseVal;
+  return vb && vb.width ? { w: vb.width, h: vb.height } : { w: BASE_LAYOUT_W, h: BASE_LAYOUT_H };
+}
+
+/**
  * THE shared screen<->layout coordinate conversion this whole file commits
  * to reusing everywhere a raw mouse/click coordinate needs to become a
- * LAYOUT_W/LAYOUT_H-space point -- ratio-based off the SVG's own
+ * layout-space point -- ratio-based off the SVG's own
  * getBoundingClientRect(), so it stays correct at any CSS zoom level
  * (applyZoom() only ever changes the SVG's rendered CSS size, never its
- * viewBox). wireRubberBandSelection's own svgPoint() below is refactored to
- * call this rather than duplicating the math; Phase 12's two new
- * interactions that need a raw click point (wireEdgeDrawing's drag-line
- * endpoint, armPlacementMode's node-placement click) both use this SAME
- * function too, per this project's own explicit warning (CLAUDE.md /
- * phase-12-tasks.md) not to invent a second coordinate-math approach.
+ * viewBox) AND at any layout box size (currentLayoutDims above).
+ * wireRubberBandSelection's own svgPoint() below is refactored to call this
+ * rather than duplicating the math; Phase 12's two new interactions that
+ * need a raw click point (wireEdgeDrawing's drag-line endpoint,
+ * armPlacementMode's node-placement click) both use this SAME function too,
+ * per this project's own explicit warning (CLAUDE.md / phase-12-tasks.md)
+ * not to invent a second coordinate-math approach.
  */
 function svgPointFromClient(svg, clientX, clientY) {
   const rect = svg.getBoundingClientRect();
+  const dims = currentLayoutDims(svg);
   return {
-    x: ((clientX - rect.left) / rect.width) * LAYOUT_W,
-    y: ((clientY - rect.top) / rect.height) * LAYOUT_H
+    x: ((clientX - rect.left) / rect.width) * dims.w,
+    y: ((clientY - rect.top) / rect.height) * dims.h
   };
 }
 
@@ -310,10 +374,10 @@ export function renderGraph(container, graph, opts = {}) {
     return;
   }
 
-  const positions = computeLayout(graph.nodes, graph.edges, opts.cacheKey ?? "default");
+  const { positions, dims } = computeLayout(graph.nodes, graph.edges, opts.cacheKey ?? "default");
 
   const svg = svgEl("svg", {
-    viewBox: `0 0 ${LAYOUT_W} ${LAYOUT_H}`,
+    viewBox: `0 0 ${dims.w} ${dims.h}`,
     class: "graph-svg",
     "data-testid": "graph-svg"
   });
@@ -435,6 +499,11 @@ export function renderGraph(container, graph, opts = {}) {
 
   container.appendChild(svg);
   wireRubberBandSelection(container, svg, graph.nodes, positions, mode, opts);
+  // Phase 13 task 13.2: real click-and-drag panning, STANDALONE MODE ONLY --
+  // batch mode's own background mousedown already means "start a rubber-band
+  // selection" (wireRubberBandSelection above), so wiring panning there too
+  // would be a straight interaction conflict, not just visual noise.
+  if (mode === "standalone") wireGraphPanning(container, svg);
   if (editable) {
     wireEdgeDrawing(container, svg, graph.nodes, positions, opts);
     wireDeleteKeyboardShortcut(container, opts);
@@ -450,25 +519,100 @@ export function renderGraph(container, graph, opts = {}) {
 // scrollable container -- NOT a viewBox/transform change -- specifically so
 // the existing screen<->layout coordinate math in showPopover() and
 // wireRubberBandSelection() (both already ratio-based off
-// getBoundingClientRect() vs LAYOUT_W/LAYOUT_H) keeps working completely
-// unchanged and correct at any zoom level, with zero risk to that
-// already-hardened code. Panning is native browser scroll once the SVG is
-// larger than its container -- no custom drag-to-pan gesture, so there's no
-// conflict with batch mode's own background-drag rubber-band select.
+// getBoundingClientRect() vs the SVG's own current viewBox) keeps working
+// completely unchanged and correct at any zoom level, with zero risk to
+// that already-hardened code.
+//
+// Phase 13 task 13.2: previously the SVG's rendered CSS width tracked its
+// CONTAINER (`100%`) while only its height scaled with zoom -- fine when
+// the logical layout box was a single fixed constant, but once
+// layoutDimsForNodeCount lets a big graph's viewBox genuinely grow, a
+// container-relative width would just squeeze that whole bigger viewBox
+// back down to fit the container (via SVG's own preserveAspectRatio
+// letterboxing), silently defeating the entire point of giving it more
+// logical room -- nodes would render SMALLER, not give a bigger graph more
+// visible space to pan around in. Both width AND height are now driven
+// directly off the CURRENT render's own layout dims (read live from the
+// SVG's viewBox via currentLayoutDims, not a second cached copy) at a fixed
+// PX_PER_LAYOUT_UNIT, chosen so a baseline (<=8-node) graph at zoom 100%
+// renders at its exact historical ~420px-tall size -- byte-for-byte the
+// same visual result Phase 7/12's own zoom verification already covered,
+// confirmed by this being the SAME 420 the old ZOOM_BASE_HEIGHT constant
+// used. A bigger graph at zoom 100% now genuinely renders bigger than its
+// container, which is what makes panning (native scroll, or the drag
+// gesture below) an actually necessary and useful way to explore it,
+// instead of everything staying squeezed into the same visible box.
 // ---------------------------------------------------------------------------
 
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 3;
 const ZOOM_STEP = 0.25;
-const ZOOM_BASE_HEIGHT = 420; // matches .graph-svg's CSS default at zoom 1
+const ZOOM_BASE_HEIGHT = 420; // matches this file's own pre-Phase-13 baseline-graph zoom-100% height, preserved exactly
+const PX_PER_LAYOUT_UNIT = ZOOM_BASE_HEIGHT / BASE_LAYOUT_H; // ~0.677 CSS px per logical layout unit at zoom 1
 
 function applyZoom(container, svg, zoom) {
   const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom));
   container._graphZoom = clamped;
-  svg.style.width = `${clamped * 100}%`;
-  svg.style.height = `${Math.round(ZOOM_BASE_HEIGHT * clamped)}px`;
+  const dims = currentLayoutDims(svg);
+  svg.style.width = `${Math.round(dims.w * PX_PER_LAYOUT_UNIT * clamped)}px`;
+  svg.style.height = `${Math.round(dims.h * PX_PER_LAYOUT_UNIT * clamped)}px`;
   const label = container.querySelector(".graph-zoom-label");
   if (label) label.textContent = `${Math.round(clamped * 100)}%`;
+}
+
+/**
+ * Phase 13 task 13.2: real click-and-drag panning, wired ONLY when
+ * renderGraph is called with mode==='standalone' (see its own call site) --
+ * batch mode's background mousedown already means "start a rubber-band
+ * selection" (wireRubberBandSelection above wires only for mode==='batch',
+ * so the two are structurally mutually exclusive, never both wired for the
+ * same render). Implemented as a drag gesture that programmatically sets
+ * container.scrollLeft/scrollTop -- the exact same native-scroll pan
+ * mechanism the container already supported (`overflow:auto`), just more
+ * discoverable/usable than hunting for a scrollbar -- NOT a viewBox/
+ * transform change, so it adds no new coordinate math and touches none of
+ * svgPointFromClient/showPopover/wireRubberBandSelection's own ratio-based
+ * math at all.
+ *
+ * Same "bind window-level listeners ONCE per container, read current state
+ * off the container's own live scroll position" pattern
+ * wireRubberBandSelection/wireEdgeDrawing already established for the exact
+ * same reason: this container's content is torn down and rebuilt on every
+ * renderGraph() re-render, so re-binding fresh window listeners every call
+ * would leak.
+ */
+function wireGraphPanning(container, svg) {
+  container.classList.add("graph-pannable");
+  if (container._graphPanWired) return;
+  container._graphPanWired = true;
+
+  let dragging = false;
+  let startClientX = 0, startClientY = 0, startScrollLeft = 0, startScrollTop = 0;
+
+  container.addEventListener("mousedown", (evt) => {
+    if (evt.button !== 0) return;
+    // A node/edge-hitarea/popover/form's own mousedown handler already calls
+    // stopPropagation() (see the main render loop and wireFormDismiss), so
+    // this only ever fires for a genuine background drag -- EXCEPT
+    // placement mode, which wants a single precise click-to-place and
+    // shouldn't have that click's own mousedown kick off a pan first.
+    if (container.classList.contains("graph-placement-active")) return;
+    dragging = true;
+    startClientX = evt.clientX; startClientY = evt.clientY;
+    startScrollLeft = container.scrollLeft; startScrollTop = container.scrollTop;
+    container.classList.add("graph-panning");
+  });
+
+  window.addEventListener("mousemove", (evt) => {
+    if (!dragging) return;
+    container.scrollLeft = startScrollLeft - (evt.clientX - startClientX);
+    container.scrollTop = startScrollTop - (evt.clientY - startClientY);
+  });
+
+  window.addEventListener("mouseup", () => {
+    dragging = false;
+    container.classList.remove("graph-panning");
+  });
 }
 
 function wireZoomControls(container) {
@@ -606,8 +750,9 @@ function showPopover(container, node, pos, opts) {
   const svg = container.querySelector(".graph-svg");
   const svgRect = svg.getBoundingClientRect();
   const containerRect = container.getBoundingClientRect();
-  const scaleX = svgRect.width / LAYOUT_W;
-  const scaleY = svgRect.height / LAYOUT_H;
+  const dims = currentLayoutDims(svg);
+  const scaleX = svgRect.width / dims.w;
+  const scaleY = svgRect.height / dims.h;
   const left = (svgRect.left - containerRect.left) + pos.x * scaleX;
   const top = (svgRect.top - containerRect.top) + pos.y * scaleY;
   el.style.left = `${left}px`;
@@ -772,8 +917,9 @@ function positionPopoverAt(container, el, layoutPoint) {
   const svg = container.querySelector(".graph-svg");
   const svgRect = svg.getBoundingClientRect();
   const containerRect = container.getBoundingClientRect();
-  const scaleX = svgRect.width / LAYOUT_W;
-  const scaleY = svgRect.height / LAYOUT_H;
+  const dims = currentLayoutDims(svg);
+  const scaleX = svgRect.width / dims.w;
+  const scaleY = svgRect.height / dims.h;
   el.style.left = `${(svgRect.left - containerRect.left) + layoutPoint.x * scaleX}px`;
   el.style.top = `${(svgRect.top - containerRect.top) + layoutPoint.y * scaleY}px`;
 }
@@ -1031,7 +1177,8 @@ function showEdgePopover(container, edge, opts, { startInEdit = false } = {}) {
   const positions = container._graphEdgeDraw?.positions ?? container._graphRubberBand?.positions;
   const a = positions?.get(edge.sourceId);
   const b = positions?.get(edge.targetId);
-  const midpoint = a && b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : { x: LAYOUT_W / 2, y: LAYOUT_H / 2 };
+  const fallbackDims = currentLayoutDims(svg);
+  const midpoint = a && b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : { x: fallbackDims.w / 2, y: fallbackDims.h / 2 };
 
   container._graphActivePopoverSubject = { kind: "edge", id: edge.id };
 
