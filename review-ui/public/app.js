@@ -54,6 +54,7 @@ async function initWorldSelect() {
     CURRENT_WORLD = select.value;
     localStorage.setItem("gmReview.world", CURRENT_WORLD);
     renderCurrentView();
+    closeMobileMenu();
   });
 }
 
@@ -111,10 +112,53 @@ function renderCurrentView() {
   else if (view === "entity") renderEntityDetail(arg);
 }
 
-window.addEventListener("hashchange", renderCurrentView);
+// Phase 15 task 15.3: closing the mobile drawer belongs on the hashchange
+// listener itself, not just the [data-nav] click handler below -- a real
+// gap found via actually driving this (Playwright navigating by hash, the
+// same mechanism a browser back/forward/history navigation uses) rather
+// than only a click: any navigation, however triggered, must close the
+// drawer, since it fires unconditionally on every real view change.
+window.addEventListener("hashchange", () => {
+  renderCurrentView();
+  closeMobileMenu();
+});
 document.addEventListener("click", (e) => {
   const nav = e.target.closest("[data-nav]");
-  if (nav) navigate(nav.dataset.nav);
+  if (nav) {
+    navigate(nav.dataset.nav);
+    // Belt-and-suspenders alongside the hashchange listener above: clicking
+    // a nav item for the CURRENT view (e.g. "Queue" while already on Queue)
+    // never fires hashchange at all (the hash string doesn't change), so
+    // that listener alone wouldn't close the drawer in that specific case.
+    closeMobileMenu();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Phase 15 task 15.3: mobile topbar drawer. Only visible/interactive at
+// mobile widths (style.css's media query) -- at desktop widths
+// #topbar-collapsible is `display:contents` and this toggle is inert (the
+// button itself is display:none there), so this wiring changes nothing
+// about desktop behavior.
+// ---------------------------------------------------------------------------
+const mobileMenuBtn = document.getElementById("mobile-menu-btn");
+const topbarCollapsible = document.getElementById("topbar-collapsible");
+
+function closeMobileMenu() {
+  topbarCollapsible?.classList.remove("open");
+  mobileMenuBtn?.setAttribute("aria-expanded", "false");
+}
+
+mobileMenuBtn?.addEventListener("click", (e) => {
+  e.stopPropagation(); // don't let this same click immediately trigger the outside-click closer below
+  const isOpen = topbarCollapsible.classList.toggle("open");
+  mobileMenuBtn.setAttribute("aria-expanded", String(isOpen));
+});
+
+document.addEventListener("click", (e) => {
+  if (!topbarCollapsible?.classList.contains("open")) return;
+  if (e.target.closest("#topbar-collapsible") || e.target.closest("#mobile-menu-btn")) return;
+  closeMobileMenu();
 });
 
 // ---------------------------------------------------------------------------
@@ -476,11 +520,19 @@ function buildMutationRow(entity, index, openMutationIds, openEntityIdHint) {
   if (entity.scanResultKind === "link") row.classList.add("scan-link");
   if (entity.scanResultKind === "new") row.classList.add("scan-new");
 
+  // Phase 15 task 15.5: wrapped in a <label> (native HTML: clicking anywhere
+  // in a label toggles its associated control) rather than the bare
+  // ~13x13px native checkbox alone -- style.css's mobile media query grows
+  // ONLY this wrapper's padding to the ~44px touch-target guideline,
+  // leaving the checkbox's own visual size and desktop density untouched.
+  const checkboxWrap = document.createElement("label");
+  checkboxWrap.className = "row-check-wrap";
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.className = "row-check";
   checkbox.disabled = entity.status !== "pending";
-  row.appendChild(checkbox);
+  checkboxWrap.appendChild(checkbox);
+  row.appendChild(checkboxWrap);
 
   const details = document.createElement("details");
   const summary = document.createElement("summary");

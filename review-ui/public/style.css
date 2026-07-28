@@ -95,6 +95,15 @@ h2.section-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing:
 .icon-btn { background: none; border: none; font-size: 1.2rem; cursor: pointer; color: var(--text-muted); line-height: 1; padding: 0.2rem 0.4rem; border-radius: 6px; }
 .icon-btn:hover { color: var(--text); background: var(--card-bg); }
 
+/* Phase 15 task 15.3: at desktop widths this wrapper is fully transparent to
+   layout (`display: contents` makes .topnav/.topbar-right participate as if
+   they were DIRECT children of .topbar, byte-identical to the pre-Phase-15
+   markup/layout) -- the mobile media query below is what turns it into an
+   actual collapsible drawer. #mobile-menu-btn stays hidden until that same
+   query enables it, so nothing about desktop rendering changes at all. */
+.topbar-collapsible { display: contents; }
+.mobile-menu-btn { display: none; }
+
 main { max-width: 860px; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
 
 .view { display: none; }
@@ -151,6 +160,12 @@ main { max-width: 860px; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
   display: flex; align-items: center; gap: 0.5rem;
   background: var(--bg-alt); border-bottom: 1px solid var(--border);
   padding: 0.5rem 0.25rem; margin-bottom: 0.5rem;
+  /* Phase 15 task 15.4: safe at every width -- a row that already fits
+     never wraps, so this is a no-op at desktop widths (re-confirmed via a
+     real desktop screenshot). See the mobile media query below for the
+     Accept/Reject-stay-on-row-one prioritization once wrapping actually
+     kicks in on a narrow viewport. */
+  flex-wrap: wrap; row-gap: 0.5rem;
 }
 .action-bar-spacer { flex: 1; }
 .narrate-bar {
@@ -171,7 +186,10 @@ main { max-width: 860px; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
 .mutation-row.flagged { border-left: 3px solid var(--amber); background: var(--amber-bg); }
 .mutation-row.boring { opacity: 0.85; }
 .mutation-row.focused { outline: 2px solid var(--accent); outline-offset: 1px; }
-.mutation-row > input[type="checkbox"] { margin-top: 0.35rem; flex: none; }
+/* Phase 15 task 15.5: the checkbox itself keeps its native visual size at
+   desktop (this wrapper adds no padding there) -- see the mobile media
+   query below for the actual ~44px touch-target expansion. */
+.mutation-row > .row-check-wrap { margin-top: 0.35rem; flex: none; display: inline-flex; cursor: pointer; }
 .mutation-row details { flex: 1; min-width: 0; }
 .mutation-row summary {
   cursor: pointer; list-style: none; display: flex; align-items: center; gap: 0.5rem;
@@ -496,4 +514,61 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 @media (max-width: 560px) {
   main { padding: 1rem 0.6rem 4rem; }
   .row-body { padding-left: 0.2rem; }
+}
+
+/* ===========================================================================
+   Phase 15 tasks 15.3/15.4/15.5: real mobile-viewport support. Verified
+   against a real iPhone 13 logical viewport (390px wide, Playwright device
+   emulation) via actual bounding-box measurements/screenshots -- see
+   plans/phase-15-tasks.md. 700px comfortably covers phone widths (portrait
+   AND landscape) without touching the desktop/tablet layout at all; the
+   pre-existing 560px rule above is untouched.
+   =========================================================================== */
+@media (max-width: 700px) {
+  /* --- 15.3: world-select + Settings gear were pushed off-screen entirely
+     (.topbar-right's margin-left:auto on a non-wrapping row that simply
+     extended past the viewport, clipped by body's overflow-x:hidden, not
+     scrollable) -- collapse .topnav + .topbar-right into a dropdown drawer
+     toggled by #mobile-menu-btn instead. The drawer is `position: absolute`
+     (an overlay, not part of normal flow), so .topbar's own height/sticky
+     math (--topbar-h, which .action-bar/.narrate-bar's `top` also depend
+     on) is completely untouched by this -- zero risk of a second-order
+     sticky-positioning regression. */
+  .mobile-menu-btn { display: inline-flex; align-items: center; justify-content: center; }
+  .topbar-collapsible {
+    display: none;
+    position: absolute; top: var(--topbar-h); left: 0; right: 0;
+    flex-direction: column; align-items: stretch; gap: 0.6rem;
+    background: var(--bg-alt); border-bottom: 1px solid var(--border);
+    padding: 0.6rem 0.9rem 0.9rem;
+    box-shadow: 0 8px 18px rgba(0,0,0,0.18);
+    z-index: 19;
+  }
+  .topbar-collapsible.open { display: flex; }
+  .topnav { flex-direction: column; gap: 0.2rem; }
+  .topnav button { text-align: left; width: 100%; padding: 0.6rem 0.5rem; }
+  .topbar-right { margin-left: 0; justify-content: space-between; }
+  #world-select { flex: 1; min-width: 0; }
+
+  /* --- 15.4: the action bar's five buttons + spacer overflowed past the
+     visible edge with no wrap, clipping "Reject Selected" off-screen
+     entirely (confirmed: scrollWidth > clientWidth, no scroll affordance).
+     flex-wrap is already unconditional above (safe at every width); here,
+     Accept/Reject are given `order` priority so they land on the FIRST
+     wrapped row even if the bulk-select helper buttons (Select All/None/
+     Boring) don't all fit alongside them, per the task's own "primary/
+     destructive actions should stay on the first row" guidance. */
+  #btn-accept-selected, #btn-reject-selected { order: 1; }
+  #btn-select-all, #btn-select-none, .select-all-boring { order: 2; }
+  .action-bar-spacer { display: none; } /* the push-right trick isn't needed once wrapping is active -- an empty flex:1 item just adds unpredictable wrap behavior */
+
+  /* --- 15.5: the mutation-row checkbox rendered at the browser-default
+     ~13x13px, well under the ~44px touch-target guideline. Grow ONLY the
+     wrapping label's hit area here (desktop keeps the checkbox exactly as
+     dense as before -- see the unscoped rule above). Also found while in
+     this code: .icon-btn (Settings gear, the new hamburger, and the graph
+     popover's edit/delete pencil/x icons) rendered similarly small
+     (~25-30px) -- same fix, same guideline. */
+  .row-check-wrap { min-width: 44px; min-height: 44px; align-items: center; justify-content: center; }
+  .icon-btn { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
 }

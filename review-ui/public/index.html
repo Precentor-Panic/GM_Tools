@@ -10,15 +10,23 @@
 
 <header class="topbar">
   <button class="brand" data-nav="queue" title="Back to Queue">GM Review</button>
-  <nav class="topnav">
-    <button data-nav="queue">Queue</button>
-    <button data-nav="import">New Import</button>
-    <button data-nav="debt">Deferred Debt</button>
-    <button data-nav="graph">Graph</button>
-  </nav>
-  <div class="topbar-right">
-    <select id="world-select" aria-label="World"></select>
-    <button id="gear-btn" class="icon-btn" data-nav="settings" title="Settings" aria-label="Settings">&#9881;</button>
+  <!-- Phase 15 task 15.3: at mobile widths, .topnav + .topbar-right collapse
+       into a dropdown drawer toggled by this button instead of overflowing
+       off-screen -- see style.css's mobile media query and app.js's toggle
+       wiring. Hidden at desktop widths (CSS), where the drawer markup below
+       renders inline exactly as it always has (display:contents). -->
+  <button id="mobile-menu-btn" class="icon-btn mobile-menu-btn" aria-label="Menu" aria-expanded="false" aria-controls="topbar-collapsible">&#9776;</button>
+  <div id="topbar-collapsible" class="topbar-collapsible">
+    <nav class="topnav">
+      <button data-nav="queue">Queue</button>
+      <button data-nav="import">New Import</button>
+      <button data-nav="debt">Deferred Debt</button>
+      <button data-nav="graph">Graph</button>
+    </nav>
+    <div class="topbar-right">
+      <select id="world-select" aria-label="World"></select>
+      <button id="gear-btn" class="icon-btn" data-nav="settings" title="Settings" aria-label="Settings">&#9881;</button>
+    </div>
   </div>
 </header>
 
