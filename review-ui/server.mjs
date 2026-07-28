@@ -34,6 +34,33 @@
  * zod/@anthropic-ai/sdk, resolve from GM_Tools/'s root node_modules via
  * Node's normal upward node_modules search, the same way wf-mcp-server's own
  * mutation-engine/* imports already do).
+ *
+ * SECURITY: this server has NO authentication layer of its own -- every
+ * route below is reachable by anyone who can reach the port (this project's
+ * own documented remote-access recommendation is a mesh VPN like Tailscale,
+ * specifically because this file has nothing to authenticate a request
+ * with). Given that, every route calls the shared resolveDir() with NO
+ * argument, deliberately never forwarding a client-supplied `dataDir` from
+ * `body`/the query string into it, even though wf-mcp-server/lib/resolve.mjs's
+ * resolveDir() function itself still accepts an explicit override (needed
+ * there for the MCP tool surface, which is local/trusted, spawned directly
+ * by a Claude Code session over stdio, never network-facing). Found via a
+ * real security review: resolveDir(explicit) and resolveWorld(world) both
+ * used to pass an unvalidated client string straight into join()-based file
+ * paths across all seven of this project's flat-JSON stores plus the
+ * snapshot/mutations-bridge paths -- node:path's join() does not stop `..`
+ * traversal, so an unauthenticated request with a crafted `dataDir` was a
+ * real arbitrary-file-read/write primitive scoped to whatever this Node
+ * process's OS user can touch, not just "read/write your campaign data."
+ * Fixed by removing the untrusted input from this file entirely (dataDir
+ * always resolves from WF_DATA_DIR/OS-default here, never from a request)
+ * rather than trying to validate an arbitrary path string -- a validator
+ * is one more thing that can itself have a bug (symlinks, encoding,
+ * normalization edge cases); not accepting the input at all has no such
+ * failure mode. `world` is separately hardened at its source in
+ * resolve.mjs's own resolveWorld() (format-restricted, not removed --
+ * unlike dataDir, a world id is a genuinely meaningful client-supplied
+ * value here, e.g. switching worlds from the UI's own dropdown).
  */
 import { createServer } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
@@ -641,7 +668,7 @@ async function handleApi(req, res, url, parts) {
 
   // GET /api/worlds
   if (method === "GET" && parts.length === 2 && parts[1] === "worlds") {
-    const dir = resolveDir(q.get("dataDir"));
+    const dir = resolveDir();
     return sendJson(res, 200, { dataDir: dir, worlds: listWorlds(dir) });
   }
 
@@ -655,7 +682,7 @@ async function handleApi(req, res, url, parts) {
   // up immediately since it just checks for an on-disk snapshot file.
   if (method === "POST" && parts.length === 2 && parts[1] === "worlds") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const worldId = typeof body.world === "string" ? body.world.trim() : "";
     if (!worldId || !/^[a-zA-Z0-9_-]+$/.test(worldId)) {
       throw new Error(
@@ -683,7 +710,7 @@ async function handleApi(req, res, url, parts) {
   // prep-content sub-resources below are fetched separately by the same page.
   if (method === "GET" && parts.length === 3 && parts[1] === "entities") {
     const w = resolveWorld(q.get("world"));
-    const dir = resolveDir(q.get("dataDir"));
+    const dir = resolveDir();
     const { entities } = loadSnapshot(dir, w).snapshot;
     const entity = findEntity(entities, parts[2]);
     if (!entity) throw new Error(`No committed entity "${parts[2]}" found in world "${w}"'s live snapshot.`);
@@ -707,7 +734,7 @@ async function handleApi(req, res, url, parts) {
   // POST /api/batches/:batchId/accept  { world, dataDir, scope, id }
   if (method === "POST" && parts.length === 4 && parts[1] === "batches" && parts[3] === "accept") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await acceptOp(dir, w, { batchId: parts[2], scope: body.scope, id: body.id });
     return sendJson(res, 200, result);
@@ -720,7 +747,7 @@ async function handleApi(req, res, url, parts) {
   // -- see mutation-ops.mjs's own doc comment for the full state machine.
   if (method === "POST" && parts.length === 4 && parts[1] === "batches" && parts[3] === "reject") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await rejectWithLoopOp(dir, w, {
       batchId: parts[2],
@@ -742,7 +769,7 @@ async function handleApi(req, res, url, parts) {
   // mutation-ops.mjs's acceptMutationIds doc comment for the full reasoning.
   if (method === "POST" && parts.length === 4 && parts[1] === "batches" && parts[3] === "bulk-accept") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     const mutationIds = body.mutationIds;
     if (!Array.isArray(mutationIds) || !mutationIds.length) {
@@ -780,7 +807,7 @@ async function handleApi(req, res, url, parts) {
   // POST /api/batches/:batchId/regenerate  { world, dataDir, scope, id, note }
   if (method === "POST" && parts.length === 4 && parts[1] === "batches" && parts[3] === "regenerate") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await regenerateOp(dir, w, { batchId: parts[2], scope: body.scope, id: body.id, note: body.note });
     return sendJson(res, 200, result);
@@ -813,7 +840,7 @@ async function handleApi(req, res, url, parts) {
   // before this route ever responds.
   if (method === "POST" && parts.length === 4 && parts[1] === "batches" && parts[3] === "narrate-entity") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     if (!body.mutationId) throw new Error("POST .../narrate-entity requires a `mutationId`.");
     const result = await narrateEntityOp(dir, w, { batchId: parts[2], mutationId: body.mutationId, note: body.note });
@@ -845,7 +872,7 @@ async function handleApi(req, res, url, parts) {
   // (mapped to a clean 404 below, never a silent no-op) if nothing ever has.
   if (method === "POST" && parts.length === 4 && parts[1] === "entities" && parts[3] === "narrate") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await narrateEntityStandaloneOp(dir, w, { entityId: parts[2], note: body.note });
     return sendJson(res, 200, result);
@@ -854,7 +881,7 @@ async function handleApi(req, res, url, parts) {
   // POST /api/batches/:batchId/sync  { world, dataDir }
   if (method === "POST" && parts.length === 4 && parts[1] === "batches" && parts[3] === "sync") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await syncOp(dir, w, { batchId: parts[2] });
     return sendJson(res, 200, result);
@@ -863,7 +890,7 @@ async function handleApi(req, res, url, parts) {
   // POST /api/batches/:batchId/rollback  { world, dataDir }
   if (method === "POST" && parts.length === 4 && parts[1] === "batches" && parts[3] === "rollback") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await rollbackOp(dir, w, { batchId: parts[2] });
     return sendJson(res, 200, result);
@@ -878,7 +905,7 @@ async function handleApi(req, res, url, parts) {
   // GET /api/unreviewed-entities
   if (method === "GET" && parts.length === 2 && parts[1] === "unreviewed-entities") {
     const w = resolveWorld(q.get("world"));
-    const dir = resolveDir(q.get("dataDir"));
+    const dir = resolveDir();
     const maxAgeDays = q.get("maxAgeDays") ? Number(q.get("maxAgeDays")) : undefined;
     const maxUnreviewedAccepts = q.get("maxUnreviewedAccepts") ? Number(q.get("maxUnreviewedAccepts")) : undefined;
     return sendJson(res, 200, {
@@ -905,7 +932,7 @@ async function handleApi(req, res, url, parts) {
 
   // GET /api/pending-entities
   if (method === "GET" && parts.length === 2 && parts[1] === "pending-entities") {
-    const dir = resolveDir(q.get("dataDir"));
+    const dir = resolveDir();
     const w = resolveWorld(q.get("world"));
     return sendJson(res, 200, { world: w, entities: pendingEntitiesPayload(w, dir) });
   }
@@ -913,7 +940,7 @@ async function handleApi(req, res, url, parts) {
   // POST /api/pending-entities/:entityId/resolve  { world, dataDir, depth, maxNeighbors, elapsedTimeDescriptor }
   if (method === "POST" && parts.length === 4 && parts[1] === "pending-entities" && parts[3] === "resolve") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     const { entities, edges } = loadSnapshot(dir, w).snapshot;
     const result = await resolvePending(
@@ -932,7 +959,7 @@ async function handleApi(req, res, url, parts) {
   // ---------------------------------------------------------------------
   if (method === "GET" && parts.length === 2 && parts[1] === "graph") {
     const w = resolveWorld(q.get("world"));
-    const dir = resolveDir(q.get("dataDir"));
+    const dir = resolveDir();
     if (q.get("batchId")) {
       const depth = q.get("depth") ? Number(q.get("depth")) : 1;
       return sendJson(res, 200, graphPayloadForBatch(w, dir, q.get("batchId"), depth));
@@ -950,7 +977,7 @@ async function handleApi(req, res, url, parts) {
   // POST /api/graph/nodes  { world, dataDir, name, type, description?, importance?, tags?, status?, playerKnown?, canonLocked?, role? }
   if (method === "POST" && parts.length === 3 && parts[1] === "graph" && parts[2] === "nodes") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await addNodeOp(dir, w, body);
     return sendJson(res, 200, result);
@@ -959,7 +986,7 @@ async function handleApi(req, res, url, parts) {
   // POST /api/graph/edges  { world, dataDir, sourceId, targetId, relationshipType?, label?, strength?, valence?, notes? }
   if (method === "POST" && parts.length === 3 && parts[1] === "graph" && parts[2] === "edges") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await addEdgeOp(dir, w, body);
     return sendJson(res, 200, result);
@@ -968,7 +995,7 @@ async function handleApi(req, res, url, parts) {
   // PATCH-style: POST /api/graph/nodes/:entityId  { world, dataDir, data:{...} }
   if (method === "POST" && parts.length === 4 && parts[1] === "graph" && parts[2] === "nodes") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await editNodeOp(dir, w, { entityId: parts[3], data: body.data });
     return sendJson(res, 200, result);
@@ -977,7 +1004,7 @@ async function handleApi(req, res, url, parts) {
   // POST /api/graph/edges/:edgeId  { world, dataDir, data:{...} }
   if (method === "POST" && parts.length === 4 && parts[1] === "graph" && parts[2] === "edges") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await editEdgeOp(dir, w, { edgeId: parts[3], data: body.data });
     return sendJson(res, 200, result);
@@ -986,7 +1013,7 @@ async function handleApi(req, res, url, parts) {
   // DELETE /api/graph/nodes/:entityId  { world, dataDir } (query or body — accept both, body is simpler for fetch())
   if (method === "DELETE" && parts.length === 4 && parts[1] === "graph" && parts[2] === "nodes") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir ?? q.get("dataDir"));
+    const dir = resolveDir();
     const w = resolveWorld(body.world ?? q.get("world"));
     const result = await deleteNodeOp(dir, w, { entityId: parts[3] });
     return sendJson(res, 200, result);
@@ -995,7 +1022,7 @@ async function handleApi(req, res, url, parts) {
   // DELETE /api/graph/edges/:edgeId  { world, dataDir }
   if (method === "DELETE" && parts.length === 4 && parts[1] === "graph" && parts[2] === "edges") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir ?? q.get("dataDir"));
+    const dir = resolveDir();
     const w = resolveWorld(body.world ?? q.get("world"));
     const result = await deleteEdgeOp(dir, w, { edgeId: parts[3] });
     return sendJson(res, 200, result);
@@ -1019,7 +1046,7 @@ async function handleApi(req, res, url, parts) {
   // POST /api/manual-undo  { world, dataDir }  -- consumes and applies the single undo slot
   if (method === "POST" && parts.length === 2 && parts[1] === "manual-undo") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await undoLastManualEditOp(dir, w);
     return sendJson(res, 200, result);
@@ -1053,7 +1080,7 @@ async function handleApi(req, res, url, parts) {
   // second, fully redundant batch. See dedupedScan's own doc comment.
   if (method === "POST" && parts.length === 4 && parts[1] === "entities" && parts[3] === "scan-mentions") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     if (typeof body.text !== "string" || !body.text.trim()) {
       throw new Error("POST .../scan-mentions requires a non-empty `text` field.");
@@ -1080,7 +1107,7 @@ async function handleApi(req, res, url, parts) {
   // to an already-existing entity instead of creating a duplicate.
   if (method === "POST" && parts.length === 6 && parts[1] === "batches" && parts[3] === "mutations" && parts[5] === "redirect-to-existing") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     if (typeof body.existingEntityId !== "string" || !body.existingEntityId.trim()) {
       throw new Error("POST .../redirect-to-existing requires a non-empty `existingEntityId`.");
@@ -1119,7 +1146,7 @@ async function handleApi(req, res, url, parts) {
   // no batch created yet.
   if (method === "POST" && parts.length === 2 && parts[1] === "writeup-propose") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     if (typeof body.text !== "string" || !body.text.trim()) {
       throw new Error("POST /api/writeup-propose requires a non-empty `text` field.");
@@ -1134,7 +1161,7 @@ async function handleApi(req, res, url, parts) {
   // the reviewer's pick after a plain-reject-triggered re-framing round).
   if (method === "POST" && parts.length === 2 && parts[1] === "writeup-select-framing") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     if (body.batchId) {
       const result = await selectFramingForExistingBatch(dir, w, {
@@ -1175,7 +1202,7 @@ async function handleApi(req, res, url, parts) {
   // POST /api/entities/:entityId/prep/propose-framings  { world, dataDir }
   if (method === "POST" && parts.length === 5 && parts[1] === "entities" && parts[3] === "prep" && parts[4] === "propose-framings") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await proposePrepFramingsOp(dir, w, { entityId: parts[2] });
     return sendJson(res, 200, result);
@@ -1184,7 +1211,7 @@ async function handleApi(req, res, url, parts) {
   // POST /api/entities/:entityId/prep/reframe  { world, dataDir, priorRoundCount }
   if (method === "POST" && parts.length === 5 && parts[1] === "entities" && parts[3] === "prep" && parts[4] === "reframe") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await reframePrepFramingsOp(dir, w, { entityId: parts[2], priorRoundCount: body.priorRoundCount });
     return sendJson(res, 200, result);
@@ -1193,7 +1220,7 @@ async function handleApi(req, res, url, parts) {
   // POST /api/entities/:entityId/prep/generate  { world, dataDir, selection }
   if (method === "POST" && parts.length === 5 && parts[1] === "entities" && parts[3] === "prep" && parts[4] === "generate") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     if (!body.selection) throw new Error("POST .../prep/generate requires a `selection` field.");
     const result = await generatePrepContentOp(dir, w, { entityId: parts[2], selection: body.selection });
@@ -1217,7 +1244,7 @@ async function handleApi(req, res, url, parts) {
   // POST /api/entities/:entityId/prep/regenerate-field  { world, dataDir, fieldName, note }
   if (method === "POST" && parts.length === 5 && parts[1] === "entities" && parts[3] === "prep" && parts[4] === "regenerate-field") {
     const body = await readBody(req);
-    const dir = resolveDir(body.dataDir);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
     if (!body.fieldName) throw new Error("POST .../prep/regenerate-field requires a `fieldName` field.");
     const result = await regeneratePrepFieldOp(dir, w, { entityId: parts[2], fieldName: body.fieldName, note: body.note });

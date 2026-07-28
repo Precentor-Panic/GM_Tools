@@ -131,6 +131,25 @@ test("GET / serves the static shell", async () => {
   assert.match(res.headers.get("content-type"), /text\/html/);
 });
 
+test("SECURITY: a client-supplied dataDir is never honored -- GET /api/worlds ignores it and resolves from server-side env config regardless", async () => {
+  // Real security-review finding: resolveDir(explicit) used to pass this
+  // straight through into every downstream file path. This server has no
+  // auth layer of its own (see server.mjs's own top-of-file comment), so
+  // the fix is to never forward a client-supplied dataDir at all, not to
+  // validate the string -- confirm the route reports the REAL configured
+  // dataDir, not the (nonsense, traversal-shaped) one a client sent.
+  const { status, body } = await getJson(`/api/worlds?dataDir=${encodeURIComponent("../../../etc")}`);
+  assert.equal(status, 200);
+  assert.equal(body.dataDir, dataDir, "must resolve from WF_DATA_DIR, completely ignoring the client-supplied dataDir");
+  assert.ok(body.worlds.includes(WORLD), "still finds the real fixture world under the real dataDir");
+});
+
+test("SECURITY: a path-traversal-shaped world id is rejected with a clean error, not silently resolved into a file path", async () => {
+  const { status, body } = await getJson(`/api/batches?world=${encodeURIComponent("../../../../etc")}`);
+  assert.equal(status, 400);
+  assert.match(body.error, /Invalid world id/);
+});
+
 test("GET /api/worlds lists the fixture world", async () => {
   const { status, body } = await getJson("/api/worlds");
   assert.equal(status, 200);
