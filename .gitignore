@@ -37,6 +37,16 @@ prep-content/*/
 manual-undo/*
 !manual-undo/.gitkeep
 
+# Phase 16: session-planner/scenes.mjs and session-planner/session-notes.mjs,
+# same one-file-per-world flat convention as human-review/user-settings/
+# manual-undo above -- added at spec time (task 16.0), not after the fact,
+# per this project's own recurring-gap lesson.
+session-scenes/*
+!session-scenes/.gitkeep
+
+session-notes/*
+!session-notes/.gitkeep
+
 node_modules/
 
 # never commit API keys / secrets
