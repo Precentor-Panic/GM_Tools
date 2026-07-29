@@ -139,6 +139,13 @@ import {
   markPrepContentStaleOp
 } from "../wf-mcp-server/lib/prep-content-ops.mjs";
 
+// Phase 16 -- Session Planner engine (task 16.6). Thin wrappers only, same
+// convention as every other route in this file: resolveWorld/resolveDir()
+// with NO client-supplied dataDir override anywhere below.
+import { createScene, forkScene, getScene } from "../session-planner/scenes.mjs";
+import { buildSessionBrief } from "../session-planner/brief.mjs";
+import { captureNote, runBatchIntake } from "../session-planner/session-notes.mjs";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
 
@@ -1256,6 +1263,68 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     return sendJson(res, 200, markPrepContentStaleOp(w, { entityId: parts[2] }));
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 16 -- Session Planner engine (task 16.6). Every route below is a
+  // thin wrapper over session-planner/{scenes,brief,session-notes}.mjs --
+  // resolveWorld()/resolveDir() with NO argument, exactly like every route
+  // above; no route here accepts a client-supplied `dataDir`.
+  // ---------------------------------------------------------------------
+
+  // POST /api/session-planner/scenes  { world, locationEntityId?, objectiveNote? }
+  if (method === "POST" && parts.length === 3 && parts[1] === "session-planner" && parts[2] === "scenes") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const scene = createScene(w, { locationEntityId: body.locationEntityId, objectiveNote: body.objectiveNote });
+    return sendJson(res, 200, { scene });
+  }
+
+  // POST /api/session-planner/scenes/:id/fork  { world, locationEntityId?, objectiveNote? }
+  if (method === "POST" && parts.length === 5 && parts[1] === "session-planner" && parts[2] === "scenes" && parts[4] === "fork") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const scene = forkScene(w, parts[3], { locationEntityId: body.locationEntityId, objectiveNote: body.objectiveNote });
+    return sendJson(res, 200, { scene });
+  }
+
+  // GET /api/session-planner/scenes/:id?world=...
+  if (method === "GET" && parts.length === 4 && parts[1] === "session-planner" && parts[2] === "scenes") {
+    const w = resolveWorld(q.get("world"));
+    const scene = getScene(w, parts[3]);
+    return sendJson(res, 200, { scene });
+  }
+
+  // GET /api/session-planner/brief?world=...&sceneId=...&corridorTolerance=...
+  if (method === "GET" && parts.length === 3 && parts[1] === "session-planner" && parts[2] === "brief") {
+    const w = resolveWorld(q.get("world"));
+    const scene = getScene(w, q.get("sceneId"));
+    const dir = resolveDir();
+    const { entities, edges } = loadSnapshot(dir, w).snapshot;
+    const corridorToleranceRaw = q.get("corridorTolerance");
+    const corridorTolerance = corridorToleranceRaw ? Number(corridorToleranceRaw) : undefined;
+    const brief = buildSessionBrief(w, { entities, edges }, scene, { corridorTolerance });
+    return sendJson(res, 200, { brief });
+  }
+
+  // POST /api/session-planner/notes  { world, text, anchorEntityId?, sceneId? }
+  if (method === "POST" && parts.length === 3 && parts[1] === "session-planner" && parts[2] === "notes") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const note = captureNote(w, { text: body.text, anchorEntityId: body.anchorEntityId, sceneId: body.sceneId });
+    return sendJson(res, 200, { note });
+  }
+
+  // POST /api/session-planner/notes/intake  { world, noteIds }
+  // Makes a real LLM call via proposeMentionedEntities (runBatchIntake) --
+  // world format is validated (resolveWorld) BEFORE any of that runs.
+  if (method === "POST" && parts.length === 4 && parts[1] === "session-planner" && parts[2] === "notes" && parts[3] === "intake") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const dir = resolveDir();
+    const { entities, edges, entityTypes } = loadSnapshot(dir, w).snapshot;
+    const result = await runBatchIntake(w, body.noteIds ?? [], { entities, edges, entityTypes }, {});
+    return sendJson(res, 200, result);
   }
 
   sendJson(res, 404, { error: `No route: ${req.method} ${url.pathname}` });
