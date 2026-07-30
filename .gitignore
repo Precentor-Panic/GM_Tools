@@ -47,6 +47,21 @@ session-scenes/*
 session-notes/*
 !session-notes/.gitkeep
 
+# Phase 18 (task 18.0, added at spec time, not after the fact -- per this
+# project's own recurring-gap lesson): combat-planning/bestiary-store.mjs is
+# PER-ENTRY-FILE, flat under this root (no per-world subdir -- bestiary
+# storage is deliberately per-user/library-wide, not per-world, see that
+# module's own test file for the reasoning), same convention as
+# human-review/*.
+bestiary/*
+!bestiary/.gitkeep
+
+# combat-planning/party-roster-store.mjs is per-world-file, same convention
+# as session-scenes/ above (PCs genuinely belong to one campaign, unlike the
+# bestiary).
+party-roster/*
+!party-roster/.gitkeep
+
 node_modules/
 
 # never commit API keys / secrets
