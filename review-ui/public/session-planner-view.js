@@ -357,6 +357,40 @@ function toggleNotePanel(card, location, sceneId) {
 }
 
 // ---------------------------------------------------------------------------
+// Task 17.4: beyond-corridor summary -- two SEPARATE figures, never summed.
+// Collapsed by default (a plain <details>/<summary> gives free, JS-free
+// collapse/expand -- design record §11 correctly leaves this reactive-only,
+// no proactive e2e test needed).
+// ---------------------------------------------------------------------------
+function renderBeyondCorridorSummary(beyondCorridor) {
+  const wrap = document.createElement("details");
+  wrap.className = "beyond-corridor-summary";
+  wrap.setAttribute("data-testid", "beyond-corridor-summary");
+
+  const summary = document.createElement("summary");
+  summary.textContent = "Beyond this corridor";
+  wrap.appendChild(summary);
+
+  const body = document.createElement("div");
+  body.className = "beyond-corridor-body";
+
+  const contentP = document.createElement("p");
+  contentP.setAttribute("data-testid", "beyond-corridor-content-count");
+  const contentCount = beyondCorridor?.contentReadinessCount ?? 0;
+  contentP.textContent = `${contentCount} ${contentCount === 1 ? "entity" : "entities"} beyond the corridor still need content.`;
+  body.appendChild(contentP);
+
+  const structP = document.createElement("p");
+  structP.setAttribute("data-testid", "beyond-corridor-structural-count");
+  const structCount = beyondCorridor?.structuralUnderConnectionCount ?? 0;
+  structP.textContent = `${structCount} ${structCount === 1 ? "entity is" : "entities are"} beyond the corridor and thinly connected.`;
+  body.appendChild(structP);
+
+  wrap.appendChild(body);
+  return wrap;
+}
+
+// ---------------------------------------------------------------------------
 // Task 17.1: empty-state scene bootstrap.
 // ---------------------------------------------------------------------------
 function renderBootstrap(container) {
@@ -448,6 +482,8 @@ function renderBriefBody(container, brief, entityInfoMap, sceneId) {
     empty.textContent = "Nothing found in the corridor around this scene yet.";
     container.appendChild(empty);
   }
+
+  container.appendChild(renderBeyondCorridorSummary(brief.beyondCorridor));
 }
 
 /**

@@ -599,6 +599,14 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 }
 .location-note-status { min-height: 1.1em; }
 
+/* Beyond-corridor summary (task 17.4): two SEPARATE figures, never summed. */
+.beyond-corridor-summary { margin: 1rem 0; border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.8rem; }
+.beyond-corridor-summary summary { cursor: pointer; font-weight: 600; list-style: none; }
+.beyond-corridor-summary summary::-webkit-details-marker { display: none; }
+.beyond-corridor-summary summary::before { content: "\25B8"; color: var(--text-muted); font-size: 0.8rem; margin-right: 0.4rem; display: inline-block; }
+.beyond-corridor-summary[open] summary::before { transform: rotate(90deg); }
+.beyond-corridor-body { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
+
 /* ===========================================================================
    Phase 15 tasks 15.3/15.4/15.5: real mobile-viewport support. Verified
    against a real iPhone 13 logical viewport (390px wide, Playwright device
