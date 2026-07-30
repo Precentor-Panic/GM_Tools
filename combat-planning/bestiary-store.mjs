@@ -42,6 +42,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
+import { diceAverage } from "./dice.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "bestiary");
@@ -57,29 +58,6 @@ function entryFilePath(entryId) {
 /** Generate a bestiary entry id. Injectable (opts.makeId) for deterministic tests. */
 export function makeBestiaryEntryId() {
   return `bst_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-/**
- * Parses a dice-string average (e.g. "2d6+3" -> 10, "40d10+400" -> 620).
- * Pure. Returns null (never throws, never guesses) for a shape it doesn't
- * recognize -- checkBestiaryOutliers below simply skips an unparseable
- * attack rather than fabricating a number for it.
- * @param {string} diceStr
- * @returns {number|null}
- */
-export function diceAverage(diceStr) {
-  if (typeof diceStr !== "string") return null;
-  const m = diceStr.trim().match(/^(\d+)d(\d+)\s*([+-]\s*\d+)?$/i);
-  if (!m) {
-    // A plain flat number (no dice at all) is also a valid "damageDice" in
-    // principle -- tolerate it rather than treating it as unparseable.
-    const flat = Number(diceStr.trim());
-    return Number.isFinite(flat) ? flat : null;
-  }
-  const count = Number(m[1]);
-  const sides = Number(m[2]);
-  const modifier = m[3] ? Number(m[3].replace(/\s+/g, "")) : 0;
-  return count * ((sides + 1) / 2) + modifier;
 }
 
 /**
