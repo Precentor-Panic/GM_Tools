@@ -146,6 +146,31 @@ import { createScene, forkScene, getScene } from "../session-planner/scenes.mjs"
 import { buildSessionBrief } from "../session-planner/brief.mjs";
 import { captureNote, runBatchIntake } from "../session-planner/session-notes.mjs";
 
+// Phase 18 -- Encounter Guidance engine (task 18.7). Thin wrappers only,
+// same convention as every other route in this file: resolveWorld()/
+// resolveDir() with NO client-supplied dataDir override anywhere below.
+// Bestiary routes are deliberately NEVER world-scoped (bestiary-store.mjs's
+// own per-user/library-wide storage decision, task 18.1) -- party-roster and
+// encounter-suggest ARE world-scoped, same as session-planner's own routes
+// above.
+import { buildAdjacencyContext, DEFAULT_ENTITY_NARRATE_DEPTH } from "../mutation-engine/narrate.mjs";
+import { proposeBestiaryEntryFromText, proposeBestiaryEntryFromPdf } from "../combat-planning/bestiary-ingest.mjs";
+import {
+  saveBestiaryEntry,
+  listBestiaryEntries,
+  acceptBestiaryEntry,
+  discardBestiaryEntry
+} from "../combat-planning/bestiary-store.mjs";
+import { proposePartyMemberFromText, proposePartyMemberFromPdf } from "../combat-planning/party-roster-ingest.mjs";
+import { savePartyMember, listPartyMembers } from "../combat-planning/party-roster-store.mjs";
+import { proposeThematicTags } from "../combat-planning/thematic-filter.mjs";
+import { suggestEncounter } from "../combat-planning/encounter-heuristic.mjs";
+// Only used to distinguish "the Anthropic API itself failed" (502, an
+// upstream/infra problem) from "this codebase's own library modules threw a
+// deliberate validation error" (400) in statusForError below -- see that
+// function's own Phase 18 branch.
+import { AnthropicError } from "@anthropic-ai/sdk";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
 
@@ -182,6 +207,21 @@ function statusForError(err) {
   if (/already exists/i.test(err.message ?? "")) return 409; // task 14.2: creating a world id that's already taken
   if (/no (batch|region|entity|world|snapshot) found/i.test(err.message ?? "")) return 404;
   if (/not found/i.test(err.message ?? "")) return 404;
+  // Phase 18 task 18.7: an LLM-touching route (bestiary/party-roster ingest,
+  // encounter-suggest's thematic filter) that failed because the Anthropic
+  // API itself couldn't be reached/authenticated is a genuine upstream/infra
+  // failure, not a caller-facing validation problem -- must NOT collapse
+  // into the same 400 every deliberate validation throw uses, or a route
+  // whose world/dataDir handling is completely correct would look
+  // indistinguishable from one that rejected the request outright (exactly
+  // the distinction review-ui/test/combat-planning-routes.test.mjs's own
+  // dataDir-never-honored test on encounter-suggest checks for). Caught two
+  // ways: a real AnthropicError instance (an actual failed/rejected HTTP
+  // call), or the SDK's own pre-request "Could not resolve authentication
+  // method" check (a plain Error, not an AnthropicError subclass, thrown
+  // when no API key is configured at all -- as will be the case in this
+  // project's own deterministic test runs, which never set one).
+  if (err instanceof AnthropicError || /Could not resolve authentication method/i.test(err.message ?? "")) return 502;
   return 400; // everything else thrown by this codebase's library modules is a deliberate, caller-facing validation error, not a crash
 }
 
@@ -1336,6 +1376,103 @@ async function handleApi(req, res, url, parts) {
     const { entities, edges, entityTypes } = loadSnapshot(dir, w).snapshot;
     const result = await runBatchIntake(w, body.noteIds ?? [], { entities, edges, entityTypes }, {});
     return sendJson(res, 200, result);
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 18 (task 18.7) -- Encounter Guidance engine routes. Bestiary
+  // routes carry NO `world` concept at all (bestiary-store.mjs's own
+  // per-user/library-wide storage decision) -- party-roster and
+  // encounter-suggest routes ARE world-scoped via the same resolveWorld()
+  // every other world-scoped route in this file already uses. No route
+  // here accepts a client-supplied dataDir.
+  // ---------------------------------------------------------------------
+
+  // POST /api/combat-planning/bestiary/ingest   { text } or { pdfBase64 }
+  // Library-wide -- deliberately no `world` parameter. Makes a real LLM
+  // call via bestiary-ingest.mjs's extraction.
+  if (method === "POST" && parts.length === 4 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[3] === "ingest") {
+    const body = await readBody(req);
+    const raw = body.pdfBase64
+      ? await proposeBestiaryEntryFromPdf(body.pdfBase64, {})
+      : await proposeBestiaryEntryFromText(body.text, {});
+    const entry = saveBestiaryEntry({
+      rawFields: raw,
+      sourceText: body.pdfBase64 ? null : body.text,
+      sourcePdfName: body.pdfBase64 ? (body.sourcePdfName ?? null) : null
+    });
+    return sendJson(res, 200, { entry });
+  }
+
+  // GET /api/combat-planning/bestiary   -- no `world` parameter (library-wide)
+  if (method === "GET" && parts.length === 3 && parts[1] === "combat-planning" && parts[2] === "bestiary") {
+    return sendJson(res, 200, { entries: listBestiaryEntries() });
+  }
+
+  // POST /api/combat-planning/bestiary/:id/accept
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "accept") {
+    const entry = acceptBestiaryEntry(parts[3]);
+    return sendJson(res, 200, { entry });
+  }
+
+  // POST /api/combat-planning/bestiary/:id/discard
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "discard") {
+    const entry = discardBestiaryEntry(parts[3]);
+    return sendJson(res, 200, { entry });
+  }
+
+  // POST /api/combat-planning/party-roster/ingest   { world, text } or { world, pdfBase64 }
+  // World-scoped -- resolveWorld(body.world), no client-supplied dataDir.
+  // Makes a real LLM call via party-roster-ingest.mjs's extraction.
+  if (method === "POST" && parts.length === 4 && parts[1] === "combat-planning" && parts[2] === "party-roster" && parts[3] === "ingest") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const raw = body.pdfBase64
+      ? await proposePartyMemberFromPdf(body.pdfBase64, {})
+      : await proposePartyMemberFromText(body.text, {});
+    const member = savePartyMember(w, {
+      name: raw.name,
+      combatRelevant: raw.combatRelevant,
+      buildRelevant: raw.buildRelevant,
+      sourceText: body.pdfBase64 ? null : body.text,
+      sourcePdfName: body.pdfBase64 ? (body.sourcePdfName ?? null) : null
+    });
+    return sendJson(res, 200, { member });
+  }
+
+  // GET /api/combat-planning/party-roster?world=...
+  if (method === "GET" && parts.length === 3 && parts[1] === "combat-planning" && parts[2] === "party-roster") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, { members: listPartyMembers(w) });
+  }
+
+  // POST /api/combat-planning/encounter-suggest   { world, targetDifficulty, sceneEntityId, knobs? }
+  // World format IS validated (resolveWorld) BEFORE any LLM call runs.
+  // dataDir is NEVER honored from the client -- resolveDir() with no
+  // argument, same as every other route in this file. The one route in
+  // this set that makes a real API call (thematic-filter.mjs's
+  // proposeThematicTags, grounded via buildAdjacencyContext against the
+  // live snapshot) before wrapping encounter-heuristic.mjs's suggestEncounter
+  // (deterministic, no further LLM call) with the thematically-filtered pool.
+  if (method === "POST" && parts.length === 3 && parts[1] === "combat-planning" && parts[2] === "encounter-suggest") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const dir = resolveDir();
+    const { entities, edges } = loadSnapshot(dir, w).snapshot;
+    const sceneContext = buildAdjacencyContext(entities, edges, body.sceneEntityId, DEFAULT_ENTITY_NARRATE_DEPTH);
+
+    const fullPool = listBestiaryEntries().map((e) => ({ entryId: e.id, rawFields: e.rawFields, derivedScore: e.derivedScore }));
+    const { filteredEntryIds } = await proposeThematicTags(sceneContext, fullPool, {});
+    const filteredIdSet = new Set(filteredEntryIds);
+    const candidatePool = fullPool.filter((c) => filteredIdSet.has(c.entryId));
+
+    const party = listPartyMembers(w);
+    const suggestion = suggestEncounter({
+      targetDifficulty: body.targetDifficulty,
+      candidatePool,
+      party,
+      knobs: body.knobs ?? {}
+    });
+    return sendJson(res, 200, { suggestion });
   }
 
   sendJson(res, 404, { error: `No route: ${req.method} ${url.pathname}` });
