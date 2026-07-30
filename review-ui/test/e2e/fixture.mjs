@@ -33,6 +33,16 @@ export function setupScratchEnv(prefix) {
   process.env.GM_TOOLS_PREP_CONTENT_DIR = join(scratchDir, "prep-content");
   process.env.GM_TOOLS_ENTITY_NARRATION_DIR = join(scratchDir, "entity-narration");
   process.env.GM_TOOLS_USER_SETTINGS_DIR = join(scratchDir, "user-settings");
+  // Phase 17 task 17.0: Phase 16's two session-planner stores
+  // (session-planner/scenes.mjs, session-planner/session-notes.mjs) were
+  // added to review-ui/test/session-planner-routes.test.mjs's own isolation
+  // setup at the time they were built, but never added here -- this shared
+  // e2e fixture predates Phase 16. Added now, at the point this project's
+  // first e2e tests actually need real scene/note isolation, matching every
+  // prior store's own "added when first actually exercised" pattern (see
+  // this project's .gitignore comments for human-review/prep-content/etc.).
+  process.env.GM_TOOLS_SESSION_SCENES_DIR = join(scratchDir, "session-scenes");
+  process.env.GM_TOOLS_SESSION_NOTES_DIR = join(scratchDir, "session-notes");
   process.env.WF_DATA_DIR = dataDir;
   return { scratchDir, dataDir };
 }
