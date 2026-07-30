@@ -209,6 +209,17 @@ function readBody(req) {
 const CONTENT_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  // Phase 17 task 17.0/17.3: review-ui/public/debounced-save.mjs is a real
+  // ES module imported by session-planner-view.js -- without this, the
+  // browser fetches it, gets served as application/octet-stream (the
+  // extname()-miss fallback below), and refuses to load it as a module
+  // script (strict MIME-type enforcement per the HTML spec), silently
+  // breaking the ENTIRE app.js module graph (every other view along with
+  // it) since app.js -> session-planner-view.js -> debounced-save.mjs is one
+  // static import chain. Found by actually driving this in a browser, not
+  // from reading the JS alone -- every pre-existing e2e test started failing
+  // too, which is what surfaced it.
+  ".mjs": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8"
 };

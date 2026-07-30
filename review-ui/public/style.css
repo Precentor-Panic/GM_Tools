@@ -516,6 +516,57 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   .row-body { padding-left: 0.2rem; }
 }
 
+/* --- Phase 17: Session Planner --- */
+.session-planner-bootstrap { display: flex; flex-direction: column; gap: 0.6rem; max-width: 480px; }
+.session-planner-objective-label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.85rem; color: var(--text-muted); }
+.session-planner-objective-label input {
+  font-size: 0.95rem; padding: 0.45rem 0.6rem; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text);
+}
+
+/* Shared type-ahead entity picker -- task 17.1's scene-bootstrap location
+   picker AND task 17.5's re-center picker both use this one component. */
+.entity-picker { display: flex; flex-direction: column; gap: 0.3rem; margin: 0.4rem 0; }
+.entity-picker-input {
+  font-size: 0.9rem; padding: 0.4rem 0.6rem; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text);
+}
+.entity-picker-results { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+.entity-picker-results:empty { border: none; }
+.entity-picker-results li { border-bottom: 1px solid var(--border); }
+.entity-picker-results li:last-child { border-bottom: none; }
+.entity-picker-option { display: block; width: 100%; text-align: left; padding: 0.35rem 0.55rem; }
+.entity-picker-option:hover { background: var(--bg-alt); }
+.entity-picker-option:disabled { opacity: 0.5; cursor: default; }
+
+/* Anchor + satellite layout (design record §3): a uniform grid rendered the
+   same way every time becomes an implicit reading order even with numbers
+   stripped off, so the single path-location anchor gets a visually distinct
+   treatment (bordered, tinted, pinned first via CSS `order`) instead of
+   sitting in the same rank-and-file grid cell shape as everything else.
+   The remaining satellite cards stay in the hash-order the JS already
+   computed -- `order:-1` here is a binary anchor/satellite distinction, not
+   a per-distance sort, so it doesn't reintroduce chapter numbering. */
+.session-planner-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+  align-items: start;
+}
+.location-card { border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem 0.85rem; background: var(--card-bg); }
+.location-card--anchor {
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--card-bg));
+  grid-column: span 2;
+  order: -1;
+}
+.location-card-header { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.location-card-name { margin: 0; font-size: 1rem; }
+.location-card-anchor-badge { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent); white-space: nowrap; }
+.location-card-type { text-transform: capitalize; margin: 0.1rem 0 0.4rem; }
+.location-card-distance { margin-top: 0.4rem; }
+
 /* ===========================================================================
    Phase 15 tasks 15.3/15.4/15.5: real mobile-viewport support. Verified
    against a real iPhone 13 logical viewport (390px wide, Playwright device

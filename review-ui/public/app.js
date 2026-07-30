@@ -5,6 +5,7 @@
 // <script> tag was switched to type="module" for this).
 "use strict";
 import { renderGraph, showCreateNodeForm, armPlacementMode, seedNodePosition, removeNodePosition } from "./graph-view.js";
+import { renderSessionPlanner } from "./session-planner-view.js";
 
 // ---------------------------------------------------------------------------
 // world selection
@@ -45,6 +46,17 @@ async function initWorldSelect() {
     }
     if (!CURRENT_WORLD || !worlds.includes(CURRENT_WORLD)) {
       CURRENT_WORLD = worlds[0] || null;
+      // Phase 17: a completely fresh browser session (no prior
+      // localStorage entry) previously left CURRENT_WORLD correctly
+      // auto-selected in memory but localStorage silently un-synced --
+      // invisible to anything reading CURRENT_WORLD directly (every
+      // pre-Phase-17 function in this file), but a real bug for
+      // session-planner-view.js, which is deliberately standalone
+      // (mirroring graph-view.js's zero-app.js-import convention) and reads
+      // the SAME "gmReview.world" key the change handler below writes.
+      // Found by actually driving this in a browser against a
+      // single-world fixture, the exact shape every isolated e2e test uses.
+      if (CURRENT_WORLD) localStorage.setItem("gmReview.world", CURRENT_WORLD);
     }
     if (CURRENT_WORLD) select.value = CURRENT_WORLD;
   } catch (err) {
@@ -110,6 +122,7 @@ function renderCurrentView() {
   else if (view === "framing") renderFramingView();
   else if (view === "graph") renderGraphStandaloneView();
   else if (view === "entity") renderEntityDetail(arg);
+  else if (view === "session-planner") renderSessionPlanner(arg);
 }
 
 // Phase 15 task 15.3: closing the mobile drawer belongs on the hashchange
