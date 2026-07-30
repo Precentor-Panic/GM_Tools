@@ -357,6 +357,19 @@ function toggleNotePanel(card, location, sceneId) {
 }
 
 // ---------------------------------------------------------------------------
+// Task 17.5: re-center race guard. Single shared, replaced-on-every-
+// invocation abort slot, mirroring app.js's activeScanController exactly.
+// ---------------------------------------------------------------------------
+let activeRecenterController = null;
+
+export function cancelActiveRecenter() {
+  if (activeRecenterController) {
+    activeRecenterController.abort();
+    activeRecenterController = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Task 17.4: beyond-corridor summary -- two SEPARATE figures, never summed.
 // Collapsed by default (a plain <details>/<summary> gives free, JS-free
 // collapse/expand -- design record §11 correctly leaves this reactive-only,
@@ -388,6 +401,70 @@ function renderBeyondCorridorSummary(beyondCorridor) {
 
   wrap.appendChild(body);
   return wrap;
+}
+
+// ---------------------------------------------------------------------------
+// Task 17.5: re-center control. Type-ahead/search-as-you-select (never a
+// plain <select>), reusing buildEntityPicker above. Race guard: the shared
+// activeRecenterController slot (abort any earlier in-flight sequence
+// first) PLUS disabling only the specific clicked option button for the
+// duration of ITS OWN fetch, as defense-in-depth on top of (never instead
+// of) the abort guard.
+// ---------------------------------------------------------------------------
+function buildRecenterControl(sceneId, onRecentered) {
+  const wrap = document.createElement("div");
+  wrap.className = "recenter-control";
+
+  const label = document.createElement("div");
+  label.className = "hint";
+  label.textContent = "Re-center on a different location:";
+  wrap.appendChild(label);
+
+  const status = document.createElement("div");
+  status.className = "hint recenter-status";
+  status.setAttribute("data-testid", "recenter-status");
+  wrap.appendChild(status);
+
+  const picker = buildEntityPicker({
+    testidPrefix: "recenter",
+    placeholder: "Search locations to re-center on…",
+    onSelect: (entity, btn) => doRecenter(sceneId, entity, btn, status, onRecentered)
+  });
+  wrap.appendChild(picker);
+
+  return wrap;
+}
+
+async function doRecenter(sceneId, entity, btn, statusEl, onRecentered) {
+  cancelActiveRecenter(); // abort any earlier still-in-flight recenter sequence first
+  const controller = new AbortController();
+  activeRecenterController = controller;
+
+  btn.disabled = true; // defense-in-depth ON TOP OF the abort guard, not instead of it
+  statusEl.textContent = "Recentering…";
+
+  try {
+    const forkRes = await spApi(`/api/session-planner/scenes/${encodeURIComponent(sceneId)}/fork`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), locationEntityId: entity.id }),
+      signal: controller.signal
+    });
+    const newSceneId = forkRes.scene.id;
+    const briefRes = await spApi(`/api/session-planner/brief${spWithWorld({ sceneId: newSceneId })}`, {
+      signal: controller.signal
+    });
+
+    statusEl.textContent = "";
+    if (activeRecenterController === controller) activeRecenterController = null;
+    onRecentered(newSceneId, briefRes.brief);
+  } catch (err) {
+    if (err.name === "AbortError") return; // superseded by a later click/navigation -- deliberate, not a real failure
+    statusEl.textContent = `Recenter failed: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    if (activeRecenterController === controller) activeRecenterController = null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +561,16 @@ function renderBriefBody(container, brief, entityInfoMap, sceneId) {
   }
 
   container.appendChild(renderBeyondCorridorSummary(brief.beyondCorridor));
+
+  container.appendChild(buildRecenterControl(sceneId, (newSceneId, newBrief) => {
+    // Re-center replaces the rendered brief directly -- NOT via the hash
+    // router (avoids a redundant GET .../brief round trip triggered by our
+    // own hashchange listener). history.replaceState keeps the URL bar/
+    // bookmark/reload behavior correct WITHOUT firing a hashchange event.
+    history.replaceState(null, "", `#session-planner/${newSceneId}`);
+    openNotePanels.clear(); // old cards (and their debounce instances) are gone
+    renderBriefBody(container, newBrief, entityInfoMap, newSceneId);
+  }));
 }
 
 /**
