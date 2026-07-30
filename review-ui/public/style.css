@@ -584,6 +584,21 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .flag-badge--content { background: var(--amber-bg); color: var(--amber); border-color: var(--amber); }
 .flag-badge--structural { background: var(--pill-rejected-bg); color: var(--reject); border-color: var(--reject); }
 
+.location-card-notes-footer { margin-top: 0.5rem; display: flex; }
+.location-note-toggle-btn { font-size: 0.82rem; width: auto; padding: 0.25rem 0.5rem; gap: 0.3rem; }
+
+/* Inline-expand, not a popover (design record §5): pushes the rest of the
+   card down, no positioning/clamping code, survives scroll/resize for free. */
+.location-note-panel { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 0.4rem; }
+.location-note-entries { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.location-note-entry { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.4rem 0.55rem; font-size: 0.85rem; display: flex; flex-direction: column; gap: 0.15rem; }
+.location-note-meta { font-size: 0.72rem; }
+.location-note-textarea {
+  width: 100%; font: inherit; font-size: 0.88rem; padding: 0.45rem 0.6rem; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); resize: vertical; min-height: 3.2em;
+}
+.location-note-status { min-height: 1.1em; }
+
 /* ===========================================================================
    Phase 15 tasks 15.3/15.4/15.5: real mobile-viewport support. Verified
    against a real iPhone 13 logical viewport (390px wide, Playwright device

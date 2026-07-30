@@ -184,7 +184,21 @@ test("typing a note then navigating away before the debounce fires still durably
   // Trigger a hash navigation via a DIFFERENT nav item, exactly the way a
   // DM would actually navigate away mid-note -- immediately, no waiting for
   // the debounce window.
-  await page.locator('[data-nav="queue"]').click();
+  //
+  // IMPLEMENTATION NOTE (flagged per this project's own instruction to flag
+  // rather than silently patch a test that looks wrong once deep in real
+  // implementation): a bare `[data-nav="queue"]` selector is genuinely
+  // ambiguous against this app's REAL, PRE-EXISTING DOM (unrelated to
+  // anything Phase 17 added) -- index.html has THREE elements carrying
+  // data-nav="queue" at all times regardless of which view is active: the
+  // ".brand" logo button, the actual topnav "Queue" button, and the Review
+  // view's own "<- Back to Queue" link (present in the DOM, just hidden,
+  // whenever #view-review isn't the active section). Playwright's strict
+  // mode correctly refuses to guess between them. Scoped to `.topnav` here
+  // to unambiguously target the real topnav Queue button the comment above
+  // actually describes -- not a loosened assertion, every assertion below
+  // this line is unchanged.
+  await page.locator('.topnav [data-nav="queue"]').click();
 
   // (1) The guaranteed-flush POST must have actually fired and succeeded --
   // not just "a request was observed" but a real 200 response.

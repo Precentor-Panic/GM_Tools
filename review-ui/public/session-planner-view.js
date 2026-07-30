@@ -19,6 +19,7 @@
 // type-ahead entity picker (also reused by task 17.5's re-center control,
 // per that task's own "don't build two combo-box implementations" note).
 "use strict";
+import { createFlushableDebounce } from "./debounced-save.mjs";
 
 // ---------------------------------------------------------------------------
 // local api/world helpers (see file header -- deliberately not imported
@@ -48,6 +49,35 @@ function spWithWorld(params) {
   if (w) p.set("world", w);
   const qs = p.toString();
   return qs ? `?${qs}` : "";
+}
+
+// ---------------------------------------------------------------------------
+// Task 17.3: inline-expand note autosave. A single small helper module
+// (debounced-save.mjs) provides the pure timer logic; this file owns the
+// DOM wiring and the open-panel bookkeeping. ONE createFlushableDebounce
+// instance per currently-open note editor (per debounced-save.test.mjs's
+// own header contract) -- multiple cards' note panels CAN be open at once
+// (design record §10 explicitly protects against a rebuild "destroying any
+// other inline-expanded note the DM has open elsewhere on the grid"), and
+// cross-entity misattribution is prevented STRUCTURALLY (each debounce
+// instance's saveFn closure is bound to exactly one entityId/sceneId at
+// creation, never reused for a different entity) rather than by only
+// allowing one editor open at a time.
+// ---------------------------------------------------------------------------
+const openNotePanels = new Map(); // entityId -> { panelEl, debounce }
+
+/**
+ * Guaranteed flush on navigate (design record §6). Wired into app.js's
+ * existing hashchange/renderCurrentView() cancellation step, as a sibling
+ * of cancelActiveScan() -- NOT a second navigation-hook mechanism. Safe to
+ * call unconditionally on every navigation: each debounce instance's own
+ * flush() is a no-op when nothing is pending (debounced-save.test.mjs), so
+ * the overwhelmingly common case (no note editor open at all) costs nothing.
+ */
+export function flushActiveNoteSave() {
+  for (const { debounce } of openNotePanels.values()) {
+    debounce.flush();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +185,7 @@ function hashOrderLocations(locations) {
 // Location card (task 17.2: anchor/satellite + always-visible digest + two
 // independent flag badges). Notes land in task 17.3.
 // ---------------------------------------------------------------------------
-function renderLocationCard(location, role, entityInfo) {
+function renderLocationCard(location, role, entityInfo, sceneId) {
   const card = document.createElement("article");
   card.className = `location-card location-card--${role}`;
   card.setAttribute("data-testid", "location-card");
@@ -236,7 +266,94 @@ function renderLocationCard(location, role, entityInfo) {
     : `${location.distance} hop${location.distance === 1 ? "" : "s"} from the path`;
   card.appendChild(distEl);
 
+  // --- Notes footer: a small note-icon affordance, NEVER the entity name
+  // itself (design record §5 -- avoids accidental edits while browsing). ---
+  const notesFooter = document.createElement("div");
+  notesFooter.className = "location-card-notes-footer";
+  const toggleBtn = document.createElement("button");
+  toggleBtn.type = "button";
+  toggleBtn.className = "icon-btn location-note-toggle-btn";
+  toggleBtn.setAttribute("data-testid", "location-note-toggle");
+  toggleBtn.setAttribute("aria-label", "Notes for this location");
+  toggleBtn.textContent = location.notes?.length ? `📝 Notes (${location.notes.length})` : "📝 Add note";
+  notesFooter.appendChild(toggleBtn);
+  card.appendChild(notesFooter);
+
+  toggleBtn.addEventListener("click", () => toggleNotePanel(card, location, sceneId));
+
   return card;
+}
+
+/** Inline-expand within the row -- no popover, no positioning/clamping code (design record §5). */
+function toggleNotePanel(card, location, sceneId) {
+  const entityId = location.entityId;
+
+  if (openNotePanels.has(entityId)) {
+    const { panelEl, debounce } = openNotePanels.get(entityId);
+    debounce.flush(); // guaranteed-flush on manual close too, same safety net as navigate
+    panelEl.remove();
+    openNotePanels.delete(entityId);
+    return;
+  }
+
+  const panel = document.createElement("div");
+  panel.className = "location-note-panel";
+  panel.setAttribute("data-testid", "location-note-panel");
+
+  const entriesList = document.createElement("ul");
+  entriesList.className = "location-note-entries";
+  for (const note of location.notes ?? []) {
+    const li = document.createElement("li");
+    li.setAttribute("data-testid", "location-note-entry");
+    li.className = "location-note-entry";
+    const textSpan = document.createElement("span");
+    textSpan.textContent = note.text;
+    const meta = document.createElement("span");
+    meta.className = "hint location-note-meta";
+    meta.textContent = note.timestamp ? new Date(note.timestamp).toLocaleString() : "";
+    li.append(textSpan, meta);
+    entriesList.appendChild(li);
+  }
+  panel.appendChild(entriesList);
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "location-note-textarea";
+  textarea.setAttribute("data-testid", "location-note-textarea");
+  textarea.placeholder = "Jot a note — autosaves as you type…";
+  panel.appendChild(textarea);
+
+  const status = document.createElement("div");
+  status.className = "hint location-note-status";
+  status.setAttribute("data-testid", "location-note-status");
+  panel.appendChild(status);
+
+  card.appendChild(panel);
+
+  // Task 17.3: debounce `input` (~500ms), flush immediately on `blur`,
+  // guaranteed flush on hashchange via flushActiveNoteSave() above. Save
+  // success/error updates ONLY this row's own small status indicator --
+  // NEVER calls the container-level rebuild (design record §10: doing so
+  // would tear down every card on every blur, including any other
+  // inline-expanded note the DM has open elsewhere on the grid).
+  const debounce = createFlushableDebounce((value) => {
+    if (!value || !value.trim()) return; // zero-ceremony, but don't POST an empty note
+    status.textContent = "Saving…";
+    spApi("/api/session-planner/notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), text: value, anchorEntityId: entityId, sceneId })
+    }).then(() => {
+      status.textContent = "Saved.";
+    }).catch((err) => {
+      status.textContent = `Error saving note: ${err.message}`;
+    });
+  }, { debounceMs: 500 });
+
+  textarea.addEventListener("input", () => debounce.onInput(textarea.value));
+  textarea.addEventListener("blur", () => debounce.onBlur(textarea.value));
+
+  openNotePanels.set(entityId, { panelEl: panel, debounce });
+  textarea.focus();
 }
 
 // ---------------------------------------------------------------------------
@@ -313,7 +430,7 @@ async function fetchEntityInfoMap() {
   }
 }
 
-function renderBriefBody(container, brief, entityInfoMap) {
+function renderBriefBody(container, brief, entityInfoMap, sceneId) {
   container.innerHTML = "";
 
   const grid = document.createElement("div");
@@ -321,7 +438,7 @@ function renderBriefBody(container, brief, entityInfoMap) {
   const ordered = hashOrderLocations(brief.locations ?? []);
   for (const loc of ordered) {
     const role = loc.distance === 0 ? "anchor" : "satellite";
-    grid.appendChild(renderLocationCard(loc, role, entityInfoMap.get(loc.entityId)));
+    grid.appendChild(renderLocationCard(loc, role, entityInfoMap.get(loc.entityId), sceneId));
   }
   container.appendChild(grid);
 
@@ -343,6 +460,9 @@ export async function renderSessionPlanner(sceneIdArg) {
   const container = document.getElementById("session-planner-body");
   if (!container) return;
 
+  // Any navigation into (or within) this view starts from a clean slate --
+  // old open note panels belong to DOM nodes about to be discarded.
+  openNotePanels.clear();
   container.innerHTML = "";
 
   if (!currentWorld()) {
@@ -378,5 +498,5 @@ export async function renderSessionPlanner(sceneIdArg) {
     return;
   }
 
-  renderBriefBody(container, brief, entityInfoMap);
+  renderBriefBody(container, brief, entityInfoMap, sceneIdArg);
 }

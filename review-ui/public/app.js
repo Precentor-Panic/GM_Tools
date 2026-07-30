@@ -5,7 +5,7 @@
 // <script> tag was switched to type="module" for this).
 "use strict";
 import { renderGraph, showCreateNodeForm, armPlacementMode, seedNodePosition, removeNodePosition } from "./graph-view.js";
-import { renderSessionPlanner } from "./session-planner-view.js";
+import { renderSessionPlanner, flushActiveNoteSave } from "./session-planner-view.js";
 
 // ---------------------------------------------------------------------------
 // world selection
@@ -107,6 +107,14 @@ function renderCurrentView() {
   // appear, with no way to know it happened short of stumbling onto it
   // later in the Queue.
   cancelActiveScan();
+  // Phase 17 task 17.3: the SAME cancellation step cancelActiveScan()
+  // already uses on every navigation, extended with a guaranteed flush for
+  // any open inline note editor -- typed text the DM expects kept, never
+  // silently lost just because they navigated away via the hash router
+  // before the debounce timer fired. Not a second navigation-hook
+  // mechanism, and safe to call unconditionally (a no-op when nothing is
+  // pending, see debounced-save.test.mjs).
+  flushActiveNoteSave();
   const { view, arg } = parseHash();
   for (const section of document.querySelectorAll(".view")) {
     section.classList.toggle("active", section.id === `view-${view}`);
