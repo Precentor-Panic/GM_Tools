@@ -567,6 +567,23 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .location-card-type { text-transform: capitalize; margin: 0.1rem 0 0.4rem; }
 .location-card-distance { margin-top: 0.4rem; }
 
+.location-card-digest { margin: 0.4rem 0; font-size: 0.92rem; line-height: 1.45; }
+.digest-role-tag { color: var(--text-muted); text-transform: capitalize; }
+.digest-hook { color: var(--text); }
+/* Conspicuous, never blank space -- blank space reads as a loading glitch,
+   not a real signal (design record §4). */
+.location-card-digest--empty { color: var(--amber); background: var(--amber-bg); border-radius: 5px; padding: 0.35rem 0.55rem; font-size: 0.85rem; }
+
+/* Two visually distinct badges, never merged (design record §4). Icon/shape
+   AND color, so this reads correctly even at a table in low light. */
+.location-card-flags { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.4rem 0; }
+.flag-badge {
+  display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.72rem; font-weight: 700;
+  padding: 0.15rem 0.5rem; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.02em; border: 1px solid transparent;
+}
+.flag-badge--content { background: var(--amber-bg); color: var(--amber); border-color: var(--amber); }
+.flag-badge--structural { background: var(--pill-rejected-bg); color: var(--reject); border-color: var(--reject); }
+
 /* ===========================================================================
    Phase 15 tasks 15.3/15.4/15.5: real mobile-viewport support. Verified
    against a real iPhone 13 logical viewport (390px wide, Playwright device

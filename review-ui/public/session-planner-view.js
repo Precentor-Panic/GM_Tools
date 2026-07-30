@@ -152,8 +152,8 @@ function hashOrderLocations(locations) {
 }
 
 // ---------------------------------------------------------------------------
-// Location card (task 17.1 scope: anchor/satellite shell only -- digest and
-// flag-badge rendering land in task 17.2, notes in 17.3).
+// Location card (task 17.2: anchor/satellite + always-visible digest + two
+// independent flag badges). Notes land in task 17.3.
 // ---------------------------------------------------------------------------
 function renderLocationCard(location, role, entityInfo) {
   const card = document.createElement("article");
@@ -182,6 +182,52 @@ function renderLocationCard(location, role, entityInfo) {
     typeEl.textContent = entityInfo.type;
     card.appendChild(typeEl);
   }
+
+  // --- Ambient digest: always visible, unconditionally rendered -- never
+  // gated behind a click. `digest: null` gets its own CONSPICUOUS state
+  // (never blank space, per design record §4). ---
+  const digestEl = document.createElement("div");
+  digestEl.className = "location-card-digest";
+  if (location.digest) {
+    const nameSpan = document.createElement("strong");
+    nameSpan.textContent = location.digest.name;
+    const roleSpan = document.createElement("span");
+    roleSpan.className = "digest-role-tag";
+    roleSpan.textContent = ` (${location.digest.roleTag})`;
+    const hookSpan = document.createElement("span");
+    hookSpan.className = "digest-hook";
+    hookSpan.textContent = ` — ${location.digest.hook}`;
+    digestEl.append(nameSpan, roleSpan, hookSpan);
+  } else {
+    digestEl.classList.add("location-card-digest--empty");
+    digestEl.setAttribute("data-testid", "location-digest-empty");
+    digestEl.textContent = "⚠ Not established yet — nothing written for this location.";
+  }
+  card.appendChild(digestEl);
+
+  // --- Two independent flag badges (design record §4): NEVER merged into
+  // one combined indicator. Icon/shape-coded (not color-only) since this is
+  // explicitly an ambient/improv-use surface, plausibly read at a table in
+  // low light. ---
+  const flagsWrap = document.createElement("div");
+  flagsWrap.className = "location-card-flags";
+  if (location.contentFlag?.flagged) {
+    const b = document.createElement("span");
+    b.className = "flag-badge flag-badge--content";
+    b.setAttribute("data-testid", "content-flag-badge");
+    b.textContent = "✎ Undeveloped";
+    b.title = `Content-readiness flag: ${(location.contentFlag.reasons || []).join(", ") || "flagged"}`;
+    flagsWrap.appendChild(b);
+  }
+  if (location.structuralFlag?.flagged) {
+    const b = document.createElement("span");
+    b.className = "flag-badge flag-badge--structural";
+    b.setAttribute("data-testid", "structural-flag-badge");
+    b.textContent = `⛓ Thin connections`;
+    b.title = `Structural under-connection: ${location.structuralFlag.edgeCount} edge(s), fewer than ${location.structuralFlag.minEdges}`;
+    flagsWrap.appendChild(b);
+  }
+  if (flagsWrap.children.length) card.appendChild(flagsWrap);
 
   const distEl = document.createElement("div");
   distEl.className = "hint location-card-distance";
