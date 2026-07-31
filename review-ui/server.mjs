@@ -164,7 +164,7 @@ import {
 import { proposePartyMemberFromText, proposePartyMemberFromPdf } from "../combat-planning/party-roster-ingest.mjs";
 import { savePartyMember, listPartyMembers } from "../combat-planning/party-roster-store.mjs";
 import { proposeThematicTags } from "../combat-planning/thematic-filter.mjs";
-import { suggestEncounter } from "../combat-planning/encounter-heuristic.mjs";
+import { suggestEncounter, scoreCombination } from "../combat-planning/encounter-heuristic.mjs";
 // Only used to distinguish "the Anthropic API itself failed" (502, an
 // upstream/infra problem) from "this codebase's own library modules threw a
 // deliberate validation error" (400) in statusForError below -- see that
@@ -1445,33 +1445,92 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { members: listPartyMembers(w) });
   }
 
-  // POST /api/combat-planning/encounter-suggest   { world, targetDifficulty, sceneEntityId, knobs? }
+  // POST /api/combat-planning/encounter-suggest
+  //   { world, targetDifficulty, sceneEntityId, knobs?, themeText?, attendingMemberIds?, manualCombination? }
   // World format IS validated (resolveWorld) BEFORE any LLM call runs.
   // dataDir is NEVER honored from the client -- resolveDir() with no
-  // argument, same as every other route in this file. The one route in
-  // this set that makes a real API call (thematic-filter.mjs's
-  // proposeThematicTags, grounded via buildAdjacencyContext against the
-  // live snapshot) before wrapping encounter-heuristic.mjs's suggestEncounter
-  // (deterministic, no further LLM call) with the thematically-filtered pool.
+  // argument, same as every other route in this file.
+  //
+  // Phase 18 addendum (QA pass found during Phase 19 task 19.0's
+  // test-authoring pass -- see review-ui/test/e2e/combat-planning-fixture.mjs's
+  // header comment for the full, authoritative contract this implements):
+  // as originally shipped, this route unconditionally called
+  // thematic-filter.mjs's proposeThematicTags (a real LLM call) on EVERY
+  // request, always against the FULL roster, with no way to score an
+  // explicit DM-picked combination -- contradicting plans/phase-19-review.md
+  // §2's "deterministic, local, instant, zero LLM calls except the ingestion
+  // screen and an explicit, optional theme box" design claim. Three new
+  // OPTIONAL, backward-compatible request fields fix this -- a caller using
+  // only the original request shape (world/targetDifficulty/sceneEntityId/
+  // knobs) still gets a valid { suggestion } response, no new failure mode
+  // introduced, per combat-planning-fixture.mjs's own contract:
+  //   - themeText: omitted/blank/whitespace-only => proposeThematicTags is
+  //     SKIPPED ENTIRELY, candidatePool is the full accepted-bestiary pool
+  //     (the same status:"accepted"-only pool the Phase 19 catalog browses),
+  //     zero LLM calls -- this IS the new default, deliberately, since the
+  //     whole point of this fix is that ordinary difficulty-rail/knob/
+  //     attendance interactions never need one. Non-empty => the original
+  //     shipped behavior, unchanged (a real proposeThematicTags call,
+  //     narrowing that same pool by theme fit).
+  //   - attendingMemberIds: when present, `party` is listPartyMembers(w)
+  //     filtered to only these ids. Omitted => the full roster, unchanged.
+  //   - manualCombination: when present, scores EXACTLY this combination
+  //     (via encounter-heuristic.mjs's scoreCombination, applying `knobs` and
+  //     computing burstCeiling/snowballDelta/asymmetricRiskFlag the IDENTICAL
+  //     way suggestEncounter's own auto-fill does) instead of auto-building
+  //     one via targetDifficulty -- looked up against the full accepted
+  //     bestiary (not the theme-filtered pool, since a manual pick is an
+  //     already-made catalog choice, not something theme-fit should
+  //     silently exclude). The response's `combination` echoes back exactly
+  //     what was sent. Omitted => the original shipped auto-fill behavior.
   if (method === "POST" && parts.length === 3 && parts[1] === "combat-planning" && parts[2] === "encounter-suggest") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     const dir = resolveDir();
-    const { entities, edges } = loadSnapshot(dir, w).snapshot;
-    const sceneContext = buildAdjacencyContext(entities, edges, body.sceneEntityId, DEFAULT_ENTITY_NARRATE_DEPTH);
 
-    const fullPool = listBestiaryEntries().map((e) => ({ entryId: e.id, rawFields: e.rawFields, derivedScore: e.derivedScore }));
-    const { filteredEntryIds } = await proposeThematicTags(sceneContext, fullPool, {});
-    const filteredIdSet = new Set(filteredEntryIds);
-    const candidatePool = fullPool.filter((c) => filteredIdSet.has(c.entryId));
+    const themeText = typeof body.themeText === "string" ? body.themeText.trim() : "";
+    const acceptedPool = () =>
+      listBestiaryEntries()
+        .filter((e) => e.status === "accepted")
+        .map((e) => ({ entryId: e.id, rawFields: e.rawFields, derivedScore: e.derivedScore }));
 
-    const party = listPartyMembers(w);
-    const suggestion = suggestEncounter({
-      targetDifficulty: body.targetDifficulty,
-      candidatePool,
-      party,
-      knobs: body.knobs ?? {}
-    });
+    let candidatePool;
+    if (themeText) {
+      const { entities, edges } = loadSnapshot(dir, w).snapshot;
+      const sceneContext = buildAdjacencyContext(entities, edges, body.sceneEntityId, DEFAULT_ENTITY_NARRATE_DEPTH);
+      const fullPool = listBestiaryEntries().map((e) => ({ entryId: e.id, rawFields: e.rawFields, derivedScore: e.derivedScore }));
+      const { filteredEntryIds } = await proposeThematicTags(sceneContext, fullPool, {});
+      const filteredIdSet = new Set(filteredEntryIds);
+      candidatePool = fullPool.filter((c) => filteredIdSet.has(c.entryId));
+    } else {
+      candidatePool = acceptedPool();
+    }
+
+    let party = listPartyMembers(w);
+    if (Array.isArray(body.attendingMemberIds)) {
+      const attendingSet = new Set(body.attendingMemberIds);
+      party = party.filter((m) => attendingSet.has(m.id));
+    }
+
+    const suggestion = Array.isArray(body.manualCombination)
+      ? scoreCombination({
+          combination: body.manualCombination,
+          // manualCombination is looked up against the full accepted pool,
+          // not the (possibly theme-filtered) candidatePool above -- an
+          // already-made manual catalog pick must never be silently dropped
+          // for not matching the theme. When themeText was blank,
+          // candidatePool IS already exactly this pool -- reused rather than
+          // re-read.
+          candidatePool: themeText ? acceptedPool() : candidatePool,
+          party,
+          knobs: body.knobs ?? {}
+        })
+      : suggestEncounter({
+          targetDifficulty: body.targetDifficulty,
+          candidatePool,
+          party,
+          knobs: body.knobs ?? {}
+        });
     return sendJson(res, 200, { suggestion });
   }
 

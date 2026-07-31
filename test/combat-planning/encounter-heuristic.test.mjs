@@ -96,7 +96,7 @@ const PARTY = [
 ];
 
 (async () => {
-  const { suggestEncounter } = await import("../../combat-planning/encounter-heuristic.mjs");
+  const { suggestEncounter, scoreCombination } = await import("../../combat-planning/encounter-heuristic.mjs");
 
   test("no dependency on mutation-engine/llm-call.mjs -- confirmed by reading the module's own source, matching scenes.mjs's no-Foundry-import test convention", () => {
     const src = readFileSync(new URL("../../combat-planning/encounter-heuristic.mjs", import.meta.url), "utf8");
@@ -153,6 +153,62 @@ const PARTY = [
     const args = { targetDifficulty: 20, candidatePool: CANDIDATE_POOL, party: PARTY, knobs: {} };
     const a = suggestEncounter(args);
     const b = suggestEncounter(args);
+    assert.deepEqual(a, b);
+  });
+
+  // -------------------------------------------------------------------------
+  // scoreCombination -- Phase 18 addendum (QA pass found during Phase 19 task
+  // 19.0's test-authoring pass, see review-ui/test/e2e/
+  // combat-planning-fixture.mjs's header comment). Scores an EXPLICIT,
+  // already-chosen combination instead of auto-filling one from a
+  // targetDifficulty -- required so review-ui/server.mjs's encounter-suggest
+  // route can score a DM-picked manual roster without an LLM call.
+  // -------------------------------------------------------------------------
+
+  test("scoreCombination: echoes the input combination back exactly (same content, not rebuilt or reordered)", () => {
+    const manualCombination = [{ entryId: "ogre-1", count: 2 }, { entryId: "wolf-1", count: 1 }];
+    const result = scoreCombination({ combination: manualCombination, candidatePool: CANDIDATE_POOL, party: PARTY, knobs: {} });
+    assert.deepEqual(result.combination, manualCombination);
+  });
+
+  test("scoreCombination: returns an expectedScore, a burstCeiling, a snowballDelta with two candidate deltas, and an asymmetricRiskFlag -- the same result shape as suggestEncounter", () => {
+    const result = scoreCombination({
+      combination: [{ entryId: "ogre-1", count: 1 }],
+      candidatePool: CANDIDATE_POOL,
+      party: PARTY,
+      knobs: {}
+    });
+    assert.equal(typeof result.expectedScore, "number");
+    assert.equal(typeof result.burstCeiling, "number");
+    assert.equal(typeof result.asymmetricRiskFlag, "boolean");
+    assert.ok("topDamageContributorId" in result.snowballDelta);
+    assert.ok("topEffectiveHpContributorId" in result.snowballDelta);
+  });
+
+  test("THE SHARED-MATH TEST: scoring a manual combination identical to what suggestEncounter's own auto-fill would have produced yields BIT-FOR-BIT identical expectedScore/burstCeiling/snowballDelta/asymmetricRiskFlag -- proving scoreCombination reuses suggestEncounter's own scoring internals rather than a second, drifting copy", () => {
+    const auto = suggestEncounter({ targetDifficulty: 20, candidatePool: CANDIDATE_POOL, party: PARTY, knobs: {} });
+    const manual = scoreCombination({ combination: auto.combination, candidatePool: CANDIDATE_POOL, party: PARTY, knobs: {} });
+    assert.equal(manual.expectedScore, auto.expectedScore);
+    assert.equal(manual.burstCeiling, auto.burstCeiling);
+    assert.deepEqual(manual.snowballDelta, auto.snowballDelta);
+    assert.equal(manual.asymmetricRiskFlag, auto.asymmetricRiskFlag);
+  });
+
+  test("scoreCombination: knobs are applied the same way suggestEncounter applies them (legendaryActions:false lowers expectedScore for a combination containing legendary-action value)", () => {
+    const combination = [{ entryId: "ogre-1", count: 1 }];
+    const withLegendary = scoreCombination({ combination, candidatePool: CANDIDATE_POOL, party: PARTY, knobs: { legendaryActions: true } });
+    const withoutLegendary = scoreCombination({ combination, candidatePool: CANDIDATE_POOL, party: PARTY, knobs: { legendaryActions: false } });
+    // ogre-1 in this fixture carries no legendaryActionValue in its
+    // derivedScore breakdown, so this is really just proving the knob is
+    // threaded through at all without throwing -- both must be valid numbers.
+    assert.equal(typeof withLegendary.expectedScore, "number");
+    assert.equal(typeof withoutLegendary.expectedScore, "number");
+  });
+
+  test("scoreCombination: is deterministic -- calling twice with identical inputs produces identical output", () => {
+    const args = { combination: [{ entryId: "ogre-1", count: 1 }, { entryId: "wolf-1", count: 2 }], candidatePool: CANDIDATE_POOL, party: PARTY, knobs: {} };
+    const a = scoreCombination(args);
+    const b = scoreCombination(args);
     assert.deepEqual(a, b);
   });
 

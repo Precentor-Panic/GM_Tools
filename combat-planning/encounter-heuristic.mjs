@@ -31,6 +31,15 @@
  * open (§4: "real implementation-time decisions, not designed to that level
  * of precision here") — chosen to be simple, deterministic, and documented
  * in place, not implied to be precision-tuned.
+ *
+ * Phase 18 addendum (QA pass found during Phase 19 task 19.0's test-authoring
+ * pass, see review-ui/test/e2e/combat-planning-fixture.mjs's header comment):
+ * added `scoreCombination`, a small additive export alongside
+ * `suggestEncounter` for scoring an EXPLICIT, already-chosen combination (a
+ * DM's manual roster edit) instead of auto-building one from a
+ * targetDifficulty -- both now share the same `scoreCombinationCore`
+ * internal so burstCeiling/snowballDelta/asymmetricRiskFlag are computed
+ * identically either way, never a second, drifting copy of that math.
  */
 import { computeActionEconomyScore } from "./action-economy.mjs";
 import { computeBurstCeiling } from "./burst-ceiling.mjs";
@@ -136,20 +145,15 @@ function partyCapacity(party) {
 }
 
 /**
- * @param {object} args
- * @param {number} args.targetDifficulty
- * @param {Array<object>} args.candidatePool   already thematically filtered -- {entryId, rawFields, derivedScore}
- * @param {Array<object>} args.party            {id, combatRelevant:{hp, damagePerRoundEstimate, ...}}
- * @param {object} [args.knobs]
- * @returns {{combination:Array, expectedScore:number, burstCeiling:number, snowballDelta:object, asymmetricRiskFlag:boolean}}
+ * Shared scoring core for a FINAL combination (already built, either by
+ * buildCombination's own auto-fill or handed in verbatim by a caller that
+ * already knows exactly what it wants) -- expectedScore/burstCeiling/
+ * snowballDelta/asymmetricRiskFlag are computed identically regardless of
+ * where `combination` came from. `combination` is returned as-is (the same
+ * reference/array a caller passed in), so a caller that hands in its own
+ * explicit combination gets it echoed back exactly, not rebuilt.
  */
-export function suggestEncounter({ targetDifficulty, candidatePool, party, knobs = {} }) {
-  const k = { ...DEFAULT_KNOBS, ...knobs };
-  const target = targetDifficulty * (k.scalingSlider ?? 1);
-
-  const candidateByEntryId = new Map(candidatePool.map((c) => [c.entryId, c]));
-  const combination = buildCombination(candidatePool, target, k);
-
+function scoreCombinationCore(combination, candidateByEntryId, party, k) {
   // expectedScore/burstCeiling are computed with ZERO reference to
   // burstCeilingThresholdPct -- see this module's own top-of-file note.
   const expectedScore = computeCombinationExpectedScore(combination, candidateByEntryId, k);
@@ -176,4 +180,45 @@ export function suggestEncounter({ targetDifficulty, candidatePool, party, knobs
     partyEffectiveHpTotal > 0 && burstCeiling > partyEffectiveHpTotal * (k.burstCeilingThresholdPct ?? 0.5);
 
   return { combination, expectedScore, burstCeiling, snowballDelta, asymmetricRiskFlag };
+}
+
+/**
+ * @param {object} args
+ * @param {number} args.targetDifficulty
+ * @param {Array<object>} args.candidatePool   already thematically filtered -- {entryId, rawFields, derivedScore}
+ * @param {Array<object>} args.party            {id, combatRelevant:{hp, damagePerRoundEstimate, ...}}
+ * @param {object} [args.knobs]
+ * @returns {{combination:Array, expectedScore:number, burstCeiling:number, snowballDelta:object, asymmetricRiskFlag:boolean}}
+ */
+export function suggestEncounter({ targetDifficulty, candidatePool, party, knobs = {} }) {
+  const k = { ...DEFAULT_KNOBS, ...knobs };
+  const target = targetDifficulty * (k.scalingSlider ?? 1);
+
+  const candidateByEntryId = new Map(candidatePool.map((c) => [c.entryId, c]));
+  const combination = buildCombination(candidatePool, target, k);
+
+  return scoreCombinationCore(combination, candidateByEntryId, party, k);
+}
+
+/**
+ * Scores an EXPLICIT, already-chosen combination (e.g. a DM manually
+ * assembling/editing the roster in the UI) instead of auto-building one from
+ * a targetDifficulty -- reuses the exact same scoreCombinationCore math
+ * suggestEncounter's own auto-fill path uses (task 18.5-addendum's explicit
+ * "reuse the existing scoring internals, don't duplicate them" requirement),
+ * only the buildCombination auto-fill step is skipped. The returned
+ * `combination` is the same array/objects passed in, unmodified -- callers
+ * that need to echo the input back exactly (review-ui/server.mjs's
+ * encounter-suggest route) get that for free, not as a separate step.
+ * @param {object} args
+ * @param {Array<{entryId:string, count:number}>} args.combination
+ * @param {Array<object>} args.candidatePool   {entryId, rawFields, derivedScore} -- used ONLY to look up each combination entry's own fields, not to constrain which entries may appear (unlike suggestEncounter's pool, this is not itself auto-filled from)
+ * @param {Array<object>} args.party            {id, combatRelevant:{hp, damagePerRoundEstimate, ...}}
+ * @param {object} [args.knobs]
+ * @returns {{combination:Array, expectedScore:number, burstCeiling:number, snowballDelta:object, asymmetricRiskFlag:boolean}}
+ */
+export function scoreCombination({ combination, candidatePool, party, knobs = {} }) {
+  const k = { ...DEFAULT_KNOBS, ...knobs };
+  const candidateByEntryId = new Map(candidatePool.map((c) => [c.entryId, c]));
+  return scoreCombinationCore(combination, candidateByEntryId, party, k);
 }

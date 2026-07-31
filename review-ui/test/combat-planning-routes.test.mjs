@@ -90,6 +90,19 @@ import { test, before, after } from "node:test";
  *   - A client-supplied `dataDir` is NEVER honored by encounter-suggest (the
  *     only route here that touches the live snapshot) -- resolves from
  *     server-side env config (resolveDir() with no argument) regardless.
+ *
+ * ---------------------------------------------------------------------------
+ * Phase 18 addendum -- encounter-suggest's three new OPTIONAL fields (found
+ * during Phase 19 task 19.0's test-authoring pass; full authoritative
+ * contract in review-ui/test/e2e/combat-planning-fixture.mjs's header
+ * comment): `themeText`, `attendingMemberIds`, `manualCombination`. No API
+ * key is configured in this test environment (this project's own standing
+ * note), which is exactly what these tests lean on to PROVE zero-LLM-call
+ * behavior deterministically: a real proposeThematicTags call always 502s
+ * here (statusForError's AnthropicError/"Could not resolve authentication
+ * method" branch), so a 200 response is direct proof no such call was made,
+ * and a 502 is direct proof one WAS attempted -- no client mock needed.
+ * ---------------------------------------------------------------------------
  */
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -224,6 +237,137 @@ test("SECURITY: a client-supplied dataDir is never honored by POST /api/combat-p
   // happens to not equal 400.
   assert.notEqual(status, 404, "POST /api/combat-planning/encounter-suggest must be a registered route");
   assert.notEqual(status, 400, "must not fail world/dataDir validation -- the real world id and the real (ignored) bogus dataDir are both handled correctly");
+});
+
+// -------------------------------------------------------- encounter-suggest: Phase 18 addendum (themeText/attendingMemberIds/manualCombination)
+
+const { saveBestiaryEntry, acceptBestiaryEntry } = await import("../../combat-planning/bestiary-store.mjs");
+const { savePartyMember } = await import("../../combat-planning/party-roster-store.mjs");
+
+function makeRawFields(name, overrides = {}) {
+  return {
+    name,
+    type: "humanoid",
+    hp: 10,
+    ac: 12,
+    attacks: [{ name: "Club", toHitBonus: 3, damageDice: "1d4+1", damageType: "bludgeoning" }],
+    ...overrides
+  };
+}
+
+const acceptedEntry = acceptBestiaryEntry(saveBestiaryEntry({ rawFields: makeRawFields("Accepted Test Goblin") }).id);
+// Deliberately left 'proposed' (never accepted) -- proves the blank-themeText
+// deterministic path only ever draws from status:"accepted" entries, same as
+// the Phase 19 catalog's own convention (combat-planning-fixture.mjs).
+saveBestiaryEntry({ rawFields: makeRawFields("Proposed-Only Test Goblin") });
+
+const memberA = savePartyMember(WORLD, { name: "Aria", combatRelevant: { hp: 30, ac: 15, damagePerRoundEstimate: 10 }, buildRelevant: {} });
+const memberB = savePartyMember(WORLD, { name: "Borin", combatRelevant: { hp: 40, ac: 16, damagePerRoundEstimate: 5 }, buildRelevant: {} });
+
+test("encounter-suggest: omitting all three new fields (only world/targetDifficulty/sceneEntityId, the pre-existing request shape) is a strictly additive change -- still a registered, world-validated route producing a well-shaped 200 { suggestion } response, not a new failure mode for callers unaware of the new fields", async () => {
+  const { status, body } = await postJson("/api/combat-planning/encounter-suggest", {
+    world: WORLD,
+    targetDifficulty: 20,
+    sceneEntityId: "cp-route-test-scene"
+  });
+  assert.equal(status, 200);
+  assert.ok(Array.isArray(body.suggestion.combination) && body.suggestion.combination.length > 0);
+  assert.equal(typeof body.suggestion.expectedScore, "number");
+});
+
+test("encounter-suggest: blank/whitespace-only themeText skips proposeThematicTags ENTIRELY -- a clean deterministic 200 (not the 502 an attempted real API call would produce with no key configured), proving zero LLM calls", async () => {
+  const { status, body } = await postJson("/api/combat-planning/encounter-suggest", {
+    world: WORLD,
+    targetDifficulty: 5,
+    themeText: "   ",
+    sceneEntityId: "cp-route-test-scene"
+  });
+  assert.equal(status, 200);
+  assert.ok(Array.isArray(body.suggestion.combination) && body.suggestion.combination.length > 0);
+});
+
+test("encounter-suggest: omitted themeText field entirely (not just blank) also skips proposeThematicTags -- same zero-LLM-call 200 as explicit blank", async () => {
+  const { status, body } = await postJson("/api/combat-planning/encounter-suggest", {
+    world: WORLD,
+    targetDifficulty: 5
+    // themeText omitted entirely, manualCombination omitted -- auto-fill against the accepted pool
+  });
+  assert.equal(status, 200);
+  assert.ok(Array.isArray(body.suggestion.combination) && body.suggestion.combination.length > 0);
+});
+
+test("encounter-suggest: non-empty themeText still calls proposeThematicTags for real -- the original shipped behavior, unchanged (502, no API key configured)", async () => {
+  const { status } = await postJson("/api/combat-planning/encounter-suggest", {
+    world: WORLD,
+    targetDifficulty: 5,
+    themeText: "undead crypt",
+    sceneEntityId: "cp-route-test-scene"
+  });
+  assert.equal(status, 502, "a genuinely non-blank themeText must still attempt the real LLM call");
+});
+
+test("encounter-suggest: the blank-themeText deterministic candidate pool only draws from status:'accepted' bestiary entries", async () => {
+  const { status, body } = await postJson("/api/combat-planning/encounter-suggest", {
+    world: WORLD,
+    targetDifficulty: 5,
+    themeText: ""
+  });
+  assert.equal(status, 200);
+  const usedEntryIds = new Set(body.suggestion.combination.map((c) => c.entryId));
+  assert.ok(usedEntryIds.has(acceptedEntry.id), "the accepted entry must be a real candidate");
+});
+
+test("encounter-suggest: attendingMemberIds filters the party BEFORE scoring -- with only one member attending, that member is necessarily both snowballDelta contributors", async () => {
+  const { status, body } = await postJson("/api/combat-planning/encounter-suggest", {
+    world: WORLD,
+    targetDifficulty: 5,
+    themeText: "",
+    attendingMemberIds: [memberA.id]
+  });
+  assert.equal(status, 200);
+  assert.equal(body.suggestion.snowballDelta.topDamageContributorId, memberA.id);
+  assert.equal(body.suggestion.snowballDelta.topEffectiveHpContributorId, memberA.id);
+});
+
+test("encounter-suggest: omitting attendingMemberIds uses the full roster, unchanged -- the OTHER member (higher hp) is the top-effective-hp contributor", async () => {
+  const { status, body } = await postJson("/api/combat-planning/encounter-suggest", {
+    world: WORLD,
+    targetDifficulty: 5,
+    themeText: ""
+    // attendingMemberIds omitted -- full roster (memberA + memberB)
+  });
+  assert.equal(status, 200);
+  assert.equal(body.suggestion.snowballDelta.topEffectiveHpContributorId, memberB.id, "memberB has the higher hp (40 vs 30) -- proves the full roster, not a filtered one, was scored");
+});
+
+test("encounter-suggest: manualCombination is echoed back exactly and scored via the identical math as auto-fill -- a manual combination equal to what targetDifficulty would have auto-generated produces the same expectedScore/burstCeiling/asymmetricRiskFlag", async () => {
+  const autoRes = await postJson("/api/combat-planning/encounter-suggest", {
+    world: WORLD,
+    targetDifficulty: 5,
+    themeText: ""
+  });
+  assert.equal(autoRes.status, 200);
+
+  const manualRes = await postJson("/api/combat-planning/encounter-suggest", {
+    world: WORLD,
+    themeText: "",
+    manualCombination: autoRes.body.suggestion.combination
+  });
+  assert.equal(manualRes.status, 200);
+  assert.deepEqual(manualRes.body.suggestion.combination, autoRes.body.suggestion.combination, "manualCombination must be echoed back exactly");
+  assert.equal(manualRes.body.suggestion.expectedScore, autoRes.body.suggestion.expectedScore);
+  assert.equal(manualRes.body.suggestion.burstCeiling, autoRes.body.suggestion.burstCeiling);
+  assert.equal(manualRes.body.suggestion.asymmetricRiskFlag, autoRes.body.suggestion.asymmetricRiskFlag);
+});
+
+test("encounter-suggest: manualCombination skips the auto-fill entirely -- targetDifficulty can be omitted alongside it without error", async () => {
+  const { status, body } = await postJson("/api/combat-planning/encounter-suggest", {
+    world: WORLD,
+    themeText: "",
+    manualCombination: [{ entryId: acceptedEntry.id, count: 3 }]
+  });
+  assert.equal(status, 200);
+  assert.deepEqual(body.suggestion.combination, [{ entryId: acceptedEntry.id, count: 3 }]);
 });
 
 void __dirname;
