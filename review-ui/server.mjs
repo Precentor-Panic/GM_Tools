@@ -514,6 +514,19 @@ function graphNodePayload(entity, { degrees, flaggedIds, debtIds, proposed, sess
     playerKnown: entity.playerKnown ?? null,
     canonLocked: entity.canonLocked ?? false,
     role: entity.role ?? null,
+    // Phase 19 task 19.6: a small, additive, backward-compatible response
+    // field (same category of change as the Phase 18 addendum's additive
+    // REQUEST fields on encounter-suggest -- growing an EXISTING route's
+    // payload, not a new route) -- combat-planning-view.js's Resync-from-
+    // Foundry button reads a WF entity's own already-stored generic
+    // `attributes` bag (matched to a PartyMember by name) as the closest
+    // real "read live data via the existing snapshot/file-bridge" path
+    // available: WF graph entities have no dedicated hp field of their own
+    // (confirmed by reading entity-schema/graphNodePayload fresh), so this
+    // is a genuine, flagged gap, not an established convention being
+    // reused -- see combat-planning-view.js's own header comment for the
+    // full reasoning.
+    attributes: entity.attributes ?? {},
     ...(proposed !== undefined ? { proposed } : {})
   };
 }
@@ -1510,6 +1523,21 @@ async function handleApi(req, res, url, parts) {
     if (Array.isArray(body.attendingMemberIds)) {
       const attendingSet = new Set(body.attendingMemberIds);
       party = party.filter((m) => attendingSet.has(m.id));
+    }
+    // Phase 19 task 19.6 addition (small, additive, backward-compatible --
+    // same category of change as the three fields above): `hpOverrides`
+    // ({memberId: hp}) substitutes a WORKING-SESSION hp value into scoring
+    // for this request ONLY -- never written back to party-roster-store.mjs.
+    // review-ui/public/combat-planning-view.js's Resync-from-Foundry button
+    // is the one caller; see that file's header for the full grounding on
+    // why this (rather than a persisted write) is the correct shape for
+    // "working session, not persisted record."
+    if (body.hpOverrides && typeof body.hpOverrides === "object") {
+      party = party.map((m) =>
+        Object.prototype.hasOwnProperty.call(body.hpOverrides, m.id) && typeof body.hpOverrides[m.id] === "number"
+          ? { ...m, combatRelevant: { ...m.combatRelevant, hp: body.hpOverrides[m.id] } }
+          : m
+      );
     }
 
     const suggestion = Array.isArray(body.manualCombination)

@@ -23,6 +23,7 @@
       <button data-nav="debt">Deferred Debt</button>
       <button data-nav="graph">Graph</button>
       <button data-nav="session-planner" data-testid="session-planner-nav">Plan Session</button>
+      <button data-nav="combat-planning" data-testid="combat-planning-nav">Encounter Builder</button>
     </nav>
     <div class="topbar-right">
       <select id="world-select" aria-label="World"></select>
@@ -170,6 +171,18 @@
   <h1>Plan Session</h1>
   <p class="hint">A live instrument, not a plan to follow — surfaces what's near the party's current scene, flags what's thin, and captures notes without them drifting into a second source of truth.</p>
   <div id="session-planner-body"></div>
+</section>
+
+<!-- ================= ENCOUNTER BUILDER (Phase 19) ================= -->
+<section id="view-combat-planning" class="view">
+  <h1>Encounter Builder</h1>
+  <div id="combat-planning-body"></div>
+</section>
+
+<!-- ================= ENCOUNTER BUILDER INGESTION (Phase 19) ================= -->
+<section id="view-combat-planning-ingest" class="view">
+  <button class="link-btn" data-nav="combat-planning">&larr; Back to Encounter Builder</button>
+  <div id="combat-planning-ingest-body"></div>
 </section>
 
 <!-- ================= DEFERRED DEBT ================= -->

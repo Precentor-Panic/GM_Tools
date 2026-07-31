@@ -665,3 +665,116 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   .row-check-wrap { min-width: 44px; min-height: 44px; align-items: center; justify-content: center; }
   .icon-btn { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
 }
+
+/* ===========================================================================
+   Phase 19: Encounter Builder
+   =========================================================================== */
+.combat-planning-links-row { display: flex; gap: 1rem; margin-bottom: 0.75rem; }
+
+.difficulty-rail { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+.difficulty-tier-btn { font-size: 1rem; padding: 0.6rem 1.1rem; font-weight: 600; }
+.difficulty-tier-btn.active { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+.difficulty-numeric-chip {
+  width: 4.5rem; font-size: 0.85rem; padding: 0.35rem 0.4rem; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text);
+}
+
+.roster-strip { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; }
+.roster-chip {
+  display: flex; align-items: center; gap: 0.4rem; border: 1px solid var(--border); border-radius: 999px;
+  padding: 0.3rem 0.6rem; background: var(--card-bg); font-size: 0.85rem;
+}
+.roster-chip-label { display: flex; align-items: center; gap: 0.35rem; cursor: pointer; }
+.roster-chip-hp-staleness { color: var(--text-muted); font-size: 0.72rem; }
+.roster-chip-hp-staleness--stale { color: var(--amber); font-weight: 600; }
+.roster-chip-resync-btn { font-size: 0.9rem; padding: 0.1rem 0.3rem; }
+
+.score-band { border: 1px solid var(--border); border-radius: 10px; padding: 0.8rem 1rem; margin-bottom: 0.75rem; background: var(--card-bg); }
+.expected-score-value { font-size: 1.6rem; font-weight: 700; margin: 0.4rem 0; }
+.snowball-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.4rem; }
+.snowball-pill {
+  display: inline-block; font-size: 0.8rem; padding: 0.2rem 0.6rem; border-radius: 999px;
+  background: var(--pill-pending-bg); color: var(--pill-pending-text);
+}
+.burst-ceiling-badge {
+  display: inline-block; font-size: 0.75rem; padding: 0.15rem 0.55rem; border-radius: 999px;
+  background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber); margin-right: 0.4rem;
+}
+.attendance-staleness-line { font-size: 0.85rem; color: var(--text-muted); margin-top: 0.4rem; }
+
+.working-roster { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.75rem; }
+.working-combatant-row {
+  display: flex; align-items: center; gap: 0.5rem; border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.35rem 0.6rem; font-size: 0.9rem; background: var(--bg);
+}
+.working-combatant-count { color: var(--text-muted); font-weight: 600; }
+
+.disclosure { margin-bottom: 0.5rem; }
+.disclosure-toggle {
+  background: none; border: none; color: var(--text); font-size: 0.92rem; font-weight: 600; cursor: pointer;
+  padding: 0.35rem 0; text-align: left;
+}
+.disclosure-panel { border-left: 2px solid var(--border); padding: 0.5rem 0 0.5rem 0.75rem; margin-top: 0.2rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.knob-field { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
+.knob-field--checkbox input { width: 1rem; height: 1rem; }
+.knob-field-hint { font-size: 0.72rem; }
+.why-score-list { margin: 0; padding-left: 1.1rem; font-size: 0.88rem; }
+.why-score-list li { margin-bottom: 0.2rem; }
+
+.catalog-facets { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0 0.5rem; }
+.catalog-facets select, .catalog-facets input[type="search"] {
+  font-size: 0.85rem; padding: 0.3rem 0.5rem; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text);
+}
+.theme-box { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+.theme-box input[type="text"] {
+  flex: 1; min-width: 180px; font-size: 0.88rem; padding: 0.4rem 0.6rem; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+}
+
+.catalog { display: flex; flex-direction: column; gap: 0.4rem; }
+.catalog-row {
+  display: grid; grid-template-columns: 1fr 9rem 8rem; align-items: center; gap: 0.6rem;
+  border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.7rem; background: var(--bg);
+}
+.catalog-row-main { min-width: 0; }
+.catalog-row-name { font-size: 0.92rem; }
+
+.impact-fingerprint { display: inline-flex; gap: 2px; margin-top: 0.3rem; }
+.impact-bar { width: 6px; height: 12px; border-radius: 2px; background: var(--border); display: inline-block; }
+.impact-bar--active { background: var(--accent); }
+
+/* Confidence-encoded score chip: ONE fixed-size slot regardless of state
+   (combat-planning-confidence-format.e2e.mjs asserts this via real
+   bounding-box comparison) -- align-self:start so the row's own height
+   (which DOES vary, e.g. when a stepper is also present) never stretches
+   this element. */
+.catalog-score-chip {
+  align-self: start; box-sizing: border-box; width: 100%; height: 3.4rem; overflow: hidden;
+  display: flex; flex-direction: column; justify-content: center; align-items: flex-start;
+  padding: 0.3rem 0.5rem; border-radius: 6px; border: 1px solid var(--border); font-size: 0.8rem;
+}
+.catalog-score-chip--solid { border-color: var(--accent); }
+.catalog-score-chip--banded { border-style: dashed; border-color: var(--amber); }
+.catalog-score-chip--unscored { background: var(--card-bg); color: var(--text-muted); }
+.catalog-score-value, .catalog-score-range { font-size: 1.05rem; font-weight: 700; }
+.catalog-score-fuzzy-note { display: block; font-size: 0.68rem; color: var(--text-muted); margin-top: 0.15rem; line-height: 1.2; }
+.catalog-score-unscored-pill { font-size: 0.78rem; }
+
+.catalog-row-controls { display: flex; flex-direction: column; gap: 0.3rem; align-items: flex-start; }
+.catalog-stepper { display: flex; align-items: center; gap: 0.35rem; }
+.catalog-stepper button { font-size: 0.85rem; padding: 0.1rem 0.4rem; border: 1px solid var(--border); border-radius: 5px; }
+
+.ingest-kind-switch { display: flex; gap: 0.75rem; margin-bottom: 0.75rem; }
+.ingest-kind-switch a { color: var(--text-muted); font-size: 0.9rem; text-decoration: none; padding: 0.2rem 0; }
+.ingest-kind-switch a.active { color: var(--text); font-weight: 700; border-bottom: 2px solid var(--accent); }
+.ingest-form { margin-bottom: 1rem; }
+.ingest-review-entry { border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem 0.9rem; margin-bottom: 0.6rem; }
+.ingest-review-fields { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.5rem; }
+.ingest-review-field { font-size: 0.88rem; }
+.ingest-review-field-label { color: var(--text-muted); }
+.ingest-review-field-flag {
+  margin-top: 0.15rem; font-size: 0.78rem; color: var(--amber); background: var(--amber-bg);
+  border-radius: 4px; padding: 0.2rem 0.4rem; display: inline-block;
+}
+.ingest-party-list { margin: 0; padding-left: 1.1rem; }

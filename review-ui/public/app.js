@@ -6,6 +6,7 @@
 "use strict";
 import { renderGraph, showCreateNodeForm, armPlacementMode, seedNodePosition, removeNodePosition } from "./graph-view.js";
 import { renderSessionPlanner, flushActiveNoteSave, cancelActiveRecenter } from "./session-planner-view.js";
+import { renderCombatPlanning, renderCombatPlanningIngest, cancelActiveCombatPlanningRequest } from "./combat-planning-view.js";
 
 // ---------------------------------------------------------------------------
 // world selection
@@ -117,6 +118,10 @@ function renderCurrentView() {
   // mechanism, and both are safe to call unconditionally.
   flushActiveNoteSave();
   cancelActiveRecenter();
+  // Phase 19: the same cancel-on-navigate convention, for this phase's two
+  // (and only two) LLM call sites (ingestion submit, non-blank theme-box
+  // submit) -- see combat-planning-view.js's own header.
+  cancelActiveCombatPlanningRequest();
   const { view, arg } = parseHash();
   for (const section of document.querySelectorAll(".view")) {
     section.classList.toggle("active", section.id === `view-${view}`);
@@ -133,6 +138,8 @@ function renderCurrentView() {
   else if (view === "graph") renderGraphStandaloneView();
   else if (view === "entity") renderEntityDetail(arg);
   else if (view === "session-planner") renderSessionPlanner(arg);
+  else if (view === "combat-planning") renderCombatPlanning();
+  else if (view === "combat-planning-ingest") renderCombatPlanningIngest(arg);
 }
 
 // Phase 15 task 15.3: closing the mobile drawer belongs on the hashchange
