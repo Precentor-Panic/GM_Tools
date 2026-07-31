@@ -749,16 +749,30 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
    bounding-box comparison) -- align-self:start so the row's own height
    (which DOES vary, e.g. when a stepper is also present) never stretches
    this element. */
+/* height is generously sized to comfortably fit the WORST case (a full
+   range line plus a 3-line-clamped fuzzy note) without relying on
+   overflow:hidden to silently crop content invisibly -- found via a real
+   headless-Chromium screenshot during self-review: flexbox's
+   justify-content:center "safe alignment" fallback for overflowing content
+   caused the banded state's range+note text to render OUTSIDE this box's
+   own bounds entirely (visually bleeding into the row above) despite
+   overflow:hidden being computed as set; the earlier 3.4rem height was
+   simply too short for real banded content. justify-content is now
+   flex-start (predictable top-anchored overflow direction, if any) and the
+   fuzzy note is separately -webkit-line-clamped as defense in depth. */
 .catalog-score-chip {
-  align-self: start; box-sizing: border-box; width: 100%; height: 3.4rem; overflow: hidden;
-  display: flex; flex-direction: column; justify-content: center; align-items: flex-start;
+  align-self: start; box-sizing: border-box; width: 100%; height: 4.6rem; overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-start; align-items: flex-start;
   padding: 0.3rem 0.5rem; border-radius: 6px; border: 1px solid var(--border); font-size: 0.8rem;
 }
 .catalog-score-chip--solid { border-color: var(--accent); }
 .catalog-score-chip--banded { border-style: dashed; border-color: var(--amber); }
 .catalog-score-chip--unscored { background: var(--card-bg); color: var(--text-muted); }
 .catalog-score-value, .catalog-score-range { font-size: 1.05rem; font-weight: 700; }
-.catalog-score-fuzzy-note { display: block; font-size: 0.68rem; color: var(--text-muted); margin-top: 0.15rem; line-height: 1.2; }
+.catalog-score-fuzzy-note {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+  font-size: 0.68rem; color: var(--text-muted); margin-top: 0.15rem; line-height: 1.2;
+}
 .catalog-score-unscored-pill { font-size: 0.78rem; }
 
 .catalog-row-controls { display: flex; flex-direction: column; gap: 0.3rem; align-items: flex-start; }
