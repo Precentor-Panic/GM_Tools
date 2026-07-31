@@ -43,6 +43,17 @@ export function setupScratchEnv(prefix) {
   // this project's .gitignore comments for human-review/prep-content/etc.).
   process.env.GM_TOOLS_SESSION_SCENES_DIR = join(scratchDir, "session-scenes");
   process.env.GM_TOOLS_SESSION_NOTES_DIR = join(scratchDir, "session-notes");
+  // Phase 19 task 19.0: same "added when first actually exercised" gap as
+  // the session-scenes/session-notes pair above -- this shared e2e fixture
+  // predates Phase 18's combat-planning/bestiary-store.mjs (per-user/
+  // library-wide, GM_TOOLS_BESTIARY_DIR) and combat-planning/party-roster-
+  // store.mjs (per-world, GM_TOOLS_PARTY_ROSTER_DIR). Added now, at the
+  // point this project's combat-planning e2e tests first need real
+  // bestiary/party-roster isolation, matching every prior store's own
+  // "added when first actually exercised" pattern (see this project's
+  // .gitignore comments for human-review/prep-content/session-scenes/etc.).
+  process.env.GM_TOOLS_BESTIARY_DIR = join(scratchDir, "bestiary");
+  process.env.GM_TOOLS_PARTY_ROSTER_DIR = join(scratchDir, "party-roster");
   process.env.WF_DATA_DIR = dataDir;
   return { scratchDir, dataDir };
 }
