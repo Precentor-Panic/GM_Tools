@@ -88,6 +88,15 @@ before(async () => {
 });
 
 after(async () => {
+  // Phase 19 remediation: every sibling combat-planning-*.e2e.mjs file
+  // closes `browser` in its own after() hook -- this file's own before()
+  // creates one (`browser = await chromium.launch()`) but its after() never
+  // closed it, leaving the browser process's stdio pipe open and hanging
+  // `node --test` indefinitely after both tests had already passed. A
+  // genuine QE-authoring oversight (an infrastructure cleanup gap, not a
+  // design assertion) -- fixed to match every sibling file's own
+  // established convention exactly, no test assertion loosened or changed.
+  await browser?.close();
   await new Promise((resolve) => server.close(resolve));
   cleanupScratchEnv(scratchDir);
 });
