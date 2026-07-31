@@ -108,12 +108,35 @@ function buildCombination(candidatePool, target, knobs) {
   return [...counts.entries()].map(([entryId, count]) => ({ entryId, count }));
 }
 
-/** Sum of a combination's threat, pack-coefficient-adjusted per entry, tactics-slider-adjusted overall. */
+/**
+ * Sum of a combination's threat, pack-coefficient-adjusted per entry,
+ * tactics-slider-adjusted and scaling-slider-adjusted overall.
+ *
+ * Phase 19 addendum (a real gap found while building the Encounter Builder
+ * UI's task 19.2/19.4 live-recompute path -- see combat-planning-
+ * live-recompute.e2e.mjs's mutation-type-3 assertion, which requires a knob
+ * change to move expectedScore for a MANUALLY-scored combination, not just
+ * an auto-filled one): as originally written, `scalingSlider` was applied
+ * ONLY inside suggestEncounter's own `target` calculation (steering which
+ * combination buildCombination's greedy auto-fill picks) -- it had ZERO
+ * effect on the reported expectedScore for any combination scored via
+ * scoreCombination (a DM's manual roster), since that path skips
+ * buildCombination/target entirely. Applying it here too (in the ONE shared
+ * scoring core both suggestEncounter and scoreCombination call into) is
+ * coherent, not double-counting: a higher scalingSlider means "scale this
+ * fight up" in BOTH senses -- pick more/tougher combatants when auto-filling,
+ * AND report a proportionally larger number for whatever combination
+ * (auto-filled OR manually chosen) is actually being scored. Only ever
+ * multiplies expectedScore, per this module's own top-of-file convention
+ * that expectedScore/burstCeiling never reference the burstCeilingThresholdPct
+ * knob -- unaffected by this change.
+ */
 function computeCombinationExpectedScore(combination, candidateByEntryId, knobs) {
   // 0 = chaotic-spread, 1 = optimal-focus-fire, 0.5 = average -- a linear
   // +/-20% swing around the average case (the tactical-DM review's
   // top-requested lever, design record §2), not simulated in any way.
   const tacticsMultiplier = 0.8 + 0.4 * (knobs.playerTacticsSlider ?? 0.5);
+  const scalingMultiplier = knobs.scalingSlider ?? 1;
 
   const total = combination.reduce((sum, { entryId, count }) => {
     const entry = candidateByEntryId.get(entryId);
@@ -122,7 +145,7 @@ function computeCombinationExpectedScore(combination, candidateByEntryId, knobs)
     return sum + applyPackCoefficient(perUnit, count, hasFocusFireTrait);
   }, 0);
 
-  return total * tacticsMultiplier;
+  return total * tacticsMultiplier * scalingMultiplier;
 }
 
 /** Burst components across a combination: each entry's recharge abilities, times how many copies are present (a "synchronized" burst -- design record §2). Recharge abilities need no external setup (setupSteps:0) -- the guard only ever excludes something described as needing 2+ setup steps, which nothing derivable from RawBestiaryFields today claims. */
