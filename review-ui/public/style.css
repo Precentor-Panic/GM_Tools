@@ -346,6 +346,18 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 
 .graph-context-controls { display: flex; align-items: center; gap: 0.6rem; margin: 0.4rem 0; flex-wrap: wrap; }
 
+/* Task 20.3 (real-usage bug): a NON-scrolling positioning context wrapping
+   .graph-view-container, so the zoom-controls bar (a child of THIS element,
+   see graph-view.js's ensureGraphWrapper/wireZoomControls) never inherits
+   .graph-view-container's own scroll offset. Before this, the zoom bar was
+   a direct child of .graph-view-container itself -- position:absolute
+   relative to a position:relative ancestor that is ALSO the scroll
+   container means the absolutely-positioned child scrolls WITH the
+   content instead of staying pinned to the visible viewport corner. Sized
+   purely by its one child (.graph-view-container carries its own explicit
+   width/height below), so this is visually a no-op box otherwise. */
+.graph-view-wrapper { position: relative; }
+
 .graph-view-container {
   position: relative; width: 100%; height: 560px;
   border: 1px solid var(--border); border-radius: 8px; background: var(--bg-alt);
@@ -353,7 +365,13 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
      past the container's own size; scrolling IS the pan mechanism, no custom
      drag-to-pan gesture needed. A real gap found via hands-on use: the old
      fixed 420px box with overflow:hidden had no way to see more of a dense
-     graph or get in close on a cluster. */
+     graph or get in close on a cluster. Still the actual scroll/pan element
+     post-task-20.3 -- only the zoom-controls bar moved out to the new
+     .graph-view-wrapper above; every other absolutely-positioned child here
+     (tooltip, popover, inline forms) is UNCHANGED and deliberately still
+     scrolls with this element's content, which is the behavior a DM
+     actually wants for those (they're anchored to a specific node/point in
+     the graph, not to the viewport corner). */
   overflow: auto;
 }
 .graph-svg { width: 100%; height: 420px; display: block; user-select: none; }
@@ -704,10 +722,17 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 
 .working-roster { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.75rem; }
 .working-combatant-row {
-  display: flex; align-items: center; gap: 0.5rem; border: 1px solid var(--border); border-radius: 6px;
-  padding: 0.35rem 0.6rem; font-size: 0.9rem; background: var(--bg);
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.35rem 0.6rem; font-size: 0.9rem; background: var(--bg);
 }
 .working-combatant-count { color: var(--text-muted); font-weight: 600; }
+/* Task 20.4 -- count/removal controls relocated here from the catalog row
+   (which is now a simple binary Add/Remove toggle, see .catalog-row-controls
+   below). */
+.working-combatant-controls { display: flex; align-items: center; gap: 0.5rem; margin-left: auto; }
+.working-roster-stepper { display: flex; align-items: center; gap: 0.35rem; }
+.working-roster-stepper button { font-size: 0.85rem; padding: 0.1rem 0.4rem; border: 1px solid var(--border); border-radius: 5px; }
+.working-roster-remove-btn { font-size: 1rem; }
 
 .disclosure { margin-bottom: 0.5rem; }
 .disclosure-toggle {
@@ -775,9 +800,9 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 }
 .catalog-score-unscored-pill { font-size: 0.78rem; }
 
+/* Task 20.4 -- reduced to a simple Add/Remove toggle button; the old +/-
+   stepper that used to live here moved to .working-roster-stepper above. */
 .catalog-row-controls { display: flex; flex-direction: column; gap: 0.3rem; align-items: flex-start; }
-.catalog-stepper { display: flex; align-items: center; gap: 0.35rem; }
-.catalog-stepper button { font-size: 0.85rem; padding: 0.1rem 0.4rem; border: 1px solid var(--border); border-radius: 5px; }
 
 .ingest-kind-switch { display: flex; gap: 0.75rem; margin-bottom: 0.75rem; }
 .ingest-kind-switch a { color: var(--text-muted); font-size: 0.9rem; text-decoration: none; padding: 0.2rem 0; }

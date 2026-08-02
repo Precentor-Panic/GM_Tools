@@ -329,11 +329,65 @@ function svgPointFromClient(svg, clientX, clientY) {
 }
 
 // ---------------------------------------------------------------------------
+// outer, non-scrolling wrapper (task 20.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Real-usage bug (task 20.3): `.graph-zoom-controls` used to be appended as
+ * a DIRECT CHILD of `container` -- the SAME element that is both
+ * `.graph-view-container`'s positioning context (`position: relative`) AND
+ * its own scroll/pan mechanism (`overflow: auto`, per that CSS rule's own
+ * comment: "scrolling IS the pan mechanism"). An absolutely-positioned
+ * child of a scrollable positioned ancestor scrolls WITH that ancestor's
+ * content instead of staying pinned to the visible viewport corner -- at
+ * low zoom nothing needs to scroll so this was invisible, but at any real
+ * working zoom level scrolling to see the rest of the graph carried the
+ * zoom widget away with it.
+ *
+ * Fixed by giving `container` its own non-scrolling, `position:relative`
+ * OUTER wrapper (`.graph-view-wrapper`) that the zoom-controls bar attaches
+ * to instead -- a sibling of the scrollable `.graph-view-container`, not a
+ * descendant of it, so it never inherits that element's scroll offset.
+ * `container` itself is completely unchanged (still `overflow:auto`, still
+ * the element every other interaction in this file binds to/measures
+ * against -- tooltip, popover, rubber-band select, panning, edge drawing).
+ *
+ * Callers never need to pre-build this wrapper: it's created here,
+ * transparently, the first time a given `container` is rendered, by
+ * reparenting `container` in place (its existing position in the document
+ * is preserved) -- and reused on every subsequent renderGraph() call for
+ * the same container (idempotent, checked via the wrapper being container's
+ * actual current parent), so this works identically for every real call
+ * site (Batch Review's `#review-graph` and the standalone Graph view's
+ * `#graph-standalone`, confirmed by grep to be the only two) without either
+ * one's static HTML needing to change.
+ */
+function ensureGraphWrapper(container) {
+  const parent = container.parentElement;
+  if (parent && parent.classList.contains("graph-view-wrapper")) return parent;
+  const wrapper = document.createElement("div");
+  wrapper.className = "graph-view-wrapper";
+  // Node.replaceWith() is a documented no-op when `container` currently has
+  // no parent (nothing to do) rather than throwing -- fine, since
+  // wrapper.appendChild(container) below still succeeds either way and the
+  // wrapper simply isn't inserted anywhere yet (matches a detached-container
+  // test/render scenario, not a real page).
+  container.replaceWith(wrapper);
+  wrapper.appendChild(container);
+  return wrapper;
+}
+
+// ---------------------------------------------------------------------------
 // main render entry point
 // ---------------------------------------------------------------------------
 
 /**
- * @param {HTMLElement} container   a positioned (position:relative) block-level element, cleared and (re)filled each call
+ * @param {HTMLElement} container   a positioned (position:relative) block-level element, cleared and (re)filled each call.
+ *   Task 20.3: this element stays the SCROLLABLE `.graph-view-container` exactly as before (unchanged overflow:auto,
+ *   unchanged event-binding target for every existing interaction in this file) -- renderGraph transparently wraps it
+ *   in a new, non-scrolling `.graph-view-wrapper` sibling-positioning-context on first use (see ensureGraphWrapper),
+ *   so callers never need to change their markup. The zoom-controls bar is the ONE thing that now attaches to that
+ *   wrapper instead of to `container` -- see wireZoomControls's own comment for why.
  * @param {{nodes:object[], edges:object[]}} graph  each node: {id,name,type,degree,flaggedUnreviewed,hasDeferredDebt,proposed?, status?, mutationId?, rationale?}; each edge: {id,sourceId,targetId,relationshipType,proposed?}
  * @param {object} opts
  * @param {string} opts.cacheKey                localStorage layout-cache key (e.g. `batch:${batchId}` or `standalone`)
@@ -365,6 +419,10 @@ export function renderGraph(container, graph, opts = {}) {
   const mode = opts.mode ?? "standalone";
   container.innerHTML = "";
   container.classList.add("graph-view-container");
+  // Task 20.3: guarantee the non-scrolling outer wrapper exists before
+  // anything below (applyZoom's zoom-label lookup, wireZoomControls) needs
+  // to find it -- see ensureGraphWrapper's own comment.
+  ensureGraphWrapper(container);
 
   if (!graph.nodes.length) {
     const empty = document.createElement("div");
@@ -556,7 +614,12 @@ function applyZoom(container, svg, zoom) {
   const dims = currentLayoutDims(svg);
   svg.style.width = `${Math.round(dims.w * PX_PER_LAYOUT_UNIT * clamped)}px`;
   svg.style.height = `${Math.round(dims.h * PX_PER_LAYOUT_UNIT * clamped)}px`;
-  const label = container.querySelector(".graph-zoom-label");
+  // Task 20.3: the zoom-controls bar (and its %-label) now lives in the
+  // outer wrapper, not `container` itself -- see ensureGraphWrapper. Reads
+  // via the wrapper rather than `container.querySelector` so the label
+  // keeps updating correctly on every zoom action (buttons, ctrl+wheel)
+  // exactly as it did before this restructure.
+  const label = ensureGraphWrapper(container).querySelector(".graph-zoom-label");
   if (label) label.textContent = `${Math.round(clamped * 100)}%`;
 }
 
@@ -615,8 +678,20 @@ function wireGraphPanning(container, svg) {
   });
 }
 
+/**
+ * Task 20.3: the zoom-controls bar attaches to `ensureGraphWrapper(container)`
+ * -- the new, non-scrolling OUTER wrapper -- not to `container` itself
+ * (the scrollable `.graph-view-container`, still the pan mechanism it
+ * always was). This is the actual fix: a `position:absolute` child of the
+ * wrapper (which never scrolls) stays pinned to the wrapper's own
+ * top-right corner regardless of how far `container`'s content is
+ * scrolled, instead of scrolling away with it. The ctrl+wheel zoom
+ * listener below deliberately stays bound to `container` (the graph
+ * content itself, not the thin zoom-bar strip) -- unchanged behavior.
+ */
 function wireZoomControls(container) {
-  let bar = container.querySelector(".graph-zoom-controls");
+  const wrapper = ensureGraphWrapper(container);
+  let bar = wrapper.querySelector(".graph-zoom-controls");
   if (!bar) {
     bar = document.createElement("div");
     bar.className = "graph-zoom-controls";
@@ -650,11 +725,13 @@ function wireZoomControls(container) {
     });
     bar.append(outBtn, label, inBtn, resetBtn);
   }
-  // The zoom bar must survive renderGraph()'s `container.innerHTML = ""`
-  // teardown-and-rebuild-on-every-refresh (same reason wireRubberBandSelection
-  // guards its own window listeners) -- re-append every call rather than
-  // relying on it having stuck around, since it definitely didn't.
-  container.appendChild(bar);
+  // Belt-and-suspenders re-append, matching this function's own prior
+  // convention: `container.innerHTML = ""` (renderGraph's teardown-and-
+  // rebuild-on-every-refresh) doesn't touch `wrapper` or `bar` any more
+  // (bar is no longer a child of `container`), but re-appending is still
+  // free and keeps this robust against the bar ever being removed by
+  // anything else.
+  wrapper.appendChild(bar);
 
   // Ctrl/Cmd+wheel zooms; plain wheel is left alone so normal page/container
   // scroll (the actual pan mechanism once zoomed in) isn't hijacked. Bound
