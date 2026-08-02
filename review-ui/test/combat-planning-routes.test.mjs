@@ -370,4 +370,30 @@ test("encounter-suggest: manualCombination skips the auto-fill entirely -- targe
   assert.deepEqual(body.suggestion.combination, [{ entryId: acceptedEntry.id, count: 3 }]);
 });
 
+// -------------------------------------------------------- encounter-suggest: Phase 20 task 20.5 (theme narrowing against a snapshot-less world)
+
+// A SEPARATE world within the SAME dataDir, deliberately never passed to
+// bootstrapSnapshot -- reproduces the real, confirmed root cause of task
+// 20.5 ("narrow by theme doesn't work when actually used"): Encounter
+// Builder's own bestiary/party-roster stores are deliberately NOT
+// graph-backed (see combat-planning-fixture.mjs's own header), so a real DM
+// world may genuinely have no world-fabric-snapshot.json on disk at all.
+const WORLD_NO_SNAPSHOT = "combat-planning-routes-test-world-no-snapshot";
+
+test("encounter-suggest: 20.5 REGRESSION -- non-empty themeText for a world with NO WF snapshot on disk no longer 400s with \"No World Fabric snapshot found\" (the confirmed root cause); it degrades to an ungrounded scene context and still genuinely attempts the real LLM call (502, no API key configured) -- the SAME failure shape as a themed request against a world that DOES have a snapshot", async () => {
+  const { status, body } = await postJson("/api/combat-planning/encounter-suggest", {
+    world: WORLD_NO_SNAPSHOT,
+    targetDifficulty: 5,
+    themeText: "undead crypt"
+    // deliberately no sceneEntityId -- matches combat-planning-view.js's
+    // real onThemeSubmit request shape, which never sends one
+  });
+  assert.notEqual(
+    status, 400,
+    "must not throw 'No World Fabric snapshot found' just because narrowing-by-theme was requested for a world that has never been graph-backed -- Encounter Builder is deliberately NOT graph-backed"
+  );
+  assert.equal(status, 502, "having skipped the snapshot-load gate, the request must still genuinely reach proposeThematicTags and fail on the expected missing-API-key reason, not some other new error");
+  assert.doesNotMatch(body.error ?? "", /No World Fabric snapshot found/);
+});
+
 void __dirname;

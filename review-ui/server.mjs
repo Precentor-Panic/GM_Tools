@@ -1509,8 +1509,33 @@ async function handleApi(req, res, url, parts) {
 
     let candidatePool;
     if (themeText) {
-      const { entities, edges } = loadSnapshot(dir, w).snapshot;
-      const sceneContext = buildAdjacencyContext(entities, edges, body.sceneEntityId, DEFAULT_ENTITY_NARRATE_DEPTH);
+      // Task 20.5 -- CONFIRMED ROOT CAUSE (reproduced directly, not guessed):
+      // this branch used to call loadSnapshot(dir, w) UNCONDITIONALLY, which
+      // throws ("No World Fabric snapshot found for world ...") the instant
+      // that world has never had a WF snapshot exported -- but Encounter
+      // Builder is DELIBERATELY NOT graph-backed (design record §1a,
+      // confirmed by review-ui/test/e2e/combat-planning-fixture.mjs's own
+      // primeWorldSelection header: "combat-planning's bestiary/party-roster
+      // stores are deliberately NOT graph-backed... this suite has no
+      // snapshot file for GET /api/worlds to discover at all"), and
+      // review-ui/public/combat-planning-view.js's onThemeSubmit never sends
+      // a sceneEntityId at all (the Encounter Builder view has no scene
+      // concept anywhere) -- so the snapshot, when it does exist, was never
+      // even being used for anything beyond an always-absent sceneEntityId
+      // lookup. The result: narrowing by theme threw a hard 400 for any
+      // world without a live/ever-exported WF snapshot -- exactly the
+      // real-world "just using Encounter Builder standalone" case -- instead
+      // of ever reaching proposeThematicTags at all. Degrade gracefully
+      // instead: only load the snapshot (for the optional scene-grounding
+      // context) when one actually exists on disk; otherwise proceed with an
+      // ungrounded sceneContext, matching buildAdjacencyContext's own
+      // existing "degrade to the raw id rather than throwing" convention for
+      // an unresolvable entityId.
+      let sceneContext = { entityLabel: undefined, neighborDescriptions: [] };
+      if (existsSync(snapshotFilePath(dir, w))) {
+        const { entities, edges } = loadSnapshot(dir, w).snapshot;
+        sceneContext = buildAdjacencyContext(entities, edges, body.sceneEntityId, DEFAULT_ENTITY_NARRATE_DEPTH);
+      }
       const fullPool = listBestiaryEntries().map((e) => ({ entryId: e.id, rawFields: e.rawFields, derivedScore: e.derivedScore }));
       const { filteredEntryIds } = await proposeThematicTags(sceneContext, fullPool, {});
       const filteredIdSet = new Set(filteredEntryIds);
