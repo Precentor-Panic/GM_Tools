@@ -142,7 +142,7 @@ import {
 // Phase 16 -- Session Planner engine (task 16.6). Thin wrappers only, same
 // convention as every other route in this file: resolveWorld/resolveDir()
 // with NO client-supplied dataDir override anywhere below.
-import { createScene, forkScene, getScene } from "../session-planner/scenes.mjs";
+import { createScene, forkScene, getScene, listScenesForWorld } from "../session-planner/scenes.mjs";
 import { buildSessionBrief } from "../session-planner/brief.mjs";
 import { captureNote, runBatchIntake } from "../session-planner/session-notes.mjs";
 
@@ -1625,6 +1625,19 @@ async function handleApi(req, res, url, parts) {
   // always resolved (and so validated) before any snapshot read, store
   // write, or LLM-touching call for that route.
   // ---------------------------------------------------------------------
+
+  // GET /api/scene-planning/scenes?world=
+  // Phase 24 task 24.1 -- thin wrapper over listScenesForWorld, the one real
+  // gap plans/phase-24-tasks.md's grounding pass found: Phase 22 shipped
+  // linkage/transit/membership/undo/develop/quick-gen routes but never
+  // exposed scenes.mjs's own listScenesForWorld over HTTP. No new store
+  // logic here, same resolveWorld()/resolveDir() convention (no
+  // client-supplied dataDir) as every other route in this file.
+  if (method === "GET" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "scenes") {
+    const w = resolveWorld(q.get("world"));
+    const scenes = listScenesForWorld(w);
+    return sendJson(res, 200, { scenes });
+  }
 
   // GET /api/scene-planning/linkage?world=&sceneId=&maxHops=
   if (method === "GET" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "linkage") {
