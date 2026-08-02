@@ -77,6 +77,13 @@ scene-undo/*/
 scene-membership/*
 !scene-membership/.gitkeep
 
+# Phase 22 addendum (added at spec time, not after the fact -- per this
+# project's own recurring-gap lesson): combat-planning/saved-encounter.mjs
+# is flat per-world-file, same convention as session-notes/ above -- a
+# scene's attached, snapshotted "Add Encounter" records.
+saved-encounters/*
+!saved-encounters/.gitkeep
+
 node_modules/
 
 # never commit API keys / secrets

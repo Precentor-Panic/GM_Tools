@@ -184,6 +184,15 @@ import {
 } from "../mutation-engine/scene-undo.mjs";
 import { developScene } from "../mutation-engine/scene-develop.mjs";
 import { quickGenerate } from "../mutation-engine/quick-gen.mjs";
+
+// Phase 22 ADDENDUM -- "Add Encounter" persistence (plans/phase-21-review.md
+// §6: equal-weight sibling of "Add Event"/session-notes.mjs's captureNote).
+// Thin wrapper only, same convention as every route in this file/block.
+import {
+  saveEncounter,
+  listEncountersForScene,
+  removeSavedEncounter
+} from "../combat-planning/saved-encounter.mjs";
 // Only used to distinguish "the Anthropic API itself failed" (502, an
 // upstream/infra problem) from "this codebase's own library modules threw a
 // deliberate validation error" (400) in statusForError below -- see that
@@ -1736,6 +1745,43 @@ async function handleApi(req, res, url, parts) {
     resolveWorld(body.world); // validated for security parity with every other route; quickGenerate itself carries no world concept
     const result = await quickGenerate(body.prompt, {});
     return sendJson(res, 200, result);
+  }
+
+  // -----------------------------------------------------------------------
+  // Phase 22 ADDENDUM -- "Add Encounter" persistence, same
+  // `/api/scene-planning/scenes/:sceneId/*` prefix/style as this file's
+  // Phase 22 `.../members` routes above (mirrored deliberately, not a new
+  // convention). Thin wrappers over combat-planning/saved-encounter.mjs
+  // (22.7-addendum) -- resolveWorld()/resolveDir() with NO client-supplied
+  // dataDir override, same as every route in this block.
+  // -----------------------------------------------------------------------
+
+  // POST /api/scene-planning/scenes/:sceneId/encounters   { world, name?, combination, knobs?, scoreSnapshot? }
+  if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "encounters") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const encounter = saveEncounter(w, parts[3], {
+      name: body.name,
+      combination: body.combination,
+      knobs: body.knobs,
+      scoreSnapshot: body.scoreSnapshot
+    });
+    return sendJson(res, 200, { encounter });
+  }
+
+  // GET /api/scene-planning/scenes/:sceneId/encounters?world=
+  if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "encounters") {
+    const w = resolveWorld(q.get("world"));
+    const encounters = listEncountersForScene(w, parts[3]);
+    return sendJson(res, 200, { encounters });
+  }
+
+  // DELETE /api/scene-planning/scenes/:sceneId/encounters/:encounterId   { world } (query or body, matching the sibling members route's own convention)
+  if (method === "DELETE" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "encounters") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world ?? q.get("world"));
+    const encounter = removeSavedEncounter(w, parts[5]);
+    return sendJson(res, 200, { encounter });
   }
 
   sendJson(res, 404, { error: `No route: ${req.method} ${url.pathname}` });
