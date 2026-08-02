@@ -988,12 +988,19 @@ function mountAddNodeControl(sceneId, itemBodyEl) {
 // Task 23.6: Add Event (session-notes.mjs's captureNote, sceneId set,
 // mirrors toggleNotePanel's autosave pattern verbatim) and Add Encounter
 // (real navigation to a return-context-aware Encounter Builder).
+//
+// Task 25.5 extended both with an optional `testid` param so Table Mode's
+// bottom actions bar can mount the SAME mechanism under its own
+// table-add-event-btn/table-add-encounter-btn testids -- "wire the same
+// actions into a new layout," not new action logic (default value
+// preserves the construction view's existing add-event-btn/
+// add-encounter-btn testids unchanged).
 // ---------------------------------------------------------------------------
-function mountAddEventControl(scene) {
+function mountAddEventControl(scene, testid = "add-event-btn") {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "btn scene-action-btn";
-  btn.setAttribute("data-testid", "add-event-btn");
+  btn.setAttribute("data-testid", testid);
   btn.setAttribute("data-scene-id", scene.id);
   btn.textContent = "Add Event";
 
@@ -1036,11 +1043,11 @@ function mountAddEventControl(scene) {
   return { btn, panel };
 }
 
-function mountAddEncounterControl(scene) {
+function mountAddEncounterControl(scene, testid = "add-encounter-btn") {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "btn scene-action-btn";
-  btn.setAttribute("data-testid", "add-encounter-btn");
+  btn.setAttribute("data-testid", testid);
   btn.setAttribute("data-scene-id", scene.id);
   btn.textContent = "Add Encounter";
   btn.addEventListener("click", () => {
@@ -2310,13 +2317,101 @@ function buildTableNotesEncountersZone(scene, extras, bestiaryEntries) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 25.5 (stub pending that task's own edit): bottom actions bar.
+// Task 25.5: bottom actions bar -- Add Event / Add Encounter (task 23.6's
+// EXISTING mechanisms, reused verbatim via mountAddEventControl/
+// mountAddEncounterControl's now-parameterized testid, above) plus quick-gen
+// (Phase 22's already-shipped fast single-call primitive: the SAME two
+// network calls buildQuickAddScenePanel already makes, adapted only because
+// Table Mode has no chain to append the new scene into). Equal visual
+// weight between Add Event and Add Encounter is inherited for free -- both
+// reuse the exact same "btn scene-action-btn" class the construction view's
+// already-measured equal-weight buttons use (scene-construction-events-
+// encounters.e2e.mjs's own precedent), no new CSS needed.
 // ---------------------------------------------------------------------------
+function buildTableQuickGenControl() {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn scene-action-btn";
+  btn.setAttribute("data-testid", "table-quick-gen-btn");
+  btn.textContent = "+ Quick add scene";
+
+  const panel = document.createElement("div");
+  panel.className = "quick-add-scene-panel";
+  panel.style.display = "none";
+
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.placeholder = "Name this ad-hoc scene…";
+
+  const submitBtn = document.createElement("button");
+  submitBtn.type = "button";
+  submitBtn.className = "btn btn--accept";
+  submitBtn.textContent = "Create";
+
+  const status = document.createElement("div");
+  status.className = "hint";
+
+  submitBtn.addEventListener("click", async () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      status.textContent = "Type a name first.";
+      return;
+    }
+    submitBtn.disabled = true;
+    status.innerHTML = "";
+    const promise = (async () => {
+      // Exactly the same two calls, in the same order, as Phase 22/23's
+      // own quick-gen primitive -- reused as-is, not re-implemented.
+      const genRes = await spApi("/api/scene-planning/quick-gen", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          world: currentWorld(),
+          prompt: `Briefly and evocatively describe a location or moment called "${name}", suitable for dropping into an ongoing tabletop RPG session on short notice. Two or three sentences.`
+        })
+      });
+      const sceneRes = await spApi("/api/session-planner/scenes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), objectiveNote: `${name} — ${genRes.text}` })
+      });
+      return sceneRes.scene;
+    })();
+    try {
+      const newScene = await withSlowNoticeIndicator(status, promise);
+      status.textContent = `Created "${name}" — find it via search or the full scene list above to switch to it.`;
+      addedMembership.set(newScene.id, new Set());
+      nameInput.value = "";
+      panel.style.display = "none";
+    } catch (err) {
+      status.textContent = `Could not create: ${err.message}`;
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  btn.addEventListener("click", () => {
+    panel.style.display = panel.style.display === "none" ? "block" : "none";
+  });
+
+  panel.append(nameInput, submitBtn, status);
+  return { btn, panel };
+}
+
 function buildTableActionsBar(scene) {
   const wrap = document.createElement("div");
-  wrap.className = "table-actions-bar";
+  wrap.className = "scene-actions-bar table-actions-bar";
   wrap.setAttribute("data-testid", "table-actions-bar");
   wrap.setAttribute("data-scene-id", scene.id);
+
+  const { btn: addEventBtn, panel: addEventPanel } = mountAddEventControl(scene, "table-add-event-btn");
+  const addEncounterBtn = mountAddEncounterControl(scene, "table-add-encounter-btn");
+  const { btn: quickGenBtn, panel: quickGenPanel } = buildTableQuickGenControl();
+
+  // DOM source order matches the contract: add-event, add-encounter,
+  // quick-gen, all direct siblings of this ONE bar.
+  wrap.append(addEventBtn, addEncounterBtn, quickGenBtn, addEventPanel, quickGenPanel);
+
   return wrap;
 }
 
