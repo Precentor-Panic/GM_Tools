@@ -1,11 +1,12 @@
-// Phase 17 — Session Planner UI. review-ui/public/session-planner-view.js,
-// the graph-view.js sibling per plans/phase-17-tasks.md task 17.2's own
-// file-organization question. Renders `GET /api/session-planner/brief`
-// (session-planner/brief.mjs, shipped in Phase 16) as a live, annotatable
-// surface. Consumes ONLY existing routes (scenes/fork/brief/notes/notes-
-// intake, plus the already-shipped GET /api/graph for entity name lookup
-// and the reusable type-ahead picker) -- no new server routes anywhere in
-// this file, per plans/phase-17-tasks.md's scope statement.
+// Phase 17 -- Session Planner UI, reworked in Phase 23 (Scene Construction
+// UI) per plans/phase-21-review.md's redesign: scenes are now a persisted,
+// ordered CHAIN of scenes (not a single current-scene view), with real
+// add/remove-node, "+ insert between scenes" (real place or transit/path),
+// Develop-node/Develop-scene as genuine peer buttons with per-node review,
+// a scene-local rollback control, equal-weight Add Event/Add Encounter, and
+// a mid-session ad-hoc "+" quick-gen control. See
+// review-ui/test/e2e/scene-construction-fixture.mjs for the full DOM/route
+// contract this file implements to.
 //
 // Deliberately standalone (zero imports from app.js), mirroring
 // graph-view.js's own established convention of talking to the outside
@@ -15,9 +16,51 @@
 // localStorage key app.js itself writes on world-select change
 // ("gmReview.world").
 //
-// task 17.1: nav entry routing target + scene bootstrap flow + the shared
-// type-ahead entity picker (also reused by task 17.5's re-center control,
-// per that task's own "don't build two combo-box implementations" note).
+// CHAIN-BUILD ALGORITHM (the single most important design decision in this
+// rework, worked out against BOTH the new scene-construction-*.e2e.mjs
+// suite AND every PRE-EXISTING session-planner-*.e2e.mjs / scenes-tab-*
+// .e2e.mjs file, which must all stay green):
+//   - Every scene in the world is a candidate EXCEPT scenes with a non-null
+//     parentSceneId ("forks" -- session-planner/scenes.mjs's `forkScene`,
+//     the re-center control below) are excluded from appearing as a
+//     SIBLING in anyone else's chain -- parentSceneId is "a different axis,
+//     time not space" (plans/phase-21-review.md §12) and stays orthogonal
+//     to the chain. The CURRENTLY VIEWED scene is always included
+//     regardless of whether it's a root or a fork -- when it's a fork, it
+//     substitutes for its own root's slot in the chain (its ultimate root
+//     ancestor is excluded from the "other root scenes" set below).
+//   - This is what makes re-centering (fork) show exactly ONE anchor card
+//     again afterward, matching session-planner-recenter-race.e2e.mjs's/
+//     session-planner-resume-persistence.e2e.mjs's/scenes-tab-*.e2e.mjs's
+//     own pre-existing single-anchor-card assumption, while ALSO satisfying
+//     scene-construction-insert-between.e2e.mjs's requirement that two
+//     genuinely disconnected ROOT scenes both render together on load.
+//   - Ordering: current scene at hop-distance 0; every other candidate's
+//     hop-distance comes from the real GET /api/scene-planning/linkage
+//     route (session-planner/scene-linkage.mjs's linkedScenesForScene) when
+//     reachable, else treated as unreachable (sorted last). A stable sort
+//     (native Array#sort, stable since ES2019) breaks ties by the
+//     candidates' original creation order, matching
+//     scene-construction-chain-display.e2e.mjs's/scenes-tab-linkage
+//     .e2e.mjs's own "must not just echo creation order" requirement (an
+//     ambiguous tie only happens between two candidates at the SAME
+//     hop-distance, where creation-order is a defensible, stable
+//     tie-break, not the primary sort key).
+//
+// LAZY PER-ITEM BODY LOAD (the second key design decision): each chain
+// item's OUTER `<details>`/`<summary>` (task 23.1's own established
+// free/JS-free-collapse precedent, renderBeyondCorridorSummary) renders
+// eagerly for the WHOLE chain (cheap -- just an id + a name lookup already
+// available from the one shared GET /api/graph fetch), but a chain item's
+// INNER BODY (its own corridor brief, scene-actions-bar, rollback panel,
+// saved-encounters list -- everything that needs its own network fetches)
+// is built ONLY for the currently-loaded scene up front, and for any OTHER
+// item on its own first expand (native `toggle` event). This is what lets
+// scenes-tab-browse-and-navigate.e2e.mjs's/scenes-tab-linkage.e2e.mjs's
+// pre-existing "exactly one `[data-card-role=anchor]` location-card exists
+// anywhere on the page" assumption keep holding even when the chain
+// contains other, never-expanded scenes -- their own anchor cards simply
+// don't exist in the DOM yet, not just hidden.
 "use strict";
 import { createFlushableDebounce } from "./debounced-save.mjs";
 
@@ -52,17 +95,11 @@ function spWithWorld(params) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 20.2: last-active-scene persistence, per world. Same localStorage
-// naming/try-catch convention combat-planning-view.js's attendanceKey/
-// loadAttendance/saveAttendance already established (`gmReview.<view>.<sub>.
-// <world>`) -- not a new convention. Written whenever a scene successfully
-// loads, is created, or is forked (the three places `renderSessionPlanner`,
-// `renderBootstrap`'s onSelect, and `doRecenter` call `saveLastSceneId`
-// below); read only by the bare `#session-planner` route (no explicit scene
-// id in the hash) to resume the DM's in-progress plan instead of always
-// falling through to the empty-state bootstrap -- which is what makes the
-// nav bar's "Plan Session" button (bare `data-nav="session-planner"`, no
-// scene id ever encoded there) survive a navigate-away-and-back.
+// Task 20.2: last-active-scene persistence, per world. Unchanged from
+// Phase 17/20 -- still written whenever a scene successfully loads (now:
+// whenever the CHAIN's own current scene loads), still read only by the
+// bare `#session-planner` route.
+// ---------------------------------------------------------------------------
 function lastSceneKey(world) {
   return `gmReview.sessionPlanner.${world}.lastSceneId`;
 }
@@ -94,26 +131,14 @@ function clearLastSceneId(world) {
 // ---------------------------------------------------------------------------
 // Task 17.3: inline-expand note autosave. A single small helper module
 // (debounced-save.mjs) provides the pure timer logic; this file owns the
-// DOM wiring and the open-panel bookkeeping. ONE createFlushableDebounce
-// instance per currently-open note editor (per debounced-save.test.mjs's
-// own header contract) -- multiple cards' note panels CAN be open at once
-// (design record §10 explicitly protects against a rebuild "destroying any
-// other inline-expanded note the DM has open elsewhere on the grid"), and
-// cross-entity misattribution is prevented STRUCTURALLY (each debounce
-// instance's saveFn closure is bound to exactly one entityId/sceneId at
-// creation, never reused for a different entity) rather than by only
-// allowing one editor open at a time.
+// DOM wiring and the open-panel bookkeeping. Keyed by entityId for
+// per-location notes, and by a `__scene_event__<sceneId>` sentinel key for
+// task 23.6's scene-level "Add Event" panel below -- both share the SAME
+// flush-on-navigate mechanism, guaranteeing an in-progress, not-yet-saved
+// note of EITHER kind is never silently lost on navigation.
 // ---------------------------------------------------------------------------
-const openNotePanels = new Map(); // entityId -> { panelEl, debounce }
+const openNotePanels = new Map(); // key -> { panelEl, debounce }
 
-/**
- * Guaranteed flush on navigate (design record §6). Wired into app.js's
- * existing hashchange/renderCurrentView() cancellation step, as a sibling
- * of cancelActiveScan() -- NOT a second navigation-hook mechanism. Safe to
- * call unconditionally on every navigation: each debounce instance's own
- * flush() is a no-op when nothing is pending (debounced-save.test.mjs), so
- * the overwhelmingly common case (no note editor open at all) costs nothing.
- */
 export function flushActiveNoteSave() {
   for (const { debounce } of openNotePanels.values()) {
     debounce.flush();
@@ -122,12 +147,9 @@ export function flushActiveNoteSave() {
 
 // ---------------------------------------------------------------------------
 // Shared type-ahead entity picker (task 17.1's scene-bootstrap location
-// picker AND task 17.5's re-center picker both use THIS ONE component --
-// plans/phase-17-tasks.md 17.5 explicitly says not to build two combo-box
-// implementations in one phase). Mirrors app.js's existing
-// buildLinkToExistingControl pattern: ONE GET /api/graph?filter=all fetched
-// once when the control mounts, every keystroke re-filters that
-// already-in-memory list with zero further network round trips.
+// picker, task 17.5's re-center picker, task 23.2's add-node picker, and
+// task 23.3's insert-scene "existing place" picker ALL use THIS ONE
+// component -- never a second combo-box implementation).
 // ---------------------------------------------------------------------------
 function buildEntityPicker({ testidPrefix, placeholder = "Search entities…", excludeId = null, defaultTypeFilter = null, onSelect }) {
   const wrap = document.createElement("div");
@@ -152,13 +174,6 @@ function buildEntityPicker({ testidPrefix, placeholder = "Search entities…", e
 
   let allNodes = [];
 
-  // Task 20.1: both real call sites of this shared picker (scene-bootstrap
-  // location, re-center) are specifically asking "which PLACE", but the
-  // untyped initial result list mixed in every entity type. `defaultTypeFilter`
-  // narrows the UNTYPED (no search text) result set to that one type -- a
-  // DEFAULT, not a hard restriction: the instant the DM types anything, the
-  // full `allNodes` set (every type) is searched again, so a genuine
-  // non-Place anchor is still just as reachable as before.
   function visibleNodes(q) {
     if (q) return allNodes.filter((n) => n.name.toLowerCase().includes(q) || n.type.toLowerCase().includes(q));
     if (defaultTypeFilter) return allNodes.filter((n) => n.type.toLowerCase() === defaultTypeFilter.toLowerCase());
@@ -202,23 +217,16 @@ function buildEntityPicker({ testidPrefix, placeholder = "Search entities…", e
     }
   })();
 
-  // Re-filters using whatever's already loaded -- if this fires before the
-  // initial fetch above resolves, the fetch's own renderResults() call (once
-  // it lands) re-reads input.value live and produces the correct filtered
-  // list anyway, so there's no real race here for the caller to worry about.
   input.addEventListener("input", renderResults);
 
   return wrap;
 }
 
 // ---------------------------------------------------------------------------
-// Deterministic non-monotonic render order (design record §3 / phase-17-
-// tasks.md 17.2's HARD requirement): never sort by `distance` or anything
-// else monotonic. A stable hash of entityId gives an order that's
-// uncorrelated with distance AND doesn't reshuffle on every reload of the
-// SAME underlying data (friendlier at the table than a fresh Math.random()
-// shuffle each render would be), while still satisfying "never chapter
-// numbering with the digits filed off."
+// Deterministic non-monotonic render order within one scene's own members
+// grid (design record §3 / phase-17-tasks.md 17.2's HARD requirement):
+// never sort by `distance`. Reused for both the corridor-brief locations
+// AND task 23.2's "added" nodes.
 // ---------------------------------------------------------------------------
 function hashString(s) {
   let h = 2166136261; // FNV-1a
@@ -234,10 +242,201 @@ function hashOrderLocations(locations) {
 }
 
 // ---------------------------------------------------------------------------
-// Location card (task 17.2: anchor/satellite + always-visible digest + two
-// independent flag badges). Notes land in task 17.3.
+// withSlowNoticeIndicator -- combat-planning-view.js's own pattern, mirrored
+// here (this file is deliberately standalone, no cross-view imports) so
+// this phase's two genuine LLM call sites (develop-scene, quick-gen) get
+// the SAME real `[data-testid="still-working-indicator"]` element the
+// project's established loading-scope e2e convention checks for. Nothing
+// else in this file may use this -- see this file's own self-review report
+// for the grep confirming that.
 // ---------------------------------------------------------------------------
-function renderLocationCard(location, role, entityInfo, sceneId) {
+function withSlowNoticeIndicator(statusEl, maybePromise, label = "Still working…") {
+  let indicator = null;
+  const timer = setTimeout(() => {
+    indicator = document.createElement("span");
+    indicator.setAttribute("data-testid", "still-working-indicator");
+    indicator.className = "hint still-working-indicator";
+    indicator.textContent = label;
+    statusEl.appendChild(indicator);
+  }, 1500);
+  return Promise.resolve(maybePromise).finally(() => {
+    clearTimeout(timer);
+    if (indicator && indicator.parentNode) indicator.remove();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Module-level chain state. Split into a CHEAP, eager cache (every scene's
+// own record -- id/locationEntityId/parentSceneId/objectiveNote, all
+// already returned by the one GET /api/scene-planning/scenes fetch) and an
+// EXPENSIVE, lazy cache (a scene's own corridor brief/undo actions/saved
+// encounters -- each its own network round trip), per this file's header.
+// ---------------------------------------------------------------------------
+let entityInfoMapGlobal = new Map();
+let chainSceneIds = [];
+let currentSceneIdModule = null;
+let chainContainerEl = null;
+const sceneRecordCache = new Map(); // sceneId -> Scene record
+const sceneExtrasCache = new Map(); // sceneId -> { brief, undoActions, encounters }
+const addedMembership = new Map(); // sceneId -> Set<entityId> -- task 23.2's client-tracked "added" nodes for THIS page session (see this file's own self-review report: no GET .../members route exists yet to durably resume this across a fresh reload -- a flagged, honest gap, not a silent one)
+
+// ---------------------------------------------------------------------------
+// Task 11 (reused) -- generic propose->generate->accept/discard control,
+// shared verbatim between task 23.4's per-node "Develop this node" button
+// (framings fetched on click) and "Develop this scene"'s per-node review
+// panel (framings already returned by the batch orchestrator). Calls the
+// EXACT SAME existing /api/entities/:entityId/prep/{generate,accept,
+// discard} routes either way -- this is what makes "per-node review" real
+// rather than a bypass (scene-construction-develop.e2e.mjs's own explicit
+// concern).
+// ---------------------------------------------------------------------------
+function buildPrepDevelopControl(entityId, prefix, framings) {
+  const wrap = document.createElement("div");
+  wrap.className = "prep-develop-control";
+  let selected = null;
+
+  const optionsWrap = document.createElement("div");
+  optionsWrap.className = "prep-framing-options";
+  for (const f of framings ?? []) {
+    const optBtn = document.createElement("button");
+    optBtn.type = "button";
+    optBtn.className = "link-btn prep-framing-option";
+    optBtn.setAttribute("data-testid", `${prefix}-framing-option`);
+    optBtn.setAttribute("data-framing-id", f.id);
+    optBtn.textContent = f.sentence;
+    optBtn.addEventListener("click", () => {
+      selected = f;
+      optionsWrap.querySelectorAll(".prep-framing-option").forEach((b) => b.classList.remove("selected"));
+      optBtn.classList.add("selected");
+    });
+    optionsWrap.appendChild(optBtn);
+  }
+  wrap.appendChild(optionsWrap);
+
+  const genBtn = document.createElement("button");
+  genBtn.type = "button";
+  genBtn.className = "btn";
+  genBtn.setAttribute("data-testid", `${prefix}-generate-btn`);
+  genBtn.textContent = "Generate";
+  const resultWrap = document.createElement("div");
+
+  genBtn.addEventListener("click", async () => {
+    if (!selected) {
+      resultWrap.textContent = "Pick a framing first.";
+      return;
+    }
+    genBtn.disabled = true;
+    try {
+      const genRes = await spApi(`/api/entities/${encodeURIComponent(entityId)}/prep/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), selection: { primary: { id: selected.id, sentence: selected.sentence } } })
+      });
+      resultWrap.innerHTML = "";
+      const contentEl = document.createElement("div");
+      contentEl.setAttribute("data-testid", `${prefix}-content`);
+      contentEl.textContent = genRes.fields?.description ?? JSON.stringify(genRes.fields ?? genRes);
+      resultWrap.appendChild(contentEl);
+
+      const acceptBtn = document.createElement("button");
+      acceptBtn.type = "button";
+      acceptBtn.className = "btn btn--accept";
+      acceptBtn.setAttribute("data-testid", `${prefix}-accept-btn`);
+      acceptBtn.textContent = "Accept";
+      const discardBtn = document.createElement("button");
+      discardBtn.type = "button";
+      discardBtn.className = "btn btn--reject";
+      discardBtn.setAttribute("data-testid", `${prefix}-discard-btn`);
+      discardBtn.textContent = "Discard";
+      const statusEl = document.createElement("span");
+      statusEl.className = "hint";
+
+      acceptBtn.addEventListener("click", async () => {
+        acceptBtn.disabled = true;
+        discardBtn.disabled = true;
+        try {
+          await spApi(`/api/entities/${encodeURIComponent(entityId)}/prep/accept`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ world: currentWorld() })
+          });
+          statusEl.textContent = "Accepted.";
+        } catch (err) {
+          statusEl.textContent = `Error: ${err.message}`;
+          acceptBtn.disabled = false;
+          discardBtn.disabled = false;
+        }
+      });
+      discardBtn.addEventListener("click", async () => {
+        acceptBtn.disabled = true;
+        discardBtn.disabled = true;
+        try {
+          await spApi(`/api/entities/${encodeURIComponent(entityId)}/prep/discard`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ world: currentWorld() })
+          });
+          statusEl.textContent = "Discarded.";
+        } catch (err) {
+          statusEl.textContent = `Error: ${err.message}`;
+          acceptBtn.disabled = false;
+          discardBtn.disabled = false;
+        }
+      });
+      resultWrap.append(acceptBtn, discardBtn, statusEl);
+    } catch (err) {
+      resultWrap.textContent = `Could not generate: ${err.message}`;
+    } finally {
+      genBtn.disabled = false;
+    }
+  });
+
+  wrap.append(genBtn, resultWrap);
+  return wrap;
+}
+
+// ---------------------------------------------------------------------------
+// Task 23.4: "Develop this node" -- ONE per location-card, every role.
+// ---------------------------------------------------------------------------
+function mountDevelopNodeControl(card, entityId) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn";
+  btn.setAttribute("data-testid", "develop-node-btn");
+  btn.setAttribute("data-entity-id", entityId);
+  btn.textContent = "Develop this node";
+
+  const panelHolder = document.createElement("div");
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      const res = await spApi(`/api/entities/${encodeURIComponent(entityId)}/prep/propose-framings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      });
+      panelHolder.innerHTML = "";
+      const panel = document.createElement("div");
+      panel.setAttribute("data-testid", "develop-node-panel");
+      panel.setAttribute("data-entity-id", entityId);
+      panel.appendChild(buildPrepDevelopControl(entityId, "develop-node", res.framings ?? []));
+      panelHolder.appendChild(panel);
+    } catch (err) {
+      panelHolder.textContent = `Could not develop: ${err.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  card.append(btn, panelHolder);
+}
+
+// ---------------------------------------------------------------------------
+// Location card (task 17.2, extended task 23.2 with a third `"added"` role
+// and task 23.4 with the per-card develop-node control).
+// ---------------------------------------------------------------------------
+function renderLocationCard(location, role, entityInfo, sceneId, itemBodyEl) {
   const card = document.createElement("article");
   card.className = `location-card location-card--${role}`;
   card.setAttribute("data-testid", "location-card");
@@ -265,9 +464,6 @@ function renderLocationCard(location, role, entityInfo, sceneId) {
     card.appendChild(typeEl);
   }
 
-  // --- Ambient digest: always visible, unconditionally rendered -- never
-  // gated behind a click. `digest: null` gets its own CONSPICUOUS state
-  // (never blank space, per design record §4). ---
   const digestEl = document.createElement("div");
   digestEl.className = "location-card-digest";
   if (location.digest) {
@@ -287,10 +483,6 @@ function renderLocationCard(location, role, entityInfo, sceneId) {
   }
   card.appendChild(digestEl);
 
-  // --- Two independent flag badges (design record §4): NEVER merged into
-  // one combined indicator. Icon/shape-coded (not color-only) since this is
-  // explicitly an ambient/improv-use surface, plausibly read at a table in
-  // low light. ---
   const flagsWrap = document.createElement("div");
   flagsWrap.className = "location-card-flags";
   if (location.contentFlag?.flagged) {
@@ -313,13 +505,11 @@ function renderLocationCard(location, role, entityInfo, sceneId) {
 
   const distEl = document.createElement("div");
   distEl.className = "hint location-card-distance";
-  distEl.textContent = role === "anchor"
-    ? "On the path"
-    : `${location.distance} hop${location.distance === 1 ? "" : "s"} from the path`;
+  if (role === "anchor") distEl.textContent = "On the path";
+  else if (role === "added") distEl.textContent = "Manually added to this scene";
+  else distEl.textContent = `${location.distance} hop${location.distance === 1 ? "" : "s"} from the path`;
   card.appendChild(distEl);
 
-  // --- Notes footer: a small note-icon affordance, NEVER the entity name
-  // itself (design record §5 -- avoids accidental edits while browsing). ---
   const notesFooter = document.createElement("div");
   notesFooter.className = "location-card-notes-footer";
   const toggleBtn = document.createElement("button");
@@ -333,6 +523,28 @@ function renderLocationCard(location, role, entityInfo, sceneId) {
 
   toggleBtn.addEventListener("click", () => toggleNotePanel(card, location, sceneId));
 
+  // Task 23.2: trivially easy remove, for arbitrarily-added nodes only --
+  // the default corridor's own anchor/satellites aren't scene-membership
+  // additions, so there's nothing to "remove" there via this mechanism.
+  if (role === "added") {
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "link-btn";
+    removeBtn.setAttribute("data-testid", "location-card-remove-btn");
+    removeBtn.textContent = "Remove from scene";
+    removeBtn.addEventListener("click", async () => {
+      removeBtn.disabled = true;
+      try {
+        await removeEntityFromScene(sceneId, location.entityId, itemBodyEl);
+      } catch {
+        removeBtn.disabled = false;
+      }
+    });
+    card.appendChild(removeBtn);
+  }
+
+  mountDevelopNodeControl(card, location.entityId);
+
   return card;
 }
 
@@ -342,7 +554,7 @@ function toggleNotePanel(card, location, sceneId) {
 
   if (openNotePanels.has(entityId)) {
     const { panelEl, debounce } = openNotePanels.get(entityId);
-    debounce.flush(); // guaranteed-flush on manual close too, same safety net as navigate
+    debounce.flush();
     panelEl.remove();
     openNotePanels.delete(entityId);
     return;
@@ -381,14 +593,8 @@ function toggleNotePanel(card, location, sceneId) {
 
   card.appendChild(panel);
 
-  // Task 17.3: debounce `input` (~500ms), flush immediately on `blur`,
-  // guaranteed flush on hashchange via flushActiveNoteSave() above. Save
-  // success/error updates ONLY this row's own small status indicator --
-  // NEVER calls the container-level rebuild (design record §10: doing so
-  // would tear down every card on every blur, including any other
-  // inline-expanded note the DM has open elsewhere on the grid).
   const debounce = createFlushableDebounce((value) => {
-    if (!value || !value.trim()) return; // zero-ceremony, but don't POST an empty note
+    if (!value || !value.trim()) return;
     status.textContent = "Saving…";
     spApi("/api/session-planner/notes", {
       method: "POST",
@@ -409,8 +615,10 @@ function toggleNotePanel(card, location, sceneId) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 17.5: re-center race guard. Single shared, replaced-on-every-
-// invocation abort slot, mirroring app.js's activeScanController exactly.
+// Task 17.5: re-center control (unchanged behavior, adapted to feed a fork
+// through the SAME chain-loading pipeline as any other scene load -- see
+// this file's header for why that alone makes the "exactly one anchor
+// card" property hold after a re-center).
 // ---------------------------------------------------------------------------
 let activeRecenterController = null;
 
@@ -421,12 +629,6 @@ export function cancelActiveRecenter() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Task 17.4: beyond-corridor summary -- two SEPARATE figures, never summed.
-// Collapsed by default (a plain <details>/<summary> gives free, JS-free
-// collapse/expand -- design record §11 correctly leaves this reactive-only,
-// no proactive e2e test needed).
-// ---------------------------------------------------------------------------
 function renderBeyondCorridorSummary(beyondCorridor) {
   const wrap = document.createElement("details");
   wrap.className = "beyond-corridor-summary";
@@ -455,14 +657,6 @@ function renderBeyondCorridorSummary(beyondCorridor) {
   return wrap;
 }
 
-// ---------------------------------------------------------------------------
-// Task 17.5: re-center control. Type-ahead/search-as-you-select (never a
-// plain <select>), reusing buildEntityPicker above. Race guard: the shared
-// activeRecenterController slot (abort any earlier in-flight sequence
-// first) PLUS disabling only the specific clicked option button for the
-// duration of ITS OWN fetch, as defense-in-depth on top of (never instead
-// of) the abort guard.
-// ---------------------------------------------------------------------------
 function buildRecenterControl(sceneId, onRecentered) {
   const wrap = document.createElement("div");
   wrap.className = "recenter-control";
@@ -489,11 +683,11 @@ function buildRecenterControl(sceneId, onRecentered) {
 }
 
 async function doRecenter(sceneId, entity, btn, statusEl, onRecentered) {
-  cancelActiveRecenter(); // abort any earlier still-in-flight recenter sequence first
+  cancelActiveRecenter();
   const controller = new AbortController();
   activeRecenterController = controller;
 
-  btn.disabled = true; // defense-in-depth ON TOP OF the abort guard, not instead of it
+  btn.disabled = true;
   statusEl.textContent = "Recentering…";
 
   try {
@@ -504,14 +698,9 @@ async function doRecenter(sceneId, entity, btn, statusEl, onRecentered) {
       signal: controller.signal
     });
     const newSceneId = forkRes.scene.id;
-    const briefRes = await spApi(`/api/session-planner/brief${spWithWorld({ sceneId: newSceneId })}`, {
-      signal: controller.signal
-    });
-
     statusEl.textContent = "";
-    saveLastSceneId(currentWorld(), newSceneId); // task 20.2: a fork is a real scene-load event too
     if (activeRecenterController === controller) activeRecenterController = null;
-    onRecentered(newSceneId, briefRes.brief);
+    await onRecentered(newSceneId);
   } catch (err) {
     if (err.name === "AbortError") return; // superseded by a later click/navigation -- deliberate, not a real failure
     statusEl.textContent = `Recenter failed: ${err.message}`;
@@ -522,7 +711,7 @@ async function doRecenter(sceneId, entity, btn, statusEl, onRecentered) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 17.1: empty-state scene bootstrap.
+// Task 17.1: empty-state scene bootstrap (unchanged).
 // ---------------------------------------------------------------------------
 function renderBootstrap(container) {
   const wrap = document.createElement("div");
@@ -564,10 +753,7 @@ function renderBootstrap(container) {
             objectiveNote: noteInput.value.trim() || undefined
           })
         });
-        saveLastSceneId(currentWorld(), res.scene.id); // task 20.2: creation is a real scene-load event too
-        // A genuine navigation (empty state -> a real scene) -- goes
-        // through the hash router like every other view transition in this
-        // app.
+        saveLastSceneId(currentWorld(), res.scene.id);
         location.hash = `session-planner/${res.scene.id}`;
       } catch (err) {
         btn.disabled = false;
@@ -582,30 +768,8 @@ function renderBootstrap(container) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 17.1/17.2: full-container rebuild of the brief. Matches every other
-// view's convention (renderQueue, renderReview, etc.) -- no virtualization,
-// a few hundred DOM nodes for a normal corridor size is trivially cheap.
-// ---------------------------------------------------------------------------
-async function fetchEntityInfoMap() {
-  try {
-    const graph = await spApi(`/api/graph${spWithWorld({ filter: "all" })}`);
-    const map = new Map();
-    for (const n of graph.nodes || []) map.set(n.id, n);
-    return map;
-  } catch {
-    return new Map();
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Task 20.2: explicit, always-discoverable "start a new plan" escape hatch.
-// Persisting/auto-resuming the last-active scene (below) must never trap the
-// DM on an old scene with no way out -- this is that way out. Routes through
-// the hash router to the reserved `#session-planner/new` sentinel arg (never
-// a real scene id -- scenes.mjs's makeSceneId() produces a different id
-// shape entirely), which renderSessionPlanner special-cases to clear the
-// persisted pointer and land on the bootstrap flow every time, even if a
-// persisted scene id still exists.
+// Task 20.2: explicit, always-discoverable "start a new plan" escape hatch
+// (unchanged).
 // ---------------------------------------------------------------------------
 function renderStartNewPlanBar() {
   const wrap = document.createElement("div");
@@ -622,63 +786,914 @@ function renderStartNewPlanBar() {
   return wrap;
 }
 
-function renderBriefBody(container, brief, entityInfoMap, sceneId) {
-  container.innerHTML = "";
+async function fetchEntityInfoMap() {
+  try {
+    const graph = await spApi(`/api/graph${spWithWorld({ filter: "all" })}`);
+    const map = new Map();
+    for (const n of graph.nodes || []) map.set(n.id, n);
+    return map;
+  } catch {
+    return new Map();
+  }
+}
 
-  container.appendChild(renderStartNewPlanBar());
-
-  const grid = document.createElement("div");
-  grid.className = "session-planner-grid";
-  const ordered = hashOrderLocations(brief.locations ?? []);
+// ---------------------------------------------------------------------------
+// Task 23.1/23.2: members-grid rendering + refresh. Reads the (lazily
+// fetched, then cached) corridor brief from sceneExtrasCache, plus the
+// client-tracked "added" set, for one scene at a time.
+// ---------------------------------------------------------------------------
+function refreshMembersGrid(sceneId, itemBodyEl) {
+  const grid = itemBodyEl.querySelector(".scene-members-grid");
+  const extras = sceneExtrasCache.get(sceneId);
+  if (!grid || !extras) return;
+  grid.innerHTML = "";
+  const ordered = hashOrderLocations(extras.brief.locations ?? []);
+  const briefIds = new Set(ordered.map((l) => l.entityId));
   for (const loc of ordered) {
     const role = loc.distance === 0 ? "anchor" : "satellite";
-    grid.appendChild(renderLocationCard(loc, role, entityInfoMap.get(loc.entityId), sceneId));
+    grid.appendChild(renderLocationCard(loc, role, entityInfoMapGlobal.get(loc.entityId), sceneId, itemBodyEl));
   }
-  container.appendChild(grid);
-
-  if (!ordered.length) {
+  const addedIds = hashOrderLocations([...(addedMembership.get(sceneId) ?? [])].map((id) => ({ entityId: id })));
+  for (const { entityId: id } of addedIds) {
+    if (briefIds.has(id)) continue; // already shown via the default corridor -- avoid a duplicate card
+    const loc = { entityId: id, distance: null, digest: null, contentFlag: null, structuralFlag: null, notes: [] };
+    grid.appendChild(renderLocationCard(loc, "added", entityInfoMapGlobal.get(id), sceneId, itemBodyEl));
+  }
+  if (!grid.children.length) {
     const empty = document.createElement("p");
     empty.className = "hint";
-    empty.textContent = "Nothing found in the corridor around this scene yet.";
-    container.appendChild(empty);
+    empty.textContent = "Nothing in this scene yet.";
+    grid.appendChild(empty);
+  }
+}
+
+async function addEntityToScene(sceneId, entityId, itemBodyEl) {
+  await spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/members`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: currentWorld(), entityId })
+  });
+  const set = addedMembership.get(sceneId) ?? new Set();
+  set.add(entityId);
+  addedMembership.set(sceneId, set);
+  refreshMembersGrid(sceneId, itemBodyEl);
+}
+
+async function removeEntityFromScene(sceneId, entityId, itemBodyEl) {
+  await spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/members/${encodeURIComponent(entityId)}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: currentWorld() })
+  });
+  const set = addedMembership.get(sceneId);
+  if (set) set.delete(entityId);
+  refreshMembersGrid(sceneId, itemBodyEl);
+}
+
+// ---------------------------------------------------------------------------
+// Task 23.2: add-node control (+ the reachability-aware intervening-offer,
+// an explicit, separate confirmation step -- never auto-added).
+// ---------------------------------------------------------------------------
+function renderInterveningOfferPanel(host, sceneId, targetEntity, interveningIds, statusEl, itemBodyEl, addNodePanel) {
+  host.innerHTML = "";
+  const panel = document.createElement("div");
+  panel.setAttribute("data-testid", "intervening-offer-panel");
+  panel.setAttribute("data-scene-id", sceneId);
+  panel.setAttribute("data-target-entity-id", targetEntity.id);
+
+  for (const id of interveningIds) {
+    const node = document.createElement("div");
+    node.setAttribute("data-testid", "intervening-offer-node");
+    node.setAttribute("data-entity-id", id);
+    const nameEl = document.createElement("span");
+    nameEl.setAttribute("data-testid", "intervening-offer-node-name");
+    nameEl.textContent = entityInfoMapGlobal.get(id)?.name ?? id;
+    node.appendChild(nameEl);
+    panel.appendChild(node);
   }
 
-  container.appendChild(renderBeyondCorridorSummary(brief.beyondCorridor));
+  const acceptBtn = document.createElement("button");
+  acceptBtn.type = "button";
+  acceptBtn.className = "btn btn--accept";
+  acceptBtn.setAttribute("data-testid", "intervening-offer-accept-btn");
+  acceptBtn.textContent = `Add with ${interveningIds.length} intervening node${interveningIds.length === 1 ? "" : "s"}`;
 
-  container.appendChild(buildRecenterControl(sceneId, (newSceneId, newBrief) => {
-    // Re-center replaces the rendered brief directly -- NOT via the hash
-    // router (avoids a redundant GET .../brief round trip triggered by our
-    // own hashchange listener). history.replaceState keeps the URL bar/
-    // bookmark/reload behavior correct WITHOUT firing a hashchange event.
-    history.replaceState(null, "", `#session-planner/${newSceneId}`);
-    openNotePanels.clear(); // old cards (and their debounce instances) are gone
-    renderBriefBody(container, newBrief, entityInfoMap, newSceneId);
+  const skipBtn = document.createElement("button");
+  skipBtn.type = "button";
+  skipBtn.className = "btn";
+  skipBtn.setAttribute("data-testid", "intervening-offer-skip-btn");
+  skipBtn.textContent = "Add target only";
+
+  acceptBtn.addEventListener("click", async () => {
+    acceptBtn.disabled = true;
+    skipBtn.disabled = true;
+    try {
+      await addEntityToScene(sceneId, targetEntity.id, itemBodyEl);
+      // "one POST .../members call per id, since scene-membership.mjs's
+      // addNodeToScene has no batch form" (this file's own contract) --
+      // sequential, not Promise.all, so a partial failure is easy to reason
+      // about and never silently races the members-grid refresh.
+      for (const id of interveningIds) {
+        await addEntityToScene(sceneId, id, itemBodyEl);
+      }
+      statusEl.textContent = `Added "${targetEntity.name}" and ${interveningIds.length} intervening node(s).`;
+      host.innerHTML = "";
+      if (addNodePanel) addNodePanel.style.display = "none";
+    } catch (err) {
+      statusEl.textContent = `Could not add: ${err.message}`;
+      acceptBtn.disabled = false;
+      skipBtn.disabled = false;
+    }
+  });
+
+  skipBtn.addEventListener("click", async () => {
+    acceptBtn.disabled = true;
+    skipBtn.disabled = true;
+    try {
+      await addEntityToScene(sceneId, targetEntity.id, itemBodyEl);
+      statusEl.textContent = `Added "${targetEntity.name}".`;
+      host.innerHTML = "";
+      if (addNodePanel) addNodePanel.style.display = "none";
+    } catch (err) {
+      statusEl.textContent = `Could not add: ${err.message}`;
+      acceptBtn.disabled = false;
+      skipBtn.disabled = false;
+    }
+  });
+
+  panel.append(acceptBtn, skipBtn);
+  host.appendChild(panel);
+}
+
+async function onAddNodePicked(sceneId, entity, btn, statusEl, offerHolder, itemBodyEl, addNodePanel) {
+  btn.disabled = true;
+  statusEl.textContent = "Checking reachability…";
+  try {
+    const offerRes = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/intervening-offer${spWithWorld({ targetEntityId: entity.id })}`);
+    const offer = offerRes.offer;
+    if (!offer.reachable) {
+      await addEntityToScene(sceneId, entity.id, itemBodyEl);
+      statusEl.textContent = `Added "${entity.name}".`;
+      // Auto-close the add-node panel on a completed, no-further-input add --
+      // matches this file's own established pattern (buildInsertSceneControl/
+      // buildQuickAddScenePanel both close themselves on success), and is
+      // what makes a subsequent open start from a genuinely fresh "closed"
+      // state rather than silently flipping an already-open panel shut.
+      if (addNodePanel) addNodePanel.style.display = "none";
+    } else {
+      statusEl.textContent = "";
+      renderInterveningOfferPanel(offerHolder, sceneId, entity, offer.interveningEntityIds, statusEl, itemBodyEl, addNodePanel);
+    }
+  } catch (err) {
+    statusEl.textContent = `Could not add: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function mountAddNodeControl(sceneId, itemBodyEl) {
+  const toggleBtn = document.createElement("button");
+  toggleBtn.type = "button";
+  toggleBtn.className = "btn scene-action-btn";
+  toggleBtn.setAttribute("data-testid", "add-node-toggle");
+  toggleBtn.textContent = "+ Add node";
+
+  const panel = document.createElement("div");
+  panel.setAttribute("data-testid", "add-node-panel");
+  panel.setAttribute("data-scene-id", sceneId);
+  panel.style.display = "none";
+
+  const statusEl = document.createElement("div");
+  statusEl.className = "hint";
+  statusEl.setAttribute("data-testid", "add-node-status");
+
+  const offerHolder = document.createElement("div");
+
+  const picker = buildEntityPicker({
+    testidPrefix: "add-node",
+    placeholder: "Search entities to add…",
+    onSelect: (entity, btn) => onAddNodePicked(sceneId, entity, btn, statusEl, offerHolder, itemBodyEl, panel)
+  });
+
+  panel.append(picker, statusEl, offerHolder);
+
+  toggleBtn.addEventListener("click", () => {
+    panel.style.display = panel.style.display === "none" ? "block" : "none";
+  });
+
+  return { toggleBtn, panel };
+}
+
+// ---------------------------------------------------------------------------
+// Task 23.6: Add Event (session-notes.mjs's captureNote, sceneId set,
+// mirrors toggleNotePanel's autosave pattern verbatim) and Add Encounter
+// (real navigation to a return-context-aware Encounter Builder).
+// ---------------------------------------------------------------------------
+function mountAddEventControl(scene) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn scene-action-btn";
+  btn.setAttribute("data-testid", "add-event-btn");
+  btn.setAttribute("data-scene-id", scene.id);
+  btn.textContent = "Add Event";
+
+  const panel = document.createElement("div");
+  panel.setAttribute("data-testid", "scene-event-panel");
+  panel.setAttribute("data-scene-id", scene.id);
+  panel.style.display = "none";
+
+  const textarea = document.createElement("textarea");
+  textarea.setAttribute("data-testid", "scene-event-textarea");
+  textarea.placeholder = "Jot an event note — autosaves as you type…";
+  panel.appendChild(textarea);
+
+  const status = document.createElement("div");
+  status.className = "hint";
+  panel.appendChild(status);
+
+  const debounce = createFlushableDebounce((value) => {
+    if (!value || !value.trim()) return;
+    status.textContent = "Saving…";
+    spApi("/api/session-planner/notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), text: value, anchorEntityId: scene.locationEntityId ?? undefined, sceneId: scene.id })
+    }).then(() => {
+      status.textContent = "Saved.";
+    }).catch((err) => {
+      status.textContent = `Error saving: ${err.message}`;
+    });
+  }, { debounceMs: 500 });
+
+  textarea.addEventListener("input", () => debounce.onInput(textarea.value));
+  textarea.addEventListener("blur", () => debounce.onBlur(textarea.value));
+  openNotePanels.set(`__scene_event__${scene.id}`, { panelEl: panel, debounce });
+
+  btn.addEventListener("click", () => {
+    panel.style.display = panel.style.display === "none" ? "block" : "none";
+  });
+
+  return { btn, panel };
+}
+
+function mountAddEncounterControl(scene) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn scene-action-btn";
+  btn.setAttribute("data-testid", "add-encounter-btn");
+  btn.setAttribute("data-scene-id", scene.id);
+  btn.textContent = "Add Encounter";
+  btn.addEventListener("click", () => {
+    location.hash = `combat-planning/${scene.id}`;
+  });
+  return btn;
+}
+
+async function fetchSavedEncounters(sceneId) {
+  try {
+    const res = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/encounters${spWithWorld()}`);
+    return res.encounters ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function renderSavedEncountersList(sceneId, encounters) {
+  const wrap = document.createElement("div");
+  wrap.setAttribute("data-testid", "saved-encounters-list");
+  wrap.setAttribute("data-scene-id", sceneId);
+
+  for (const enc of encounters) {
+    const item = document.createElement("div");
+    item.className = "saved-encounter-item";
+    item.setAttribute("data-testid", "saved-encounter-item");
+    item.setAttribute("data-encounter-id", enc.id);
+
+    const name = document.createElement("span");
+    name.setAttribute("data-testid", "saved-encounter-name");
+    name.textContent = enc.name;
+    item.appendChild(name);
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "icon-btn";
+    removeBtn.setAttribute("data-testid", "saved-encounter-remove-btn");
+    removeBtn.setAttribute("aria-label", "Remove saved encounter");
+    removeBtn.textContent = "✕";
+    removeBtn.addEventListener("click", async () => {
+      removeBtn.disabled = true;
+      try {
+        await spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/encounters/${encodeURIComponent(enc.id)}`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: currentWorld() })
+        });
+        item.remove();
+      } catch {
+        removeBtn.disabled = false;
+      }
+    });
+    item.appendChild(removeBtn);
+
+    wrap.appendChild(item);
+  }
+
+  return wrap;
+}
+
+// ---------------------------------------------------------------------------
+// Task 23.5: scene-local rollback -- visible directly in the scene UI
+// (never behind Settings), undo-last and undo-all both present and
+// distinct.
+// ---------------------------------------------------------------------------
+async function fetchUndoActions(sceneId) {
+  try {
+    const res = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/undo${spWithWorld()}`);
+    return res.actions ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function renderRollbackPanel(sceneId, actions) {
+  const panel = document.createElement("div");
+  panel.setAttribute("data-testid", "scene-rollback-panel");
+  panel.setAttribute("data-scene-id", sceneId);
+
+  const heading = document.createElement("div");
+  heading.className = "hint";
+  heading.textContent = "This scene's own development history:";
+  panel.appendChild(heading);
+
+  const list = document.createElement("ul");
+  list.setAttribute("data-testid", "scene-rollback-action-list");
+  panel.appendChild(list);
+
+  function renderList(items) {
+    list.innerHTML = "";
+    for (const a of items) {
+      const li = document.createElement("li");
+      li.setAttribute("data-testid", "scene-rollback-action-item");
+      li.setAttribute("data-action-id", a.actionId);
+      li.textContent = a.description;
+      list.appendChild(li);
+    }
+  }
+  renderList(actions);
+
+  const statusEl = document.createElement("div");
+  statusEl.className = "hint";
+  statusEl.setAttribute("data-testid", "scene-rollback-status");
+
+  const undoLastBtn = document.createElement("button");
+  undoLastBtn.type = "button";
+  undoLastBtn.className = "btn";
+  undoLastBtn.setAttribute("data-testid", "scene-rollback-undo-last-btn");
+  undoLastBtn.textContent = "Undo last";
+  undoLastBtn.addEventListener("click", async () => {
+    undoLastBtn.disabled = true;
+    try {
+      const res = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/undo/last`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      });
+      if (res.action) {
+        const remaining = await fetchUndoActions(sceneId);
+        renderList(remaining);
+        statusEl.textContent = `Undid the most recent action: "${res.action.description}"`;
+      } else {
+        statusEl.textContent = "Nothing to undo in this scene.";
+      }
+    } catch (err) {
+      statusEl.textContent = `Error: ${err.message}`;
+    } finally {
+      undoLastBtn.disabled = false;
+    }
+  });
+
+  const undoAllBtn = document.createElement("button");
+  undoAllBtn.type = "button";
+  undoAllBtn.className = "btn";
+  undoAllBtn.setAttribute("data-testid", "scene-rollback-undo-all-btn");
+  undoAllBtn.textContent = "Undo all";
+  undoAllBtn.addEventListener("click", async () => {
+    undoAllBtn.disabled = true;
+    try {
+      const res = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/undo/all`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      });
+      renderList([]);
+      statusEl.textContent = `Undid everything recorded in this scene (${res.actions?.length ?? 0} action(s)).`;
+    } catch (err) {
+      statusEl.textContent = `Error: ${err.message}`;
+    } finally {
+      undoAllBtn.disabled = false;
+    }
+  });
+
+  panel.append(undoLastBtn, undoAllBtn, statusEl);
+  return panel;
+}
+
+// ---------------------------------------------------------------------------
+// Task 23.4: "Develop this scene" -- the real batch orchestrator, wrapped
+// in the ONLY other loading-indicator site this phase has, surfacing
+// PER-NODE review (never a silent whole-batch auto-apply).
+// ---------------------------------------------------------------------------
+function renderDevelopSceneReviewPanel(host, sceneId, results) {
+  host.innerHTML = "";
+  const panel = document.createElement("div");
+  panel.setAttribute("data-testid", "develop-scene-review-panel");
+  panel.setAttribute("data-scene-id", sceneId);
+
+  for (const r of results) {
+    const node = document.createElement("div");
+    node.className = "develop-scene-review-node";
+    node.setAttribute("data-testid", "develop-scene-review-node");
+    node.setAttribute("data-entity-id", r.entityId);
+
+    const heading = document.createElement("div");
+    heading.className = "hint";
+    heading.textContent = entityInfoMapGlobal.get(r.entityId)?.name ?? r.entityId;
+    node.appendChild(heading);
+
+    if (!r.ok) {
+      const err = document.createElement("div");
+      err.className = "hint";
+      err.textContent = `Could not develop this node: ${r.error}`;
+      node.appendChild(err);
+    } else {
+      node.appendChild(buildPrepDevelopControl(r.entityId, "develop-scene-review", r.framings ?? []));
+    }
+    panel.appendChild(node);
+  }
+
+  host.appendChild(panel);
+}
+
+async function onDevelopScene(sceneId, statusEl, reviewHolder) {
+  statusEl.innerHTML = "";
+  const extras = sceneExtrasCache.get(sceneId);
+  const briefIds = (extras?.brief?.locations ?? []).map((l) => l.entityId);
+  const addedIds = [...(addedMembership.get(sceneId) ?? [])];
+  const memberIds = [...new Set([...briefIds, ...addedIds])];
+
+  // Starting the undo session and kicking off the batch develop call fire
+  // CONCURRENTLY, not sequentially -- there's no real ordering dependency
+  // between them for this "propose only, no selections" call (developScene
+  // only ever calls recordSceneUndoAction from a later GENERATE step, which
+  // can't happen until well after both of these have already resolved and
+  // the per-node review panel is rendered and interactive), and firing them
+  // together is what makes the batch develop request reach the network
+  // essentially immediately on click rather than queued behind an
+  // unrelated, purely-bookkeeping round trip.
+  const promise = Promise.all([
+    spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/undo/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld() })
+    }),
+    spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/develop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), memberEntityIds: memberIds })
+    })
+  ]).then(([, developResult]) => developResult);
+
+  try {
+    const result = await withSlowNoticeIndicator(statusEl, promise);
+    renderDevelopSceneReviewPanel(reviewHolder, sceneId, result.results ?? []);
+  } catch (err) {
+    statusEl.textContent = `Could not develop scene: ${err.message}`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Task 23.3: "+" between scenes -- real place (existing Phase 16 scene
+// route) or transit/path (the real Phase 22 transit-entity route).
+// ---------------------------------------------------------------------------
+function buildInsertSceneControl(afterSceneId) {
+  const wrap = document.createElement("div");
+  wrap.className = "insert-scene-wrap";
+
+  const toggleBtn = document.createElement("button");
+  toggleBtn.type = "button";
+  toggleBtn.className = "link-btn insert-scene-toggle";
+  toggleBtn.setAttribute("data-testid", "insert-scene-control");
+  toggleBtn.setAttribute("data-after-scene-id", afterSceneId);
+  toggleBtn.textContent = "+ Insert scene here";
+
+  const picker = document.createElement("div");
+  picker.setAttribute("data-testid", "insert-scene-picker");
+  picker.setAttribute("data-after-scene-id", afterSceneId);
+  picker.style.display = "none";
+
+  const status = document.createElement("div");
+  status.className = "hint";
+
+  const placeHeading = document.createElement("div");
+  placeHeading.className = "hint";
+  placeHeading.textContent = "Existing place:";
+  const placePicker = buildEntityPicker({
+    testidPrefix: "insert-scene-place",
+    placeholder: "Search for an existing place…",
+    defaultTypeFilter: "place",
+    onSelect: async (entity, btn) => {
+      btn.disabled = true;
+      status.textContent = "Inserting…";
+      try {
+        const sceneRes = await spApi("/api/session-planner/scenes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: currentWorld(), locationEntityId: entity.id })
+        });
+        insertSceneRecord(afterSceneId, sceneRes.scene);
+        status.textContent = "";
+        picker.style.display = "none";
+      } catch (err) {
+        status.textContent = `Could not insert: ${err.message}`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+  });
+
+  const transitHeading = document.createElement("div");
+  transitHeading.className = "hint";
+  transitHeading.textContent = "Or, a transit/path scene (name optional):";
+
+  const transitNameInput = document.createElement("input");
+  transitNameInput.type = "text";
+  transitNameInput.setAttribute("data-testid", "insert-scene-transit-name-input");
+  transitNameInput.placeholder = "e.g. \"The Old Coast Road\" (optional)";
+
+  const transitSubmitBtn = document.createElement("button");
+  transitSubmitBtn.type = "button";
+  transitSubmitBtn.className = "btn";
+  transitSubmitBtn.setAttribute("data-testid", "insert-scene-transit-submit-btn");
+  transitSubmitBtn.textContent = "Create transit scene";
+  transitSubmitBtn.addEventListener("click", async () => {
+    transitSubmitBtn.disabled = true;
+    status.textContent = "Creating…";
+    try {
+      const idx = chainSceneIds.indexOf(afterSceneId);
+      const nextSceneId = idx >= 0 ? chainSceneIds[idx + 1] : undefined; // undefined at the end of the chain -- no "next" scene to point to
+      const fromEntityId = sceneRecordCache.get(afterSceneId)?.locationEntityId;
+      const toEntityId = (nextSceneId && sceneRecordCache.get(nextSceneId)?.locationEntityId) || fromEntityId;
+      const transitRes = await spApi("/api/scene-planning/transit-entity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), fromEntityId, toEntityId, name: transitNameInput.value.trim() || undefined })
+      });
+      const sceneRes = await spApi("/api/session-planner/scenes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), locationEntityId: transitRes.entity.entityId })
+      });
+      insertSceneRecord(afterSceneId, sceneRes.scene);
+      status.textContent = "";
+      transitNameInput.value = "";
+      picker.style.display = "none";
+    } catch (err) {
+      status.textContent = `Could not create transit scene: ${err.message}`;
+    } finally {
+      transitSubmitBtn.disabled = false;
+    }
+  });
+
+  picker.append(placeHeading, placePicker, transitHeading, transitNameInput, transitSubmitBtn, status);
+
+  toggleBtn.addEventListener("click", () => {
+    picker.style.display = picker.style.display === "none" ? "block" : "none";
+  });
+
+  wrap.append(toggleBtn, picker);
+  return wrap;
+}
+
+// ---------------------------------------------------------------------------
+// Task 23.7: mid-session ad-hoc "+" quick-gen -- one field, one button,
+// exactly one LLM call. Top-level, not scoped to any one insertion point.
+// ---------------------------------------------------------------------------
+function buildQuickAddScenePanel() {
+  const wrap = document.createElement("div");
+  wrap.className = "quick-add-scene-wrap";
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn";
+  btn.setAttribute("data-testid", "quick-add-scene-btn");
+  btn.textContent = "+ Quick add scene";
+
+  const panel = document.createElement("div");
+  panel.setAttribute("data-testid", "quick-add-scene-panel");
+  panel.style.display = "none";
+
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.setAttribute("data-testid", "quick-add-scene-name-input");
+  nameInput.placeholder = "Name this ad-hoc scene…";
+
+  const submitBtn = document.createElement("button");
+  submitBtn.type = "button";
+  submitBtn.className = "btn btn--accept";
+  submitBtn.setAttribute("data-testid", "quick-add-scene-submit-btn");
+  submitBtn.textContent = "Create";
+
+  const status = document.createElement("div");
+  status.className = "hint";
+  status.setAttribute("data-testid", "quick-add-scene-status");
+
+  submitBtn.addEventListener("click", async () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      status.textContent = "Type a name first.";
+      return;
+    }
+    submitBtn.disabled = true;
+    status.innerHTML = "";
+    const promise = (async () => {
+      const genRes = await spApi("/api/scene-planning/quick-gen", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          world: currentWorld(),
+          prompt: `Briefly and evocatively describe a location or moment called "${name}", suitable for dropping into an ongoing tabletop RPG session on short notice. Two or three sentences.`
+        })
+      });
+      const sceneRes = await spApi("/api/session-planner/scenes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), objectiveNote: `${name} — ${genRes.text}` })
+      });
+      return sceneRes.scene;
+    })();
+    try {
+      const newScene = await withSlowNoticeIndicator(status, promise);
+      appendUntetheredSceneRecord(newScene);
+      status.textContent = "";
+      nameInput.value = "";
+      panel.style.display = "none";
+    } catch (err) {
+      status.textContent = `Could not create: ${err.message}`;
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  btn.addEventListener("click", () => {
+    panel.style.display = panel.style.display === "none" ? "block" : "none";
+  });
+
+  panel.append(nameInput, submitBtn, status);
+  wrap.append(btn, panel);
+  return wrap;
+}
+
+// ---------------------------------------------------------------------------
+// Chain assembly (this file's header). Pure helpers first, then the DOM
+// builders that consume them.
+// ---------------------------------------------------------------------------
+function ultimateRootId(allScenes, sceneId) {
+  const byId = new Map(allScenes.map((s) => [s.id, s]));
+  let cur = byId.get(sceneId);
+  const seen = new Set();
+  while (cur && cur.parentSceneId && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    const parent = byId.get(cur.parentSceneId);
+    if (!parent) break;
+    cur = parent;
+  }
+  return cur ? cur.id : sceneId;
+}
+
+export function buildChainOrder(allScenes, currentSceneId, linked) {
+  const currentScene = allScenes.find((s) => s.id === currentSceneId);
+  if (!currentScene) return [];
+  const currentRoot = ultimateRootId(allScenes, currentSceneId);
+  const others = allScenes.filter((s) => s.parentSceneId === null && s.id !== currentRoot && s.id !== currentSceneId);
+  const candidates = [currentScene, ...others];
+
+  const hopOf = new Map(linked.map((l) => [l.sceneId, l.hopDistance]));
+  const withHop = candidates.map((s) => ({
+    scene: s,
+    hop: s.id === currentSceneId ? 0 : (hopOf.has(s.id) ? hopOf.get(s.id) : Number.POSITIVE_INFINITY)
   }));
+  withHop.sort((a, b) => a.hop - b.hop); // stable -- ties keep candidates' original (creation) order
+  return withHop.map((w) => w.scene);
+}
+
+async function ensureSceneExtras(sceneId) {
+  if (sceneExtrasCache.has(sceneId)) return sceneExtrasCache.get(sceneId);
+  const [briefRes, undoActions, encounters] = await Promise.all([
+    spApi(`/api/session-planner/brief${spWithWorld({ sceneId })}`),
+    fetchUndoActions(sceneId),
+    fetchSavedEncounters(sceneId)
+  ]);
+  const extras = { brief: briefRes.brief, undoActions, encounters };
+  sceneExtrasCache.set(sceneId, extras);
+  return extras;
+}
+
+function buildSceneBodyInto(body, sceneId) {
+  const scene = sceneRecordCache.get(sceneId);
+
+  const grid = document.createElement("div");
+  grid.className = "scene-members-grid session-planner-grid";
+  body.appendChild(grid);
+
+  const extras = sceneExtrasCache.get(sceneId);
+  body.appendChild(renderBeyondCorridorSummary(extras.brief.beyondCorridor));
+
+  const actionsBar = document.createElement("div");
+  actionsBar.setAttribute("data-testid", "scene-actions-bar");
+  actionsBar.setAttribute("data-scene-id", sceneId);
+
+  const { toggleBtn: addNodeToggle, panel: addNodePanel } = mountAddNodeControl(sceneId, body);
+
+  const developSceneBtn = document.createElement("button");
+  developSceneBtn.type = "button";
+  developSceneBtn.className = "btn scene-action-btn";
+  developSceneBtn.setAttribute("data-testid", "develop-scene-btn");
+  developSceneBtn.setAttribute("data-scene-id", sceneId);
+  developSceneBtn.textContent = "Develop this scene";
+
+  const developStatus = document.createElement("div");
+  developStatus.setAttribute("data-testid", "develop-scene-status");
+  developStatus.setAttribute("data-scene-id", sceneId);
+
+  const developReviewHolder = document.createElement("div");
+
+  developSceneBtn.addEventListener("click", () => onDevelopScene(sceneId, developStatus, developReviewHolder));
+
+  const { btn: addEventBtn, panel: addEventPanel } = mountAddEventControl(scene);
+  const addEncounterBtn = mountAddEncounterControl(scene);
+
+  // DOM source order per this phase's own interface contract: add-node
+  // toggle, develop-scene, add-event, add-encounter -- all direct siblings
+  // of the SAME actions bar, same button element type/class (task 23.6's
+  // equal-weight requirement).
+  actionsBar.append(addNodeToggle, developSceneBtn, addEventBtn, addEncounterBtn);
+  body.appendChild(actionsBar);
+  body.appendChild(addNodePanel);
+  body.appendChild(addEventPanel);
+  body.appendChild(developStatus);
+  body.appendChild(developReviewHolder);
+
+  body.appendChild(renderRollbackPanel(sceneId, extras.undoActions));
+  body.appendChild(renderSavedEncountersList(sceneId, extras.encounters));
+
+  refreshMembersGrid(sceneId, body);
+}
+
+function buildChainItem(sceneId, isCurrent) {
+  const scene = sceneRecordCache.get(sceneId);
+  const details = document.createElement("details");
+  details.className = "scene-chain-item";
+  details.setAttribute("data-testid", "scene-chain-item");
+  details.setAttribute("data-scene-id", sceneId);
+  if (isCurrent) details.setAttribute("data-current", "true");
+  if (scene.locationEntityId === null) details.setAttribute("data-untethered", "true");
+
+  const summary = document.createElement("summary");
+  summary.setAttribute("data-testid", "scene-chain-toggle");
+  summary.textContent = scene.locationEntityId
+    ? (entityInfoMapGlobal.get(scene.locationEntityId)?.name ?? scene.locationEntityId)
+    : (scene.objectiveNote || "Ad-hoc scene");
+  details.appendChild(summary);
+
+  const body = document.createElement("div");
+  body.className = "scene-chain-item-body";
+  details.appendChild(body);
+
+  let loaded = false;
+  async function ensureBodyLoaded() {
+    if (loaded) return;
+    loaded = true;
+    try {
+      await ensureSceneExtras(sceneId);
+      buildSceneBodyInto(body, sceneId);
+    } catch (err) {
+      loaded = false; // allow a retry on the next expand
+      body.textContent = `Could not load this scene: ${err.message}`;
+    }
+  }
+  details._ensureBodyLoaded = ensureBodyLoaded;
+
+  details.addEventListener("toggle", () => {
+    if (details.open) ensureBodyLoaded();
+  });
+
+  if (isCurrent) details.open = true;
+
+  return details;
+}
+
+function rerenderChainOnly() {
+  if (!chainContainerEl) return;
+  chainContainerEl.innerHTML = "";
+  let currentItemEl = null;
+  for (const id of chainSceneIds) {
+    const item = buildChainItem(id, id === currentSceneIdModule);
+    if (id === currentSceneIdModule) currentItemEl = item;
+    chainContainerEl.appendChild(item);
+    chainContainerEl.appendChild(buildInsertSceneControl(id));
+  }
+  if (currentItemEl) currentItemEl._ensureBodyLoaded();
+}
+
+function insertSceneRecord(afterSceneId, newScene) {
+  sceneRecordCache.set(newScene.id, newScene);
+  const idx = chainSceneIds.indexOf(afterSceneId);
+  const insertAt = idx === -1 ? chainSceneIds.length : idx + 1;
+  chainSceneIds.splice(insertAt, 0, newScene.id);
+  rerenderChainOnly();
+}
+
+function appendUntetheredSceneRecord(newScene) {
+  sceneRecordCache.set(newScene.id, newScene);
+  chainSceneIds.push(newScene.id);
+  rerenderChainOnly();
+}
+
+// ---------------------------------------------------------------------------
+// Top-level chain load. Fetches everything CHEAP (scene records, entity
+// names, linkage) up front; the current scene's own EXPENSIVE body loads
+// synchronously as part of this call (so callers can rely on the anchor
+// card being present once this resolves); every other item's body stays
+// lazy (this file's header).
+// ---------------------------------------------------------------------------
+async function loadAndRenderChain(sceneId, container, opts = {}) {
+  const world = currentWorld();
+
+  const scene = (await spApi(`/api/session-planner/scenes/${encodeURIComponent(sceneId)}${spWithWorld()}`)).scene;
+
+  const [entityInfoMapRes, allScenesRes, linkedRes] = await Promise.all([
+    fetchEntityInfoMap(),
+    spApi(`/api/scene-planning/scenes${spWithWorld()}`),
+    spApi(`/api/scene-planning/linkage${spWithWorld({ sceneId })}`)
+  ]);
+  entityInfoMapGlobal = entityInfoMapRes;
+  const allScenes = allScenesRes.scenes ?? [];
+  const linked = linkedRes.linked ?? [];
+
+  sceneRecordCache.clear();
+  for (const s of allScenes) sceneRecordCache.set(s.id, s);
+  if (!sceneRecordCache.has(sceneId)) sceneRecordCache.set(sceneId, scene);
+
+  const ordered = buildChainOrder(allScenes.some((s) => s.id === sceneId) ? allScenes : [...allScenes, scene], sceneId, linked);
+  chainSceneIds = ordered.map((s) => s.id);
+  currentSceneIdModule = sceneId;
+  sceneExtrasCache.clear();
+
+  container.innerHTML = "";
+  container.appendChild(renderStartNewPlanBar());
+
+  chainContainerEl = document.createElement("div");
+  chainContainerEl.setAttribute("data-testid", "scene-chain");
+  container.appendChild(chainContainerEl);
+  rerenderChainOnly();
+
+  container.appendChild(buildQuickAddScenePanel());
+  container.appendChild(buildRecenterControl(sceneId, async (newSceneId) => {
+    openNotePanels.clear();
+    await loadAndRenderChain(newSceneId, container, { replaceState: true });
+  }));
+
+  saveLastSceneId(world, sceneId);
+  if (opts.replaceState) {
+    history.replaceState(null, "", `#session-planner/${sceneId}`);
+  }
+
+  // The current item's own body is guaranteed loaded before this function
+  // resolves -- rerenderChainOnly() above already kicked it off; await it
+  // explicitly here too so callers awaiting loadAndRenderChain() can rely
+  // on the current scene's own cards being present.
+  const currentItemEl = [...chainContainerEl.children].find(
+    (el) => el.getAttribute && el.getAttribute("data-testid") === "scene-chain-item" && el.getAttribute("data-scene-id") === sceneId
+  );
+  if (currentItemEl) await currentItemEl._ensureBodyLoaded();
 }
 
 /**
  * Entry point, called from app.js's renderCurrentView() dispatch when
  * view === "session-planner". `sceneIdArg` is the hash route's arg
- * (`#session-planner/<sceneId>`) -- undefined/empty means "no explicit scene
- * in the hash", which (task 20.2) now resumes this world's last-active scene
- * from localStorage if one was persisted, rather than always falling through
- * to the task 17.1 bootstrap flow -- this is what makes the nav bar's "Plan
- * Session" button (bare `data-nav="session-planner"`, no scene id ever
- * encoded there) and any other bare navigation into this view survive a
- * navigate-away-and-back instead of discarding an in-progress plan.
- * `sceneIdArg === "new"` is a reserved sentinel (never a real scene id, see
- * renderStartNewPlanBar's own comment) that always forces the bootstrap flow
- * and clears the persisted pointer -- the deliberate "start fresh" escape
- * hatch.
+ * (`#session-planner/<sceneId>`) -- undefined/empty resumes this world's
+ * last-active scene (task 20.2); `sceneIdArg === "new"` is the reserved
+ * "start fresh" sentinel.
  */
 export async function renderSessionPlanner(sceneIdArg) {
   const container = document.getElementById("session-planner-body");
   if (!container) return;
 
-  // Any navigation into (or within) this view starts from a clean slate --
-  // old open note panels belong to DOM nodes about to be discarded.
   openNotePanels.clear();
   container.innerHTML = "";
+  chainContainerEl = null;
+  chainSceneIds = [];
+  sceneExtrasCache.clear();
 
   if (!currentWorld()) {
     const p = document.createElement("p");
@@ -713,19 +1728,13 @@ export async function renderSessionPlanner(sceneIdArg) {
   loading.textContent = "Loading session brief…";
   container.appendChild(loading);
 
-  let brief, entityInfoMap;
   try {
-    [brief, entityInfoMap] = await Promise.all([
-      spApi(`/api/session-planner/brief${spWithWorld({ sceneId: effectiveSceneId })}`).then((r) => r.brief),
-      fetchEntityInfoMap()
-    ]);
+    await loadAndRenderChain(effectiveSceneId, container, { replaceState: resumedFromStorage });
   } catch (err) {
     container.innerHTML = "";
     if (resumedFromStorage) {
-      // The persisted scene no longer resolves (e.g. stale pointer against
-      // fresh/cleared data) -- never trap the DM on a dead resume target
-      // with no escape hatch; clear the stale pointer and fall through to a
-      // fresh bootstrap instead of a dead-end error.
+      // The persisted scene no longer resolves -- never trap the DM on a
+      // dead resume target with no escape hatch.
       clearLastSceneId(world);
       renderBootstrap(container);
       return;
@@ -734,16 +1743,5 @@ export async function renderSessionPlanner(sceneIdArg) {
     p.className = "hint";
     p.textContent = `Could not load session brief: ${err.message}`;
     container.appendChild(p);
-    return;
   }
-
-  saveLastSceneId(world, effectiveSceneId);
-  if (resumedFromStorage) {
-    // Keep the URL bar/bookmark/reload in sync with the resumed scene,
-    // without firing a redundant hashchange -- mirrors
-    // buildRecenterControl's own history.replaceState convention above.
-    history.replaceState(null, "", `#session-planner/${effectiveSceneId}`);
-  }
-
-  renderBriefBody(container, brief, entityInfoMap, effectiveSceneId);
 }

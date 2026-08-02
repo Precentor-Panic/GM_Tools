@@ -124,6 +124,30 @@ main { max-width: 860px; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
 .link-btn { background: none; border: none; color: var(--link); cursor: pointer; font-size: 0.9rem; padding: 0; text-decoration: none; }
 .link-btn:hover { text-decoration: underline; }
 
+/* --- Phase 23: Scene Construction UI --- */
+/* scene-action-btn: add-node-toggle/develop-scene-btn/add-event-btn/
+   add-encounter-btn all share this class so Add Event and Add Encounter
+   (task 23.6's equal-weight requirement, verified by a real bounding-box
+   measurement in scene-construction-events-encounters.e2e.mjs) render at
+   identical width/height/font-size regardless of their own label length. */
+.scene-action-btn { min-width: 150px; text-align: center; }
+.scene-actions-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0; }
+.scene-chain-item { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.75rem; padding: 0.6rem 0.9rem; }
+.scene-chain-item > summary { cursor: pointer; font-weight: 600; }
+.scene-chain-item-body { margin-top: 0.6rem; }
+.scene-members-grid { display: grid; gap: 0.75rem; margin-bottom: 0.5rem; }
+.insert-scene-wrap { margin: 0.25rem 0 0.75rem; }
+.insert-scene-picker { border: 1px dashed var(--border); border-radius: 6px; padding: 0.5rem 0.75rem; margin-top: 0.35rem; }
+.quick-add-scene-wrap { margin: 1rem 0; }
+.scene-rollback-panel, .saved-encounters-list, .scene-event-panel, .add-node-panel { margin-top: 0.6rem; }
+.scene-rollback-panel ul, .saved-encounters-list { list-style: none; padding: 0; }
+.saved-encounter-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; }
+.prep-framing-options { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 0.5rem; }
+.prep-framing-option { text-align: left; }
+.prep-framing-option.selected { font-weight: 700; }
+.develop-scene-review-node { border-top: 1px solid var(--border); padding-top: 0.5rem; margin-top: 0.5rem; }
+.still-working-indicator { margin-left: 0.5rem; }
+
 /* --- Queue --- */
 .queue-list { list-style: none; margin: 0 0 1rem; padding: 0; }
 .queue-list li { border-bottom: 1px solid var(--border); }
