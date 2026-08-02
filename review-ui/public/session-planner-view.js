@@ -2468,8 +2468,18 @@ async function loadAndRenderTableMode(sceneId, container, opts = {}) {
 
   view.appendChild(buildTableTopStrip(scene, extras));
   view.appendChild(buildTableNavZone(scene, allScenes, linked));
-  view.appendChild(buildTableRoster(scene, extras));
-  view.appendChild(buildTableNotesEncountersZone(scene, extras, bestiaryEntries));
+
+  // Task 25.6: roster + notes/encounters share a column layout on wide
+  // viewports (CSS grid, style.css), stacking on narrow ones -- neither
+  // zone is contractually required to be a DIRECT child of table-mode-view
+  // (only top-strip/nav-zone/actions-bar are), so this wrapper is free to
+  // exist without affecting any selector in the suite.
+  const columns = document.createElement("div");
+  columns.className = "table-mode-columns";
+  columns.appendChild(buildTableRoster(scene, extras));
+  columns.appendChild(buildTableNotesEncountersZone(scene, extras, bestiaryEntries));
+  view.appendChild(columns);
+
   view.appendChild(buildTableActionsBar(scene));
 
   container.appendChild(view);

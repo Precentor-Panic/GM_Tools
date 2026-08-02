@@ -887,4 +887,114 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 }
 .linked-scenes-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
 .linked-scene-item { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+
+/* ===========================================================================
+   Phase 25: Table Mode -- the at-table live-read view (plans/phase-25-review
+   .md §3/§3a). Fixed-zone layout, identical positions across every scene and
+   every breakpoint (research finding #1 -- SCALE, don't reflow/reorder):
+   top strip, then nav zone, then a roster/notes-encounters column pair, then
+   the actions bar, always in that top-to-bottom order at every width. Only
+   proportions/padding/font-size scale down for tablet/phone -- the zone
+   ORDER and adjacency never changes.
+   =========================================================================== */
+.table-mode-view { display: flex; flex-direction: column; gap: 1rem; max-width: 74rem; }
+.table-mode-back-btn { align-self: flex-start; }
+
+.table-top-strip {
+  border: 2px solid var(--accent); border-radius: 10px; padding: 0.75rem 1rem;
+  background: color-mix(in srgb, var(--accent) 6%, var(--card-bg));
+  display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap;
+}
+.table-top-strip-name { margin: 0; font-size: 1.4rem; }
+.table-top-strip-flags { margin: 0; flex-basis: 100%; }
+
+.table-nav-zone {
+  border: 1px solid var(--border); border-radius: 10px; padding: 0.65rem 0.85rem;
+  display: flex; flex-direction: column; gap: 0.5rem; background: var(--bg-alt);
+}
+.table-nav-search-input {
+  width: 100%; font: inherit; font-size: 0.9rem; padding: 0.4rem 0.6rem; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+}
+.table-nav-search-results {
+  display: flex; flex-direction: column; gap: 0.25rem; border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.4rem 0.5rem; background: var(--bg); max-height: 12rem; overflow-y: auto;
+}
+.table-nav-search-result { text-align: left; padding: 0.15rem 0; }
+.table-adjacent-strip { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; min-height: 1.8rem; }
+.table-adjacent-scene-item { font-size: 0.85rem; padding: 0.3rem 0.65rem; }
+.table-full-list summary { cursor: pointer; font-weight: 600; list-style: none; font-size: 0.88rem; }
+.table-full-list summary::-webkit-details-marker { display: none; }
+.table-full-list summary::before { content: "\25B8"; color: var(--text-muted); font-size: 0.8rem; margin-right: 0.4rem; display: inline-block; }
+.table-full-list[open] summary::before { transform: rotate(90deg); }
+.table-full-list-body { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.4rem; padding-left: 0.5rem; }
+.table-full-list-item { text-align: left; padding: 0.1rem 0; }
+
+/* Roster + notes/encounters: side-by-side columns on wide viewports (design
+   record §3: "Laptop: all zones visible at once"), collapsing to a single
+   stacked column well before phone width -- ALWAYS in the same top-to-
+   bottom source order (roster, then notes/encounters), never reordered. */
+.table-mode-columns { display: grid; grid-template-columns: 1.3fr 1fr; gap: 1rem; align-items: start; }
+
+.table-roster { display: flex; flex-direction: column; gap: 0.5rem; }
+.table-roster-row {
+  border: 1px solid var(--border); border-radius: 8px; padding: 0.55rem 0.75rem; background: var(--card-bg);
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem;
+}
+.table-roster-row--anchor { border-color: var(--accent); border-width: 2px; }
+.table-roster-row-name { font-weight: 700; }
+.table-roster-row-hook { flex-basis: 100%; font-size: 0.9rem; }
+.table-roster-expand-btn { margin-left: auto; font-size: 0.85rem; width: auto; }
+.table-roster-detail {
+  flex-basis: 100%; margin-top: 0.4rem; padding-top: 0.4rem; border-top: 1px dashed var(--border);
+  display: flex; flex-direction: column; gap: 0.35rem;
+}
+.table-roster-detail-image { max-width: 100%; max-height: 10rem; border-radius: 6px; object-fit: cover; }
+.table-roster-detail-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.table-roster-detail-tag {
+  font-size: 0.72rem; background: var(--pill-pending-bg); color: var(--pill-pending-text);
+  border-radius: 999px; padding: 0.1rem 0.5rem;
+}
+/* playerKnown gate -- deliberately more visually weighted than a plain
+   expand (design record §3/§5's "harder, more deliberate gate" ask). */
+.table-roster-playerknown-confirm-panel {
+  border: 1px dashed var(--structural); border-radius: 6px; padding: 0.4rem 0.6rem;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+}
+.table-roster-playerknown-value { font-weight: 600; }
+
+.table-notes-encounters-zone { display: flex; flex-direction: column; gap: 0.5rem; }
+.table-notes-encounters-item { border: 1px solid var(--border); border-radius: 8px; padding: 0.55rem 0.75rem; background: var(--card-bg); }
+.table-note-text { margin: 0; }
+.table-encounter-name { margin: 0 0 0.4rem; font-size: 0.95rem; }
+.table-encounter-roster-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; padding: 0.2rem 0; }
+.table-encounter-roster-name { font-weight: 600; }
+.table-encounter-roster-hp, .table-encounter-roster-ac { font-size: 0.85rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.table-encounter-roster-expand-btn { margin-left: auto; font-size: 0.8rem; width: auto; }
+.table-encounter-roster-detail { flex-basis: 100%; display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; padding-left: 0.5rem; }
+
+.table-actions-bar.scene-actions-bar { margin-top: 0.25rem; }
+
+/* Tablet: same zones, scaled down, same relative proportions -- no reflow,
+   no reordering (research finding #5). */
+@media (max-width: 960px) {
+  .table-mode-view { gap: 0.75rem; }
+  .table-top-strip-name { font-size: 1.2rem; }
+  .table-mode-columns { grid-template-columns: 1fr; }
+}
+
+/* Phone: a true single column becomes unavoidable -- the top strip and nav
+   zone (adjacent strip + search) stay compact enough to be reachable
+   without scrolling regardless of how much roster/notes/encounters content
+   follows beneath them (§3a's own explicit requirement), same 700px
+   breakpoint Phase 15 already established for phone-width support. */
+@media (max-width: 700px) {
+  .table-mode-view { gap: 0.6rem; max-width: 100%; }
+  .table-top-strip { padding: 0.5rem 0.65rem; gap: 0.4rem; }
+  .table-top-strip-name { font-size: 1.05rem; }
+  .table-nav-zone { padding: 0.5rem 0.6rem; gap: 0.4rem; }
+  .table-adjacent-strip { gap: 0.3rem; }
+  .table-adjacent-scene-item { font-size: 0.8rem; padding: 0.25rem 0.5rem; }
+  .table-roster-row, .table-notes-encounters-item { padding: 0.45rem 0.6rem; }
+}
 .linked-scene-anchor-name { font-weight: 600; }
