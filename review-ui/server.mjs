@@ -173,7 +173,7 @@ import { suggestEncounter, scoreCombination } from "../combat-planning/encounter
 // reused here unmodified.
 import { linkedScenesForScene } from "../session-planner/scene-linkage.mjs";
 import { createTransitEntity } from "../session-planner/transit-entity.mjs";
-import { addNodeToScene, removeNodeFromScene, offerInterveningNodes } from "../session-planner/scene-membership.mjs";
+import { addNodeToScene, removeNodeFromScene, getSceneMembership, offerInterveningNodes } from "../session-planner/scene-membership.mjs";
 import {
   startSceneUndoSession,
   listSceneUndoActions,
@@ -1661,6 +1661,13 @@ async function handleApi(req, res, url, parts) {
       name: body.name
     });
     return sendJson(res, 200, { entity });
+  }
+
+  // GET /api/scene-planning/scenes/:sceneId/members?world=
+  if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "members") {
+    const w = resolveWorld(q.get("world"));
+    const membership = getSceneMembership(w, parts[3]);
+    return sendJson(res, 200, { membership });
   }
 
   // POST /api/scene-planning/scenes/:sceneId/members   { world, entityId }

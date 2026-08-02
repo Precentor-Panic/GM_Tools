@@ -214,6 +214,13 @@ test("DELETE /api/scene-planning/scenes/:id/members/:entityId removes a node", a
   assert.ok(!body.membership.entityIds.includes("sp-to-remove"));
 });
 
+test("GET /api/scene-planning/scenes/:id/members reads back real persisted membership (Phase 23 self-review addendum: closes the reload-persistence gap)", async () => {
+  await postJson(`/api/scene-planning/scenes/${anchoredScene.id}/members`, { world: WORLD, entityId: "sp-readback" });
+  const { status, body } = await getJson(`/api/scene-planning/scenes/${anchoredScene.id}/members?world=${WORLD}`);
+  assert.equal(status, 200);
+  assert.ok(body.membership.entityIds.includes("sp-readback"));
+});
+
 test("scene-undo session routes: start -> record -> peek -> last -> clear, real HTTP round trip", async () => {
   const start = await postJson(`/api/scene-planning/scenes/${anchoredScene.id}/undo/start`, { world: WORLD });
   assert.equal(start.status, 200);
@@ -255,6 +262,12 @@ test("SECURITY: POST /api/scene-planning/transit-entity rejects a path-traversal
 
 test("SECURITY: POST /api/scene-planning/scenes/:id/members rejects a path-traversal-shaped world id with 400", async () => {
   const { status, body } = await postJson(`/api/scene-planning/scenes/${anchoredScene.id}/members`, { world: MALICIOUS_WORLD, entityId: "x" });
+  assert.equal(status, 400);
+  assert.match(body.error, /Invalid world id/);
+});
+
+test("SECURITY: GET /api/scene-planning/scenes/:id/members rejects a path-traversal-shaped world id with 400", async () => {
+  const { status, body } = await getJson(`/api/scene-planning/scenes/${anchoredScene.id}/members?world=${encodeURIComponent(MALICIOUS_WORLD)}`);
   assert.equal(status, 400);
   assert.match(body.error, /Invalid world id/);
 });

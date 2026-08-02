@@ -1115,6 +1115,19 @@ async function fetchUndoActions(sceneId) {
   }
 }
 
+// Closes the gap flagged in task 23.2's self-review: addedMembership was
+// client-tracked-only for the page session, so a fresh reload lost every
+// arbitrarily-added node even though scene-membership.mjs had already
+// persisted it server-side. Reads it back through the real store.
+async function fetchSceneMembers(sceneId) {
+  try {
+    const res = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/members${spWithWorld()}`);
+    return res.membership?.entityIds ?? [];
+  } catch {
+    return [];
+  }
+}
+
 function renderRollbackPanel(sceneId, actions) {
   const panel = document.createElement("div");
   panel.setAttribute("data-testid", "scene-rollback-panel");
@@ -1488,11 +1501,15 @@ export function buildChainOrder(allScenes, currentSceneId, linked) {
 
 async function ensureSceneExtras(sceneId) {
   if (sceneExtrasCache.has(sceneId)) return sceneExtrasCache.get(sceneId);
-  const [briefRes, undoActions, encounters] = await Promise.all([
+  const [briefRes, undoActions, encounters, memberIds] = await Promise.all([
     spApi(`/api/session-planner/brief${spWithWorld({ sceneId })}`),
     fetchUndoActions(sceneId),
-    fetchSavedEncounters(sceneId)
+    fetchSavedEncounters(sceneId),
+    fetchSceneMembers(sceneId)
   ]);
+  if (!addedMembership.has(sceneId)) addedMembership.set(sceneId, new Set());
+  const added = addedMembership.get(sceneId);
+  for (const id of memberIds) added.add(id);
   const extras = { brief: briefRes.brief, undoActions, encounters };
   sceneExtrasCache.set(sceneId, extras);
   return extras;
