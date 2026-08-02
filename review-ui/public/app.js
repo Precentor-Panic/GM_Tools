@@ -139,7 +139,7 @@ function renderCurrentView() {
   else if (view === "graph") renderGraphStandaloneView();
   else if (view === "entity") renderEntityDetail(arg);
   else if (view === "session-planner") renderSessionPlanner(arg);
-  else if (view === "combat-planning") renderCombatPlanning();
+  else if (view === "combat-planning") renderCombatPlanning(arg);
   else if (view === "combat-planning-ingest") renderCombatPlanningIngest(arg);
   else if (view === "scenes") renderScenesTab();
 }

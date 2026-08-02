@@ -174,6 +174,12 @@ const SNOWBALL_RISK_THRESHOLD_PCT = 0.15;
 let session = null;
 let builderRoot = null;
 let recomputeSeq = 0;
+// Phase 23 task 23.6: set only when renderCombatPlanning(sceneIdArg) is
+// called with a real scene id (Add Encounter's own return-context
+// navigation, `#combat-planning/<sceneId>`) -- gates the save-to-scene
+// affordance below, which must NEVER appear on the bare `#combat-planning`
+// route (this file's own pre-existing entry point, unaffected otherwise).
+let returnSceneId = null;
 
 function newSession(world) {
   return {
@@ -1183,6 +1189,8 @@ function rerenderBuilder() {
   linksRow.append(addMonster, addMember);
   builderRoot.appendChild(linksRow);
 
+  renderReturnToSceneBar(builderRoot);
+
   builderRoot.appendChild(renderDifficultyRail());
   builderRoot.appendChild(renderRosterStrip());
 
@@ -1202,14 +1210,70 @@ function rerenderBuilder() {
 }
 
 /**
- * Entry point, called from app.js's renderCurrentView() dispatch when
- * view === "combat-planning".
+ * Phase 23 task 23.6/23.7 (the Phase 22 addendum route): saves the
+ * builder's own live working state to `POST /api/scene-planning/scenes/
+ * :sceneId/encounters` (combat-planning/saved-encounter.mjs's saveEncounter,
+ * confirmed live) using the SAME toManualCombination(workingRoster) helper
+ * every other combination-shaped request in this file already reuses --
+ * never a second combination-building code path.
  */
-export async function renderCombatPlanning() {
+function renderReturnToSceneBar(container) {
+  if (!returnSceneId) return;
+
+  const bar = document.createElement("div");
+  bar.className = "combat-planning-links-row";
+
+  const status = document.createElement("span");
+  status.className = "hint";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "btn btn--accept";
+  saveBtn.setAttribute("data-testid", "save-encounter-to-scene-btn");
+  saveBtn.textContent = "Save encounter to scene";
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    status.textContent = "Saving…";
+    try {
+      await cpApi(`/api/scene-planning/scenes/${encodeURIComponent(returnSceneId)}/encounters`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          world: currentWorld(),
+          combination: toManualCombination(session.workingRoster),
+          knobs: session.knobs,
+          scoreSnapshot: session.latestSuggestion ?? {}
+        })
+      });
+      location.hash = `session-planner/${returnSceneId}`;
+    } catch (err) {
+      status.textContent = `Could not save: ${err.message}`;
+      saveBtn.disabled = false;
+    }
+  });
+
+  const backLink = document.createElement("a");
+  backLink.href = `#session-planner/${returnSceneId}`;
+  backLink.setAttribute("data-testid", "return-to-scene-link");
+  backLink.textContent = "← Back to scene without saving";
+
+  bar.append(saveBtn, backLink, status);
+  container.appendChild(bar);
+}
+
+/**
+ * Entry point, called from app.js's renderCurrentView() dispatch when
+ * view === "combat-planning". `sceneIdArg` is the hash route's arg
+ * (`#combat-planning/<sceneId>`) -- present only when reached via task
+ * 23.6's Add Encounter navigation; absent (undefined) for this view's own
+ * pre-existing bare `#combat-planning` entry point, unaffected either way.
+ */
+export async function renderCombatPlanning(sceneIdArg) {
   const container = document.getElementById("combat-planning-body");
   if (!container) return;
   container.innerHTML = "";
   builderRoot = null;
+  returnSceneId = sceneIdArg || null;
 
   const world = currentWorld();
   if (!world) {
