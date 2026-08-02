@@ -2148,14 +2148,164 @@ function buildTableRoster(scene, extras) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 25.4 (stub pending that task's own edit): notes + saved encounters,
-// interleaved.
+// Task 25.4: notes + saved encounters, interleaved into ONE unified zone
+// (design record §3, Phase 21 §6's standing equal-weight rule) -- DOM
+// siblings under the SAME parent, never two separately-sized sections.
 // ---------------------------------------------------------------------------
+
+/**
+ * This scene's own pending notes, read from the already-fetched brief
+ * (extras.brief.locations[].notes -- session-planner/brief.mjs's own
+ * per-location anchorEntityId filter over session-notes.mjs's
+ * listPendingNotes) rather than a new route: every note this suite seeds
+ * carries BOTH an anchorEntityId matching a scene member AND this scene's
+ * own sceneId, so scanning every member's notes and keeping only the ones
+ * genuinely stamped with this scene's id is a correct, zero-new-route read
+ * of data already in hand (no new engine/store work, per design record §4).
+ */
+function collectSceneNotes(sceneId, extras) {
+  const bySceneNoteId = new Map();
+  for (const loc of extras?.brief?.locations ?? []) {
+    for (const note of loc.notes ?? []) {
+      if (note.sceneId === sceneId) bySceneNoteId.set(note.id, note);
+    }
+  }
+  return [...bySceneNoteId.values()];
+}
+
+function buildTableNoteItem(note) {
+  const item = document.createElement("div");
+  item.className = "table-notes-encounters-item table-note-item";
+  item.setAttribute("data-testid", "table-notes-encounters-item");
+  item.setAttribute("data-item-type", "note");
+  item.setAttribute("data-item-id", note.id);
+
+  const text = document.createElement("p");
+  text.className = "table-note-text";
+  text.setAttribute("data-testid", "table-note-text");
+  text.textContent = note.text;
+  item.appendChild(text);
+
+  return item;
+}
+
+/**
+ * One roster row per combination[] entry (saved-encounter.mjs's own
+ * {entryId, count} shape -- never a stored name/hp/ac), resolved against
+ * the real bestiary entry fetched separately (GET /api/combat-planning/
+ * bestiary) since the snapshot never carries the full stat block itself.
+ * Name/HP/AC show unexpanded; attacks/rechargeAbilities (this codebase's
+ * real "beyond attacks" stat-block field -- there is no `traits` field
+ * anywhere in the real bestiary shape) sit behind a nested expand.
+ */
+function buildTableEncounterRosterRow(combo, entry) {
+  const raw = entry?.rawFields ?? {};
+
+  const row = document.createElement("div");
+  row.className = "table-encounter-roster-row";
+  row.setAttribute("data-testid", "table-encounter-roster-row");
+  row.setAttribute("data-entry-id", combo.entryId);
+
+  const nameEl = document.createElement("span");
+  nameEl.className = "table-encounter-roster-name";
+  nameEl.setAttribute("data-testid", "table-encounter-roster-name");
+  nameEl.textContent = combo.count > 1 ? `${raw.name ?? combo.entryId} ×${combo.count}` : (raw.name ?? combo.entryId);
+  row.appendChild(nameEl);
+
+  const hpEl = document.createElement("span");
+  hpEl.className = "table-encounter-roster-hp";
+  hpEl.setAttribute("data-testid", "table-encounter-roster-hp");
+  hpEl.textContent = `HP ${raw.hp ?? "?"}`;
+  row.appendChild(hpEl);
+
+  const acEl = document.createElement("span");
+  acEl.className = "table-encounter-roster-ac";
+  acEl.setAttribute("data-testid", "table-encounter-roster-ac");
+  acEl.textContent = `AC ${raw.ac ?? "?"}`;
+  row.appendChild(acEl);
+
+  const expandBtn = document.createElement("button");
+  expandBtn.type = "button";
+  expandBtn.className = "icon-btn table-encounter-roster-expand-btn";
+  expandBtn.setAttribute("data-testid", "table-encounter-roster-expand-btn");
+  expandBtn.setAttribute("aria-label", `Expand stat block for ${raw.name ?? combo.entryId}`);
+  expandBtn.textContent = "▸ Stats";
+  row.appendChild(expandBtn);
+
+  const detail = document.createElement("div");
+  detail.className = "table-encounter-roster-detail";
+  detail.setAttribute("data-testid", "table-encounter-roster-detail");
+  detail.setAttribute("data-entry-id", combo.entryId);
+  detail.style.display = "none";
+
+  for (const atk of raw.attacks ?? []) {
+    const atkEl = document.createElement("div");
+    atkEl.className = "table-encounter-roster-attack";
+    atkEl.setAttribute("data-testid", "table-encounter-roster-attack");
+    atkEl.textContent = `${atk.name} +${atk.toHitBonus} — ${atk.damageDice} ${atk.damageType}`;
+    detail.appendChild(atkEl);
+  }
+  for (const ra of raw.rechargeAbilities ?? []) {
+    const raEl = document.createElement("div");
+    raEl.className = "table-encounter-roster-recharge-ability";
+    raEl.setAttribute("data-testid", "table-encounter-roster-recharge-ability");
+    raEl.textContent = `${ra.name} (Recharge ${ra.rechargeOn})${ra.damageDice ? `: ${ra.damageDice}` : ""}`;
+    detail.appendChild(raEl);
+  }
+  row.appendChild(detail);
+
+  // Idempotent-open, matching table-roster-expand-btn's own established
+  // Phase 25 convention (this file, above) -- same reasoning applies.
+  expandBtn.addEventListener("click", () => {
+    detail.style.display = "block";
+    expandBtn.textContent = "▾ Stats";
+  });
+
+  return row;
+}
+
+function buildTableEncounterItem(enc, bestiaryById) {
+  const item = document.createElement("div");
+  item.className = "table-notes-encounters-item table-encounter-item";
+  item.setAttribute("data-testid", "table-notes-encounters-item");
+  item.setAttribute("data-item-type", "encounter");
+  item.setAttribute("data-item-id", enc.id);
+
+  const nameEl = document.createElement("h4");
+  nameEl.className = "table-encounter-name";
+  nameEl.setAttribute("data-testid", "table-encounter-name");
+  nameEl.textContent = enc.name;
+  item.appendChild(nameEl);
+
+  for (const combo of enc.combination ?? []) {
+    item.appendChild(buildTableEncounterRosterRow(combo, bestiaryById.get(combo.entryId)));
+  }
+
+  return item;
+}
+
 function buildTableNotesEncountersZone(scene, extras, bestiaryEntries) {
   const wrap = document.createElement("div");
   wrap.className = "table-notes-encounters-zone";
   wrap.setAttribute("data-testid", "table-notes-encounters-zone");
   wrap.setAttribute("data-scene-id", scene.id);
+
+  const bestiaryById = new Map(bestiaryEntries.map((e) => [e.id, e]));
+
+  for (const note of collectSceneNotes(scene.id, extras)) {
+    wrap.appendChild(buildTableNoteItem(note));
+  }
+  for (const enc of extras?.encounters ?? []) {
+    wrap.appendChild(buildTableEncounterItem(enc, bestiaryById));
+  }
+
+  if (!wrap.children.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No notes or encounters yet for this scene.";
+    wrap.appendChild(empty);
+  }
+
   return wrap;
 }
 
