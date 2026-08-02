@@ -1483,6 +1483,14 @@ function ultimateRootId(allScenes, sceneId) {
   return cur ? cur.id : sceneId;
 }
 
+/** Shared "what do we call this scene" resolution -- an anchored scene shows its anchor entity's real name; an untethered (quick-gen) scene falls back to its own objective note. Used by both the construction chain's own scene-chain-toggle summary text (unchanged, not touched here) and Table Mode's nav-zone items/search (task 25.2). */
+function resolveSceneDisplayName(scene) {
+  if (scene.locationEntityId) {
+    return entityInfoMapGlobal.get(scene.locationEntityId)?.name ?? scene.locationEntityId;
+  }
+  return scene.objectiveNote || "Ad-hoc scene";
+}
+
 export function buildChainOrder(allScenes, currentSceneId, linked) {
   const currentScene = allScenes.find((s) => s.id === currentSceneId);
   if (!currentScene) return [];
@@ -1674,6 +1682,20 @@ async function loadAndRenderChain(sceneId, container, opts = {}) {
   container.appendChild(chainContainerEl);
   rerenderChainOnly();
 
+  // Phase 25 task 25.2: Table Mode toggle -- top-level, sibling of
+  // scene-chain (matching quick-add-scene-btn's own established
+  // top-level-not-scoped-to-one-scene-item placement), always for whichever
+  // scene is CURRENTLY loaded. See table-mode-fixture.mjs §1.
+  const tableModeToggleBtn = document.createElement("button");
+  tableModeToggleBtn.type = "button";
+  tableModeToggleBtn.className = "btn";
+  tableModeToggleBtn.setAttribute("data-testid", "table-mode-toggle-btn");
+  tableModeToggleBtn.textContent = "🖥 Table Mode";
+  tableModeToggleBtn.addEventListener("click", () => {
+    location.hash = `session-planner/${currentSceneIdModule}?mode=table`;
+  });
+  container.appendChild(tableModeToggleBtn);
+
   container.appendChild(buildQuickAddScenePanel());
   container.appendChild(buildRecenterControl(sceneId, async (newSceneId) => {
     openNotePanels.clear();
@@ -1695,12 +1717,323 @@ async function loadAndRenderChain(sceneId, container, opts = {}) {
   if (currentItemEl) await currentItemEl._ensureBodyLoaded();
 }
 
+// ===========================================================================
+// Phase 25: Table Mode -- the at-table live-read view. A single-scene,
+// fixed-zone alternate render of the SAME #session-planner-body container
+// the construction chain above populates (mutually exclusive with it), per
+// plans/phase-25-review.md §3/§3a and review-ui/test/e2e/table-mode-fixture
+// .mjs's full DOM/route contract. Deliberately reuses ensureSceneExtras'
+// existing lazy per-scene cache (brief/undoActions/encounters) rather than
+// fetching independently -- see this file's own established convention.
+// ===========================================================================
+
+/**
+ * The URL scheme packs the mode signal into app.js's single `arg` slot
+ * (`<sceneId>?mode=table`) rather than a third hash path segment, since
+ * app.js's parseHash() only ever extracts two segments (`raw.split("/")`)
+ * and would silently drop a third. See table-mode-fixture.mjs §1 for the
+ * full reasoning -- this function is the "responsible for splitting arg on
+ * ?mode=table itself" half of that contract.
+ */
+function parseSceneModeArg(raw) {
+  if (!raw) return { sceneId: null, mode: "construction" };
+  const idx = raw.indexOf("?mode=table");
+  if (idx === -1) return { sceneId: raw, mode: "construction" };
+  return { sceneId: raw.slice(0, idx), mode: "table" };
+}
+
+function tableModeHashFor(sceneId) {
+  return `session-planner/${sceneId}?mode=table`;
+}
+
+// ---------------------------------------------------------------------------
+// Task 25.2: top strip -- the scene's own anchor entity name/path-badge plus
+// the corrected (task 25.1) flag coding, reusing the EXACT SAME CSS classes
+// the construction view's location-card already uses (table-mode-fixture.mjs
+// §2) so Table Mode benefits from the same token fix, not a parallel set of
+// classes it wouldn't reach.
+// ---------------------------------------------------------------------------
+function buildTableTopStrip(scene, extras) {
+  const wrap = document.createElement("div");
+  wrap.className = "table-top-strip";
+  wrap.setAttribute("data-testid", "table-top-strip");
+  wrap.setAttribute("data-scene-id", scene.id);
+
+  const nameEl = document.createElement("h2");
+  nameEl.className = "table-top-strip-name";
+  nameEl.setAttribute("data-testid", "table-top-strip-name");
+  nameEl.textContent = resolveSceneDisplayName(scene);
+  wrap.appendChild(nameEl);
+
+  const pathBadge = document.createElement("span");
+  pathBadge.className = "location-card-anchor-badge";
+  pathBadge.setAttribute("data-testid", "table-top-strip-path-badge");
+  pathBadge.textContent = "On the path";
+  wrap.appendChild(pathBadge);
+
+  const flagsWrap = document.createElement("div");
+  flagsWrap.className = "location-card-flags table-top-strip-flags";
+
+  const anchorLoc = (extras?.brief?.locations ?? []).find((l) => l.distance === 0) ?? null;
+  if (anchorLoc) {
+    if (anchorLoc.contentFlag?.flagged) {
+      const b = document.createElement("span");
+      b.className = "flag-badge flag-badge--content";
+      b.setAttribute("data-testid", "table-flag-badge");
+      b.setAttribute("data-flag-kind", "content");
+      b.textContent = "✎ Undeveloped";
+      b.title = `Content-readiness flag: ${(anchorLoc.contentFlag.reasons || []).join(", ") || "flagged"}`;
+      flagsWrap.appendChild(b);
+    }
+    if (anchorLoc.structuralFlag?.flagged) {
+      const b = document.createElement("span");
+      b.className = "flag-badge flag-badge--structural";
+      b.setAttribute("data-testid", "table-flag-badge");
+      b.setAttribute("data-flag-kind", "structural");
+      b.textContent = "⛓ Thin connections";
+      b.title = `Structural under-connection: ${anchorLoc.structuralFlag.edgeCount} edge(s), fewer than ${anchorLoc.structuralFlag.minEdges}`;
+      flagsWrap.appendChild(b);
+    }
+    if (!anchorLoc.digest) {
+      const b = document.createElement("span");
+      b.className = "location-card-digest--empty";
+      b.setAttribute("data-testid", "table-flag-badge");
+      b.setAttribute("data-flag-kind", "empty");
+      b.textContent = "⚠ Not established yet — nothing written for this location.";
+      flagsWrap.appendChild(b);
+    }
+  }
+  wrap.appendChild(flagsWrap);
+
+  return wrap;
+}
+
+// ---------------------------------------------------------------------------
+// Task 25.2: navigation zone -- adjacent-scenes strip (hop-1 only) + an
+// in-place search bar above it + a collapsed-by-default full scene list.
+// Replaces the idea of a single "Advance" button entirely (design record
+// §3a) -- this zone is the whole navigation surface.
+// ---------------------------------------------------------------------------
+function buildTableNavZone(scene, allScenes, linked) {
+  const wrap = document.createElement("div");
+  wrap.className = "table-nav-zone";
+  wrap.setAttribute("data-testid", "table-nav-zone");
+  wrap.setAttribute("data-scene-id", scene.id);
+
+  // In-place search -- client-side substring filter over the SAME
+  // GET /api/scene-planning/scenes fetch the full list below uses (and
+  // Phase 24's scenes-view.js already established this pattern for).
+  const searchInput = document.createElement("input");
+  searchInput.type = "text";
+  searchInput.className = "table-nav-search-input";
+  searchInput.setAttribute("data-testid", "table-nav-search-input");
+  searchInput.placeholder = "Search all scenes…";
+
+  const searchResults = document.createElement("div");
+  searchResults.className = "table-nav-search-results";
+  searchResults.setAttribute("data-testid", "table-nav-search-results");
+  searchResults.style.display = "none";
+
+  searchInput.addEventListener("input", () => {
+    const q = searchInput.value.trim().toLowerCase();
+    searchResults.innerHTML = "";
+    if (!q) {
+      searchResults.style.display = "none";
+      return;
+    }
+    const matches = allScenes.filter((s) => resolveSceneDisplayName(s).toLowerCase().includes(q));
+    for (const s of matches) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "link-btn table-nav-search-result";
+      item.setAttribute("data-testid", "table-nav-search-result");
+      item.setAttribute("data-scene-id", s.id);
+      item.textContent = resolveSceneDisplayName(s);
+      item.addEventListener("click", () => {
+        location.hash = tableModeHashFor(s.id);
+      });
+      searchResults.appendChild(item);
+    }
+    if (!matches.length) {
+      const none = document.createElement("div");
+      none.className = "hint";
+      none.textContent = "No matches.";
+      searchResults.appendChild(none);
+    }
+    searchResults.style.display = "block";
+  });
+
+  wrap.append(searchInput, searchResults);
+
+  // Adjacent-scenes strip -- hop-1 neighbors only, a single tap, no picker.
+  const adjacentStrip = document.createElement("div");
+  adjacentStrip.className = "table-adjacent-strip";
+  adjacentStrip.setAttribute("data-testid", "table-adjacent-strip");
+
+  const hop1 = linked.filter((x) => x.hopDistance === 1);
+  for (const l of hop1) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "btn table-adjacent-scene-item";
+    item.setAttribute("data-testid", "table-adjacent-scene-item");
+    item.setAttribute("data-scene-id", l.sceneId);
+    item.textContent = l.anchorEntityName ?? sceneRecordCache.get(l.sceneId)?.locationEntityId ?? l.sceneId;
+    item.addEventListener("click", () => {
+      location.hash = tableModeHashFor(l.sceneId);
+    });
+    adjacentStrip.appendChild(item);
+  }
+  if (!hop1.length) {
+    // A real, visible (non-zero-area) placeholder -- an empty container with
+    // no children/CSS would collapse to a zero-height box, which is
+    // indistinguishable from "not rendered" to a real bounding-box check.
+    const empty = document.createElement("span");
+    empty.className = "hint";
+    empty.textContent = "No adjacent scenes yet.";
+    adjacentStrip.appendChild(empty);
+  }
+  wrap.appendChild(adjacentStrip);
+
+  // Full scene list -- collapsed by default, a real <details> (free,
+  // JS-free collapse, matching scene-chain-item's own established
+  // precedent), manual scroll-and-browse fallback only.
+  const fullList = document.createElement("details");
+  fullList.className = "table-full-list";
+  fullList.setAttribute("data-testid", "table-full-list");
+
+  const summary = document.createElement("summary");
+  summary.setAttribute("data-testid", "table-full-list-toggle");
+  summary.textContent = "All scenes";
+  fullList.appendChild(summary);
+
+  const listBody = document.createElement("div");
+  listBody.className = "table-full-list-body";
+  for (const s of allScenes) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "link-btn table-full-list-item";
+    item.setAttribute("data-testid", "table-full-list-item");
+    item.setAttribute("data-scene-id", s.id);
+    item.textContent = resolveSceneDisplayName(s);
+    item.addEventListener("click", () => {
+      location.hash = tableModeHashFor(s.id);
+    });
+    listBody.appendChild(item);
+  }
+  fullList.appendChild(listBody);
+  wrap.appendChild(fullList);
+
+  return wrap;
+}
+
+// ---------------------------------------------------------------------------
+// Task 25.3 (stub pending that task's own edit): member roster with
+// unbounded nested expand + the playerKnown hard gate.
+// ---------------------------------------------------------------------------
+function buildTableRoster(scene, extras) {
+  const wrap = document.createElement("div");
+  wrap.className = "table-roster";
+  wrap.setAttribute("data-testid", "table-roster");
+  wrap.setAttribute("data-scene-id", scene.id);
+  return wrap;
+}
+
+// ---------------------------------------------------------------------------
+// Task 25.4 (stub pending that task's own edit): notes + saved encounters,
+// interleaved.
+// ---------------------------------------------------------------------------
+function buildTableNotesEncountersZone(scene, extras, bestiaryEntries) {
+  const wrap = document.createElement("div");
+  wrap.className = "table-notes-encounters-zone";
+  wrap.setAttribute("data-testid", "table-notes-encounters-zone");
+  wrap.setAttribute("data-scene-id", scene.id);
+  return wrap;
+}
+
+// ---------------------------------------------------------------------------
+// Task 25.5 (stub pending that task's own edit): bottom actions bar.
+// ---------------------------------------------------------------------------
+function buildTableActionsBar(scene) {
+  const wrap = document.createElement("div");
+  wrap.className = "table-actions-bar";
+  wrap.setAttribute("data-testid", "table-actions-bar");
+  wrap.setAttribute("data-scene-id", scene.id);
+  return wrap;
+}
+
+/**
+ * Top-level Table Mode load. Mirrors loadAndRenderChain's own shape
+ * (fetch cheap shared data, reuse ensureSceneExtras for the scene's own
+ * expensive brief/undo/encounters, render into the SAME #session-planner-body
+ * container) but renders the fixed-zone single-scene view instead of the
+ * chain.
+ */
+async function loadAndRenderTableMode(sceneId, container, opts = {}) {
+  const world = currentWorld();
+
+  const scene = (await spApi(`/api/session-planner/scenes/${encodeURIComponent(sceneId)}${spWithWorld()}`)).scene;
+
+  const [entityInfoMapRes, allScenesRes, linkedRes, bestiaryRes] = await Promise.all([
+    fetchEntityInfoMap(),
+    spApi(`/api/scene-planning/scenes${spWithWorld()}`),
+    spApi(`/api/scene-planning/linkage${spWithWorld({ sceneId })}`),
+    spApi("/api/combat-planning/bestiary")
+  ]);
+  entityInfoMapGlobal = entityInfoMapRes;
+  const allScenes = allScenesRes.scenes ?? [];
+  const linked = linkedRes.linked ?? [];
+  const bestiaryEntries = bestiaryRes.entries ?? [];
+
+  sceneRecordCache.clear();
+  for (const s of allScenes) sceneRecordCache.set(s.id, s);
+  if (!sceneRecordCache.has(sceneId)) sceneRecordCache.set(sceneId, scene);
+
+  currentSceneIdModule = sceneId;
+  chainContainerEl = null;
+  chainSceneIds = [];
+  sceneExtrasCache.clear();
+
+  const extras = await ensureSceneExtras(sceneId);
+
+  container.innerHTML = "";
+
+  const view = document.createElement("div");
+  view.className = "table-mode-view";
+  view.setAttribute("data-testid", "table-mode-view");
+  view.setAttribute("data-scene-id", sceneId);
+
+  const backBtn = document.createElement("button");
+  backBtn.type = "button";
+  backBtn.className = "btn table-mode-back-btn";
+  backBtn.setAttribute("data-testid", "construction-mode-toggle-btn");
+  backBtn.textContent = "← Construction view";
+  backBtn.addEventListener("click", () => {
+    location.hash = `session-planner/${sceneId}`;
+  });
+  view.appendChild(backBtn);
+
+  view.appendChild(buildTableTopStrip(scene, extras));
+  view.appendChild(buildTableNavZone(scene, allScenes, linked));
+  view.appendChild(buildTableRoster(scene, extras));
+  view.appendChild(buildTableNotesEncountersZone(scene, extras, bestiaryEntries));
+  view.appendChild(buildTableActionsBar(scene));
+
+  container.appendChild(view);
+
+  saveLastSceneId(world, sceneId);
+  if (opts.replaceState) {
+    history.replaceState(null, "", `#${tableModeHashFor(sceneId)}`);
+  }
+}
+
 /**
  * Entry point, called from app.js's renderCurrentView() dispatch when
  * view === "session-planner". `sceneIdArg` is the hash route's arg
- * (`#session-planner/<sceneId>`) -- undefined/empty resumes this world's
+ * (`#session-planner/<sceneId>` or, since Phase 25, `#session-planner/
+ * <sceneId>?mode=table`) -- undefined/empty resumes this world's
  * last-active scene (task 20.2); `sceneIdArg === "new"` is the reserved
- * "start fresh" sentinel.
+ * "start fresh" sentinel (always construction mode -- there's no scene yet
+ * for Table Mode to render).
  */
 export async function renderSessionPlanner(sceneIdArg) {
   const container = document.getElementById("session-planner-body");
@@ -1728,7 +2061,9 @@ export async function renderSessionPlanner(sceneIdArg) {
     return;
   }
 
-  let effectiveSceneId = sceneIdArg;
+  const { sceneId: parsedSceneId, mode } = parseSceneModeArg(sceneIdArg);
+
+  let effectiveSceneId = parsedSceneId;
   let resumedFromStorage = false;
   if (!effectiveSceneId) {
     effectiveSceneId = loadLastSceneId(world);
@@ -1746,7 +2081,11 @@ export async function renderSessionPlanner(sceneIdArg) {
   container.appendChild(loading);
 
   try {
-    await loadAndRenderChain(effectiveSceneId, container, { replaceState: resumedFromStorage });
+    if (mode === "table") {
+      await loadAndRenderTableMode(effectiveSceneId, container, { replaceState: resumedFromStorage });
+    } else {
+      await loadAndRenderChain(effectiveSceneId, container, { replaceState: resumedFromStorage });
+    }
   } catch (err) {
     container.innerHTML = "";
     if (resumedFromStorage) {
