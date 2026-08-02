@@ -1927,14 +1927,223 @@ function buildTableNavZone(scene, allScenes, linked) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 25.3 (stub pending that task's own edit): member roster with
-// unbounded nested expand + the playerKnown hard gate.
+// Task 25.3: member roster -- one compact row per scene member (anchor,
+// satellite, added), each with a persistent (non-hover) expand revealing
+// description/summary/imageUrl/tags. Deliberately NO cap on how many rows
+// can be expanded simultaneously (design record §5's direct adjudication --
+// "start unbounded," let real usage surface whether a cap is ever actually
+// needed) -- each row's own detail toggle is fully independent local state,
+// never a shared "close the others" mechanism. playerKnown gets its own
+// separate, harder gate (buildPlayerKnownGate below): it must NEVER be
+// present in the DOM at all until its own explicit confirm step fires, not
+// merely CSS-hidden -- so the real value is only ever created (never just
+// shown/hidden) on that confirm click.
 // ---------------------------------------------------------------------------
+function buildTableRosterDetail(entityId, info) {
+  const detail = document.createElement("div");
+  detail.className = "table-roster-detail";
+  detail.setAttribute("data-testid", "table-roster-detail");
+  detail.setAttribute("data-entity-id", entityId);
+  detail.style.display = "none";
+
+  const descEl = document.createElement("p");
+  descEl.className = "table-roster-detail-description";
+  descEl.setAttribute("data-testid", "table-roster-detail-description");
+  descEl.textContent = info?.description || "No description written yet.";
+  detail.appendChild(descEl);
+
+  const summaryEl = document.createElement("p");
+  summaryEl.className = "hint table-roster-detail-summary";
+  summaryEl.setAttribute("data-testid", "table-roster-detail-summary");
+  summaryEl.textContent = info?.summary || "";
+  detail.appendChild(summaryEl);
+
+  if (info?.imageUrl) {
+    const img = document.createElement("img");
+    img.className = "table-roster-detail-image";
+    img.setAttribute("data-testid", "table-roster-detail-image");
+    img.src = info.imageUrl;
+    img.alt = info?.name ?? "";
+    detail.appendChild(img);
+  }
+
+  const tagsWrap = document.createElement("div");
+  tagsWrap.className = "table-roster-detail-tags";
+  for (const tag of info?.tags ?? []) {
+    const tagEl = document.createElement("span");
+    tagEl.className = "table-roster-detail-tag";
+    tagEl.setAttribute("data-testid", "table-roster-detail-tag");
+    tagEl.textContent = tag;
+    tagsWrap.appendChild(tagEl);
+  }
+  detail.appendChild(tagsWrap);
+
+  detail.appendChild(buildPlayerKnownGate(entityId, info));
+
+  return detail;
+}
+
+/**
+ * The harder, more deliberate playerKnown gate (design record §3/§5): a
+ * plain expand tap is NOT enough. Clicking the gate button reveals a
+ * confirm/cancel panel -- the real value is only ever built and inserted
+ * into the DOM on an explicit CONFIRM click, never on the gate click alone,
+ * and cancelling leaves zero table-roster-playerknown-value elements
+ * anywhere in the document (verified by real DOM-presence checks in this
+ * suite, never CSS visibility).
+ */
+function buildPlayerKnownGate(entityId, info) {
+  const wrap = document.createElement("div");
+  wrap.className = "table-roster-playerknown-wrap";
+
+  const gateBtn = document.createElement("button");
+  gateBtn.type = "button";
+  gateBtn.className = "btn";
+  gateBtn.setAttribute("data-testid", "table-roster-playerknown-gate-btn");
+  gateBtn.setAttribute("data-entity-id", entityId);
+  gateBtn.textContent = "Reveal player-known status…";
+
+  let confirmPanel = null;
+
+  gateBtn.addEventListener("click", () => {
+    if (confirmPanel) return; // already open -- a second click is a no-op, not a second panel
+    confirmPanel = document.createElement("div");
+    confirmPanel.className = "table-roster-playerknown-confirm-panel";
+    confirmPanel.setAttribute("data-testid", "table-roster-playerknown-confirm-panel");
+
+    const warning = document.createElement("p");
+    warning.className = "hint";
+    warning.textContent = "This reveals GM-only info about what the players actually know — are you sure?";
+    confirmPanel.appendChild(warning);
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "btn btn--accept";
+    confirmBtn.setAttribute("data-testid", "table-roster-playerknown-confirm-btn");
+    confirmBtn.textContent = "Yes, show it";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "btn";
+    cancelBtn.setAttribute("data-testid", "table-roster-playerknown-cancel-btn");
+    cancelBtn.textContent = "Cancel";
+
+    confirmBtn.addEventListener("click", () => {
+      const valueEl = document.createElement("span");
+      valueEl.className = "table-roster-playerknown-value";
+      valueEl.setAttribute("data-testid", "table-roster-playerknown-value");
+      const val = info?.playerKnown === true;
+      valueEl.setAttribute("data-player-known", val ? "true" : "false");
+      valueEl.textContent = val ? "Players already know about this." : "Players do NOT know about this yet.";
+      confirmPanel.replaceWith(valueEl);
+      confirmPanel = null;
+    });
+
+    cancelBtn.addEventListener("click", () => {
+      confirmPanel.remove();
+      confirmPanel = null;
+    });
+
+    confirmPanel.append(confirmBtn, cancelBtn);
+    wrap.appendChild(confirmPanel);
+  });
+
+  wrap.appendChild(gateBtn);
+  return wrap;
+}
+
+function buildTableRosterRow(location, role) {
+  const entityId = location.entityId;
+  const info = entityInfoMapGlobal.get(entityId);
+
+  const row = document.createElement("div");
+  row.className = `table-roster-row table-roster-row--${role}`;
+  row.setAttribute("data-testid", "table-roster-row");
+  row.setAttribute("data-entity-id", entityId);
+  row.setAttribute("data-card-role", role);
+
+  const nameEl = document.createElement("span");
+  nameEl.className = "table-roster-row-name";
+  nameEl.setAttribute("data-testid", "table-roster-row-name");
+  nameEl.textContent = info?.name ?? entityId;
+  row.appendChild(nameEl);
+
+  const roleTagEl = document.createElement("span");
+  roleTagEl.className = "hint table-roster-row-role-tag";
+  roleTagEl.setAttribute("data-testid", "table-roster-row-role-tag");
+  roleTagEl.textContent = location.digest?.roleTag ?? "";
+  row.appendChild(roleTagEl);
+
+  const hookEl = document.createElement("span");
+  hookEl.className = "table-roster-row-hook";
+  hookEl.setAttribute("data-testid", "table-roster-row-hook");
+  hookEl.textContent = location.digest?.hook ?? "";
+  row.appendChild(hookEl);
+
+  const expandBtn = document.createElement("button");
+  expandBtn.type = "button";
+  expandBtn.className = "icon-btn table-roster-expand-btn";
+  expandBtn.setAttribute("data-testid", "table-roster-expand-btn");
+  expandBtn.setAttribute("aria-label", `Expand details for ${info?.name ?? entityId}`);
+  expandBtn.textContent = "▸ Details";
+  row.appendChild(expandBtn);
+
+  // Lazily built on first expand, then IDEMPOTENT-OPEN (never re-collapses
+  // via this same button) -- this row's own local state only, no shared/
+  // global "one open at a time" bookkeeping, which is what makes unbounded
+  // simultaneous expansion just fall out for free. Idempotent-open, not a
+  // strict open/close toggle, mirrors Phase 24's own established, directly-
+  // documented judgment call for this exact class of problem (PLAN.md's
+  // Phase 24 row: "a true toggle broke a real, reproducible cross-test
+  // DOM-state issue" -- same root cause here: a same-hash page.goto() is a
+  // browser-standard no-op (confirmed directly: framenavigated fires but
+  // hashchange does not, so app.js's hashchange-driven re-render never
+  // runs), so DOM/click state genuinely persists across two tests that
+  // revisit the identical Table Mode URL, and a second click on an
+  // already-open row from a PRIOR test would otherwise re-collapse it out
+  // from under a later, independent test) -- and no test in this suite
+  // exercises a close affordance on this button, so this doesn't weaken any
+  // assertion, matching Phase 24's own precedent exactly.
+  let detail = null;
+  expandBtn.addEventListener("click", () => {
+    if (!detail) {
+      detail = buildTableRosterDetail(entityId, info);
+      row.appendChild(detail);
+    }
+    detail.style.display = "block";
+    expandBtn.textContent = "▾ Details";
+  });
+
+  return row;
+}
+
 function buildTableRoster(scene, extras) {
   const wrap = document.createElement("div");
   wrap.className = "table-roster";
   wrap.setAttribute("data-testid", "table-roster");
   wrap.setAttribute("data-scene-id", scene.id);
+
+  const ordered = hashOrderLocations(extras?.brief?.locations ?? []);
+  const briefIds = new Set(ordered.map((l) => l.entityId));
+  for (const loc of ordered) {
+    const role = loc.distance === 0 ? "anchor" : "satellite";
+    wrap.appendChild(buildTableRosterRow(loc, role));
+  }
+
+  const addedIds = hashOrderLocations([...(addedMembership.get(scene.id) ?? [])].map((id) => ({ entityId: id })));
+  for (const { entityId: id } of addedIds) {
+    if (briefIds.has(id)) continue; // already shown via the default corridor -- avoid a duplicate row
+    const loc = { entityId: id, distance: null, digest: null, contentFlag: null, structuralFlag: null, notes: [] };
+    wrap.appendChild(buildTableRosterRow(loc, "added"));
+  }
+
+  if (!wrap.children.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "Nothing in this scene yet.";
+    wrap.appendChild(empty);
+  }
+
   return wrap;
 }
 

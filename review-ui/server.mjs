@@ -542,6 +542,16 @@ function graphNodePayload(entity, { degrees, flaggedIds, debtIds, proposed, sess
     playerKnown: entity.playerKnown ?? null,
     canonLocked: entity.canonLocked ?? false,
     role: entity.role ?? null,
+    // Phase 25 task 25.3: same additive-payload-growth pattern as the
+    // task 19.6 comment above -- foundry_worldFabric/scripts/data/
+    // graph-service.mjs's upsertEntity already persists summary/imageUrl/
+    // tags (confirmed directly), but this route never returned them, so
+    // Table Mode's member-roster nested-expand zone (description/summary/
+    // imageUrl/tags) had nothing to read. Pure additive UI wiring over
+    // already-fetchable snapshot data, no new backend logic, no new route.
+    summary: entity.summary ?? "",
+    imageUrl: entity.imageUrl ?? null,
+    tags: Array.isArray(entity.tags) ? entity.tags : [],
     // Phase 19 task 19.6: a small, additive, backward-compatible response
     // field (same category of change as the Phase 18 addendum's additive
     // REQUEST fields on encounter-suggest -- growing an EXISTING route's
