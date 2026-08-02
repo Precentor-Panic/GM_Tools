@@ -89,7 +89,7 @@ export function flushActiveNoteSave() {
 // once when the control mounts, every keystroke re-filters that
 // already-in-memory list with zero further network round trips.
 // ---------------------------------------------------------------------------
-function buildEntityPicker({ testidPrefix, placeholder = "Search entities…", excludeId = null, onSelect }) {
+function buildEntityPicker({ testidPrefix, placeholder = "Search entities…", excludeId = null, defaultTypeFilter = null, onSelect }) {
   const wrap = document.createElement("div");
   wrap.className = "entity-picker";
 
@@ -112,12 +112,22 @@ function buildEntityPicker({ testidPrefix, placeholder = "Search entities…", e
 
   let allNodes = [];
 
+  // Task 20.1: both real call sites of this shared picker (scene-bootstrap
+  // location, re-center) are specifically asking "which PLACE", but the
+  // untyped initial result list mixed in every entity type. `defaultTypeFilter`
+  // narrows the UNTYPED (no search text) result set to that one type -- a
+  // DEFAULT, not a hard restriction: the instant the DM types anything, the
+  // full `allNodes` set (every type) is searched again, so a genuine
+  // non-Place anchor is still just as reachable as before.
+  function visibleNodes(q) {
+    if (q) return allNodes.filter((n) => n.name.toLowerCase().includes(q) || n.type.toLowerCase().includes(q));
+    if (defaultTypeFilter) return allNodes.filter((n) => n.type.toLowerCase() === defaultTypeFilter.toLowerCase());
+    return allNodes;
+  }
+
   function renderResults() {
     const q = input.value.trim().toLowerCase();
-    const matches = (q
-      ? allNodes.filter((n) => n.name.toLowerCase().includes(q) || n.type.toLowerCase().includes(q))
-      : allNodes
-    ).slice(0, 25);
+    const matches = visibleNodes(q).slice(0, 25);
     results.innerHTML = "";
     for (const n of matches) {
       const li = document.createElement("li");
@@ -143,7 +153,9 @@ function buildEntityPicker({ testidPrefix, placeholder = "Search entities…", e
     try {
       const graph = await spApi(`/api/graph${spWithWorld({ filter: "all" })}`);
       allNodes = (graph.nodes || []).filter((n) => n.id !== excludeId);
-      status.textContent = `${allNodes.length} entities — type to narrow.`;
+      status.textContent = defaultTypeFilter
+        ? `Showing ${defaultTypeFilter}s by default (${allNodes.length} entities total) — type to search all types.`
+        : `${allNodes.length} entities — type to narrow.`;
       renderResults();
     } catch (err) {
       status.textContent = `Could not load entities: ${err.message}`;
@@ -428,6 +440,7 @@ function buildRecenterControl(sceneId, onRecentered) {
   const picker = buildEntityPicker({
     testidPrefix: "recenter",
     placeholder: "Search locations to re-center on…",
+    defaultTypeFilter: "place",
     onSelect: (entity, btn) => doRecenter(sceneId, entity, btn, status, onRecentered)
   });
   wrap.appendChild(picker);
@@ -496,6 +509,7 @@ function renderBootstrap(container) {
   const picker = buildEntityPicker({
     testidPrefix: "scene-bootstrap-location",
     placeholder: "Search for a starting location…",
+    defaultTypeFilter: "place",
     onSelect: async (entity, btn) => {
       btn.disabled = true;
       status.textContent = "Starting…";
