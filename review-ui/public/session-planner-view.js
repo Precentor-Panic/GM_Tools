@@ -52,6 +52,46 @@ function spWithWorld(params) {
 }
 
 // ---------------------------------------------------------------------------
+// Task 20.2: last-active-scene persistence, per world. Same localStorage
+// naming/try-catch convention combat-planning-view.js's attendanceKey/
+// loadAttendance/saveAttendance already established (`gmReview.<view>.<sub>.
+// <world>`) -- not a new convention. Written whenever a scene successfully
+// loads, is created, or is forked (the three places `renderSessionPlanner`,
+// `renderBootstrap`'s onSelect, and `doRecenter` call `saveLastSceneId`
+// below); read only by the bare `#session-planner` route (no explicit scene
+// id in the hash) to resume the DM's in-progress plan instead of always
+// falling through to the empty-state bootstrap -- which is what makes the
+// nav bar's "Plan Session" button (bare `data-nav="session-planner"`, no
+// scene id ever encoded there) survive a navigate-away-and-back.
+function lastSceneKey(world) {
+  return `gmReview.sessionPlanner.${world}.lastSceneId`;
+}
+function loadLastSceneId(world) {
+  if (!world) return null;
+  try {
+    return localStorage.getItem(lastSceneKey(world)) || null;
+  } catch {
+    return null;
+  }
+}
+function saveLastSceneId(world, sceneId) {
+  if (!world || !sceneId) return;
+  try {
+    localStorage.setItem(lastSceneKey(world), sceneId);
+  } catch {
+    /* localStorage full/unavailable -- not fatal, matches graph-view.js's own precedent */
+  }
+}
+function clearLastSceneId(world) {
+  if (!world) return;
+  try {
+    localStorage.removeItem(lastSceneKey(world));
+  } catch {
+    /* not fatal */
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Task 17.3: inline-expand note autosave. A single small helper module
 // (debounced-save.mjs) provides the pure timer logic; this file owns the
 // DOM wiring and the open-panel bookkeeping. ONE createFlushableDebounce
@@ -469,6 +509,7 @@ async function doRecenter(sceneId, entity, btn, statusEl, onRecentered) {
     });
 
     statusEl.textContent = "";
+    saveLastSceneId(currentWorld(), newSceneId); // task 20.2: a fork is a real scene-load event too
     if (activeRecenterController === controller) activeRecenterController = null;
     onRecentered(newSceneId, briefRes.brief);
   } catch (err) {
@@ -523,6 +564,7 @@ function renderBootstrap(container) {
             objectiveNote: noteInput.value.trim() || undefined
           })
         });
+        saveLastSceneId(currentWorld(), res.scene.id); // task 20.2: creation is a real scene-load event too
         // A genuine navigation (empty state -> a real scene) -- goes
         // through the hash router like every other view transition in this
         // app.
@@ -555,8 +597,35 @@ async function fetchEntityInfoMap() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Task 20.2: explicit, always-discoverable "start a new plan" escape hatch.
+// Persisting/auto-resuming the last-active scene (below) must never trap the
+// DM on an old scene with no way out -- this is that way out. Routes through
+// the hash router to the reserved `#session-planner/new` sentinel arg (never
+// a real scene id -- scenes.mjs's makeSceneId() produces a different id
+// shape entirely), which renderSessionPlanner special-cases to clear the
+// persisted pointer and land on the bootstrap flow every time, even if a
+// persisted scene id still exists.
+// ---------------------------------------------------------------------------
+function renderStartNewPlanBar() {
+  const wrap = document.createElement("div");
+  wrap.className = "session-planner-start-new";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "link-btn";
+  btn.setAttribute("data-testid", "session-planner-start-new");
+  btn.textContent = "Start a new plan";
+  btn.addEventListener("click", () => {
+    location.hash = "session-planner/new";
+  });
+  wrap.appendChild(btn);
+  return wrap;
+}
+
 function renderBriefBody(container, brief, entityInfoMap, sceneId) {
   container.innerHTML = "";
+
+  container.appendChild(renderStartNewPlanBar());
 
   const grid = document.createElement("div");
   grid.className = "session-planner-grid";
@@ -590,8 +659,17 @@ function renderBriefBody(container, brief, entityInfoMap, sceneId) {
 /**
  * Entry point, called from app.js's renderCurrentView() dispatch when
  * view === "session-planner". `sceneIdArg` is the hash route's arg
- * (`#session-planner/<sceneId>`) -- undefined/empty means "no scene yet",
- * the task 17.1 bootstrap flow.
+ * (`#session-planner/<sceneId>`) -- undefined/empty means "no explicit scene
+ * in the hash", which (task 20.2) now resumes this world's last-active scene
+ * from localStorage if one was persisted, rather than always falling through
+ * to the task 17.1 bootstrap flow -- this is what makes the nav bar's "Plan
+ * Session" button (bare `data-nav="session-planner"`, no scene id ever
+ * encoded there) and any other bare navigation into this view survive a
+ * navigate-away-and-back instead of discarding an in-progress plan.
+ * `sceneIdArg === "new"` is a reserved sentinel (never a real scene id, see
+ * renderStartNewPlanBar's own comment) that always forces the bootstrap flow
+ * and clears the persisted pointer -- the deliberate "start fresh" escape
+ * hatch.
  */
 export async function renderSessionPlanner(sceneIdArg) {
   const container = document.getElementById("session-planner-body");
@@ -610,7 +688,22 @@ export async function renderSessionPlanner(sceneIdArg) {
     return;
   }
 
-  if (!sceneIdArg) {
+  const world = currentWorld();
+
+  if (sceneIdArg === "new") {
+    clearLastSceneId(world);
+    renderBootstrap(container);
+    return;
+  }
+
+  let effectiveSceneId = sceneIdArg;
+  let resumedFromStorage = false;
+  if (!effectiveSceneId) {
+    effectiveSceneId = loadLastSceneId(world);
+    resumedFromStorage = !!effectiveSceneId;
+  }
+
+  if (!effectiveSceneId) {
     renderBootstrap(container);
     return;
   }
@@ -623,11 +716,20 @@ export async function renderSessionPlanner(sceneIdArg) {
   let brief, entityInfoMap;
   try {
     [brief, entityInfoMap] = await Promise.all([
-      spApi(`/api/session-planner/brief${spWithWorld({ sceneId: sceneIdArg })}`).then((r) => r.brief),
+      spApi(`/api/session-planner/brief${spWithWorld({ sceneId: effectiveSceneId })}`).then((r) => r.brief),
       fetchEntityInfoMap()
     ]);
   } catch (err) {
     container.innerHTML = "";
+    if (resumedFromStorage) {
+      // The persisted scene no longer resolves (e.g. stale pointer against
+      // fresh/cleared data) -- never trap the DM on a dead resume target
+      // with no escape hatch; clear the stale pointer and fall through to a
+      // fresh bootstrap instead of a dead-end error.
+      clearLastSceneId(world);
+      renderBootstrap(container);
+      return;
+    }
     const p = document.createElement("p");
     p.className = "hint";
     p.textContent = `Could not load session brief: ${err.message}`;
@@ -635,5 +737,13 @@ export async function renderSessionPlanner(sceneIdArg) {
     return;
   }
 
-  renderBriefBody(container, brief, entityInfoMap, sceneIdArg);
+  saveLastSceneId(world, effectiveSceneId);
+  if (resumedFromStorage) {
+    // Keep the URL bar/bookmark/reload in sync with the resumed scene,
+    // without firing a redundant hashchange -- mirrors
+    // buildRecenterControl's own history.replaceState convention above.
+    history.replaceState(null, "", `#session-planner/${effectiveSceneId}`);
+  }
+
+  renderBriefBody(container, brief, entityInfoMap, effectiveSceneId);
 }
