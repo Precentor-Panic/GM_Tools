@@ -62,6 +62,21 @@ bestiary/*
 party-roster/*
 !party-roster/.gitkeep
 
+# Phase 22 (task 22.0, added at spec time, not after the fact -- per this
+# project's own recurring-gap lesson): mutation-engine/scene-undo.mjs is
+# PER-(world,sceneId)-SESSION-FILE under a per-world subdir (same layout as
+# review-state/ above), NOT a flat per-world file like manual-undo/ -- it's
+# a genuine ordered action-history list scoped to one scene-development
+# session, deliberately distinct from manual-undo.mjs's single global slot.
+scene-undo/*/
+!scene-undo/.gitkeep
+
+# session-planner/scene-membership.mjs is flat per-world-file, same
+# convention as session-scenes/ above -- a scene's explicit "add arbitrary
+# node" extra-membership list.
+scene-membership/*
+!scene-membership/.gitkeep
+
 node_modules/
 
 # never commit API keys / secrets
