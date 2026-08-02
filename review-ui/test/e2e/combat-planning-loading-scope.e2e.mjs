@@ -73,7 +73,7 @@ process.env.WF_DEFAULT_WORLD = WORLD;
 const { createReviewServer } = await import("../../server.mjs");
 
 let server, base, browser, page;
-let catalogEntry, member;
+let catalogEntry, catalogAddEntry, member;
 
 // Comfortably longer than withSlowNotice's own ~1500ms threshold.
 const HOLD_MS = 2200;
@@ -81,6 +81,19 @@ const POLL_INTERVAL_MS = 150;
 
 before(async () => {
   catalogEntry = await seedAcceptedBestiaryEntry({ rawFields: fullProfileRawFields({ name: "Loading Scope Goblin" }) });
+  // Task 20.4 gave the catalog row a binary Add/Remove toggle -- an entry
+  // already present in the working roster (any origin) shows "Remove", not
+  // "+Add". The "medium"-tier difficulty click below auto-picks catalogEntry
+  // itself (confirmed directly: with only one light candidate available,
+  // the greedy auto-fill happily takes 3 copies of it to reach target 16),
+  // which would leave catalogEntry's OWN catalog row already showing
+  // "Remove" by the time the "catalog add" step runs. A second, much
+  // heavier entry the medium-tier auto-fill will never select (confirmed
+  // directly: it's excluded from that same combination) keeps the "catalog
+  // add" step targeting a row that's genuinely still in its "+Add" state.
+  catalogAddEntry = await seedAcceptedBestiaryEntry({
+    rawFields: fullProfileRawFields({ name: "Loading Scope Dragon", type: "dragon", challengeRating: "15", hp: 250, ac: 19, attacks: [{ name: "Bite", toHitBonus: 14, damageDice: "4d10+8", damageType: "slashing" }] })
+  });
   member = await seedPartyMember(WORLD, { name: "Loading Scope PC", combatRelevant: { class: "Fighter", level: 5, ac: 16, hp: 40, damagePerRoundEstimate: 16 } });
 
   server = createReviewServer({ port: 0 });
@@ -128,8 +141,10 @@ test("difficulty-click, catalog add/remove, knob change, and attendance toggle N
   await difficultyClickDone;
   await page.locator('[data-testid="expected-score-value"]').waitFor({ state: "visible", timeout: 5000 });
 
-  // --- catalog add ---
-  const catalogRow = page.locator(`[data-testid="catalog-row"][data-entry-id="${catalogEntry.id}"]`);
+  // --- catalog add --- (catalogAddEntry, NOT catalogEntry -- see the
+  // fixture-setup comment above for why catalogEntry itself is already
+  // "Remove"-state by this point)
+  const catalogRow = page.locator(`[data-testid="catalog-row"][data-entry-id="${catalogAddEntry.id}"]`);
   await catalogRow.waitFor({ state: "visible", timeout: 5000 });
   const addClickDone = catalogRow.locator('[data-testid="catalog-add-btn"]').click();
   await assertIndicatorNeverAppearsFor(page, HOLD_MS, "catalog +Add click");

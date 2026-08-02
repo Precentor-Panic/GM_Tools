@@ -114,12 +114,19 @@
 //     roster. A `data-origin="group"` row (created by a difficulty-tier
 //     auto-suggestion, mirroring suggestEncounter's own native
 //     `{entryId,count}` combination shape 1:1) carries `[data-testid="working-combatant-count"]`
-//     showing its count and is the target of that entryId's catalog-row
-//     stepper (see CATALOG below, and
-//     combat-planning-catalog-add-fork.e2e.mjs's own detailed contract). A
-//     `data-origin="individual"` row (created by a catalog `+Add` click on a
-//     row with no prior group presence) always has count 1 and a unique
+//     showing its count. A `data-origin="individual"` row (created by a
+//     catalog `+Add` click) always has count 1 and a unique
 //     `data-instance-id`.
+//   - Phase 20 task 20.4 (real removal + correct control placement, see
+//     combat-planning-catalog-add-fork.e2e.mjs's own detailed, up-to-date
+//     contract) relocated count/removal controls OUT of the catalog row and
+//     INTO the working roster: a group-origin row carries
+//     `[data-testid="working-roster-stepper"]` (`-minus`/`-plus`, adjusting
+//     count in place, `-` at count 1 removes the row), and EVERY row
+//     regardless of origin carries `[data-testid="working-roster-remove-btn"]`
+//     (an explicit [x] removing that specific row -- by `data-instance-id`
+//     for an individual row, never a broad "all individual rows of this
+//     entryId" removal).
 //
 // TWO DISCLOSURES (task 19.4, own detailed contract in
 // combat-planning-disclosure-copy.e2e.mjs):
@@ -144,13 +151,17 @@
 //     bestiary-store.mjs's proposed/accepted/discarded lifecycle -- a
 //     `status:"proposed"` entry belongs on the ingestion review screen, not
 //     the catalog).
-//   - `[data-testid="catalog-add-btn"]` inside a row -- click-based (design
-//     record §1: "click, not drag"). EVERY click on this button, regardless
-//     of how many working-combatant-row entries already exist for this
-//     entryId, adds ONE MORE `data-origin="individual"` row to the working
-//     roster (own contract/test in combat-planning-catalog-add-fork.e2e.mjs)
-//     and triggers a recompute (manualCombination-mode encounter-suggest
-//     call reflecting the updated working roster) -- THIS is live-recompute
+//   - A catalog row is now (task 20.4) a simple binary toggle:
+//     `[data-testid="catalog-add-btn"]` ("+ Add") when this entryId has NO
+//     row in the working roster yet -- clicking it adds ONE
+//     `data-origin="individual"` row (this file's own test only ever clicks
+//     Add on an entry that isn't already present, so this is the one
+//     behavior it relies on) -- or `[data-testid="catalog-remove-btn"]`
+//     ("Remove") once it has ANY row, clicking which removes every row for
+//     that entryId. Own full contract/test in
+//     combat-planning-catalog-add-fork.e2e.mjs. A successful add still
+//     triggers a recompute (manualCombination-mode encounter-suggest call
+//     reflecting the updated working roster) -- THIS is live-recompute
 //     mutation type 2, exercised by this file's own test.
 //
 // LIVE-RECOMPUTE / NO-STALE-CACHING (design record §1, plans/phase-19-tasks.md
@@ -239,8 +250,25 @@ test("live recompute: roster-attendance toggle, catalog add, and knob change eac
   const scoreBand = page.locator('[data-testid="score-band"]');
   await scoreBand.waitFor({ state: "visible", timeout: 15000 });
 
+  // Precise mode (not the default Plain mode) -- Plain only ever renders a
+  // quantized TIER WORD (Trivial/Easy/Medium/Hard/Deadly), so two genuinely
+  // different raw scores landing in the same tier bucket would render
+  // byte-identical text and falsely look like a stale/no-op recompute.
+  // Precise always renders the raw number, which is what this test's own
+  // "never a stale prior value" assertions actually need to be reliable.
+  await page.locator('[data-testid="mode-toggle-precise"]').click();
+
   // --- Establish a starting suggestion (difficulty-rail click) ---------
-  await page.locator('[data-testid="difficulty-tier"][data-tier="medium"]').click();
+  // "easy" (not "medium") deliberately -- at "medium" the greedy auto-fill
+  // picks BOTH goblinEntry AND ogreEntry (confirmed directly), which would
+  // leave ogreEntry already present as a data-origin="group" row before
+  // MUTATION TYPE 2 below ever gets to it. Since task 20.4 made the catalog
+  // row a binary Add/Remove toggle (an entry already in the working roster
+  // shows "Remove", not "+Add"), that collision would make the
+  // catalog-add-btn lookup below fail to find anything -- "easy" keeps this
+  // test's own two fixture monsters cleanly separated (only goblinEntry is
+  // auto-picked), matching the comment on goblinEntry/ogreEntry above.
+  await page.locator('[data-testid="difficulty-tier"][data-tier="easy"]').click();
   const expectedScoreEl = page.locator('[data-testid="expected-score-value"]');
   await expectedScoreEl.waitFor({ state: "visible", timeout: 10000 });
   const scoreAfterDifficultyClick = (await expectedScoreEl.textContent()).trim();

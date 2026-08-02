@@ -341,10 +341,75 @@ function onCatalogAdd(entryId) {
   recompute();
 }
 
-function onCatalogStepperChange(entryId, delta) {
+/**
+ * Task 20.4 -- removes EVERY row (group and/or individual) for `entryId`
+ * from the working roster in one shot. The catalog's own "Remove" toggle
+ * (renderCatalogRow) is the one caller that genuinely means "take this
+ * entry out entirely" -- see removeWorkingRosterRow below for the per-ROW
+ * removal the working roster's own [x] controls use instead.
+ */
+function removeEntryEntirely(entryId) {
+  session.workingRoster = session.workingRoster.filter((r) => r.entryId !== entryId);
+  rerenderBuilder();
+  recompute();
+}
+
+/**
+ * Task 20.4 -- the catalog row's ONE control, per the project owner's exact
+ * spec (plans/phase-20-tasks.md 20.4): "Add" if this entryId has no row at
+ * all in the working roster (either origin), "Remove" (removeEntryEntirely)
+ * if it does. This deliberately supersedes Phase 19's "+Add never
+ * disappears, every click adds one more individual row" behavior
+ * (review-ui/test/e2e/combat-planning-catalog-add-fork.e2e.mjs's old PART 1)
+ * -- a real, intentional capability reduction: once an entry has ANY
+ * presence in the working roster, stacking a SECOND individual instance of
+ * that same entry is no longer reachable from the catalog (a DM wanting N
+ * identical monsters now uses a difficulty-tier auto-suggestion's own
+ * group-row stepper instead, which already supports an arbitrary count).
+ * That old test file has been rewritten to match, not left disagreeing.
+ */
+function onCatalogToggle(entryId) {
+  const inRoster = session.workingRoster.some((r) => r.entryId === entryId);
+  if (inRoster) removeEntryEntirely(entryId);
+  else onCatalogAdd(entryId);
+}
+
+/**
+ * Task 20.4 -- the working roster's own +/- stepper for a group-origin row
+ * (relocated here from the catalog, per the project owner's exact spec).
+ * Unlike the old catalog stepper (`Math.max(1, row.count + delta)`, which
+ * could never reach zero and so could never remove the row), `−` at count 1
+ * now removes the row entirely rather than leaving a zero-count ghost --
+ * closing real gap #1 from the task's root-cause writeup.
+ */
+function onWorkingRosterStepperChange(entryId, delta) {
   const row = session.workingRoster.find((r) => r.entryId === entryId && r.origin === "group");
   if (!row) return;
-  row.count = Math.max(1, row.count + delta);
+  const nextCount = row.count + delta;
+  if (nextCount <= 0) {
+    session.workingRoster = session.workingRoster.filter((r) => r !== row);
+  } else {
+    row.count = nextCount;
+  }
+  rerenderBuilder();
+  recompute();
+}
+
+/**
+ * Task 20.4 -- the working roster's explicit [x] remove-entirely control,
+ * present on EVERY row regardless of origin. A group-origin row is removed
+ * by entryId+origin (this project's own established invariant: at most one
+ * group-origin row per entryId, enforced by every group-row lookup already
+ * in this file). An individual-origin row is removed by its own
+ * `instanceId` specifically -- closing real gap #2: individual-origin
+ * combatants previously had NO removal control anywhere at all.
+ */
+function removeWorkingRosterRow(row) {
+  if (row.origin === "individual") {
+    session.workingRoster = session.workingRoster.filter((r) => r.instanceId !== row.instanceId);
+  } else {
+    session.workingRoster = session.workingRoster.filter((r) => !(r.entryId === row.entryId && r.origin === "group"));
+  }
   rerenderBuilder();
   recompute();
 }
@@ -665,13 +730,52 @@ function renderWorkingRoster() {
     name.textContent = entry?.rawFields?.name ?? row.entryId;
     rowEl.appendChild(name);
 
+    const controls = document.createElement("div");
+    controls.className = "working-combatant-controls";
+
     if (row.origin === "group") {
       const count = document.createElement("span");
       count.className = "working-combatant-count";
       count.setAttribute("data-testid", "working-combatant-count");
       count.textContent = String(row.count);
       rowEl.appendChild(count);
+
+      // Task 20.4 -- the +/- stepper relocated from the catalog row into the
+      // working roster, per the project owner's exact spec. `−` at count 1
+      // removes the row (see onWorkingRosterStepperChange) rather than
+      // leaving a zero-count ghost.
+      const stepper = document.createElement("div");
+      stepper.className = "working-roster-stepper";
+      stepper.setAttribute("data-testid", "working-roster-stepper");
+      const minus = document.createElement("button");
+      minus.type = "button";
+      minus.className = "icon-btn";
+      minus.setAttribute("data-testid", "working-roster-stepper-minus");
+      minus.textContent = "−";
+      minus.addEventListener("click", () => onWorkingRosterStepperChange(row.entryId, -1));
+      const plus = document.createElement("button");
+      plus.type = "button";
+      plus.className = "icon-btn";
+      plus.setAttribute("data-testid", "working-roster-stepper-plus");
+      plus.textContent = "+";
+      plus.addEventListener("click", () => onWorkingRosterStepperChange(row.entryId, 1));
+      stepper.append(minus, plus);
+      controls.appendChild(stepper);
     }
+
+    // Task 20.4 -- present on EVERY row regardless of origin (group rows get
+    // this ALONGSIDE their stepper, individual rows get ONLY this -- no
+    // stepper, each individual click created its own row on purpose).
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "icon-btn working-roster-remove-btn";
+    removeBtn.setAttribute("data-testid", "working-roster-remove-btn");
+    removeBtn.title = "Remove from working roster";
+    removeBtn.textContent = "✕";
+    removeBtn.addEventListener("click", () => removeWorkingRosterRow(row));
+    controls.appendChild(removeBtn);
+
+    rowEl.appendChild(controls);
 
     wrap.appendChild(rowEl);
   }
@@ -941,40 +1045,25 @@ function renderCatalogRow(entry) {
   const controls = document.createElement("div");
   controls.className = "catalog-row-controls";
 
-  const addBtn = document.createElement("button");
-  addBtn.type = "button";
-  addBtn.className = "btn btn--ghost catalog-add-btn";
-  addBtn.setAttribute("data-testid", "catalog-add-btn");
-  addBtn.textContent = "+ Add";
-  addBtn.addEventListener("click", () => onCatalogAdd(entry.id));
-  controls.appendChild(addBtn);
-
-  // Alongside, not instead of, catalog-add-btn -- only once a data-origin
-  // "group" row already exists for this entryId (created exclusively by a
-  // difficulty-tier auto-suggestion, never by +Add itself).
-  const groupRow = session.workingRoster.find((r) => r.entryId === entry.id && r.origin === "group");
-  if (groupRow) {
-    const stepper = document.createElement("div");
-    stepper.className = "catalog-stepper";
-    stepper.setAttribute("data-testid", "catalog-stepper");
-    const minus = document.createElement("button");
-    minus.type = "button";
-    minus.className = "icon-btn";
-    minus.setAttribute("data-testid", "catalog-stepper-minus");
-    minus.textContent = "−";
-    minus.addEventListener("click", () => onCatalogStepperChange(entry.id, -1));
-    const count = document.createElement("span");
-    count.setAttribute("data-testid", "catalog-stepper-count");
-    count.textContent = String(groupRow.count);
-    const plus = document.createElement("button");
-    plus.type = "button";
-    plus.className = "icon-btn";
-    plus.setAttribute("data-testid", "catalog-stepper-plus");
-    plus.textContent = "+";
-    plus.addEventListener("click", () => onCatalogStepperChange(entry.id, 1));
-    stepper.append(minus, count, plus);
-    controls.appendChild(stepper);
+  // Task 20.4 -- a simple binary Add/Remove toggle, per the project owner's
+  // exact spec: no stepper here anymore at all (relocated to the working
+  // roster, see renderWorkingRoster). "Remove" removes EVERY row (group and
+  // individual alike) for this entryId in one shot.
+  const inRoster = session.workingRoster.some((r) => r.entryId === entry.id);
+  const toggleBtn = document.createElement("button");
+  toggleBtn.type = "button";
+  if (inRoster) {
+    toggleBtn.className = "btn btn--ghost catalog-remove-btn";
+    toggleBtn.setAttribute("data-testid", "catalog-remove-btn");
+    toggleBtn.textContent = "Remove";
+    toggleBtn.addEventListener("click", () => removeEntryEntirely(entry.id));
+  } else {
+    toggleBtn.className = "btn btn--ghost catalog-add-btn";
+    toggleBtn.setAttribute("data-testid", "catalog-add-btn");
+    toggleBtn.textContent = "+ Add";
+    toggleBtn.addEventListener("click", () => onCatalogAdd(entry.id));
   }
+  controls.appendChild(toggleBtn);
 
   row.appendChild(controls);
   return row;
