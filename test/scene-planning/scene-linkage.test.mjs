@@ -100,11 +100,11 @@ function chainSnapshot() {
   return { entities, edges };
 }
 
-function seedScenes() {
-  const sceneA = createScene(WORLD, { locationEntityId: "a" });
-  const sceneC = createScene(WORLD, { locationEntityId: "c" }); // hop 2 from a
-  const sceneF = createScene(WORLD, { locationEntityId: "f" }); // hop 5 from a
-  const sceneUntethered = createScene(WORLD, { locationEntityId: null });
+function seedScenes(world = WORLD) {
+  const sceneA = createScene(world, { locationEntityId: "a" });
+  const sceneC = createScene(world, { locationEntityId: "c" }); // hop 2 from a
+  const sceneF = createScene(world, { locationEntityId: "f" }); // hop 5 from a
+  const sceneUntethered = createScene(world, { locationEntityId: null });
   return { sceneA, sceneC, sceneF, sceneUntethered };
 }
 
@@ -124,8 +124,24 @@ test("returns the within-default-range scene (hop 2), excludes the itself scene,
 });
 
 test("raising opts.maxHops surfaces the further scene too, sorted ascending by hopDistance", () => {
-  const { sceneA, sceneC, sceneF } = seedScenes();
-  const linked = linkedScenesForScene(WORLD, sceneA.id, chainSnapshot(), { maxHops: 6 });
+  // FLAGGED TEST-ISOLATION FIX (Phase 22 implementation pass): the prior
+  // version of this test reused the shared top-level WORLD constant, which
+  // -- since every test() in this file runs sequentially against ONE
+  // persistent store with no reset between tests -- silently accumulated
+  // scenes from the earlier "returns the within-default-range scene" test
+  // (itself also seeded against WORLD). That earlier test's own sceneA sits
+  // at hop 0 from THIS test's sceneA (same anchor entity "a", per
+  // chainSnapshot()), so it (plus that test's sceneC/sceneF) leaked into
+  // this test's maxHops:6 query, breaking the exact-length-2 assertion
+  // below through no fault of the implementation. Fixed the same way
+  // test/session-planner/scenes.test.mjs's own "listScenesForWorld: lists
+  // every scene..." test isolates an exact-list assertion -- a dedicated,
+  // unique world id for this test only, matching this codebase's own
+  // established convention rather than the shared WORLD constant every
+  // other (non-exact-count) test in this file still correctly uses.
+  const world = "scene-linkage-test-world-maxhops";
+  const { sceneA, sceneC, sceneF } = seedScenes(world);
+  const linked = linkedScenesForScene(world, sceneA.id, chainSnapshot(), { maxHops: 6 });
   assert.equal(linked.length, 2);
   assert.deepEqual(linked.map((l) => l.sceneId), [sceneC.id, sceneF.id], "ascending hop order");
   assert.equal(linked[1].hopDistance, 5);
