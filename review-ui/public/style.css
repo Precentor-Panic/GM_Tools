@@ -817,3 +817,21 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   border-radius: 4px; padding: 0.2rem 0.4rem; display: inline-block;
 }
 .ingest-party-list { margin: 0; padding-left: 1.1rem; }
+
+/* --- Scenes tab (Phase 24) --- */
+.scenes-search-wrap { max-width: 28rem; }
+.scenes-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.scene-list-item {
+  border: 1px solid var(--border); border-radius: 8px; padding: 0.65rem 0.85rem; background: var(--card-bg);
+}
+.scene-list-item-anchor-name { font-weight: 700; font-size: 1rem; }
+.scene-list-item-objective { margin: 0.15rem 0 0.5rem; }
+.scene-list-item-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.scene-list-item-panel-slot:not(:empty) { margin-top: 0.6rem; }
+.linked-scenes-panel {
+  border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px;
+  padding: 0.55rem 0.7rem; background: var(--bg);
+}
+.linked-scenes-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.linked-scene-item { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.linked-scene-anchor-name { font-weight: 600; }

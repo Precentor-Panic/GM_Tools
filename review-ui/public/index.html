@@ -24,6 +24,7 @@
       <button data-nav="graph">Graph</button>
       <button data-nav="session-planner" data-testid="session-planner-nav">Plan Session</button>
       <button data-nav="combat-planning" data-testid="combat-planning-nav">Encounter Builder</button>
+      <button data-nav="scenes" data-testid="scenes-nav">Scenes</button>
     </nav>
     <div class="topbar-right">
       <select id="world-select" aria-label="World"></select>
@@ -171,6 +172,13 @@
   <h1>Plan Session</h1>
   <p class="hint">A live instrument, not a plan to follow — surfaces what's near the party's current scene, flags what's thin, and captures notes without them drifting into a second source of truth.</p>
   <div id="session-planner-body"></div>
+</section>
+
+<!-- ================= SCENES (Phase 24) ================= -->
+<section id="view-scenes" class="view">
+  <h1>Scenes</h1>
+  <p class="hint">Browse and search every previously-prepared scene across this world, and jump back into any of them — not just the one you touched last.</p>
+  <div id="scenes-body"></div>
 </section>
 
 <!-- ================= ENCOUNTER BUILDER (Phase 19) ================= -->

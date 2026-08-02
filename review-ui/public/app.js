@@ -7,6 +7,7 @@
 import { renderGraph, showCreateNodeForm, armPlacementMode, seedNodePosition, removeNodePosition } from "./graph-view.js";
 import { renderSessionPlanner, flushActiveNoteSave, cancelActiveRecenter } from "./session-planner-view.js";
 import { renderCombatPlanning, renderCombatPlanningIngest, cancelActiveCombatPlanningRequest } from "./combat-planning-view.js";
+import { renderScenesTab } from "./scenes-view.js";
 
 // ---------------------------------------------------------------------------
 // world selection
@@ -140,6 +141,7 @@ function renderCurrentView() {
   else if (view === "session-planner") renderSessionPlanner(arg);
   else if (view === "combat-planning") renderCombatPlanning();
   else if (view === "combat-planning-ingest") renderCombatPlanningIngest(arg);
+  else if (view === "scenes") renderScenesTab();
 }
 
 // Phase 15 task 15.3: closing the mobile drawer belongs on the hashchange
