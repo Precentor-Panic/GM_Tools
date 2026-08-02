@@ -5,7 +5,7 @@
   "private": true,
   "description": "Phase 6 dedicated web review UI: a small node:http server (server.mjs) over mutation-engine/time-skip's existing library modules (via wf-mcp-server/lib/mutation-ops.mjs, shared verbatim with the MCP server), plus a vanilla HTML/CSS/JS frontend (public/) -- no framework, no build step, matching this project's established convention. No RUNTIME dependencies of its own: every import in server.mjs is a Node built-in or a relative path into mutation-engine/, time-skip/, or wf-mcp-server/lib/, whose own transitive deps (zod, @anthropic-ai/sdk) resolve from GM_Tools/'s root node_modules via Node's normal upward node_modules search. Phase 15 added ONE real devDependency (see devDependencies below) -- Playwright, for a committed real-browser regression suite. It is dev/test-only: never imported by server.mjs or any runtime code path, only by test/e2e/*.e2e.mjs, run via `npm run test:e2e` (kept deliberately separate from the fast, deterministic `npm test` route suite -- e2e tests are slower and spin up a real headless browser).",
   "scripts": {
-    "start": "node server.mjs",
+    "start": "node --env-file-if-exists=../.env server.mjs",
     "test": "node --test test/*.test.mjs",
     "test:e2e": "node --test test/e2e/*.e2e.mjs"
   },
