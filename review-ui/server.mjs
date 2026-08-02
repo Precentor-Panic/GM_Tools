@@ -165,6 +165,25 @@ import { proposePartyMemberFromText, proposePartyMemberFromPdf } from "../combat
 import { savePartyMember, listPartyMembers } from "../combat-planning/party-roster-store.mjs";
 import { proposeThematicTags } from "../combat-planning/thematic-filter.mjs";
 import { suggestEncounter, scoreCombination } from "../combat-planning/encounter-heuristic.mjs";
+
+// Phase 22 (task 22.7) -- Scene Engine routes. Thin wrappers only, same
+// convention as every other route in this file: resolveWorld()/resolveDir()
+// with NO client-supplied dataDir override anywhere below. getScene is
+// already imported above (Phase 16's session-planner import block) and
+// reused here unmodified.
+import { linkedScenesForScene } from "../session-planner/scene-linkage.mjs";
+import { createTransitEntity } from "../session-planner/transit-entity.mjs";
+import { addNodeToScene, removeNodeFromScene, offerInterveningNodes } from "../session-planner/scene-membership.mjs";
+import {
+  startSceneUndoSession,
+  listSceneUndoActions,
+  recordSceneUndoAction,
+  undoLastSceneAction,
+  undoAllSceneActions,
+  clearSceneUndoSession
+} from "../mutation-engine/scene-undo.mjs";
+import { developScene } from "../mutation-engine/scene-develop.mjs";
+import { quickGenerate } from "../mutation-engine/quick-gen.mjs";
 // Only used to distinguish "the Anthropic API itself failed" (502, an
 // upstream/infra problem) from "this codebase's own library modules threw a
 // deliberate validation error" (400) in statusForError below -- see that
@@ -1585,6 +1604,138 @@ async function handleApi(req, res, url, parts) {
           knobs: body.knobs ?? {}
         });
     return sendJson(res, 200, { suggestion });
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 22 (task 22.7) -- Scene Engine routes, prefix `/api/scene-planning/*`
+  // matching session-planner's own `/api/session-planner/*` and
+  // combat-planning's own `/api/combat-planning/*` precedent exactly. Every
+  // route below is a thin wrapper over the corresponding session-planner/ or
+  // mutation-engine/ module (22.1-22.6) -- resolveWorld()/resolveDir() with
+  // NO client-supplied dataDir override anywhere below, and `world` is
+  // always resolved (and so validated) before any snapshot read, store
+  // write, or LLM-touching call for that route.
+  // ---------------------------------------------------------------------
+
+  // GET /api/scene-planning/linkage?world=&sceneId=&maxHops=
+  if (method === "GET" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "linkage") {
+    const w = resolveWorld(q.get("world"));
+    const dir = resolveDir();
+    const { entities, edges } = loadSnapshot(dir, w).snapshot;
+    const maxHopsRaw = q.get("maxHops");
+    const maxHops = maxHopsRaw ? Number(maxHopsRaw) : undefined;
+    const linked = linkedScenesForScene(w, q.get("sceneId"), { entities, edges }, { maxHops });
+    return sendJson(res, 200, { linked });
+  }
+
+  // POST /api/scene-planning/transit-entity   { world, fromEntityId, toEntityId, name? }
+  if (method === "POST" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "transit-entity") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const dir = resolveDir();
+    const entity = await createTransitEntity(dir, w, {
+      fromEntityId: body.fromEntityId,
+      toEntityId: body.toEntityId,
+      name: body.name
+    });
+    return sendJson(res, 200, { entity });
+  }
+
+  // POST /api/scene-planning/scenes/:sceneId/members   { world, entityId }
+  if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "members") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const membership = addNodeToScene(w, parts[3], body.entityId);
+    return sendJson(res, 200, { membership });
+  }
+
+  // DELETE /api/scene-planning/scenes/:sceneId/members/:entityId   { world } (query or body)
+  if (method === "DELETE" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "members") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world ?? q.get("world"));
+    const membership = removeNodeFromScene(w, parts[3], parts[5]);
+    return sendJson(res, 200, { membership });
+  }
+
+  // GET /api/scene-planning/scenes/:sceneId/intervening-offer?world=&targetEntityId=
+  if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "intervening-offer") {
+    const w = resolveWorld(q.get("world"));
+    const dir = resolveDir();
+    const scene = getScene(w, parts[3]);
+    const { entities, edges } = loadSnapshot(dir, w).snapshot;
+    const offer = offerInterveningNodes(entities, edges, scene.locationEntityId, q.get("targetEntityId"));
+    return sendJson(res, 200, { offer });
+  }
+
+  // POST /api/scene-planning/scenes/:sceneId/undo/start   { world }
+  if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "undo" && parts[5] === "start") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const session = startSceneUndoSession(w, parts[3]);
+    return sendJson(res, 200, { session });
+  }
+
+  // GET /api/scene-planning/scenes/:sceneId/undo?world=   (peek/list)
+  if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "undo") {
+    const w = resolveWorld(q.get("world"));
+    const actions = listSceneUndoActions(w, parts[3]);
+    return sendJson(res, 200, { actions });
+  }
+
+  // POST /api/scene-planning/scenes/:sceneId/undo/record  { world, action }
+  if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "undo" && parts[5] === "record") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const session = recordSceneUndoAction(w, parts[3], body.action);
+    return sendJson(res, 200, { session });
+  }
+
+  // POST /api/scene-planning/scenes/:sceneId/undo/last    { world }
+  if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "undo" && parts[5] === "last") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const action = undoLastSceneAction(w, parts[3]);
+    return sendJson(res, 200, { action });
+  }
+
+  // POST /api/scene-planning/scenes/:sceneId/undo/all     { world }
+  if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "undo" && parts[5] === "all") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const actions = undoAllSceneActions(w, parts[3]);
+    return sendJson(res, 200, { actions });
+  }
+
+  // POST /api/scene-planning/scenes/:sceneId/undo/clear   { world }
+  if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "undo" && parts[5] === "clear") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    clearSceneUndoSession(w, parts[3]);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // POST /api/scene-planning/scenes/:sceneId/develop   { world, memberEntityIds, selections?, reframeMemberIds?, priorRoundCounts? }
+  // Makes real LLM calls transitively (via the prep-content operations
+  // module) -- world is resolved/validated FIRST, before any of that runs.
+  if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "develop") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const dir = resolveDir();
+    const result = await developScene(dir, w, parts[3], body.memberEntityIds ?? [], {
+      selections: body.selections,
+      reframeMemberIds: body.reframeMemberIds,
+      priorRoundCounts: body.priorRoundCounts
+    });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/scene-planning/quick-gen   { world, prompt }
+  // Makes a real LLM call -- world is resolved/validated FIRST, before any of that runs.
+  if (method === "POST" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "quick-gen") {
+    const body = await readBody(req);
+    resolveWorld(body.world); // validated for security parity with every other route; quickGenerate itself carries no world concept
+    const result = await quickGenerate(body.prompt, {});
+    return sendJson(res, 200, result);
   }
 
   sendJson(res, 404, { error: `No route: ${req.method} ${url.pathname}` });
