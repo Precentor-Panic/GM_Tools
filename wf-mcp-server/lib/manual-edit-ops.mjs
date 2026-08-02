@@ -180,13 +180,24 @@ function requireNonEmptyString(value, label) {
 
 // The subset of entity fields a manual create/edit is allowed to set
 // directly -- deliberately excludes id/createdAt/updatedAt/source (bookkeeping
-// GraphService/interchange.mjs itself own) and attributes/foundryRef/x/y
-// (Foundry-authored fields with no meaningful manual-edit UI in this phase's
-// scope, per the design doc's field list: "name/description/importance" for
-// edit, plus this phase's own new metadata fields).
+// GraphService/interchange.mjs itself own) and foundryRef/x/y (Foundry-authored
+// fields with no meaningful manual-edit UI in this phase's scope, per the
+// design doc's field list: "name/description/importance" for edit, plus this
+// phase's own new metadata fields).
+//
+// Phase 22 task 22.2 addition: "attributes" -- both graph-service.mjs's
+// upsertEntity() and interchange.mjs's normalizeEntity() already treat
+// `attributes` as a generic pass-through bag (`data.attributes ?? existing?.attributes
+// ?? {}`, verbatim in both), and it is the ONLY field on the entity schema's
+// closed allowlist that can carry a genuinely new, un-enum'd marker without a
+// foundry_worldFabric schema change -- session-planner/transit-entity.mjs's
+// createTransitEntity relies on this to set `attributes.isTransit: true`
+// through this SAME established addNodeOp mechanism (per plans/phase-21-review.md
+// §12/plans/phase-22-tasks.md's explicit "don't invent a second entity-creation
+// mechanism" instruction), rather than a second, parallel write path.
 const ENTITY_EDITABLE_FIELDS = [
   "name", "type", "description", "summary", "importance", "tags",
-  "status", "playerKnown", "canonLocked", "role", "namespace"
+  "status", "playerKnown", "canonLocked", "role", "namespace", "attributes"
 ];
 const EDGE_EDITABLE_FIELDS = ["relationshipType", "label", "strength", "valence", "notes"];
 
