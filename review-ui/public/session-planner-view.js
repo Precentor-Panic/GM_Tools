@@ -129,6 +129,69 @@ function clearLastSceneId(world) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 26 task 26.8, §26.D: active-Plan persistence, per world -- same
+// per-world-key localStorage convention as loadLastSceneId/saveLastSceneId
+// above. This suite (table-mode-plan-scoped.e2e.mjs) deliberately does not
+// pin the exact key name, only the observable effect: the newly-created/
+// most-recently-viewed Plan is what table-active-plan-list reflects on the
+// very next render, including after a full page reload.
+// ---------------------------------------------------------------------------
+function activePlanKey(world) {
+  return `gmReview.sessionPlanner.${world}.activePlanId`;
+}
+function loadActivePlanId(world) {
+  if (!world) return null;
+  try {
+    return localStorage.getItem(activePlanKey(world)) || null;
+  } catch {
+    return null;
+  }
+}
+function saveActivePlanId(world, planId) {
+  if (!world || !planId) return;
+  try {
+    localStorage.setItem(activePlanKey(world), planId);
+  } catch {
+    /* localStorage full/unavailable -- not fatal, matches graph-view.js's own precedent */
+  }
+}
+
+/**
+ * Resolves which Plan is "active" for Table Mode's current render. Priority:
+ * (1) the stored active plan, IF it still exists AND the currently-viewed
+ * scene is one of its members; (2) any REAL plan the currently-viewed scene
+ * is already a member of (MOST RECENTLY CREATED match wins, when a scene
+ * belongs to more than one Plan -- deterministic since listPlansForWorld
+ * returns creation order) -- this is what makes viewing a scene that
+ * belongs to a Plan become that Plan's own active view with no separate
+ * activation step, favoring whichever Plan most recently pulled this scene
+ * in over an older one; (3) the stored active plan regardless of
+ * membership, so browsing a scene that isn't part of any Plan yet doesn't
+ * lose context; (4) null (no active Plan yet -- "Start new plan"). Every
+ * non-null result is written back to storage, so browsing settles on a
+ * consistent, persisted choice rather than silently drifting.
+ *
+ * @param {string} world
+ * @param {string} sceneId
+ * @param {object[]} plans
+ * @returns {object|null}
+ */
+function resolveActivePlan(world, sceneId, plans) {
+  const storedId = loadActivePlanId(world);
+  const stored = storedId ? plans.find((p) => p.id === storedId) : null;
+  if (stored && stored.sceneIds.includes(sceneId)) return stored;
+
+  const memberOf = [...plans].reverse().find((p) => p.sceneIds.includes(sceneId));
+  if (memberOf) {
+    saveActivePlanId(world, memberOf.id);
+    return memberOf;
+  }
+
+  if (stored) return stored;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Task 17.3: inline-expand note autosave. A single small helper module
 // (debounced-save.mjs) provides the pure timer logic; this file owns the
 // DOM wiring and the open-panel bookkeeping. Keyed by entityId for
@@ -2163,7 +2226,31 @@ function buildTableTopStrip(scene, extras) {
 // Replaces the idea of a single "Advance" button entirely (design record
 // §3a) -- this zone is the whole navigation surface.
 // ---------------------------------------------------------------------------
-function buildTableNavZone(scene, allScenes, linked) {
+/**
+ * Phase 26 task 26.8, §26.D: Plan-scoped scene item, shared shape for both
+ * the active-plan-list and each other-plan-item's own revealed list.
+ * Explicitly closes `closeOnClick` (its own containing <details>, when
+ * given) on EVERY click -- including a same-scene no-op-navigation click --
+ * per §26.H bug 1's confirmed root cause (a no-op navigation never fires
+ * hashchange, so nothing re-renders to close it otherwise). Built this way
+ * from the start rather than discovering the gap again in task 26.12.
+ */
+function buildPlanSceneItem(testid, s, currentSceneId, onNavigate, closeOnClick) {
+  const item = document.createElement("button");
+  item.type = "button";
+  item.className = "link-btn";
+  item.setAttribute("data-testid", testid);
+  item.setAttribute("data-scene-id", s.id);
+  if (s.id === currentSceneId) item.setAttribute("data-current", "true");
+  item.textContent = resolveSceneDisplayName(s);
+  item.addEventListener("click", () => {
+    if (closeOnClick) closeOnClick.open = false;
+    onNavigate(s.id);
+  });
+  return item;
+}
+
+function buildTableNavZone(scene, allScenes, linked, plans, activePlan) {
   const wrap = document.createElement("div");
   wrap.className = "table-nav-zone";
   wrap.setAttribute("data-testid", "table-nav-zone");
@@ -2243,34 +2330,131 @@ function buildTableNavZone(scene, allScenes, linked) {
   }
   wrap.appendChild(adjacentStrip);
 
-  // Full scene list -- collapsed by default, a real <details> (free,
-  // JS-free collapse, matching scene-chain-item's own established
-  // precedent), manual scroll-and-browse fallback only.
-  const fullList = document.createElement("details");
-  fullList.className = "table-full-list";
-  fullList.setAttribute("data-testid", "table-full-list");
+  // Phase 26 task 26.8, §26.D: replaces the old flat "All scenes"
+  // table-full-list entirely with Plan-scoped browsing -- "Start new plan" /
+  // active Plan's own scenes (current expanded, rest collapsed) / other
+  // Plans (collapsed, revealed on expand).
+  const world = currentWorld();
 
-  const summary = document.createElement("summary");
-  summary.setAttribute("data-testid", "table-full-list-toggle");
-  summary.textContent = "All scenes";
-  fullList.appendChild(summary);
+  const startBtn = document.createElement("button");
+  startBtn.type = "button";
+  startBtn.className = "btn";
+  startBtn.setAttribute("data-testid", "table-start-new-plan-btn");
+  startBtn.textContent = "+ Start new plan";
 
-  const listBody = document.createElement("div");
-  listBody.className = "table-full-list-body";
-  for (const s of allScenes) {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "link-btn table-full-list-item";
-    item.setAttribute("data-testid", "table-full-list-item");
-    item.setAttribute("data-scene-id", s.id);
-    item.textContent = resolveSceneDisplayName(s);
-    item.addEventListener("click", () => {
-      location.hash = tableModeHashFor(s.id);
-    });
-    listBody.appendChild(item);
+  const startPanel = document.createElement("div");
+  startPanel.setAttribute("data-testid", "table-start-new-plan-panel");
+  startPanel.style.display = "none";
+
+  const startNameInput = document.createElement("input");
+  startNameInput.type = "text";
+  startNameInput.setAttribute("data-testid", "table-start-new-plan-name-input");
+  startNameInput.placeholder = "Name this plan…";
+
+  const startSubmitBtn = document.createElement("button");
+  startSubmitBtn.type = "button";
+  startSubmitBtn.className = "btn btn--accept";
+  startSubmitBtn.setAttribute("data-testid", "table-start-new-plan-submit-btn");
+  startSubmitBtn.textContent = "Create";
+
+  const startStatus = document.createElement("div");
+  startStatus.className = "hint";
+
+  startSubmitBtn.addEventListener("click", async () => {
+    const name = startNameInput.value.trim();
+    if (!name) {
+      startStatus.textContent = "Type a name first.";
+      return;
+    }
+    startSubmitBtn.disabled = true;
+    startStatus.textContent = "Creating…";
+    try {
+      const { plan } = await spApi("/api/scene-planning/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world, name })
+      });
+      await spApi(`/api/scene-planning/plans/${encodeURIComponent(plan.id)}/scenes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world, sceneId: scene.id })
+      });
+      saveActivePlanId(world, plan.id);
+      const container = document.getElementById("session-planner-body");
+      await loadAndRenderTableMode(scene.id, container);
+    } catch (err) {
+      startStatus.textContent = `Could not create plan: ${err.message}`;
+      startSubmitBtn.disabled = false;
+    }
+  });
+
+  // Idempotent-open, matching add-scene-btn's own established precedent (§26.H).
+  startBtn.addEventListener("click", () => {
+    startPanel.style.display = "block";
+  });
+
+  startPanel.append(startNameInput, startSubmitBtn, startStatus);
+  wrap.append(startBtn, startPanel);
+
+  if (activePlan) {
+    const activeList = document.createElement("details");
+    activeList.setAttribute("data-testid", "table-active-plan-list");
+    activeList.setAttribute("data-plan-id", activePlan.id);
+    activeList.open = true;
+
+    const activeSummary = document.createElement("summary");
+    activeSummary.setAttribute("data-testid", "table-active-plan-toggle");
+    activeSummary.textContent = activePlan.name || "(untitled plan)";
+    activeList.appendChild(activeSummary);
+
+    for (const sceneIdInPlan of activePlan.sceneIds) {
+      const s = sceneRecordCache.get(sceneIdInPlan) ?? allScenes.find((x) => x.id === sceneIdInPlan);
+      if (!s) continue; // a stale/removed scene id -- skip rather than render a broken entry
+      activeList.appendChild(buildPlanSceneItem(
+        "table-active-plan-scene-item",
+        s,
+        scene.id,
+        (id) => { location.hash = tableModeHashFor(id); },
+        activeList
+      ));
+    }
+    wrap.appendChild(activeList);
   }
-  fullList.appendChild(listBody);
-  wrap.appendChild(fullList);
+
+  const otherPlans = plans.filter((p) => !activePlan || p.id !== activePlan.id);
+  if (otherPlans.length) {
+    const otherPlansWrap = document.createElement("div");
+    otherPlansWrap.setAttribute("data-testid", "table-other-plans-list");
+
+    for (const p of otherPlans) {
+      const item = document.createElement("details");
+      item.setAttribute("data-testid", "table-other-plan-item");
+      item.setAttribute("data-plan-id", p.id);
+      item.open = false;
+
+      const itemSummary = document.createElement("summary");
+      itemSummary.setAttribute("data-testid", "table-other-plan-toggle");
+      itemSummary.textContent = p.name || "(untitled plan)";
+      item.appendChild(itemSummary);
+
+      for (const sceneIdInPlan of p.sceneIds) {
+        const s = sceneRecordCache.get(sceneIdInPlan) ?? allScenes.find((x) => x.id === sceneIdInPlan);
+        if (!s) continue;
+        item.appendChild(buildPlanSceneItem(
+          "table-other-plan-scene-item",
+          s,
+          scene.id,
+          (id) => {
+            saveActivePlanId(world, p.id);
+            location.hash = tableModeHashFor(id);
+          },
+          item
+        ));
+      }
+      otherPlansWrap.appendChild(item);
+    }
+    wrap.appendChild(otherPlansWrap);
+  }
 
   return wrap;
 }
@@ -2803,16 +2987,18 @@ async function loadAndRenderTableMode(sceneId, container, opts = {}) {
 
   const scene = (await spApi(`/api/session-planner/scenes/${encodeURIComponent(sceneId)}${spWithWorld()}`)).scene;
 
-  const [entityInfoMapRes, allScenesRes, linkedRes, bestiaryRes] = await Promise.all([
+  const [entityInfoMapRes, allScenesRes, linkedRes, bestiaryRes, plansRes] = await Promise.all([
     fetchEntityInfoMap(),
     spApi(`/api/scene-planning/scenes${spWithWorld()}`),
     spApi(`/api/scene-planning/linkage${spWithWorld({ sceneId })}`),
-    spApi("/api/combat-planning/bestiary")
+    spApi("/api/combat-planning/bestiary"),
+    spApi(`/api/scene-planning/plans${spWithWorld()}`)
   ]);
   entityInfoMapGlobal = entityInfoMapRes;
   const allScenes = allScenesRes.scenes ?? [];
   const linked = linkedRes.linked ?? [];
   const bestiaryEntries = bestiaryRes.entries ?? [];
+  const plans = plansRes.plans ?? [];
 
   sceneRecordCache.clear();
   for (const s of allScenes) sceneRecordCache.set(s.id, s);
@@ -2842,8 +3028,11 @@ async function loadAndRenderTableMode(sceneId, container, opts = {}) {
   });
   view.appendChild(backBtn);
 
+  // Phase 26 task 26.8, §26.D: which Plan is "active" for this render.
+  const activePlan = resolveActivePlan(world, sceneId, plans);
+
   view.appendChild(buildTableTopStrip(scene, extras));
-  view.appendChild(buildTableNavZone(scene, allScenes, linked));
+  view.appendChild(buildTableNavZone(scene, allScenes, linked, plans, activePlan));
 
   // Task 25.6: roster + notes/encounters share a column layout on wide
   // viewports (CSS grid, style.css), stacking on narrow ones -- neither
