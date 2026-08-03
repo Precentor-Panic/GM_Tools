@@ -24,6 +24,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
+import { listPlansForWorld, removeSceneFromPlan } from "./plans.mjs";
+import { getLinkedScenes, unlinkScenes } from "./scene-links.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "session-scenes");
@@ -155,6 +157,53 @@ export function renameScene(world, sceneId, name) {
 /** @returns {object[]}   every scene for `world`, in creation (append) order. [] if none. */
 export function listScenesForWorld(world) {
   return readScenes(world);
+}
+
+/**
+ * Phase 27 task 27.1, F1: a TRUE delete (Scenes tab), distinct from
+ * `removeSceneFromPlan` (a plan-scoped unlink). Removes the scene record
+ * itself, then cascades:
+ *   - every Plan membership (`listPlansForWorld` x `removeSceneFromPlan`,
+ *     session-planner/plans.mjs -- each plan that lists this sceneId gets it
+ *     stripped; plans that never had it are untouched, and other plans'
+ *     memberships of OTHER scenes are untouched);
+ *   - every scene-link (`getLinkedScenes` x `unlinkScenes`,
+ *     session-planner/scene-links.mjs -- every explicit link touching this
+ *     scene is removed).
+ * Deliberately does NOT touch the place (World Fabric) entity or any graph
+ * edge (Decision 2, design record) -- this module has zero Foundry-facing
+ * import (see this file's own header comment / scenes.test.mjs's assertion),
+ * and neither plans.mjs nor scene-links.mjs touch the graph either, so the
+ * place entity is untouched by construction, not by a special-cased skip.
+ *
+ * Idempotent: deleting an already-absent/unknown sceneId is a safe no-op on
+ * the scene record itself (matches this directory's removeSavedEncounter/
+ * unlinkScenes convention) -- the cascades run regardless but are themselves
+ * idempotent no-ops when there's nothing to strip, so a repeat call (or a
+ * call for a sceneId that was never a real scene) is harmless.
+ *
+ * @param {string} world
+ * @param {string} sceneId
+ * @returns {{deleted:boolean}}   `deleted` is true only if a scene record
+ *   with this id actually existed and was removed.
+ */
+export function deleteScene(world, sceneId) {
+  const scenes = readScenes(world);
+  const next = scenes.filter((s) => s.id !== sceneId);
+  const deleted = next.length !== scenes.length;
+  if (deleted) writeScenes(world, next);
+
+  for (const plan of listPlansForWorld(world)) {
+    if (plan.sceneIds.includes(sceneId)) {
+      removeSceneFromPlan(world, plan.id, sceneId);
+    }
+  }
+
+  for (const linked of getLinkedScenes(world, sceneId)) {
+    unlinkScenes(world, sceneId, linked.sceneId);
+  }
+
+  return { deleted };
 }
 
 export { ConcurrentWriteError };

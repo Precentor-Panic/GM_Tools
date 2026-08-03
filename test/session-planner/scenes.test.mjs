@@ -110,6 +110,10 @@ function test(name, fn) {
 const scratchDir = mkdtempSync(join(tmpdir(), "gm-tools-session-scenes-test-"));
 process.env.GM_TOOLS_REVIEW_STATE_DIR = join(scratchDir, "review-state");
 process.env.GM_TOOLS_SESSION_SCENES_DIR = join(scratchDir, "session-scenes");
+// Phase 27 task 27.1: deleteScene cascades into plans.mjs/scene-links.mjs --
+// isolate their own store roots too, same scratchDir, BEFORE any import.
+process.env.GM_TOOLS_PLANS_DIR = join(scratchDir, "session-plans");
+process.env.GM_TOOLS_SCENE_LINKS_DIR = join(scratchDir, "scene-links");
 
 // Snapshot the REPO's real default directory BEFORE importing/running
 // anything -- not a "must not exist" assertion (the corrected pattern from
@@ -123,8 +127,10 @@ const before = existsSync(REPO_DEFAULT_ROOT) ? new Set(readdirSync(REPO_DEFAULT_
 const WORLD = "session-planner-scenes-test-world";
 
 (async () => {
-  const { createScene, forkScene, getScene, listScenesForWorld, renameScene, sessionScenesRoot } =
+  const { createScene, forkScene, getScene, listScenesForWorld, renameScene, deleteScene, sessionScenesRoot } =
     await import("../../session-planner/scenes.mjs");
+  const { createPlan, getPlan, addSceneToPlan } = await import("../../session-planner/plans.mjs");
+  const { linkScenes, getLinkedScenes } = await import("../../session-planner/scene-links.mjs");
 
   test("directory isolation: sessionScenesRoot() honors GM_TOOLS_SESSION_SCENES_DIR, never the repo's real default", () => {
     assert.equal(sessionScenesRoot(), process.env.GM_TOOLS_SESSION_SCENES_DIR);
@@ -247,6 +253,68 @@ const WORLD = "session-planner-scenes-test-world";
     const child = forkScene(WORLD, parent.id, {}, { makeId: () => "scene-name-fork-child", now: "2026-07-22T22:25:00.000Z" });
     assert.equal(child.name, null, "a fork must not silently inherit the parent's bespoke name");
   });
+
+  // ------------------------------------------------- Phase 27 task 27.1 (F1)
+
+  test("deleteScene: removes the scene record itself (a true delete, distinct from removeSceneFromPlan)", () => {
+    const scene = createScene(WORLD, { locationEntityId: "place-delete-1" }, { makeId: () => "scene-delete-1" });
+    assert.ok(getScene(WORLD, "scene-delete-1"), "sanity: scene exists before delete");
+
+    const result = deleteScene(WORLD, "scene-delete-1");
+    assert.deepEqual(result, { deleted: true });
+    assert.throws(() => getScene(WORLD, "scene-delete-1"), /No scene found/);
+    assert.ok(!listScenesForWorld(WORLD).some((s) => s.id === "scene-delete-1"));
+  });
+
+  test("deleteScene: cascades -- strips every Plan membership of the deleted scene, leaves other plans'/scenes' memberships untouched", () => {
+    const world = "scenes-delete-cascade-plans-world";
+    const scene = createScene(world, { locationEntityId: "place-cascade-plan" }, { makeId: () => "scene-cascade-plan-1" });
+    const otherScene = createScene(world, { locationEntityId: "place-cascade-plan-2" }, { makeId: () => "scene-cascade-plan-2" });
+    const planA = createPlan(world, { name: "Plan A" }, { makeId: () => "plan-cascade-a" });
+    const planB = createPlan(world, { name: "Plan B" }, { makeId: () => "plan-cascade-b" });
+    addSceneToPlan(world, planA.id, scene.id);
+    addSceneToPlan(world, planA.id, otherScene.id);
+    addSceneToPlan(world, planB.id, scene.id);
+
+    deleteScene(world, scene.id);
+
+    assert.deepEqual(getPlan(world, planA.id).sceneIds, [otherScene.id], "planA keeps the OTHER scene, loses only the deleted one");
+    assert.deepEqual(getPlan(world, planB.id).sceneIds, [], "planB's only membership (the deleted scene) is gone");
+  });
+
+  test("deleteScene: cascades -- strips every scene-link touching the deleted scene, leaves links between OTHER scenes untouched", () => {
+    const world = "scenes-delete-cascade-links-world";
+    const scene = createScene(world, { locationEntityId: "place-cascade-link" }, { makeId: () => "scene-cascade-link-1" });
+    const linkedA = createScene(world, { locationEntityId: "place-cascade-link-2" }, { makeId: () => "scene-cascade-link-2" });
+    const linkedB = createScene(world, { locationEntityId: "place-cascade-link-3" }, { makeId: () => "scene-cascade-link-3" });
+    linkScenes(world, scene.id, linkedA.id, "adjacent");
+    linkScenes(world, scene.id, linkedB.id, "adjacent");
+    linkScenes(world, linkedA.id, linkedB.id, "unrelated to the deleted scene");
+
+    deleteScene(world, scene.id);
+
+    assert.deepEqual(getLinkedScenes(world, scene.id), [], "the deleted scene's own links are gone");
+    assert.deepEqual(getLinkedScenes(world, linkedA.id).map((l) => l.sceneId), [linkedB.id], "linkedA<->linkedB survives, only the link to the deleted scene is gone");
+    assert.deepEqual(getLinkedScenes(world, linkedB.id).map((l) => l.sceneId), [linkedA.id]);
+  });
+
+  test("deleteScene: idempotent -- deleting an unknown/already-deleted sceneId is a safe no-op, returns {deleted:false}, cascades run harmlessly", () => {
+    const result = deleteScene(WORLD, "scene-never-existed-delete");
+    assert.deepEqual(result, { deleted: false });
+
+    const scene = createScene(WORLD, {}, { makeId: () => "scene-double-delete" });
+    assert.deepEqual(deleteScene(WORLD, scene.id), { deleted: true });
+    assert.deepEqual(deleteScene(WORLD, scene.id), { deleted: false }, "a second delete of the same id must not throw");
+  });
+
+  // "deleteScene does NOT touch the place entity or any graph edge" (Decision
+  // 2) has no separate runtime test here: it's guaranteed structurally, not
+  // behaviorally -- this module (and its only cascade collaborators,
+  // plans.mjs/scene-links.mjs) import nothing graph/Foundry-facing at all
+  // (see the very next test), so there is no code path through which
+  // deleteScene COULD reach a place entity or graph edge. Confirmed by
+  // reading combat-planning/saved-encounter.mjs's sibling convention of the
+  // same reasoning, and re-verified directly against this file's imports.
 
   test("no Foundry-facing import anywhere in scenes.mjs -- a scene is explicitly NOT a World Fabric graph entity (design record §2.2)", async () => {
     const src = (await import("node:fs")).readFileSync(

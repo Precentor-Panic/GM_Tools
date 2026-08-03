@@ -142,7 +142,7 @@ import {
 // Phase 16 -- Session Planner engine (task 16.6). Thin wrappers only, same
 // convention as every other route in this file: resolveWorld/resolveDir()
 // with NO client-supplied dataDir override anywhere below.
-import { createScene, forkScene, getScene, listScenesForWorld, renameScene } from "../session-planner/scenes.mjs";
+import { createScene, forkScene, getScene, listScenesForWorld, renameScene, deleteScene } from "../session-planner/scenes.mjs";
 import { buildSessionBrief } from "../session-planner/brief.mjs";
 import { captureNote, runBatchIntake } from "../session-planner/session-notes.mjs";
 
@@ -1441,6 +1441,17 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world);
     const scene = renameScene(w, parts[3], body.name ?? null);
     return sendJson(res, 200, { scene });
+  }
+
+  // DELETE /api/session-planner/scenes/:sceneId   { world } (body or query, matching
+  // the sibling members/plan-membership DELETE convention) -- Phase 27 task 27.1, F1.
+  // A TRUE delete (scenes.mjs's deleteScene cascade) -- distinct from the plan-scoped
+  // DELETE /api/scene-planning/plans/:planId/scenes/:sceneId unlink-only route below.
+  if (method === "DELETE" && parts.length === 4 && parts[1] === "session-planner" && parts[2] === "scenes") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world ?? q.get("world"));
+    const result = deleteScene(w, parts[3]);
+    return sendJson(res, 200, result);
   }
 
   // GET /api/session-planner/brief?world=...&sceneId=...&corridorTolerance=...
