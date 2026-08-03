@@ -31,7 +31,7 @@ Opus orchestrates design + independent verification. Sonnet agents do the QE-fir
 
 Author contract-first Playwright e2e tests against the not-yet-built DOM/routes, **confirmed red** before any implementation. Update existing e2e files where the Phase-27 contract changes their assumptions. New/updated coverage:
 
-- **Scene delete** (F1): a delete affordance on a scene removes the scene record, its plan memberships, and its scene-links; the place entity survives. New file, e.g. `scene-delete.e2e.mjs`.
+- **Scene delete vs. remove-from-plan** (F1): from the **Scenes tab**, delete removes the scene record, all its plan memberships, and its scene-links (place entity survives — a true delete). From the **plan view**, remove only unlinks the scene from that plan (`removeSceneFromPlan`) — the scene still exists in the Scenes tab and any other plan. Assert both, distinctly. New file, e.g. `scene-delete.e2e.mjs` (touches `scenes-view.js` and the plan-first view).
 - **Plan-first navigation** (F3): opening an existing plan shows that plan's scenes; a new/empty plan renders a screen whose only construction action is "+Add scene"; adding scenes attaches them to the active plan. New file, e.g. `plan-first-navigation.e2e.mjs`. Reconcile with `session-planner-resume-persistence`, `session-planner-flush-on-navigate`, `scene-construction-chain-display` where the entry path changes.
 - **Plan-scoped link/unlink with graph push/break** (F4, F12): a scene shows the *other scenes in the active plan*, each with an explicit link/unlink toggle; link offers a graph push (`addEdgeOp`) and unlink offers a graph break (`deleteEdgeOp`) targeting the stored `graphEdgeId`. New file, e.g. `plan-scoped-scene-links.e2e.mjs`. Update `scene-links-roundtrip.e2e.mjs` and retire/replace the green auto-link assertions in `beyond-path-removed.e2e.mjs`/`add-scene-control.e2e.mjs` where they assert the old `buildConnectExistingSceneZone` behavior.
 - **Encounter-link picker** (F11): add-encounter offers a picker over the world's saved encounters (`GET /api/scene-planning/encounters?world=`) plus an "open builder" button; picking one **attaches the same shared definition** (via `.../encounters/:encounterId/attach`) so it appears in both the origin and current scene's roster — assert the shared-reference behavior, not a copy; roster remove **detaches** without deleting the definition. New file, e.g. `encounter-link-picker.e2e.mjs`.
@@ -103,11 +103,14 @@ Add an "only undeveloped nodes" option (checkbox/toggle) to the develop-scene co
 
 **Acceptance:** 27.0's develop-only-undeveloped e2e green — with the option set, the develop call fires with only the flagged member ids; default (unset) behavior unchanged.
 
-### 27.8 — scene delete button (F1 UI) — Sonnet (depends on 27.1)
+### 27.8 — scene delete (Scenes tab) vs. remove-from-plan (plan view) (F1 UI) — Sonnet (depends on 27.1, 27.4)
 
-Add a delete affordance to each scene (in `buildChainItem`/`buildSceneBodyInto`), behind a confirm, calling `DELETE /api/session-planner/scenes/:sceneId` (27.1) and removing the scene from the view (and from the active plan's rendered list). Handle deleting the currently-viewed scene gracefully (fall back to the plan's remaining scenes or the empty-plan +Add scene screen).
+**Two distinct affordances, per the project owner (this session): the Scenes tab lists all scenes and is where a scene is truly deleted; removing a scene from a plan only unlinks it.** Same shared-thing logic as encounters — a scene lives in many plans (§26.D), so plan removal is a detach, not a destroy.
 
-**Acceptance:** 27.0's scene-delete e2e green — delete removes the scene from the view and the record; no dead-end when the current scene is deleted.
+- **Hard delete — in the Scenes tab** (`review-ui/public/scenes-view.js`, `renderSceneListItem` ~190, alongside `scene-list-item-open`/`-linked-toggle`): a delete affordance (e.g. `scene-list-item-delete`), behind a confirm, calling `DELETE /api/session-planner/scenes/:sceneId` (27.1's `deleteScene` cascade — removes the scene record + all its plan memberships + its scene-links; place entity preserved) and removing the row from the list.
+- **Remove-from-plan — in the plan-first construction view** (`session-planner-view.js`, per-scene, from 27.4's restructure): a "remove from plan" action that **unlinks only** via the existing `DELETE /api/scene-planning/plans/:planId/scenes/:sceneId` route (`removeSceneFromPlan`, `plans.mjs` — zero new backend). The scene definition and its memberships in *other* plans are untouched; it remains in the Scenes tab. Handle removing the currently-viewed scene gracefully (fall back to the plan's remaining scenes, or the empty-plan +Add scene screen).
+
+**Acceptance:** 27.0's scene-delete e2e green for both paths — Scenes-tab delete removes the scene record entirely (gone from the tab and from every plan; place entity survives); plan-view remove unlinks only (scene still exists, still in the Scenes tab and any other plan it belonged to); no dead-end when the current scene is removed from the active plan.
 
 ### 27.9 — new-location default-naming fix (F2) + add-event textarea CSS (F10) — Haiku (mechanical; folds into a sonnet pass if coordination outweighs)
 
@@ -136,7 +139,7 @@ Author `.claude/skills/gm-tools-frontend/SKILL.md`: mine `frontend-design`'s two
 | 27.5 plan-scoped link/unlink + graph push/break (F4, F12) | `session-planner-view.js` | Sonnet | 27.3, 27.4 |
 | 27.6 add-encounter picker + open-builder (F11 ui) | `session-planner-view.js` | Sonnet | 27.2, (27.4) |
 | 27.7 develop-only-undeveloped (F9) | `session-planner-view.js` | Sonnet | 27.0, (27.4) |
-| 27.8 scene delete button (F1 ui) | `session-planner-view.js` | Sonnet | 27.1, 27.4 |
+| 27.8 Scenes-tab delete + plan-view remove-from-plan (F1 ui) | `scenes-view.js`, `session-planner-view.js` | Sonnet | 27.1, 27.4 |
 | 27.9 naming fix (F2) + add-event CSS (F10) | `session-planner-view.js`, `style.css` | Haiku* | 27.4 (coordinate objectiveNote site) |
 | 27.10 `gm-tools-frontend` skill (+ optional WCAG) | `.claude/skills/`, review-ui | Sonnet | — |
 
