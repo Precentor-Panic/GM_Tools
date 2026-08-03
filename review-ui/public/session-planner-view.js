@@ -2543,65 +2543,79 @@ function buildTableRosterDetail(entityId, info) {
   // `info.tags` data fetch is completely UNTOUCHED (still fetched, just not
   // rendered here) -- this is a display change, not a data-removal.
 
-  detail.appendChild(buildPlayerKnownGate(entityId, info));
+  detail.appendChild(buildFoundryPushControl(entityId));
 
   return detail;
 }
 
 /**
- * The harder, more deliberate playerKnown gate (design record §3/§5): a
- * plain expand tap is NOT enough. Clicking the gate button reveals a
- * confirm/cancel panel -- the real value is only ever built and inserted
- * into the DOM on an explicit CONFIRM click, never on the gate click alone,
- * and cancelling leaves zero table-roster-playerknown-value elements
- * anywhere in the document (verified by real DOM-presence checks in this
- * suite, never CSS visibility).
+ * Phase 26 task 26.10, §26.F: "Drop this into Foundry" -- replaces the old
+ * buildPlayerKnownGate (a pure read-only status display with no real action
+ * behind it) with a genuine action: pushing this entity's own description
+ * text into live Foundry chat. Gated behind the SAME kind of deliberate
+ * confirm step the old gate used (a plain expand tap is NOT enough), but
+ * for a real action this time -- confirming calls the real
+ * POST /api/entities/:entityId/foundry-push route (genuinely slow/external:
+ * headless Chromium login + ChatMessage.create, per gm-say.mjs), shown with
+ * this app's established still-working-indicator loading affordance.
  */
-function buildPlayerKnownGate(entityId, info) {
+function buildFoundryPushControl(entityId) {
   const wrap = document.createElement("div");
-  wrap.className = "table-roster-playerknown-wrap";
+  wrap.className = "table-roster-foundry-push-wrap";
 
-  const gateBtn = document.createElement("button");
-  gateBtn.type = "button";
-  gateBtn.className = "btn";
-  gateBtn.setAttribute("data-testid", "table-roster-playerknown-gate-btn");
-  gateBtn.setAttribute("data-entity-id", entityId);
-  gateBtn.textContent = "Reveal player-known status…";
+  const pushBtn = document.createElement("button");
+  pushBtn.type = "button";
+  pushBtn.className = "btn";
+  pushBtn.setAttribute("data-testid", "table-roster-foundry-push-btn");
+  pushBtn.setAttribute("data-entity-id", entityId);
+  pushBtn.textContent = "Drop this into Foundry…";
+
+  const status = document.createElement("div");
+  status.className = "hint";
+  status.setAttribute("data-testid", "table-roster-foundry-push-status");
+  status.setAttribute("data-entity-id", entityId);
 
   let confirmPanel = null;
 
-  gateBtn.addEventListener("click", () => {
+  pushBtn.addEventListener("click", () => {
     if (confirmPanel) return; // already open -- a second click is a no-op, not a second panel
     confirmPanel = document.createElement("div");
-    confirmPanel.className = "table-roster-playerknown-confirm-panel";
-    confirmPanel.setAttribute("data-testid", "table-roster-playerknown-confirm-panel");
+    confirmPanel.className = "table-roster-foundry-push-confirm-panel";
+    confirmPanel.setAttribute("data-testid", "table-roster-foundry-push-confirm-panel");
 
     const warning = document.createElement("p");
     warning.className = "hint";
-    warning.textContent = "This reveals GM-only info about what the players actually know — are you sure?";
+    warning.textContent = "This posts this entity's description into live Foundry chat, visible to anyone connected — are you sure?";
     confirmPanel.appendChild(warning);
 
     const confirmBtn = document.createElement("button");
     confirmBtn.type = "button";
     confirmBtn.className = "btn btn--accept";
-    confirmBtn.setAttribute("data-testid", "table-roster-playerknown-confirm-btn");
-    confirmBtn.textContent = "Yes, show it";
+    confirmBtn.setAttribute("data-testid", "table-roster-foundry-push-confirm-btn");
+    confirmBtn.textContent = "Yes, post it";
 
     const cancelBtn = document.createElement("button");
     cancelBtn.type = "button";
     cancelBtn.className = "btn";
-    cancelBtn.setAttribute("data-testid", "table-roster-playerknown-cancel-btn");
+    cancelBtn.setAttribute("data-testid", "table-roster-foundry-push-cancel-btn");
     cancelBtn.textContent = "Cancel";
 
-    confirmBtn.addEventListener("click", () => {
-      const valueEl = document.createElement("span");
-      valueEl.className = "table-roster-playerknown-value";
-      valueEl.setAttribute("data-testid", "table-roster-playerknown-value");
-      const val = info?.playerKnown === true;
-      valueEl.setAttribute("data-player-known", val ? "true" : "false");
-      valueEl.textContent = val ? "Players already know about this." : "Players do NOT know about this yet.";
-      confirmPanel.replaceWith(valueEl);
-      confirmPanel = null;
+    confirmBtn.addEventListener("click", async () => {
+      confirmBtn.disabled = true;
+      const promise = spApi(`/api/entities/${encodeURIComponent(entityId)}/foundry-push`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      });
+      try {
+        await withSlowNoticeIndicator(status, promise);
+        status.textContent = "Posted to Foundry chat.";
+      } catch (err) {
+        status.textContent = `Could not post to Foundry: ${err.message}`;
+      } finally {
+        confirmPanel.remove();
+        confirmPanel = null;
+      }
     });
 
     cancelBtn.addEventListener("click", () => {
@@ -2613,7 +2627,7 @@ function buildPlayerKnownGate(entityId, info) {
     wrap.appendChild(confirmPanel);
   });
 
-  wrap.appendChild(gateBtn);
+  wrap.append(pushBtn, status);
   return wrap;
 }
 

@@ -201,6 +201,12 @@ import { linkScenes, unlinkScenes, getLinkedScenes } from "../session-planner/sc
 // a Plan's scenes' notes then delegates straight to the EXISTING,
 // completely unmodified importWriteup -- no logic duplicated here.
 import { proposeUpdatesForPlan } from "../session-planner/plan-updates.mjs";
+
+// Phase 26 task 26.10, §26.F -- "Drop this into Foundry". Lives directly
+// under review-ui/ (not wf-mcp-server/lib/) -- see foundry-push.mjs's own
+// header for why (playwright's runtime dependency only resolves from
+// review-ui's own node_modules).
+import { pushEntityToFoundry } from "./foundry-push.mjs";
 import { developScene } from "../mutation-engine/scene-develop.mjs";
 import { quickGenerate } from "../mutation-engine/quick-gen.mjs";
 
@@ -1003,6 +1009,19 @@ async function handleApi(req, res, url, parts) {
     const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await narrateEntityStandaloneOp(dir, w, { entityId: parts[2], note: body.note });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/entities/:entityId/foundry-push  { world }
+  // Phase 26 task 26.10, §26.F -- "Drop this into Foundry" (replaces
+  // buildPlayerKnownGate). Genuinely slow/external (headless Chromium login
+  // + ChatMessage.create) -- world is resolved/validated FIRST, before any
+  // of that runs.
+  if (method === "POST" && parts.length === 4 && parts[1] === "entities" && parts[3] === "foundry-push") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const result = await pushEntityToFoundry(dir, w, parts[2]);
     return sendJson(res, 200, result);
   }
 

@@ -3,13 +3,13 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
-  "description": "Phase 6 dedicated web review UI: a small node:http server (server.mjs) over mutation-engine/time-skip's existing library modules (via wf-mcp-server/lib/mutation-ops.mjs, shared verbatim with the MCP server), plus a vanilla HTML/CSS/JS frontend (public/) -- no framework, no build step, matching this project's established convention. No RUNTIME dependencies of its own: every import in server.mjs is a Node built-in or a relative path into mutation-engine/, time-skip/, or wf-mcp-server/lib/, whose own transitive deps (zod, @anthropic-ai/sdk) resolve from GM_Tools/'s root node_modules via Node's normal upward node_modules search. Phase 15 added ONE real devDependency (see devDependencies below) -- Playwright, for a committed real-browser regression suite. It is dev/test-only: never imported by server.mjs or any runtime code path, only by test/e2e/*.e2e.mjs, run via `npm run test:e2e` (kept deliberately separate from the fast, deterministic `npm test` route suite -- e2e tests are slower and spin up a real headless browser).",
+  "description": "Phase 6 dedicated web review UI: a small node:http server (server.mjs) over mutation-engine/time-skip's existing library modules (via wf-mcp-server/lib/mutation-ops.mjs, shared verbatim with the MCP server), plus a vanilla HTML/CSS/JS frontend (public/) -- no framework, no build step, matching this project's established convention. Phase 15 added Playwright as a devDependency (a committed real-browser regression suite, dev/test-only, run via `npm run test:e2e`). Phase 26 task 26.10 PROMOTES it to a real runtime dependency (see dependencies below) -- deliberately, flagged explicitly (not slid in silently): wf-mcp-server/lib/foundry-push.mjs's real POST /api/entities/:entityId/foundry-push route now launches real headless Chromium at runtime (mirroring foundry_worldFabric/gm/gm-say.mjs's own login + ChatMessage.create pattern, §26.F) to push an entity's description into live Foundry chat -- the first genuine runtime (not just test-time) use of Playwright in this package.",
   "scripts": {
     "start": "node --env-file-if-exists=../.env server.mjs",
     "test": "node --test test/*.test.mjs",
     "test:e2e": "node --test test/e2e/*.e2e.mjs"
   },
-  "devDependencies": {
+  "dependencies": {
     "playwright": "^1.62.0"
   }
 }
