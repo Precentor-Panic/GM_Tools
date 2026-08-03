@@ -34,7 +34,7 @@ Author contract-first Playwright e2e tests against the not-yet-built DOM/routes,
 - **Scene delete** (F1): a delete affordance on a scene removes the scene record, its plan memberships, and its scene-links; the place entity survives. New file, e.g. `scene-delete.e2e.mjs`.
 - **Plan-first navigation** (F3): opening an existing plan shows that plan's scenes; a new/empty plan renders a screen whose only construction action is "+Add scene"; adding scenes attaches them to the active plan. New file, e.g. `plan-first-navigation.e2e.mjs`. Reconcile with `session-planner-resume-persistence`, `session-planner-flush-on-navigate`, `scene-construction-chain-display` where the entry path changes.
 - **Plan-scoped link/unlink with graph push/break** (F4, F12): a scene shows the *other scenes in the active plan*, each with an explicit link/unlink toggle; link offers a graph push (`addEdgeOp`) and unlink offers a graph break (`deleteEdgeOp`) targeting the stored `graphEdgeId`. New file, e.g. `plan-scoped-scene-links.e2e.mjs`. Update `scene-links-roundtrip.e2e.mjs` and retire/replace the green auto-link assertions in `beyond-path-removed.e2e.mjs`/`add-scene-control.e2e.mjs` where they assert the old `buildConnectExistingSceneZone` behavior.
-- **Encounter-link picker** (F11): add-encounter offers a picker over the world's saved encounters (`GET /api/scene-planning/encounters?world=`) plus an "open builder" button. New file, e.g. `encounter-link-picker.e2e.mjs`.
+- **Encounter-link picker** (F11): add-encounter offers a picker over the world's saved encounters (`GET /api/scene-planning/encounters?world=`) plus an "open builder" button; picking one **attaches the same shared definition** (via `.../encounters/:encounterId/attach`) so it appears in both the origin and current scene's roster — assert the shared-reference behavior, not a copy; roster remove **detaches** without deleting the definition. New file, e.g. `encounter-link-picker.e2e.mjs`.
 - **Develop-only-undeveloped** (F9): develop-scene exposes an "only undeveloped nodes" option that filters the member set client-side by `contentFlag.flagged` before the existing develop call. Extend `scene-construction-develop.e2e.mjs` or a new sibling.
 - **Naming fix** (F2): a newly-created scene with no bespoke name shows the *place name*, never LLM-generated text. New/updated assertion (touches `scene-construction-quick-gen.e2e.mjs`).
 - **+Scene at plan level, quick-add removed** (F5, F6): assert `quick-add-scene-*` testids are gone and the per-scene actions bar is `add-node / develop-scene / add-event / add-encounter` (no add-scene at per-scene level once it moves to plan level).
@@ -47,11 +47,21 @@ Author contract-first Playwright e2e tests against the not-yet-built DOM/routes,
 
 **Acceptance:** unit test for the cascade (scene gone, plan memberships gone, scene-links gone, place entity untouched) before done, per gm-tools-conventions; DELETE route wired; 27.0's scene-delete e2e green.
 
-### 27.2 — `listEncountersForWorld` + GET route (F11 backend) — Haiku (fully specified; folds into a sonnet pass if coordination outweighs)
+### 27.2 — encounters become **shared, multi-scene definitions** + `listEncountersForWorld` + routes (F11 backend) — Sonnet
 
-`export function listEncountersForWorld(world) { return readEncounters(world); }` in `combat-planning/saved-encounter.mjs` (one line over the existing private `readEncounters`). Add `GET /api/scene-planning/encounters?world=` (3-part path, distinct from the existing 5-part scene-scoped `/scenes/:sceneId/encounters`). Thin wrapper.
+**Data-model decision (project owner, this session): a saved encounter is a shared reference, not a per-scene copy.** Picking an already-built encounter for another scene must attach the *same definition*, not mint a duplicate snapshot. This makes the scene↔encounter relation many-to-many, mirroring Phase 26's plan↔scene precedent (`plans.mjs` stores `sceneIds[]`).
 
-**Acceptance:** route returns all saved encounters for the world; a small unit/route test; feeds 27.6's picker.
+In `combat-planning/saved-encounter.mjs`:
+- **Encounter record gains `sceneIds: []`** in place of the single `sceneId`. Add/export a `SCHEMA_VERSION` and **normalize legacy records on read** (a record with the old `sceneId` reads as `sceneIds: [sceneId]`) — no hard migration, per the project's schema-versioning discipline. `saveEncounter(world, sceneId, {...})` keeps its signature and creates with `sceneIds: [sceneId]` (the origin scene).
+- **`listEncountersForScene(world, sceneId)`** → filter by membership (`(e.sceneIds ?? [e.sceneId]).includes(sceneId)`).
+- **New ops:** `attachEncounterToScene(world, encounterId, sceneId)` (idempotent add to `sceneIds`) and `detachEncounterFromScene(world, encounterId, sceneId)` (idempotent remove). `export function listEncountersForWorld(world)` returns every definition once (each record appears a single time regardless of how many scenes reference it — clean for the picker, no dedup needed).
+
+Routes (`review-ui/server.mjs`, thin wrappers only):
+- `GET /api/scene-planning/encounters?world=` — the world picker feed (3-part path, distinct from the 5-part scene-scoped one).
+- `POST /api/scene-planning/scenes/:sceneId/encounters/:encounterId/attach` — attach an existing definition to this scene.
+- Redefine the existing `DELETE /api/scene-planning/scenes/:sceneId/encounters/:encounterId` as **detach-from-this-scene** (remove the membership), NOT delete-the-definition. **Default orphan semantics (settable):** when a detach empties `sceneIds`, keep the record as an unplaced library entry still reachable via the world picker for re-attach; a *separate* explicit delete-definition affordance (out of scope here unless trivial) would be the only thing that removes it everywhere.
+
+**Acceptance:** unit tests cover — legacy `sceneId` normalizes to `sceneIds`; attach is idempotent and makes the same definition appear in two scenes' `listEncountersForScene`; detach removes it from one scene without affecting the other or duplicating; `listEncountersForWorld` returns each definition once. Existing saved-encounter tests still green (additive; legacy shape still reads). Feeds 27.6's picker.
 
 ### 27.3 — scene-link record gains optional `graphEdgeId` (F12 backend) — Sonnet
 
@@ -83,9 +93,9 @@ Replace `buildConnectExistingSceneZone`'s (713) green auto-surfaced hop/scene-li
 
 ### 27.6 — add-encounter → saved-encounter picker + open-builder button (F11 UI) — Sonnet (depends on 27.2)
 
-Rework `mountAddEncounterControl` (1174) — currently a straight navigate to the builder — into a control offering (a) a **picker over the world's saved encounters** (`GET /api/scene-planning/encounters?world=`, 27.2) that associates the chosen encounter with this scene (reuse the existing `POST /api/scene-planning/scenes/:sceneId/encounters` save path so it appears in `renderSavedEncountersList`), and (b) an **"open Encounter Builder" button** preserving the current navigate-to-builder behavior. Reuse `buildEntityPicker`'s established picker pattern where it fits.
+Rework `mountAddEncounterControl` (1174) — currently a straight navigate to the builder — into a control offering (a) a **picker over the world's saved encounters** (`GET /api/scene-planning/encounters?world=`, 27.2) that **attaches the chosen definition to this scene** via `POST /scenes/:sceneId/encounters/:encounterId/attach` (27.2 — a shared reference, NOT a re-saved copy) so it appears in `renderSavedEncountersList`, and (b) an **"open Encounter Builder" button** preserving the current navigate-to-builder behavior. Reuse `buildEntityPicker`'s established picker pattern where it fits. The roster's per-encounter remove button now **detaches** (DELETE = detach-from-scene, per 27.2), leaving the definition intact for other scenes.
 
-**Acceptance:** 27.0's encounter-link-picker e2e green — picker lists world encounters, selecting one attaches it to the scene, open-builder button still navigates.
+**Acceptance:** 27.0's encounter-link-picker e2e green — picker lists world encounters, selecting one attaches the *same* definition to the scene (verifiable: it now appears in both the origin scene's and this scene's roster), open-builder button still navigates, roster remove detaches without deleting the shared definition.
 
 ### 27.7 — develop-scene "only undeveloped nodes" option (F9) — Sonnet
 
@@ -120,7 +130,7 @@ Author `.claude/skills/gm-tools-frontend/SKILL.md`: mine `frontend-design`'s two
 |---|---|---|---|
 | 27.0 QE e2e contract | new/updated `*.e2e.mjs` | Sonnet | — |
 | 27.1 `deleteScene` + cascade + DELETE route (F1) | `scenes.mjs`, `server.mjs` | Sonnet | 27.0 |
-| 27.2 `listEncountersForWorld` + GET route (F11 be) | `saved-encounter.mjs`, `server.mjs` | Haiku* | 27.0 |
+| 27.2 encounters → shared multi-scene defs + `listEncountersForWorld` + attach/detach routes (F11 be) | `saved-encounter.mjs`, `server.mjs` | Sonnet | 27.0 |
 | 27.3 scene-link `graphEdgeId` (F12 be) | `scene-links.mjs`, `server.mjs` | Sonnet | 27.0 |
 | 27.4 **Plan-first shell restructure** (F3, F5, F6) | `session-planner-view.js` | **Opus** | 27.0 |
 | 27.5 plan-scoped link/unlink + graph push/break (F4, F12) | `session-planner-view.js` | Sonnet | 27.3, 27.4 |
@@ -130,6 +140,6 @@ Author `.claude/skills/gm-tools-frontend/SKILL.md`: mine `frontend-design`'s two
 | 27.9 naming fix (F2) + add-event CSS (F10) | `session-planner-view.js`, `style.css` | Haiku* | 27.4 (coordinate objectiveNote site) |
 | 27.10 `gm-tools-frontend` skill (+ optional WCAG) | `.claude/skills/`, review-ui | Sonnet | — |
 
-*Haiku flagged, not mandated — 27.2/27.9 touch the QE contract and need verification; if splitting adds more coordination than it saves, fold into a sonnet pass.
+*Haiku flagged, not mandated — 27.9 is mechanical but still touches the QE contract and needs verification; if splitting adds more coordination than it saves, fold into a sonnet pass. (27.2 was re-tiered Haiku→Sonnet once the shared-reference data-model decision turned it from a one-liner into a real schema change.)
 
 **Kept, unchanged (Russell liked these — do not regress):** add-node (F8), undo-last + reset-scene rollback panel (F7), dynamic new-location creation with default no-graph-push hop workflow (F13).
