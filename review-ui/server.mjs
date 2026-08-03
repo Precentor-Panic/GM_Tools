@@ -195,6 +195,12 @@ import { createPlan, getPlan, listPlansForWorld, addSceneToPlan, removeSceneFrom
 // the graph snapshot at all -- deliberately, per §26.C's "dedicated store,
 // not graph entities" decision).
 import { linkScenes, unlinkScenes, getLinkedScenes } from "../session-planner/scene-links.mjs";
+
+// Phase 26 task 26.9, §26.E -- post-session graph update. Thin composition
+// only: proposeUpdatesForPlan (session-planner/plan-updates.mjs) assembles
+// a Plan's scenes' notes then delegates straight to the EXISTING,
+// completely unmodified importWriteup -- no logic duplicated here.
+import { proposeUpdatesForPlan } from "../session-planner/plan-updates.mjs";
 import { developScene } from "../mutation-engine/scene-develop.mjs";
 import { quickGenerate } from "../mutation-engine/quick-gen.mjs";
 
@@ -1903,6 +1909,30 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     const result = unlinkScenes(w, body.sceneIdA, body.sceneIdB);
+    return sendJson(res, 200, result);
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 26 task 26.9, §26.E -- post-session graph update from a Plan's
+  // scenes' notes. A thin composition route: assemble writeup-shaped text
+  // (session-planner/plan-updates.mjs), then delegate straight to the
+  // EXISTING importWriteup() -- the exact same LLM-extraction -> dry-run
+  // merge -> review-state-batch pipeline POST /api/writeup-propose already
+  // uses, never duplicated. `llmOpts` forwards straight through (the same
+  // dependency-injection seam proposeWfiFromWriteup's own tests use).
+  // ---------------------------------------------------------------------
+
+  // POST /api/scene-planning/plans/:planId/propose-updates   { world }
+  // NOTE: `llmOpts.client` injection is NOT threaded through this HTTP route
+  // (same established limitation as /api/writeup-propose, per rubber-duck-
+  // routes.test.mjs's own documented reasoning -- a live function reference
+  // cannot survive a real HTTP JSON round trip). Tests wanting a genuinely
+  // working injected client call proposeUpdatesForPlan directly, in-process.
+  if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "plans" && parts[4] === "propose-updates") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const result = await proposeUpdatesForPlan(dir, w, parts[3]);
     return sendJson(res, 200, result);
   }
 

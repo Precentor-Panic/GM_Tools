@@ -2419,6 +2419,43 @@ function buildTableNavZone(scene, allScenes, linked, plans, activePlan) {
       ));
     }
     wrap.appendChild(activeList);
+
+    // Phase 26 task 26.9, §26.E -- "Propose graph updates from this plan's
+    // notes." Lives here (the one place in this phase's UI a "current Plan"
+    // is already a first-class concept). Calls the real POST /api/scene-
+    // planning/plans/:planId/propose-updates route, then navigates to the
+    // produced batch's Batch Review screen -- the EXISTING, unmodified
+    // review surface, never a second/parallel one.
+    const proposeBtn = document.createElement("button");
+    proposeBtn.type = "button";
+    proposeBtn.className = "btn";
+    proposeBtn.setAttribute("data-testid", "propose-graph-updates-btn");
+    proposeBtn.setAttribute("data-plan-id", activePlan.id);
+    proposeBtn.textContent = "Propose graph updates from this plan's notes";
+
+    const proposeStatus = document.createElement("div");
+    proposeStatus.className = "hint";
+    proposeStatus.setAttribute("data-testid", "propose-graph-updates-status");
+    proposeStatus.setAttribute("data-plan-id", activePlan.id);
+
+    proposeBtn.addEventListener("click", async () => {
+      proposeBtn.disabled = true;
+      const promise = spApi(`/api/scene-planning/plans/${encodeURIComponent(activePlan.id)}/propose-updates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world })
+      });
+      try {
+        const result = await withSlowNoticeIndicator(proposeStatus, promise);
+        proposeStatus.textContent = result.headline ?? "Proposed graph updates.";
+        location.hash = `review/${result.batchId}`;
+      } catch (err) {
+        proposeStatus.textContent = `Could not propose updates: ${err.message}`;
+        proposeBtn.disabled = false;
+      }
+    });
+
+    wrap.append(proposeBtn, proposeStatus);
   }
 
   const otherPlans = plans.filter((p) => !activePlan || p.id !== activePlan.id);
