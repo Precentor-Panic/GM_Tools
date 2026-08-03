@@ -229,6 +229,20 @@ function renderSceneListItem(scene, entityInfoMap) {
   linkedToggle.textContent = "Linked scenes";
   actions.appendChild(linkedToggle);
 
+  // Phase 27 task 27.8, F1: a TRUE delete -- the scene record, every plan
+  // membership, and every scene-link are gone; the place entity survives
+  // (session-planner/scenes.mjs's deleteScene cascade, 27.1). Distinct from
+  // the plan-first view's own "remove from plan" (unlink-only, below in
+  // session-planner-view.js) -- this is the Scenes tab's own affordance,
+  // where a scene is genuinely deleted, not just unlinked from one plan.
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "btn btn--ghost";
+  deleteBtn.setAttribute("data-testid", "scene-list-item-delete");
+  deleteBtn.setAttribute("data-scene-id", scene.id);
+  deleteBtn.textContent = "Delete";
+  actions.appendChild(deleteBtn);
+
   li.appendChild(actions);
 
   const panelSlot = document.createElement("div");
@@ -236,6 +250,58 @@ function renderSceneListItem(scene, entityInfoMap) {
   li.appendChild(panelSlot);
 
   linkedToggle.addEventListener("click", () => toggleLinkedPanel(scene.id, panelSlot));
+
+  let confirmPanel = null;
+  deleteBtn.addEventListener("click", () => {
+    if (confirmPanel) return; // already open -- a second click is a no-op, not a second panel
+    confirmPanel = document.createElement("div");
+    confirmPanel.className = "scene-list-item-delete-confirm-panel";
+    confirmPanel.setAttribute("data-testid", "scene-list-item-delete-confirm-panel");
+    confirmPanel.setAttribute("data-scene-id", scene.id);
+
+    const warning = document.createElement("p");
+    warning.className = "hint";
+    warning.textContent = "Delete this scene entirely? It will be removed from every plan and every scene-link -- the underlying location survives, but this scene itself is gone for good.";
+    confirmPanel.appendChild(warning);
+
+    const status = document.createElement("span");
+    status.className = "hint";
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "btn btn--accept";
+    confirmBtn.setAttribute("data-testid", "scene-list-item-delete-confirm-btn");
+    confirmBtn.textContent = "Yes, delete";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "btn";
+    cancelBtn.setAttribute("data-testid", "scene-list-item-delete-cancel-btn");
+    cancelBtn.textContent = "Cancel";
+
+    confirmBtn.addEventListener("click", async () => {
+      confirmBtn.disabled = true;
+      try {
+        await svApi(`/api/session-planner/scenes/${encodeURIComponent(scene.id)}`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: currentWorld() })
+        });
+        li.remove();
+      } catch (err) {
+        status.textContent = `Could not delete: ${err.message}`;
+        confirmBtn.disabled = false;
+      }
+    });
+
+    cancelBtn.addEventListener("click", () => {
+      confirmPanel.remove();
+      confirmPanel = null;
+    });
+
+    confirmPanel.append(confirmBtn, cancelBtn, status);
+    li.appendChild(confirmPanel);
+  });
 
   return li;
 }

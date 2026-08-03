@@ -2193,6 +2193,45 @@ function buildChainItem(sceneId, isCurrent) {
 
   details.appendChild(buildSceneRenameControl(sceneId, () => { summary.textContent = resolveSceneDisplayName(sceneRecordCache.get(sceneId)); }));
 
+  // Phase 27 task 27.8, F1: "remove from plan" -- unlinks ONLY, via the
+  // EXISTING (Phase 26, zero new backend) DELETE /api/scene-planning/plans/
+  // :planId/scenes/:sceneId route (removeSceneFromPlan). The scene record,
+  // its memberships in OTHER plans, and its scene-links are all untouched --
+  // distinct from the Scenes tab's own TRUE delete (scenes-view.js). Only
+  // rendered when an active Plan is actually driving this view (the legacy,
+  // no-active-plan fallback has no plan to remove a scene FROM).
+  if (activePlanIdModule) {
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "btn btn--ghost";
+    removeBtn.setAttribute("data-testid", "plan-scene-remove-btn");
+    removeBtn.setAttribute("data-scene-id", sceneId);
+    removeBtn.textContent = "Remove from plan";
+    removeBtn.addEventListener("click", async (evt) => {
+      evt.stopPropagation();
+      removeBtn.disabled = true;
+      const planId = activePlanIdModule;
+      try {
+        await spApi(`/api/scene-planning/plans/${encodeURIComponent(planId)}/scenes/${encodeURIComponent(sceneId)}`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: currentWorld() })
+        });
+        // Removing the CURRENTLY-VIEWED scene must not dead-end.
+        // loadAndRenderPlan's own currentSceneIdOverride logic already falls
+        // back to the plan's own remaining last scene (or plan-empty-state,
+        // when none remain) whenever the passed override isn't a member any
+        // more -- passing currentSceneIdModule unconditionally (whether or
+        // not it's the scene just removed) is enough either way.
+        await rerenderActivePlan(currentSceneIdModule);
+      } catch (err) {
+        removeBtn.disabled = false;
+        removeBtn.textContent = `Could not remove: ${err.message}`;
+      }
+    });
+    details.appendChild(removeBtn);
+  }
+
   const body = document.createElement("div");
   body.className = "scene-chain-item-body";
   details.appendChild(body);
