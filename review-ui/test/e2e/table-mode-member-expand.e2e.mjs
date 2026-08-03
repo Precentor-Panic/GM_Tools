@@ -9,6 +9,17 @@
 // `table-roster-row`/`table-roster-detail` exists yet. That failure is the
 // deliverable of this task, not a bug in this file.
 //
+// ***UPDATED by Phase 26 task 26.11*** (plans/phase-26-tasks.md §26.G):
+// "expanding a row reveals THAT entity's own description/summary/image/
+// tags" is now WRONG for the `tags` half specifically -- §26.G deliberately
+// removes tags rendering from buildTableRosterDetail entirely (the project
+// owner's own assessment: "the tags are relatively meaningless... I'm going
+// to let an LLM deal with the tags"). The tag-count assertion below is
+// removed as stale, not left silently contradictory -- description/
+// summary/image assertions are UNCHANGED and still the crux of what this
+// test verifies. See table-roster-tags-absent.e2e.mjs for the real
+// DOM-absence contract task 26.11 is verified against.
+//
 // FIXTURE: one anchor entity connected to TWO satellites (both real,
 // 1-hop, within brief.mjs's DEFAULT_CORRIDOR_TOLERANCE=2), giving 3 real
 // roster rows -- the minimum needed to prove "open 3+ simultaneously, all
@@ -136,9 +147,10 @@ test("expanding a row reveals THAT entity's own description/summary/image/tags -
   assert.match((await detail.locator('[data-testid="table-roster-detail-summary"]').textContent()) ?? "", /Satellite one summary/);
   const imgSrc = await detail.locator('[data-testid="table-roster-detail-image"]').getAttribute("src");
   assert.equal(imgSrc, "https://example.test/sat1.png");
-  const tagEls = detail.locator('[data-testid="table-roster-detail-tag"]');
-  assert.equal(await tagEls.count(), 1);
-  assert.equal((await tagEls.first().textContent()).trim(), "sat1-tag");
+  // Phase 26 task 26.11, §26.G: tags are deliberately no longer rendered
+  // here at all (real DOM-absence, confirmed by table-roster-tags-absent
+  // .e2e.mjs) -- the old tag-count/text assertions that used to live here
+  // are removed as stale, not left silently contradictory.
 });
 
 test("no cap: expanding 3 rows simultaneously leaves ALL 3 open at once -- locks in the adjudicated 'start unbounded' decision (design record §5)", async () => {

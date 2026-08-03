@@ -2500,16 +2500,11 @@ function buildTableRosterDetail(entityId, info) {
     detail.appendChild(img);
   }
 
-  const tagsWrap = document.createElement("div");
-  tagsWrap.className = "table-roster-detail-tags";
-  for (const tag of info?.tags ?? []) {
-    const tagEl = document.createElement("span");
-    tagEl.className = "table-roster-detail-tag";
-    tagEl.setAttribute("data-testid", "table-roster-detail-tag");
-    tagEl.textContent = tag;
-    tagsWrap.appendChild(tagEl);
-  }
-  detail.appendChild(tagsWrap);
+  // Phase 26 task 26.11, §26.G: tags rendering removed entirely -- "the
+  // tags are relatively meaningless... I'm going to let an LLM deal with
+  // the tags" (the project owner's own assessment). The underlying
+  // `info.tags` data fetch is completely UNTOUCHED (still fetched, just not
+  // rendered here) -- this is a display change, not a data-removal.
 
   detail.appendChild(buildPlayerKnownGate(entityId, info));
 
