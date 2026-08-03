@@ -345,6 +345,27 @@ let chainContainerEl = null;
 // back to plan-empty-state without threading these through every caller.
 let activePlanIdModule = null;
 let activePlanContainerEl = null;
+// Phase 27 task 27.5: sceneId -> that scene's OWN plan-scene-links-list
+// refresh function, for the currently-shown list only (see
+// visiblePlanSceneLinksSceneId below). Cleared whenever the chain container
+// is fully torn down and rebuilt (rerenderChainOnly).
+const planSceneLinksRefreshers = new Map();
+
+// Phase 27 task 27.5: a scene-link is a fact about a PAIR of scenes -- an
+// "other scene" id (e.g. sceneB) can legitimately appear as an item inside
+// MORE THAN ONE currently-expanded scene's own plan-scene-links-list at
+// once (sceneA's list shows "is A linked to B", sceneC's list shows "is C
+// linked to B" -- genuinely different facts that happen to share the same
+// data-scene-id). Rather than leave that ambiguous for anything querying by
+// data-scene-id alone, at most ONE plan-scene-links-list is ever shown at a
+// time -- whichever scene's body was most recently expanded steals it from
+// whichever scene held it before (every other part of that scene's own body
+// -- roster, rollback panel, saved encounters -- stays untouched/visible).
+let visiblePlanSceneLinksSceneId = null;
+
+async function refreshAllPlanSceneLinksLists() {
+  await Promise.all([...planSceneLinksRefreshers.values()].map((entry) => entry.refresh().catch(() => {})));
+}
 const sceneRecordCache = new Map(); // sceneId -> Scene record
 const sceneExtrasCache = new Map(); // sceneId -> { brief, undoActions, encounters }
 const addedMembership = new Map(); // sceneId -> Set<entityId> -- task 23.2's client-tracked "added" nodes for THIS page session (see this file's own self-review report: no GET .../members route exists yet to durably resume this across a fresh reload -- a flagged, honest gap, not a silent one)
@@ -706,8 +727,240 @@ export function cancelActiveRecenter() {
 // auto-surfaced connect-existing-scene-list/connect-existing-scene-item/
 // create-ad-hoc-scene-btn zone) is REMOVED ENTIRELY too -- a real DOM-
 // absence, asserted by beyond-path-removed.e2e.mjs. Its replacement, the
-// plan-scoped link/unlink list (plan-scene-links-list), is task 27.5's job,
-// deliberately NOT built here.
+// plan-scoped link/unlink list, is built here (task 27.5).
+
+/**
+ * Phase 27 task 27.5, §F4/F12: the plan-scoped link/unlink list. Renders one
+ * `plan-scene-link-item` per OTHER scene in the CURRENT ACTIVE PLAN (never a
+ * hop-adjacency candidate outside the plan -- reads `chainSceneIds` only when
+ * `activePlanIdModule` is set, since the legacy-fallback chain is a
+ * whole-world hop order, not a plan). Scenes start unlinked (F4: no
+ * auto-surfaced green links) -- the initial `data-linked` state comes from a
+ * real `GET /api/scene-planning/scene-links` fetch, never inferred from graph
+ * adjacency. A single shared confirm panel (keyed to THIS scene, matching the
+ * fixture's own `plan-scene-link-confirm-panel[data-scene-id=<sceneId>]`
+ * expectation) is reused across every toggle click, since only one link/
+ * unlink decision is ever in flight at a time for a given scene's own list.
+ */
+function buildPlanSceneLinksList(sceneId) {
+  const wrap = document.createElement("div");
+  wrap.setAttribute("data-testid", "plan-scene-links-list");
+  wrap.setAttribute("data-scene-id", sceneId);
+
+  const itemsHost = document.createElement("div");
+  wrap.appendChild(itemsHost);
+
+  const confirmPanel = document.createElement("div");
+  confirmPanel.setAttribute("data-testid", "plan-scene-link-confirm-panel");
+  confirmPanel.setAttribute("data-scene-id", sceneId);
+  confirmPanel.style.display = "none";
+  wrap.appendChild(confirmPanel);
+
+  const statusEl = document.createElement("div");
+  statusEl.className = "hint";
+  statusEl.setAttribute("data-testid", "plan-scene-link-status");
+  statusEl.setAttribute("data-scene-id", sceneId);
+  wrap.appendChild(statusEl);
+
+  function closeConfirm() {
+    confirmPanel.style.display = "none";
+    confirmPanel.innerHTML = "";
+  }
+
+  async function doLink(otherId, graphEdgeId) {
+    await spApi("/api/scene-planning/scene-links", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), sceneIdA: sceneId, sceneIdB: otherId, graphEdgeId: graphEdgeId ?? undefined })
+    });
+  }
+
+  async function doUnlink(otherId) {
+    await spApi("/api/scene-planning/scene-links", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), sceneIdA: sceneId, sceneIdB: otherId })
+    });
+  }
+
+  function openConfirm(otherId, linkEntry) {
+    closeConfirm();
+    confirmPanel.style.display = "block";
+    statusEl.textContent = "";
+
+    const linked = !!linkEntry;
+    const prompt = document.createElement("p");
+    prompt.className = "hint";
+
+    if (!linked) {
+      prompt.textContent = "Push a graph link to tie the two locations together?";
+      confirmPanel.appendChild(prompt);
+
+      const yesBtn = document.createElement("button");
+      yesBtn.type = "button";
+      yesBtn.className = "btn btn--accept";
+      yesBtn.setAttribute("data-testid", "plan-scene-link-graph-yes-btn");
+      yesBtn.textContent = "Yes, push graph link";
+      yesBtn.addEventListener("click", async () => {
+        yesBtn.disabled = true;
+        try {
+          const thisScene = sceneRecordCache.get(sceneId);
+          const otherScene = sceneRecordCache.get(otherId);
+          let graphEdgeId = null;
+          if (thisScene?.locationEntityId && otherScene?.locationEntityId) {
+            const edgeRes = await spApi("/api/graph/edges", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ world: currentWorld(), sourceId: thisScene.locationEntityId, targetId: otherScene.locationEntityId })
+            });
+            graphEdgeId = edgeRes.edgeId ?? null;
+          }
+          await doLink(otherId, graphEdgeId);
+          statusEl.textContent = "Linked.";
+        } catch (err) {
+          statusEl.textContent = `Could not link: ${err.message}`;
+        } finally {
+          closeConfirm();
+          await refreshAllPlanSceneLinksLists();
+        }
+      });
+
+      const noBtn = document.createElement("button");
+      noBtn.type = "button";
+      noBtn.className = "btn";
+      noBtn.setAttribute("data-testid", "plan-scene-link-graph-no-btn");
+      noBtn.textContent = "No, link only";
+      noBtn.addEventListener("click", async () => {
+        noBtn.disabled = true;
+        try {
+          await doLink(otherId, null);
+          statusEl.textContent = "Linked.";
+        } catch (err) {
+          statusEl.textContent = `Could not link: ${err.message}`;
+        } finally {
+          closeConfirm();
+          await refreshAllPlanSceneLinksLists();
+        }
+      });
+
+      confirmPanel.append(yesBtn, noBtn);
+    } else {
+      prompt.textContent = "Break the graph link?";
+      confirmPanel.appendChild(prompt);
+
+      if (linkEntry.graphEdgeId) {
+        const yesBtn = document.createElement("button");
+        yesBtn.type = "button";
+        yesBtn.className = "btn btn--accept";
+        yesBtn.setAttribute("data-testid", "plan-scene-link-break-yes-btn");
+        yesBtn.textContent = "Yes, break graph link";
+        yesBtn.addEventListener("click", async () => {
+          yesBtn.disabled = true;
+          try {
+            await spApi(`/api/graph/edges/${encodeURIComponent(linkEntry.graphEdgeId)}`, {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ world: currentWorld() })
+            });
+            await doUnlink(otherId);
+            statusEl.textContent = "Unlinked.";
+          } catch (err) {
+            statusEl.textContent = `Could not unlink: ${err.message}`;
+          } finally {
+            closeConfirm();
+            await refreshAllPlanSceneLinksLists();
+          }
+        });
+        confirmPanel.appendChild(yesBtn);
+      }
+
+      const noBtn = document.createElement("button");
+      noBtn.type = "button";
+      noBtn.className = "btn";
+      noBtn.setAttribute("data-testid", "plan-scene-link-break-no-btn");
+      noBtn.textContent = "No, keep graph link";
+      noBtn.addEventListener("click", async () => {
+        noBtn.disabled = true;
+        try {
+          await doUnlink(otherId);
+          statusEl.textContent = "Unlinked.";
+        } catch (err) {
+          statusEl.textContent = `Could not unlink: ${err.message}`;
+        } finally {
+          closeConfirm();
+          await refreshAllPlanSceneLinksLists();
+        }
+      });
+      confirmPanel.appendChild(noBtn);
+    }
+  }
+
+  function buildItem(otherId, linkEntry) {
+    const item = document.createElement("div");
+    item.className = "plan-scene-link-item";
+    item.setAttribute("data-testid", "plan-scene-link-item");
+    item.setAttribute("data-scene-id", otherId);
+    const linked = !!linkEntry;
+    item.setAttribute("data-linked", linked ? "true" : "false");
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "plan-scene-link-item-name";
+    nameEl.textContent = resolveSceneDisplayName(sceneRecordCache.get(otherId) ?? { id: otherId });
+    item.appendChild(nameEl);
+
+    const toggleBtn = document.createElement("button");
+    toggleBtn.type = "button";
+    toggleBtn.className = "btn btn--ghost";
+    toggleBtn.setAttribute("data-testid", "plan-scene-link-toggle-btn");
+    toggleBtn.setAttribute("data-scene-id", otherId);
+    toggleBtn.setAttribute("data-linked", linked ? "true" : "false");
+    toggleBtn.textContent = linked ? "Unlink" : "Link";
+    toggleBtn.addEventListener("click", () => openConfirm(otherId, linkEntry));
+    item.appendChild(toggleBtn);
+
+    return item;
+  }
+
+  async function refresh() {
+    itemsHost.innerHTML = "";
+    // §F4: never a hop candidate outside the plan -- the legacy-fallback
+    // (no active plan) chain is whole-world, so this list stays empty there.
+    if (!activePlanIdModule) return;
+    const otherIds = chainSceneIds.filter((id) => id !== sceneId);
+    if (!otherIds.length) return;
+
+    let linked = [];
+    try {
+      const res = await spApi(`/api/scene-planning/scene-links${spWithWorld({ sceneId })}`);
+      linked = res.linked ?? [];
+    } catch {
+      linked = [];
+    }
+    const linkedMap = new Map(linked.map((l) => [l.sceneId, l]));
+
+    for (const otherId of otherIds) {
+      itemsHost.appendChild(buildItem(otherId, linkedMap.get(otherId) ?? null));
+    }
+  }
+
+  // Phase 27 task 27.5: exclusivity (see visiblePlanSceneLinksSceneId's own
+  // doc comment) -- this newly-expanded scene's list steals visibility from
+  // whichever scene's list was showing before it. Clearing the DEPOSED
+  // list's own DOM (not just dropping its refresher) matters -- an
+  // un-refreshed, stale `plan-scene-link-item` left in the document would
+  // still be a real, queryable (if stale) node for the same "other scene"
+  // id this list also renders.
+  if (visiblePlanSceneLinksSceneId && visiblePlanSceneLinksSceneId !== sceneId) {
+    const deposed = planSceneLinksRefreshers.get(visiblePlanSceneLinksSceneId);
+    if (deposed) deposed.itemsHost.innerHTML = "";
+    planSceneLinksRefreshers.delete(visiblePlanSceneLinksSceneId);
+  }
+  visiblePlanSceneLinksSceneId = sceneId;
+  planSceneLinksRefreshers.set(sceneId, { refresh, itemsHost });
+
+  refresh();
+  return wrap;
+}
 
 function buildRecenterControl(sceneId, onRecentered) {
   const wrap = document.createElement("div");
@@ -1735,9 +1988,11 @@ function buildSceneBodyInto(body, sceneId) {
 
   // Phase 27 task 27.4, §F6: the per-scene "+Scene" control is RETIRED here
   // -- scene creation now lives at the plan level (buildPlanAddSceneControl,
-  // a single top-level control). §F4: buildConnectExistingSceneZone (the
-  // green auto-link zone) is likewise gone. The per-scene actions bar below
-  // is now EXACTLY add-node / develop-scene / add-event / add-encounter.
+  // a single top-level control). §F4/F12 (task 27.5): the plan-scoped
+  // link/unlink list replaces the old green auto-link zone. The per-scene
+  // actions bar below is now EXACTLY add-node / develop-scene / add-event /
+  // add-encounter.
+  body.appendChild(buildPlanSceneLinksList(sceneId));
 
   const actionsBar = document.createElement("div");
   actionsBar.setAttribute("data-testid", "scene-actions-bar");
@@ -1826,6 +2081,11 @@ function buildChainItem(sceneId, isCurrent) {
 
 function rerenderChainOnly() {
   if (!chainContainerEl) return;
+  // Every previously-mounted scene body (and its own plan-scene-links-list,
+  // task 27.5) is about to be torn down and rebuilt fresh -- drop any stale
+  // refresh closures pointing at soon-to-be-detached DOM.
+  planSceneLinksRefreshers.clear();
+  visiblePlanSceneLinksSceneId = null;
   chainContainerEl.innerHTML = "";
   let currentItemEl = null;
   for (const id of chainSceneIds) {
