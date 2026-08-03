@@ -1668,12 +1668,24 @@ function renderDevelopSceneReviewPanel(host, sceneId, results) {
   host.appendChild(panel);
 }
 
-async function onDevelopScene(sceneId, statusEl, reviewHolder) {
+async function onDevelopScene(sceneId, statusEl, reviewHolder, onlyUndeveloped = false) {
   statusEl.innerHTML = "";
   const extras = sceneExtrasCache.get(sceneId);
   const briefIds = (extras?.brief?.locations ?? []).map((l) => l.entityId);
   const addedIds = [...(addedMembership.get(sceneId) ?? [])];
-  const memberIds = [...new Set([...briefIds, ...addedIds])];
+  let memberIds = [...new Set([...briefIds, ...addedIds])];
+
+  // Phase 27 task 27.7, F9: "only undeveloped nodes" -- filter to members
+  // whose OWN brief location entry is flagged undeveloped
+  // (contentFlag.flagged), client-side, before the existing /develop call.
+  // No engine/route change -- developScene already accepts any
+  // memberEntityIds subset.
+  if (onlyUndeveloped) {
+    const flaggedIds = new Set(
+      (extras?.brief?.locations ?? []).filter((l) => l.contentFlag?.flagged).map((l) => l.entityId)
+    );
+    memberIds = memberIds.filter((id) => flaggedIds.has(id));
+  }
 
   // Starting the undo session and kicking off the batch develop call fire
   // CONCURRENTLY, not sequentially -- there's no real ordering dependency
@@ -2116,13 +2128,31 @@ function buildSceneBodyInto(body, sceneId) {
   developSceneBtn.setAttribute("data-scene-id", sceneId);
   developSceneBtn.textContent = "Develop this scene";
 
+  // Phase 27 task 27.7, F9: "only undeveloped nodes" -- default unchecked
+  // (unchanged full-member-set behavior). A sibling of develop-scene-btn
+  // inside the same actions bar, checked at click time (not watched live).
+  const undevelopedOnlyToggle = document.createElement("input");
+  undevelopedOnlyToggle.type = "checkbox";
+  undevelopedOnlyToggle.setAttribute("data-testid", "develop-scene-undeveloped-only-toggle");
+  undevelopedOnlyToggle.setAttribute("data-scene-id", sceneId);
+  const undevelopedOnlyLabel = document.createElement("label");
+  undevelopedOnlyLabel.className = "develop-scene-undeveloped-only-label hint";
+  undevelopedOnlyLabel.append(undevelopedOnlyToggle, document.createTextNode(" Only undeveloped nodes"));
+
   const developStatus = document.createElement("div");
   developStatus.setAttribute("data-testid", "develop-scene-status");
   developStatus.setAttribute("data-scene-id", sceneId);
 
   const developReviewHolder = document.createElement("div");
 
-  developSceneBtn.addEventListener("click", () => onDevelopScene(sceneId, developStatus, developReviewHolder));
+  developSceneBtn.addEventListener("click", () => {
+    // A one-shot modifier for THIS develop call, not a sticky preference --
+    // reset immediately so a later develop-scene click (without deliberately
+    // re-checking it) never silently re-applies a stale filter.
+    const onlyUndeveloped = undevelopedOnlyToggle.checked;
+    undevelopedOnlyToggle.checked = false;
+    onDevelopScene(sceneId, developStatus, developReviewHolder, onlyUndeveloped);
+  });
 
   const { btn: addEventBtn, panel: addEventPanel } = mountAddEventControl(scene);
   const { btn: addEncounterBtn, panel: addEncounterPanel } = mountAddEncounterControl(scene);
@@ -2131,8 +2161,9 @@ function buildSceneBodyInto(body, sceneId) {
   // add-node toggle, develop-scene, add-event, add-encounter -- add-scene
   // dropped (it moved to the plan level). All direct siblings of the SAME
   // actions bar, same button element type/class (task 23.6's equal-weight
-  // requirement).
-  actionsBar.append(addNodeToggle, developSceneBtn, addEventBtn, addEncounterBtn);
+  // requirement). The undeveloped-only toggle (27.7) is a non-button
+  // sibling, not one of the four equal-weight action buttons.
+  actionsBar.append(addNodeToggle, developSceneBtn, undevelopedOnlyLabel, addEventBtn, addEncounterBtn);
   body.appendChild(actionsBar);
   body.appendChild(addNodePanel);
   body.appendChild(addEventPanel);
