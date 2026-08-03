@@ -133,3 +133,66 @@ test("a scene-link record persists exactly ONE record per link, not two (asserte
   assert.ok(!fromA.linked.some((l) => l.sceneId === sceneB.id), "deleting the link must remove it when queried from side A");
   assert.ok(!fromB.linked.some((l) => l.sceneId === sceneA.id), "deleting the link must ALSO remove it when queried from side B -- a single DELETE call clears both query directions, confirming a single-record-per-link storage model");
 });
+
+// ---------------------------------------------------------------------------
+// Phase 27 task 27.3 (F12 backend) -- the scene-link record gains an
+// optional graphEdgeId, so a later unlink can target the SPECIFIC graph
+// edge a link's own graph-push step created. EXPECTED TO FAIL right now:
+// linkScenes(world, sceneIdA, sceneIdB, reason) has no graphEdgeId
+// parameter yet, getLinkedScenes doesn't echo one, and unlinkScenes returns
+// only {removed:boolean} today (confirmed fresh against the real
+// session-planner/scene-links.mjs) -- so `entry.graphEdgeId` below is
+// `undefined` and `delBody.link` is `undefined`, not a bug in this file.
+// ---------------------------------------------------------------------------
+test("POST /api/scene-planning/scene-links accepts and stores an optional graphEdgeId, echoed by GET", async () => {
+  const res = await fetch(`${base}/api/scene-planning/scene-links`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: WORLD, sceneIdA: sceneA.id, sceneIdB: sceneB.id, reason: "graph-backed link", graphEdgeId: "edge_manual_test123" })
+  });
+  const body = await res.json();
+  assert.equal(res.status, 200, `expected 200, got ${res.status}: ${JSON.stringify(body)}`);
+  assert.equal(body.link.graphEdgeId, "edge_manual_test123", "the created link record must echo the supplied graphEdgeId back in the POST response");
+
+  const fromA = await (await fetch(`${base}/api/scene-planning/scene-links?world=${WORLD}&sceneId=${sceneA.id}`)).json();
+  const entry = fromA.linked.find((l) => l.sceneId === sceneB.id);
+  assert.ok(entry, "the link must be queryable");
+  assert.equal(entry.graphEdgeId, "edge_manual_test123", "GET /scene-links must echo the stored graphEdgeId alongside every linked entry");
+});
+
+test("re-linking an already-linked pair (idempotent by unordered pair) UPDATES graphEdgeId rather than duplicating the record", async () => {
+  await fetch(`${base}/api/scene-planning/scene-links`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: WORLD, sceneIdA: sceneA.id, sceneIdB: sceneC.id, reason: "first link, no edge yet" })
+  });
+  await fetch(`${base}/api/scene-planning/scene-links`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: WORLD, sceneIdA: sceneA.id, sceneIdB: sceneC.id, graphEdgeId: "edge_manual_test456" })
+  });
+
+  const fromA = await (await fetch(`${base}/api/scene-planning/scene-links?world=${WORLD}&sceneId=${sceneA.id}`)).json();
+  const matches = fromA.linked.filter((l) => l.sceneId === sceneC.id);
+  assert.equal(matches.length, 1, "re-linking an already-linked pair must never create a second record");
+  assert.equal(matches[0].graphEdgeId, "edge_manual_test456", "re-linking must update the existing record's graphEdgeId, not silently keep the old one");
+});
+
+test("DELETE /api/scene-planning/scene-links returns the REMOVED record (including its graphEdgeId), so a caller can target the exact edge to delete", async () => {
+  await fetch(`${base}/api/scene-planning/scene-links`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: WORLD, sceneIdA: sceneB.id, sceneIdB: sceneC.id, reason: "for delete-returns-record check", graphEdgeId: "edge_manual_test789" })
+  });
+
+  const delRes = await fetch(`${base}/api/scene-planning/scene-links`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: WORLD, sceneIdA: sceneB.id, sceneIdB: sceneC.id })
+  });
+  const delBody = await delRes.json();
+  assert.equal(delRes.status, 200, `expected 200, got ${delRes.status}: ${JSON.stringify(delBody)}`);
+  assert.equal(delBody.removed, true, "removed must still be true (unchanged shape)");
+  assert.ok(delBody.link, "DELETE must return the removed link record itself, not just a boolean, so the caller can read its graphEdgeId");
+  assert.equal(delBody.link.graphEdgeId, "edge_manual_test789", "the returned removed record must carry the exact graphEdgeId that was stored, so the caller can delete that specific graph edge");
+});

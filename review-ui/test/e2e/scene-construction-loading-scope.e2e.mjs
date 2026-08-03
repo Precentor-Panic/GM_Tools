@@ -19,6 +19,23 @@
 // MOCKED via route.fulfill() with an artificial delay, matching
 // scene-construction-develop.e2e.mjs's / scene-construction-quick-gen
 // .e2e.mjs's own established no-API-key-available reasoning.
+//
+// ***UPDATED by Phase 27 task 27.0*** (F5/F6: the construction view's own
+// top-level "+ Quick add scene" -- `quick-add-scene-btn`/-panel/-name-input/
+// -submit-btn/-status, this file's own THIRD test's original target -- is
+// RETIRED ENTIRELY (see phase27-fixture.mjs's header §7). Table Mode's OWN,
+// separate `table-quick-gen-*` control is UNTOUCHED by F5/F6 and already
+// wires the SAME still-working-indicator pattern this file's original test
+// was checking (buildTableQuickGenControl's own withSlowNoticeIndicator
+// call, confirmed live and unaffected by this phase) -- re-asserting that
+// ALREADY-GREEN behavior here would not be a genuine Phase-27 red test, so
+// this file's third test is updated to assert the RETIREMENT instead (real
+// DOM-absence for the construction view's own quick-add-scene mechanism,
+// including its still-working-indicator scope), matching this file's own
+// §9 "loading-affordance scope" contract. EXPECTED TO FAIL right now: the
+// construction view's `quick-add-scene-btn`/-panel/-status are still live
+// today (confirmed fresh against the real session-planner-view.js), so the
+// absence assertion below currently fails. Not a bug in this file.
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import { chromium } from "playwright";
@@ -166,26 +183,12 @@ test("develop-scene shows the loading indicator, scoped to develop-scene-status 
   await page.unroute("**/api/scene-planning/scenes/*/develop");
 });
 
-test("quick-add shows the loading indicator, scoped to quick-add-scene-status (LLM call site #2, mocked -- no live API key needed)", async () => {
-  await page.route("**/api/scene-planning/quick-gen", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, HOLD_MS));
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ text: "Some quick-gen flavor text.", truncated: false }) });
-  });
-
+test("Phase 27 (F5/F6): the construction view's OWN quick-add-scene mechanism (and its loading-indicator scope) is retired entirely -- real DOM-absence", async () => {
   await page.goto(`${base}/#session-planner/${scene.id}`);
-  const quickAddBtn = page.locator('[data-testid="quick-add-scene-btn"]');
-  await quickAddBtn.waitFor({ state: "visible", timeout: 15000 });
-  await quickAddBtn.click();
-  const panel = page.locator('[data-testid="quick-add-scene-panel"]');
-  await panel.waitFor({ state: "visible", timeout: 5000 });
-  await panel.locator('[data-testid="quick-add-scene-name-input"]').fill("Loading Scope Waystop");
-  const submitDone = panel.locator('[data-testid="quick-add-scene-submit-btn"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-chain-item"]').length >= 1, { timeout: 15000 });
 
-  await assert.doesNotReject(async () => {
-    await page.locator('[data-testid="quick-add-scene-status"] [data-testid="still-working-indicator"]')
-      .waitFor({ state: "visible", timeout: HOLD_MS + 3000 });
-  }, "the still-working-indicator must appear inside quick-add-scene-status while the (mocked, artificially-delayed) quick-gen request is in flight");
-
-  await submitDone;
-  await page.unroute("**/api/scene-planning/quick-gen");
+  for (const testid of ["quick-add-scene-btn", "quick-add-scene-panel", "quick-add-scene-status"]) {
+    const count = await page.evaluate((t) => document.querySelectorAll(`[data-testid="${t}"]`).length, testid);
+    assert.equal(count, 0, `${testid} must be COMPLETELY REMOVED from the construction view (F5/F6) -- folded into the plan-level +Scene control, which never calls quick-gen at all`);
+  }
 });

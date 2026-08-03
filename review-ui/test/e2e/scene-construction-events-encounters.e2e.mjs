@@ -4,10 +4,21 @@
 // "Add Encounter round-trips through the real addendum routes: saving an
 // encounter to a scene, confirming it's listed via GET .../encounters,
 // removing it via DELETE." Read scene-construction-fixture.mjs's header
-// first (§6/§7 are this file's own sections). EXPECTED TO FAIL right now
-// with a Playwright selector-not-found/timeout error -- none of this DOM
-// exists yet. That failure is the deliverable of this task, not a bug in
-// this file.
+// first (§6/§7 are this file's own sections).
+//
+// ***UPDATED by Phase 27 task 27.0*** (F11: `add-encounter-btn` no longer
+// navigates to the Encounter Builder INSTANTLY -- it now opens a picker
+// panel first, per phase27-fixture.mjs's header §4 and the new
+// encounter-link-picker.e2e.mjs. The first test below (equal visual weight)
+// is UNCHANGED -- add-encounter-btn still renders as a real, equal-weight
+// sibling button; only the SECOND test's click-through is updated: it must
+// now open `add-encounter-panel` first, then click the panel's own
+// `add-encounter-open-builder-btn` to reach the SAME builder navigation the
+// old instant-click used to do directly. EXPECTED TO FAIL right now:
+// clicking add-encounter-btn still navigates instantly today (confirmed
+// fresh against the real mountAddEncounterControl), so `add-encounter-
+// panel` never appears and this test's own updated waitFor times out. That
+// failure is the deliverable of this task, not a bug in this file.
 //
 // The bounding-box comparison follows this project's established real-
 // measurement convention (combat-planning-confidence-format.e2e.mjs's own
@@ -128,13 +139,20 @@ test("Add Encounter round-trips through the real addendum routes: save, list, re
   await addEncounterBtn.waitFor({ state: "visible", timeout: 15000 });
   await addEncounterBtn.click();
 
+  // Phase 27 (F11): clicking add-encounter-btn now opens a picker panel
+  // first (offering an existing-encounter picker OR "open builder") --
+  // the open-builder button preserves the OLD instant-navigate behavior.
+  const panel = page.locator(`[data-testid="add-encounter-panel"][data-scene-id="${scene.id}"]`);
+  await panel.waitFor({ state: "visible", timeout: 5000 });
+  await panel.locator('[data-testid="add-encounter-open-builder-btn"]').click();
+
   await assert.doesNotReject(async () => {
     await page.waitForFunction(
       (expected) => location.hash === `#combat-planning/${expected}`,
       scene.id,
       { timeout: 5000 }
     );
-  }, "Add Encounter must navigate to #combat-planning/<sceneId>, a return-context-aware Encounter Builder");
+  }, "the open-builder button must navigate to #combat-planning/<sceneId>, a return-context-aware Encounter Builder");
   await page.locator("#view-combat-planning.active").waitFor({ state: "attached", timeout: 5000 });
 
   const saveBtn = page.locator('[data-testid="save-encounter-to-scene-btn"]');

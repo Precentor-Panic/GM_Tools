@@ -2,20 +2,35 @@
 // renders (beyond-corridor-summary DOM-absence); its former space now hosts
 // connect-existing-scene / create-ad-hoc-scene actions." Read
 // phase26-fixture.mjs's header FIRST (§6 is this file's own section).
-// EXPECTED TO FAIL right now -- `beyond-corridor-summary` is still very much
-// present in the current, not-yet-reworked UI (Phase 17's real, live,
-// unmodified `renderBeyondCorridorSummary`) -- the absence assertions below
-// will currently FAIL for that reason, and the replacement DOM
-// (`connect-existing-scene-list`/`create-ad-hoc-scene-btn`) doesn't exist
-// yet either. Both are the deliverable of this task, not a bug in this
+//
+// ***UPDATED by Phase 27 task 27.0*** (F4/F12: the green auto-surfaced
+// `connect-existing-scene-list`/`connect-existing-scene-item`/`create-ad-
+// hoc-scene-btn` zone this file used to assert RENDERS is now ITSELF
+// retired entirely, replaced by the plan-scoped link/unlink list
+// (`plan-scene-links-list`, see phase27-fixture.mjs's header §3 and the new
+// plan-scoped-scene-links.e2e.mjs) -- scenes now start with NO links, and
+// only show the OTHER scenes in the CURRENT PLAN, never graph-adjacency
+// candidates auto-surfaced as a green link. This file's own two positive-
+// behavior tests (asserting the OLD zone renders both linkage-derived and
+// scene-link-derived candidates, and that create-ad-hoc-scene-btn aliases
+// add-scene-btn) are RETIRED per this project's own "retire/replace the OLD
+// green auto-link assertions" instruction -- replaced below by DOM-absence
+// assertions for the entire zone, alongside the already-true (Phase 26)
+// beyond-corridor-summary absence. EXPECTED TO FAIL right now: the CURRENT
+// code still renders `connect-existing-scene-list`/`connect-existing-scene-
+// item`/`create-ad-hoc-scene-btn` in exactly this DOM position (confirmed
+// fresh against the real session-planner-view.js's buildConnectExisting
+// SceneZone, still live), so the new absence assertions below currently
+// fail. That failure is the deliverable of this task, not a bug in this
 // file.
 //
 // FIXTURE: a scene ("beyondpath-anchor") plus a graph-adjacent OTHER scene
 // ("beyondpath-hop1-anchor", 1 hop away via a real edge) AND a separately
 // explicit-scene-linked scene ("beyondpath-linked-anchor", genuinely
-// disconnected in the graph) -- so this file can assert BOTH connect-
-// existing sources (linkage-derived AND scene-link-derived) surface
-// together in the repurposed space, per phase26-fixture.mjs's §6.
+// disconnected in the graph) -- kept from the original Phase 26 fixture
+// (still useful: proves the retired zone's absence even in a world where
+// its OLD candidate data genuinely exists, so the absence isn't a false
+// pass from an empty-candidate-set coincidence).
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import { chromium } from "playwright";
@@ -81,53 +96,22 @@ test("'beyond-corridor-summary' (and its two child counts) is DOM-absent entirel
   assert.equal(structCountEl, 0, "its child beyond-corridor-structural-count must be gone too");
 });
 
-test("the repurposed space hosts connect-existing-scene actions, immediately visible (not behind a <details>), surfacing BOTH linkage-derived AND explicit-scene-link candidates", async () => {
+test("Phase 27 (F4/F12): the OLD green auto-link zone (connect-existing-scene-list/item, create-ad-hoc-scene-btn) is now ITSELF completely retired -- real DOM-absence, even though its own old candidate data (a graph-adjacent hop-1 scene AND an explicitly scene-linked scene) genuinely exists in this fixture", async () => {
   await page.goto(`${base}/#session-planner/${scene.id}`);
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-chain-item"][data-current="true"]').length === 1, { timeout: 15000 });
 
-  const list = page.locator(`[data-testid="connect-existing-scene-list"][data-scene-id="${scene.id}"]`);
-  await list.waitFor({ state: "visible", timeout: 10000 });
+  const listCount = await page.evaluate(() => document.querySelectorAll('[data-testid="connect-existing-scene-list"]').length);
+  const itemCount = await page.evaluate(() => document.querySelectorAll('[data-testid="connect-existing-scene-item"]').length);
+  const adHocCount = await page.evaluate(() => document.querySelectorAll('[data-testid="create-ad-hoc-scene-btn"]').length);
+  assert.equal(listCount, 0, "connect-existing-scene-list must be COMPLETELY REMOVED (Phase 27, F4) -- replaced by the plan-scoped link/unlink list, real DOM-absence not just untested");
+  assert.equal(itemCount, 0, "connect-existing-scene-item must be COMPLETELY REMOVED too");
+  assert.equal(adHocCount, 0, "create-ad-hoc-scene-btn must be COMPLETELY REMOVED too -- the plan-level +Scene control (F6) is the only scene-creation entry point now");
 
-  // "Quick, visible options -- not buried behind a <details>." FIX (found
-  // live while implementing 26.7, confirmed via direct empirical testing):
-  // every scene's own body -- including the OLD beyond-corridor-summary
-  // this zone replaces -- necessarily renders inside the construction
-  // view's own pre-existing, unrelated scene-chain-item `<details>`
-  // (buildChainItem's own established collapse-per-scene structure, task
-  // 23.0). The scenario's real intent (confirmed by its own wording, "it
-  // replaces the old collapsed summary, it doesn't reintroduce one") is
-  // that this zone must not add a SECOND, NEW collapse of its own -- not
-  // that it can somehow escape the outer per-scene details entirely, which
-  // no scene-body content anywhere in this view has ever done. Corrected to
-  // check for a details ancestor OTHER than that pre-existing outer one.
-  const isBuriedInANewDetails = await list.evaluate((el) => el.closest('details:not([data-testid="scene-chain-item"])') !== null);
-  assert.equal(isBuriedInANewDetails, false, "connect-existing-scene-list must NOT be nested inside a NEW <details> of its own -- it replaces the old collapsed summary, it doesn't reintroduce one");
-
-  const items = list.locator('[data-testid="connect-existing-scene-item"]');
-  await assert.doesNotReject(async () => {
-    await page.waitForFunction(
-      (sel) => document.querySelectorAll(sel).length >= 2,
-      `[data-testid="connect-existing-scene-list"][data-scene-id="${scene.id}"] [data-testid="connect-existing-scene-item"]`,
-      { timeout: 10000 }
-    );
-  }, "expected at least 2 connect-existing-scene-item entries: one linkage-derived (hop-1), one scene-link-derived");
-
-  const linkageItem = list.locator(`[data-testid="connect-existing-scene-item"][data-scene-id="${hop1Scene.id}"][data-connect-source="linkage"]`);
-  const sceneLinkItem = list.locator(`[data-testid="connect-existing-scene-item"][data-scene-id="${linkedScene.id}"][data-connect-source="scene-link"]`);
-  assert.equal(await linkageItem.count(), 1, "the graph-adjacency (hop-1) candidate must surface with data-connect-source=\"linkage\"");
-  assert.equal(await sceneLinkItem.count(), 1, "the explicitly-scene-linked (but graph-disconnected) candidate must ALSO surface, with data-connect-source=\"scene-link\" -- both sources together, per §26.C's 'surfaced together, not one replacing the other'");
-});
-
-test("create-ad-hoc-scene-btn is an alias for this scene's own add-scene-btn -- same panel, not a second creation mechanism", async () => {
-  await page.goto(`${base}/#session-planner/${scene.id}`);
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-chain-item"][data-current="true"]').length === 1, { timeout: 15000 });
-
-  const adHocBtn = page.locator(`[data-testid="create-ad-hoc-scene-btn"][data-scene-id="${scene.id}"]`);
-  await adHocBtn.waitFor({ state: "visible", timeout: 10000 });
-  await adHocBtn.click();
-
-  const panel = page.locator(`[data-testid="add-scene-panel"][data-scene-id="${scene.id}"]`);
-  await assert.doesNotReject(async () => {
-    await panel.waitFor({ state: "visible", timeout: 5000 });
-  }, "create-ad-hoc-scene-btn must open the SAME add-scene-panel §26.6's own '+Scene' button opens -- no second/duplicate scene-creation mechanism");
+  // Sanity: this isn't a false pass from an empty-candidate-set coincidence
+  // -- the fixture's own old-mechanism candidates genuinely exist (a real
+  // hop-1 graph edge, a real explicit scene-link), so a re-introduced
+  // version of the OLD zone would have real data to render here.
+  const linkageRes = await fetch(`${base}/api/scene-planning/linkage?world=${WORLD}&sceneId=${scene.id}`);
+  const linkageBody = await linkageRes.json();
+  assert.ok(linkageBody.linked.some((l) => l.sceneId === hop1Scene.id), "sanity: the hop-1 graph-adjacency candidate this fixture seeded must still genuinely exist");
 });

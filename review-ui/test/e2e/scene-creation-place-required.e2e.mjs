@@ -4,10 +4,22 @@
 // round-trips through the real addEdgeOp route." Read phase26-fixture.mjs's
 // header FIRST (§3/§5 are this file's own sections -- the shared place-step/
 // link-step sub-flow, mounted here under the `add-scene` "+Scene" prefix
-// per §26.B/§26.6). EXPECTED TO FAIL right now with a Playwright
-// selector-not-found/timeout error -- none of `add-scene-btn`/
-// `add-scene-panel` exists yet. That failure is the deliverable of this
-// task, not a bug in this file.
+// per §26.B/§26.6).
+//
+// ***UPDATED by Phase 27 task 27.0*** (F6: "+Scene" moves from a PER-SCENE
+// control to a single PLAN-LEVEL control in the CONSTRUCTION VIEW only --
+// see phase27-fixture.mjs's header. Table Mode's own per-scene `add-scene-
+// btn`/`add-scene-panel` is UNCHANGED, so this file's two TABLE MODE tests
+// below are UNCHANGED.) The two CONSTRUCTION VIEW tests are rewritten to
+// drive the new top-level `plan-add-scene-btn`/`plan-add-scene-panel`
+// (prefix `plan-add-scene`) instead of a per-scene `add-scene-btn`/
+// `add-scene-panel` scoped to `cvScene.id` -- every other assertion (place
+// required, existing-vs-new, link-vs-no-link, the real addEdgeOp
+// round-trip) is UNCHANGED. EXPECTED TO FAIL right now: the CONSTRUCTION
+// VIEW still renders a PER-SCENE `add-scene-btn` today (confirmed fresh
+// against the real session-planner-view.js) and has no top-level
+// `plan-add-scene-btn` at all yet -- both are the deliverable of this task,
+// not a bug in this file.
 //
 // FIXTURE: one anchor scene per view ("screq-cv-anchor" for construction
 // view, "screq-tm-anchor" for Table Mode), plus one pre-existing real place
@@ -82,32 +94,34 @@ test("CONSTRUCTION VIEW: picking an EXISTING place, then LINKING with a rough-di
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-chain-item"]').length >= 1, { timeout: 15000 });
   const chainCountBefore = await page.locator('[data-testid="scene-chain-item"]').count();
 
-  const addSceneBtn = page.locator(`[data-testid="add-scene-btn"][data-scene-id="${cvScene.id}"]`);
+  // Phase 27: the construction view's "+Scene" is now the single top-level
+  // plan-add-scene-btn, not a per-scene add-scene-btn.
+  const addSceneBtn = page.locator('[data-testid="plan-add-scene-btn"]');
   await addSceneBtn.waitFor({ state: "visible", timeout: 10000 });
   await addSceneBtn.click();
 
-  const panel = page.locator(`[data-testid="add-scene-panel"][data-scene-id="${cvScene.id}"]`);
+  const panel = page.locator('[data-testid="plan-add-scene-panel"]');
   await panel.waitFor({ state: "visible", timeout: 5000 });
 
   // A place MUST be required -- the panel offers both existing-place and
   // new-place paths, never lets the flow proceed without one.
-  const placeStep = panel.locator('[data-testid="add-scene-place-step"]');
+  const placeStep = panel.locator('[data-testid="plan-add-scene-place-step"]');
   await placeStep.waitFor({ state: "visible", timeout: 5000 });
 
-  const existingInput = placeStep.locator('[data-testid="add-scene-place-input"]');
+  const existingInput = placeStep.locator('[data-testid="plan-add-scene-place-input"]');
   await existingInput.fill("Screq Existing Waystop");
-  const option = placeStep.locator('[data-testid="add-scene-place-option"][data-entity-id="screq-existing-place"]');
+  const option = placeStep.locator('[data-testid="plan-add-scene-place-option"][data-entity-id="screq-existing-place"]');
   await option.waitFor({ state: "visible", timeout: 5000 });
   await option.click();
 
-  const linkStep = panel.locator('[data-testid="add-scene-link-step"][data-place-entity-id="screq-existing-place"]');
+  const linkStep = panel.locator('[data-testid="plan-add-scene-link-step"][data-place-entity-id="screq-existing-place"]');
   await linkStep.waitFor({ state: "visible", timeout: 10000 });
 
-  await linkStep.locator('[data-testid="add-scene-link-yes-btn"]').click();
-  const noteInput = linkStep.locator('[data-testid="add-scene-link-note-input"]');
+  await linkStep.locator('[data-testid="plan-add-scene-link-yes-btn"]').click();
+  const noteInput = linkStep.locator('[data-testid="plan-add-scene-link-note-input"]');
   await noteInput.waitFor({ state: "visible", timeout: 5000 });
   await noteInput.fill("~2 days' hard travel, rough terrain");
-  await linkStep.locator('[data-testid="add-scene-link-confirm-btn"]').click();
+  await linkStep.locator('[data-testid="plan-add-scene-link-confirm-btn"]').click();
 
   // FIX (same reasoning as this test's opening waitForFunction above):
   // asserted as a relative increase (this test's own real invariant, "a new
@@ -150,22 +164,24 @@ test("CONSTRUCTION VIEW: picking an EXISTING place, then choosing NOT to link, c
   const { snapshot: before1 } = loadSnapshot(dataDir, WORLD);
   const edgeCountBefore = before1.edges.length;
 
-  const addSceneBtn = page.locator(`[data-testid="add-scene-btn"][data-scene-id="${cvScene.id}"]`).first();
+  // Phase 27: the construction view's "+Scene" is now the single top-level
+  // plan-add-scene-btn, not a per-scene add-scene-btn.
+  const addSceneBtn = page.locator('[data-testid="plan-add-scene-btn"]');
   await addSceneBtn.click();
-  const panel = page.locator(`[data-testid="add-scene-panel"][data-scene-id="${cvScene.id}"]`).first();
+  const panel = page.locator('[data-testid="plan-add-scene-panel"]');
   await panel.waitFor({ state: "visible", timeout: 5000 });
 
-  const modeNewBtn = panel.locator('[data-testid="add-scene-place-mode-new-btn"]');
+  const modeNewBtn = panel.locator('[data-testid="plan-add-scene-place-mode-new-btn"]');
   await modeNewBtn.waitFor({ state: "visible", timeout: 5000 });
   await modeNewBtn.click();
 
-  const newNameInput = panel.locator('[data-testid="add-scene-new-place-name-input"]');
+  const newNameInput = panel.locator('[data-testid="plan-add-scene-new-place-name-input"]');
   await newNameInput.fill("Screq Freshly Created Place (no-link case)");
-  await panel.locator('[data-testid="add-scene-new-place-submit-btn"]').click();
+  await panel.locator('[data-testid="plan-add-scene-new-place-submit-btn"]').click();
 
-  const linkStep = panel.locator('[data-testid="add-scene-link-step"]');
+  const linkStep = panel.locator('[data-testid="plan-add-scene-link-step"]');
   await linkStep.waitFor({ state: "visible", timeout: 10000 });
-  await linkStep.locator('[data-testid="add-scene-link-no-btn"]').click();
+  await linkStep.locator('[data-testid="plan-add-scene-link-no-btn"]').click();
 
   // FIX -- same relative-count reasoning as the prior test above.
   await assert.doesNotReject(async () => {

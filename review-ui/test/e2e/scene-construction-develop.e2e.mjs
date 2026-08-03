@@ -27,6 +27,20 @@
 // "develop-satellite" (both real graph entities, real edge) -- exactly 2
 // scene members, so develop-scene's own memberEntityIds payload has a
 // small, exactly-assertable expected set.
+//
+// ***EXTENDED by Phase 27 task 27.0*** (F9: an "only undeveloped nodes"
+// option on develop-scene). Read phase27-fixture.mjs's header §5 for the
+// contract. EXPECTED TO FAIL right now -- `develop-scene-undeveloped-only-
+// toggle` doesn't exist yet, and onDevelopScene's real memberIds computation
+// (confirmed fresh against the real session-planner-view.js) always sends
+// the FULL member set regardless of contentFlag, so the filtered-payload
+// assertion below currently fails. Fixture extended with a THIRD member,
+// "develop-satellite-developed" (also 1-hop, real edge), pre-seeded with
+// real entity narration via mutation-engine/entity-narration.mjs's
+// saveEntityNarration (so its own contentFlag.flagged reads false, "already
+// developed") -- "develop-anchor"/"develop-satellite" both stay genuinely
+// UNDEVELOPED (no narration ever seeded for them), giving this file a
+// real, deterministic flagged/unflagged split to filter against.
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import { chromium } from "playwright";
@@ -45,8 +59,13 @@ bootstrapSnapshot(snapPath, { worldId: WORLD });
 applyHeadless(snapPath, [
   { op: "upsert_entity", data: { id: "develop-anchor", name: "Develop Anchor", type: "place", importance: 0.5 } },
   { op: "upsert_entity", data: { id: "develop-satellite", name: "Develop Satellite", type: "person", importance: 0.5 } },
-  { op: "upsert_edge", data: { id: "develop-e0", sourceId: "develop-anchor", targetId: "develop-satellite", relationshipType: "unspecified" } }
+  { op: "upsert_entity", data: { id: "develop-satellite-developed", name: "Develop Satellite Already-Developed", type: "person", importance: 0.5 } },
+  { op: "upsert_edge", data: { id: "develop-e0", sourceId: "develop-anchor", targetId: "develop-satellite", relationshipType: "unspecified" } },
+  { op: "upsert_edge", data: { id: "develop-e1", sourceId: "develop-anchor", targetId: "develop-satellite-developed", relationshipType: "unspecified" } }
 ]);
+
+const { saveEntityNarration } = await import("../../../mutation-engine/entity-narration.mjs");
+saveEntityNarration(WORLD, "develop-satellite-developed", { prose: "Already fully written up." });
 
 let server, base, browser, page;
 let scene;
@@ -144,8 +163,13 @@ test("develop-scene surfaces per-node review; generating/accepting one node's re
   assert.equal(developCalls.length >= 1, true, "develop-scene click must call the real batch develop route");
   assert.deepEqual(
     [...developCalls[0].memberEntityIds].sort(),
-    ["develop-anchor", "develop-satellite"],
-    "the batch develop call must include every current scene member"
+    // Phase 27 task 27.0 extended this file's own fixture with a third
+    // member ("develop-satellite-developed", pre-seeded with real
+    // narration) to give the NEW "only undeveloped nodes" test below a
+    // real flagged/unflagged split -- the default (unchecked) develop-scene
+    // call must still include EVERY member, unfiltered.
+    ["develop-anchor", "develop-satellite", "develop-satellite-developed"],
+    "the batch develop call must include every current scene member (default: unfiltered)"
   );
 
   const reviewPanel = page.locator(`[data-testid="develop-scene-review-panel"][data-scene-id="${scene.id}"]`);
@@ -194,6 +218,65 @@ test("develop-scene surfaces per-node review; generating/accepting one node's re
 
   const satelliteAcceptCalls = prepCalls.filter((c) => c.entityId === "develop-satellite" && c.action === "accept");
   assert.equal(satelliteAcceptCalls.length, 0, "accepting the anchor node's result must never also accept the satellite node's -- proves no whole-batch auto-apply");
+
+  await page.unroute("**/api/entities/*/prep/**");
+  await page.unroute("**/api/scene-planning/scenes/*/develop");
+});
+
+// ---------------------------------------------------------------------------
+// Phase 27 task 27.0 (F9) -- "only undeveloped nodes" option.
+// ---------------------------------------------------------------------------
+test("develop-scene's 'only undeveloped nodes' option filters memberEntityIds to the flagged (undeveloped) subset before the develop call fires", async () => {
+  const prepCalls = [];
+  const developCalls = [];
+  await mockPrepRoutes(page, prepCalls);
+  await mockSceneDevelopRoute(page, developCalls);
+
+  await page.goto(`${base}/#session-planner/${scene.id}`);
+  const actionsBar = page.locator(`[data-testid="scene-actions-bar"][data-scene-id="${scene.id}"]`);
+  await actionsBar.waitFor({ state: "visible", timeout: 15000 });
+
+  const toggle = actionsBar.locator(`[data-testid="develop-scene-undeveloped-only-toggle"][data-scene-id="${scene.id}"]`);
+  await toggle.waitFor({ state: "visible", timeout: 10000 });
+  assert.equal(await toggle.isChecked(), false, "the only-undeveloped option must default to UNCHECKED (unchanged default behavior)");
+  await toggle.check();
+
+  const developSceneBtn = page.locator(`[data-testid="develop-scene-btn"][data-scene-id="${scene.id}"]`);
+  await developSceneBtn.click();
+
+  await assert.doesNotReject(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  });
+  assert.equal(developCalls.length, 1, "develop-scene must still fire exactly one batch develop call with the toggle checked");
+  assert.deepEqual(
+    [...developCalls[0].memberEntityIds].sort(),
+    ["develop-anchor", "develop-satellite"],
+    "with 'only undeveloped nodes' checked, the develop call's memberEntityIds must be filtered to ONLY the members whose brief contentFlag.flagged is true -- 'develop-satellite-developed' (already-narrated) must be excluded"
+  );
+
+  await page.unroute("**/api/entities/*/prep/**");
+  await page.unroute("**/api/scene-planning/scenes/*/develop");
+});
+
+test("develop-scene's default (unchecked) behavior is genuinely unchanged -- unfiltered, full member set", async () => {
+  const prepCalls = [];
+  const developCalls = [];
+  await mockPrepRoutes(page, prepCalls);
+  await mockSceneDevelopRoute(page, developCalls);
+
+  await page.goto(`${base}/#session-planner/${scene.id}`);
+  const developSceneBtn = page.locator(`[data-testid="develop-scene-btn"][data-scene-id="${scene.id}"]`);
+  await developSceneBtn.waitFor({ state: "visible", timeout: 15000 });
+  await developSceneBtn.click();
+
+  await assert.doesNotReject(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  });
+  assert.deepEqual(
+    [...developCalls[0].memberEntityIds].sort(),
+    ["develop-anchor", "develop-satellite", "develop-satellite-developed"],
+    "leaving the only-undeveloped option unchecked must send every current member, unfiltered -- unchanged default behavior"
+  );
 
   await page.unroute("**/api/entities/*/prep/**");
   await page.unroute("**/api/scene-planning/scenes/*/develop");
