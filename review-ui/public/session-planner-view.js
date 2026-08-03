@@ -1490,12 +1490,72 @@ function ultimateRootId(allScenes, sceneId) {
   return cur ? cur.id : sceneId;
 }
 
-/** Shared "what do we call this scene" resolution -- an anchored scene shows its anchor entity's real name; an untethered (quick-gen) scene falls back to its own objective note. Used by both the construction chain's own scene-chain-toggle summary text (unchanged, not touched here) and Table Mode's nav-zone items/search (task 25.2). */
+/** Shared "what do we call this scene" resolution -- Phase 26 task 26.2: a scene's own bespoke `name`, when set, wins over everything else (what makes two scenes at the same anchor, e.g. two scenes both at "Grand Stadium", distinguishable). Falls back, when unset, to the pre-26 behavior: an anchored scene shows its anchor entity's real name; an untethered (quick-gen) scene falls back to its own objective note. Used by both the construction chain's own scene-chain-toggle summary text and Table Mode's nav-zone items/search (task 25.2). */
 function resolveSceneDisplayName(scene) {
+  if (scene.name) return scene.name;
   if (scene.locationEntityId) {
     return entityInfoMapGlobal.get(scene.locationEntityId)?.name ?? scene.locationEntityId;
   }
   return scene.objectiveNote || "Ad-hoc scene";
+}
+
+/**
+ * Phase 26 task 26.2: a small, always-available "rename this scene" control
+ * -- an edit-in-place text input, defaulting to the scene's current bespoke
+ * name (empty when unset). Calls the real POST /api/session-planner/scenes/
+ * :id/rename route, updates sceneRecordCache in place (so
+ * resolveSceneDisplayName reflects it immediately without a full reload),
+ * then invokes `onRenamed` so the caller can refresh whatever text it
+ * already rendered from the old name. Shared by both views.
+ *
+ * @param {string} sceneId
+ * @param {() => void} onRenamed
+ * @returns {HTMLElement}
+ */
+function buildSceneRenameControl(sceneId, onRenamed) {
+  const wrap = document.createElement("span");
+  wrap.className = "scene-rename-control";
+  wrap.setAttribute("data-testid", "scene-rename-control");
+  wrap.setAttribute("data-scene-id", sceneId);
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.setAttribute("data-testid", "scene-rename-input");
+  input.placeholder = "Name this scene…";
+  input.value = sceneRecordCache.get(sceneId)?.name || "";
+  input.addEventListener("click", (evt) => evt.stopPropagation()); // never toggle the enclosing <details>
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = "Rename";
+  btn.setAttribute("data-testid", "scene-rename-submit-btn");
+
+  const status = document.createElement("span");
+  status.setAttribute("data-testid", "scene-rename-status");
+
+  btn.addEventListener("click", async (evt) => {
+    evt.stopPropagation();
+    const world = currentWorld();
+    const name = input.value.trim() || null;
+    status.textContent = "Saving…";
+    try {
+      const { scene } = await spApi(`/api/session-planner/scenes/${encodeURIComponent(sceneId)}/rename`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world, name })
+      });
+      sceneRecordCache.set(sceneId, scene);
+      status.textContent = "Saved.";
+      onRenamed?.();
+    } catch (err) {
+      status.textContent = `Could not rename: ${err.message}`;
+    }
+  });
+
+  wrap.appendChild(input);
+  wrap.appendChild(btn);
+  wrap.appendChild(status);
+  return wrap;
 }
 
 export function buildChainOrder(allScenes, currentSceneId, linked) {
@@ -1592,10 +1652,10 @@ function buildChainItem(sceneId, isCurrent) {
 
   const summary = document.createElement("summary");
   summary.setAttribute("data-testid", "scene-chain-toggle");
-  summary.textContent = scene.locationEntityId
-    ? (entityInfoMapGlobal.get(scene.locationEntityId)?.name ?? scene.locationEntityId)
-    : (scene.objectiveNote || "Ad-hoc scene");
+  summary.textContent = resolveSceneDisplayName(scene);
   details.appendChild(summary);
+
+  details.appendChild(buildSceneRenameControl(sceneId, () => { summary.textContent = resolveSceneDisplayName(sceneRecordCache.get(sceneId)); }));
 
   const body = document.createElement("div");
   body.className = "scene-chain-item-body";
@@ -1771,6 +1831,8 @@ function buildTableTopStrip(scene, extras) {
   nameEl.setAttribute("data-testid", "table-top-strip-name");
   nameEl.textContent = resolveSceneDisplayName(scene);
   wrap.appendChild(nameEl);
+
+  wrap.appendChild(buildSceneRenameControl(scene.id, () => { nameEl.textContent = resolveSceneDisplayName(sceneRecordCache.get(scene.id) ?? scene); }));
 
   const pathBadge = document.createElement("span");
   pathBadge.className = "location-card-anchor-badge";

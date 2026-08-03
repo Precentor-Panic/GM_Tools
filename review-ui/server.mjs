@@ -142,7 +142,7 @@ import {
 // Phase 16 -- Session Planner engine (task 16.6). Thin wrappers only, same
 // convention as every other route in this file: resolveWorld/resolveDir()
 // with NO client-supplied dataDir override anywhere below.
-import { createScene, forkScene, getScene, listScenesForWorld } from "../session-planner/scenes.mjs";
+import { createScene, forkScene, getScene, listScenesForWorld, renameScene } from "../session-planner/scenes.mjs";
 import { buildSessionBrief } from "../session-planner/brief.mjs";
 import { captureNote, runBatchIntake } from "../session-planner/session-notes.mjs";
 
@@ -1387,19 +1387,19 @@ async function handleApi(req, res, url, parts) {
   // above; no route here accepts a client-supplied `dataDir`.
   // ---------------------------------------------------------------------
 
-  // POST /api/session-planner/scenes  { world, locationEntityId?, objectiveNote? }
+  // POST /api/session-planner/scenes  { world, locationEntityId?, objectiveNote?, name? }
   if (method === "POST" && parts.length === 3 && parts[1] === "session-planner" && parts[2] === "scenes") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
-    const scene = createScene(w, { locationEntityId: body.locationEntityId, objectiveNote: body.objectiveNote });
+    const scene = createScene(w, { locationEntityId: body.locationEntityId, objectiveNote: body.objectiveNote, name: body.name });
     return sendJson(res, 200, { scene });
   }
 
-  // POST /api/session-planner/scenes/:id/fork  { world, locationEntityId?, objectiveNote? }
+  // POST /api/session-planner/scenes/:id/fork  { world, locationEntityId?, objectiveNote?, name? }
   if (method === "POST" && parts.length === 5 && parts[1] === "session-planner" && parts[2] === "scenes" && parts[4] === "fork") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
-    const scene = forkScene(w, parts[3], { locationEntityId: body.locationEntityId, objectiveNote: body.objectiveNote });
+    const scene = forkScene(w, parts[3], { locationEntityId: body.locationEntityId, objectiveNote: body.objectiveNote, name: body.name });
     return sendJson(res, 200, { scene });
   }
 
@@ -1407,6 +1407,14 @@ async function handleApi(req, res, url, parts) {
   if (method === "GET" && parts.length === 4 && parts[1] === "session-planner" && parts[2] === "scenes") {
     const w = resolveWorld(q.get("world"));
     const scene = getScene(w, parts[3]);
+    return sendJson(res, 200, { scene });
+  }
+
+  // POST /api/session-planner/scenes/:id/rename  { world, name }  -- Phase 26 task 26.2
+  if (method === "POST" && parts.length === 5 && parts[1] === "session-planner" && parts[2] === "scenes" && parts[4] === "rename") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const scene = renameScene(w, parts[3], body.name ?? null);
     return sendJson(res, 200, { scene });
   }
 

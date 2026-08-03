@@ -123,7 +123,7 @@ const before = existsSync(REPO_DEFAULT_ROOT) ? new Set(readdirSync(REPO_DEFAULT_
 const WORLD = "session-planner-scenes-test-world";
 
 (async () => {
-  const { createScene, forkScene, getScene, listScenesForWorld, sessionScenesRoot } =
+  const { createScene, forkScene, getScene, listScenesForWorld, renameScene, sessionScenesRoot } =
     await import("../../session-planner/scenes.mjs");
 
   test("directory isolation: sessionScenesRoot() honors GM_TOOLS_SESSION_SCENES_DIR, never the repo's real default", () => {
@@ -210,6 +210,42 @@ const WORLD = "session-planner-scenes-test-world";
     assert.deepEqual(scenes.map((s) => s.id), ["list-scene-1", "list-scene-2"]);
     assert.equal(scenes[1].parentSceneId, root.id);
     void child;
+  });
+
+  test("Phase 26 task 26.2: createScene accepts an optional bespoke `name`, defaulting to null when omitted", () => {
+    const named = createScene(WORLD, { locationEntityId: "stadium-1", name: "Championship Night" }, {
+      makeId: () => "scene-named-1",
+      now: "2026-07-22T22:00:00.000Z"
+    });
+    assert.equal(named.name, "Championship Night");
+    const unnamed = createScene(WORLD, { locationEntityId: "stadium-1" }, { makeId: () => "scene-unnamed-1", now: "2026-07-22T22:05:00.000Z" });
+    assert.equal(unnamed.name, null);
+  });
+
+  test("Phase 26 task 26.2: renameScene persists a new name, and clears it when passed null", () => {
+    const scene = createScene(WORLD, { locationEntityId: "stadium-1" }, { makeId: () => "scene-rename-1", now: "2026-07-22T22:10:00.000Z" });
+    assert.equal(scene.name, null);
+
+    const renamed = renameScene(WORLD, "scene-rename-1", "The Final Match");
+    assert.equal(renamed.name, "The Final Match");
+    const reread = getScene(WORLD, "scene-rename-1");
+    assert.equal(reread.name, "The Final Match", "must genuinely persist, not just echo the input");
+
+    const cleared = renameScene(WORLD, "scene-rename-1", null);
+    assert.equal(cleared.name, null);
+  });
+
+  test("Phase 26 task 26.2: renameScene throws a clear error for an unknown sceneId", () => {
+    assert.throws(() => renameScene(WORLD, "does-not-exist-rename", "X"), /does-not-exist-rename/);
+  });
+
+  test("Phase 26 task 26.2: forkScene does NOT inherit the parent's bespoke name by default (would produce two identically-named scenes)", () => {
+    const parent = createScene(WORLD, { locationEntityId: "stadium-1", name: "Opening Ceremony" }, {
+      makeId: () => "scene-name-fork-parent",
+      now: "2026-07-22T22:20:00.000Z"
+    });
+    const child = forkScene(WORLD, parent.id, {}, { makeId: () => "scene-name-fork-child", now: "2026-07-22T22:25:00.000Z" });
+    assert.equal(child.name, null, "a fork must not silently inherit the parent's bespoke name");
   });
 
   test("no Foundry-facing import anywhere in scenes.mjs -- a scene is explicitly NOT a World Fabric graph entity (design record §2.2)", async () => {

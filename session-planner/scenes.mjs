@@ -66,7 +66,7 @@ export function makeSceneId() {
  * @param {string} [opts.now]
  * @returns {object}   the created Scene
  */
-export function createScene(world, { locationEntityId = null, objectiveNote = null } = {}, opts = {}) {
+export function createScene(world, { locationEntityId = null, objectiveNote = null, name = null } = {}, opts = {}) {
   const makeId = opts.makeId ?? makeSceneId;
   const now = opts.now ?? new Date().toISOString();
   const scene = {
@@ -75,6 +75,7 @@ export function createScene(world, { locationEntityId = null, objectiveNote = nu
     parentSceneId: null,
     locationEntityId: locationEntityId ?? null,
     objectiveNote: objectiveNote ?? null,
+    name: name ?? null,
     createdAt: now
   };
   const scenes = readScenes(world);
@@ -96,7 +97,7 @@ export function createScene(world, { locationEntityId = null, objectiveNote = nu
  * @param {string} [opts.now]
  * @returns {object}   the created (forked) Scene
  */
-export function forkScene(world, parentSceneId, { locationEntityId, objectiveNote } = {}, opts = {}) {
+export function forkScene(world, parentSceneId, { locationEntityId, objectiveNote, name = null } = {}, opts = {}) {
   const parent = getScene(world, parentSceneId);
   const makeId = opts.makeId ?? makeSceneId;
   const now = opts.now ?? new Date().toISOString();
@@ -106,6 +107,12 @@ export function forkScene(world, parentSceneId, { locationEntityId, objectiveNot
     parentSceneId: parent.id,
     locationEntityId: locationEntityId !== undefined ? locationEntityId : parent.locationEntityId,
     objectiveNote: objectiveNote !== undefined ? objectiveNote : parent.objectiveNote,
+    // Deliberately NOT inherited from the parent by default (unlike
+    // location/objective) -- a bespoke name identifies ONE specific scene
+    // instance; silently copying it onto a fork would produce two
+    // identically-named scenes with no way to tell them apart in a list.
+    // Pass an explicit `name` to set one anyway.
+    name,
     createdAt: now
   };
   const scenes = readScenes(world);
@@ -119,6 +126,29 @@ export function getScene(world, sceneId) {
   if (!scene) {
     throw new Error(`No scene found: world="${world}" sceneId="${sceneId}"`);
   }
+  return scene;
+}
+
+/**
+ * Phase 26 task 26.2: set (or clear, with `name: null`) a scene's own
+ * bespoke display name -- what makes two scenes at the same anchor
+ * (e.g. two scenes both at "Grand Stadium") distinguishable in a list.
+ * Throws the same clear "No scene found" error as getScene for an unknown
+ * sceneId.
+ *
+ * @param {string} world
+ * @param {string} sceneId
+ * @param {string|null} name
+ * @returns {object}   the updated Scene
+ */
+export function renameScene(world, sceneId, name) {
+  const scenes = readScenes(world);
+  const scene = scenes.find((s) => s.id === sceneId);
+  if (!scene) {
+    throw new Error(`No scene found: world="${world}" sceneId="${sceneId}"`);
+  }
+  scene.name = name ?? null;
+  writeScenes(world, scenes);
   return scene;
 }
 
