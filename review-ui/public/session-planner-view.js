@@ -1474,6 +1474,253 @@ function buildQuickAddScenePanel() {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 26 task 26.4, §26.A -- the ONE shared "resolve a place (existing or
+// new), then offer link-or-not" sub-flow, mounted under a caller-specific
+// testid `prefix`. Calls the REAL addNodeOp (POST /api/graph/nodes) and
+// addEdgeOp (POST /api/graph/edges) routes directly -- zero new engine work.
+// Once the place is fully resolved (an edge was created, or linking was
+// explicitly declined), invokes `onResolved(placeEntityId)` so the CALLER
+// decides what to do with it (26.5's quick-gen, 26.6's "+Scene" -- this is
+// the one inner shape, never duplicated per caller).
+//
+// @param {string} prefix
+// @param {{linkFromEntityId:string|null, onResolved:(placeEntityId:string)=>(void|Promise<void>)}} opts
+// ---------------------------------------------------------------------------
+function buildPlaceRequiredFlow(prefix, { linkFromEntityId, onResolved }) {
+  const wrap = document.createElement("div");
+  wrap.setAttribute("data-testid", `${prefix}-place-step`);
+
+  const status = document.createElement("div");
+  status.className = "hint";
+  status.setAttribute("data-testid", `${prefix}-status`);
+
+  const modeBar = document.createElement("div");
+  const existingModeBtn = document.createElement("button");
+  existingModeBtn.type = "button";
+  existingModeBtn.className = "link-btn place-mode-btn place-mode-btn--active";
+  existingModeBtn.setAttribute("data-testid", `${prefix}-place-mode-existing-btn`);
+  existingModeBtn.textContent = "Pick existing place";
+  const newModeBtn = document.createElement("button");
+  newModeBtn.type = "button";
+  newModeBtn.className = "link-btn place-mode-btn";
+  newModeBtn.setAttribute("data-testid", `${prefix}-place-mode-new-btn`);
+  newModeBtn.textContent = "Create new place";
+  modeBar.append(existingModeBtn, newModeBtn);
+
+  const existingSubpanel = document.createElement("div");
+  const newSubpanel = document.createElement("div");
+  newSubpanel.style.display = "none";
+
+  function showExisting() {
+    existingSubpanel.style.display = "";
+    newSubpanel.style.display = "none";
+    existingModeBtn.className = "link-btn place-mode-btn place-mode-btn--active";
+    newModeBtn.className = "link-btn place-mode-btn";
+  }
+  function showNew() {
+    existingSubpanel.style.display = "none";
+    newSubpanel.style.display = "";
+    newModeBtn.className = "link-btn place-mode-btn place-mode-btn--active";
+    existingModeBtn.className = "link-btn place-mode-btn";
+  }
+  existingModeBtn.addEventListener("click", showExisting);
+  newModeBtn.addEventListener("click", showNew);
+
+  const linkStepHost = document.createElement("div");
+
+  function placeResolved(placeEntityId) {
+    linkStepHost.innerHTML = "";
+    const linkStep = document.createElement("div");
+    linkStep.setAttribute("data-testid", `${prefix}-link-step`);
+    linkStep.setAttribute("data-place-entity-id", placeEntityId);
+
+    const yesBtn = document.createElement("button");
+    yesBtn.type = "button";
+    yesBtn.className = "btn";
+    yesBtn.setAttribute("data-testid", `${prefix}-link-yes-btn`);
+    yesBtn.textContent = "Link to this scene's location";
+
+    const noBtn = document.createElement("button");
+    noBtn.type = "button";
+    noBtn.className = "link-btn";
+    noBtn.setAttribute("data-testid", `${prefix}-link-no-btn`);
+    noBtn.textContent = "Don't link (just a hop)";
+
+    const noteInput = document.createElement("input");
+    noteInput.type = "text";
+    noteInput.setAttribute("data-testid", `${prefix}-link-note-input`);
+    noteInput.placeholder = "Optional: rough distance / relationship note";
+    noteInput.style.display = "none";
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "btn btn--accept";
+    confirmBtn.setAttribute("data-testid", `${prefix}-link-confirm-btn`);
+    confirmBtn.textContent = "Confirm link";
+    confirmBtn.style.display = "none";
+
+    yesBtn.addEventListener("click", () => {
+      noteInput.style.display = "";
+      confirmBtn.style.display = "";
+      yesBtn.disabled = true;
+      noBtn.disabled = true;
+    });
+
+    confirmBtn.addEventListener("click", async () => {
+      confirmBtn.disabled = true;
+      status.textContent = "Linking…";
+      try {
+        if (linkFromEntityId) {
+          await spApi("/api/graph/edges", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              world: currentWorld(),
+              sourceId: linkFromEntityId,
+              targetId: placeEntityId,
+              notes: noteInput.value.trim() || undefined
+            })
+          });
+        }
+        await onResolved(placeEntityId);
+      } catch (err) {
+        status.textContent = `Could not link: ${err.message}`;
+        confirmBtn.disabled = false;
+      }
+    });
+
+    noBtn.addEventListener("click", async () => {
+      noBtn.disabled = true;
+      yesBtn.disabled = true;
+      status.textContent = "";
+      try {
+        await onResolved(placeEntityId);
+      } catch (err) {
+        status.textContent = `Could not proceed: ${err.message}`;
+        noBtn.disabled = false;
+        yesBtn.disabled = false;
+      }
+    });
+
+    linkStep.append(yesBtn, noBtn, noteInput, confirmBtn);
+    linkStepHost.appendChild(linkStep);
+  }
+
+  const existingPicker = buildEntityPicker({
+    testidPrefix: `${prefix}-place`,
+    placeholder: "Search for an existing place…",
+    defaultTypeFilter: "place",
+    onSelect: (entity) => placeResolved(entity.id)
+  });
+  existingSubpanel.appendChild(existingPicker);
+
+  const newNameInput = document.createElement("input");
+  newNameInput.type = "text";
+  newNameInput.setAttribute("data-testid", `${prefix}-new-place-name-input`);
+  newNameInput.placeholder = "New place name…";
+  const newSubmitBtn = document.createElement("button");
+  newSubmitBtn.type = "button";
+  newSubmitBtn.className = "btn";
+  newSubmitBtn.setAttribute("data-testid", `${prefix}-new-place-submit-btn`);
+  newSubmitBtn.textContent = "Create place";
+  newSubmitBtn.addEventListener("click", async () => {
+    const name = newNameInput.value.trim();
+    if (!name) {
+      status.textContent = "Type a name first.";
+      return;
+    }
+    newSubmitBtn.disabled = true;
+    status.textContent = "Creating place…";
+    try {
+      const result = await spApi("/api/graph/nodes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), name, type: "place" })
+      });
+      status.textContent = "";
+      placeResolved(result.entityId);
+    } catch (err) {
+      status.textContent = `Could not create place: ${err.message}`;
+    } finally {
+      newSubmitBtn.disabled = false;
+    }
+  });
+  newSubpanel.append(newNameInput, newSubmitBtn);
+
+  wrap.append(modeBar, existingSubpanel, newSubpanel, linkStepHost, status);
+  return wrap;
+}
+
+/**
+ * Phase 26 task 26.4/26.6, §26.B -- "+Scene": ONE per scene, living at the
+ * bottom of that scene's own box/card in BOTH views. Runs the shared
+ * place-required-flow above (prefix `add-scene`), then creates the scene via
+ * the EXISTING (Phase 16) POST /api/session-planner/scenes route -- no new
+ * scene-creation mechanism. `onCreated(newScene)` is view-specific: the
+ * construction view appends it to the chain right after this scene; Table
+ * Mode (single-scene-focused) just reports success.
+ *
+ * @param {string} sceneId   the scene THIS control is mounted on (its own anchor is the default link target)
+ * @param {(newScene:object)=>void} onCreated
+ * @returns {{btn:HTMLElement, panel:HTMLElement}}
+ */
+function buildAddSceneControl(sceneId, onCreated) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn scene-action-btn";
+  btn.setAttribute("data-testid", "add-scene-btn");
+  btn.setAttribute("data-scene-id", sceneId);
+  btn.textContent = "+ Scene";
+
+  const panel = document.createElement("div");
+  panel.setAttribute("data-testid", "add-scene-panel");
+  panel.setAttribute("data-scene-id", sceneId);
+  panel.style.display = "none";
+
+  // Deliberately idempotent-open, NOT a strict open/close toggle -- same
+  // established precedent as scenes-view.js's own toggleLinkedPanel
+  // (§26.H's own hypothesis text names this exact pattern). ALSO rebuilds
+  // the inner flow FRESH on every click, rather than caching/resuming a
+  // previously-mounted one: a same-scene/same-hash re-navigation (the
+  // confirmed root cause behind §26.H bug 1, directly reproduced against
+  // this exact control while building it) never fires a fresh render, so a
+  // cached flow would silently resume wherever an EARLIER visit left off
+  // (a different sub-mode selected, or already past the place-step) instead
+  // of the fresh flow a DM clicking "+ Scene" again genuinely expects.
+  btn.addEventListener("click", () => {
+    panel.style.display = "block";
+    panel.innerHTML = "";
+    const anchorEntityId = sceneRecordCache.get(sceneId)?.locationEntityId ?? null;
+    const flow = buildPlaceRequiredFlow("add-scene", {
+      linkFromEntityId: anchorEntityId,
+      onResolved: async (placeEntityId) => {
+        const flowStatus = flow.querySelector('[data-testid="add-scene-status"]');
+        if (flowStatus) flowStatus.textContent = "Creating scene…";
+        const { scene: newScene } = await spApi("/api/session-planner/scenes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: currentWorld(), locationEntityId: placeEntityId })
+        });
+        if (flowStatus) flowStatus.textContent = "Scene created.";
+        onCreated(newScene);
+      }
+    });
+    // Every `add-scene-status`/`add-scene-place-step`/`add-scene-link-step`
+    // element this panel ever renders is stamped with THIS scene's own id
+    // -- the fixture's own contract scopes status lookups by
+    // [data-testid="add-scene-status"][data-scene-id="..."], matching
+    // add-scene-btn/add-scene-panel's own established convention.
+    flow.setAttribute("data-scene-id", sceneId);
+    for (const el of flow.querySelectorAll("[data-testid]")) {
+      if (!el.hasAttribute("data-scene-id")) el.setAttribute("data-scene-id", sceneId);
+    }
+    panel.appendChild(flow);
+  });
+
+  return { btn, panel };
+}
+
+// ---------------------------------------------------------------------------
 // Chain assembly (this file's header). Pure helpers first, then the DOM
 // builders that consume them.
 // ---------------------------------------------------------------------------
@@ -1624,14 +1871,23 @@ function buildSceneBodyInto(body, sceneId) {
   const { btn: addEventBtn, panel: addEventPanel } = mountAddEventControl(scene);
   const addEncounterBtn = mountAddEncounterControl(scene);
 
+  // Phase 26 task 26.4/26.6, §26.B -- "+Scene" lives at the BOTTOM of this
+  // scene's own actions bar, a sibling of develop-scene-btn etc. (replaces
+  // the old between-scenes insert-scene-control -- task 26.6 removes that
+  // mechanism entirely).
+  const { btn: addSceneBtn, panel: addScenePanel } = buildAddSceneControl(sceneId, (newScene) => {
+    insertSceneRecord(sceneId, newScene);
+  });
+
   // DOM source order per this phase's own interface contract: add-node
-  // toggle, develop-scene, add-event, add-encounter -- all direct siblings
-  // of the SAME actions bar, same button element type/class (task 23.6's
-  // equal-weight requirement).
-  actionsBar.append(addNodeToggle, developSceneBtn, addEventBtn, addEncounterBtn);
+  // toggle, develop-scene, add-event, add-encounter, add-scene -- all direct
+  // siblings of the SAME actions bar, same button element type/class (task
+  // 23.6's equal-weight requirement).
+  actionsBar.append(addNodeToggle, developSceneBtn, addEventBtn, addEncounterBtn, addSceneBtn);
   body.appendChild(actionsBar);
   body.appendChild(addNodePanel);
   body.appendChild(addEventPanel);
+  body.appendChild(addScenePanel);
   body.appendChild(developStatus);
   body.appendChild(developReviewHolder);
 
@@ -2470,9 +2726,17 @@ function buildTableActionsBar(scene) {
   const addEncounterBtn = mountAddEncounterControl(scene, "table-add-encounter-btn");
   const { btn: quickGenBtn, panel: quickGenPanel } = buildTableQuickGenControl();
 
+  // Phase 26 task 26.4/26.6, §26.B -- "+Scene", a sibling of table-add-event
+  // -btn etc. Table Mode is single-scene-focused: onCreated just reports
+  // success (add-scene-status) and caches the new scene record for later
+  // nav-zone reachability, rather than growing a visible list itself.
+  const { btn: addSceneBtn, panel: addScenePanel } = buildAddSceneControl(scene.id, (newScene) => {
+    sceneRecordCache.set(newScene.id, newScene);
+  });
+
   // DOM source order matches the contract: add-event, add-encounter,
-  // quick-gen, all direct siblings of this ONE bar.
-  wrap.append(addEventBtn, addEncounterBtn, quickGenBtn, addEventPanel, quickGenPanel);
+  // quick-gen, add-scene, all direct siblings of this ONE bar.
+  wrap.append(addEventBtn, addEncounterBtn, quickGenBtn, addSceneBtn, addEventPanel, quickGenPanel, addScenePanel);
 
   return wrap;
 }

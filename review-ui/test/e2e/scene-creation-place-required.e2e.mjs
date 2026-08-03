@@ -67,7 +67,20 @@ after(async () => {
 
 test("CONSTRUCTION VIEW: picking an EXISTING place, then LINKING with a rough-distance note, creates a scene AND a real edge (via addEdgeOp) carrying that note", async () => {
   await page.goto(`${base}/#session-planner/${cvScene.id}`);
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-chain-item"]').length === 1, { timeout: 15000 });
+  // FIX (found live while implementing 26.4, confirmed via direct empirical
+  // testing, not guesswork): this file's own before() creates BOTH cvScene
+  // AND tmScene before any test runs, so the construction-view chain
+  // (which -- confirmed correct via scene-construction-insert-between
+  // .e2e.mjs's own sibling assertion of count===2 for two similarly
+  // graph-disconnected scenes -- genuinely shows every root scene in the
+  // world, not just corridor-reachable ones) legitimately starts with 2
+  // chain items here, not 1. The very next test in this same file already
+  // uses `>= 1` for this identical fixture -- this was a copy/paste
+  // inconsistency in the original QE pass, not an intentional exact-count
+  // contract; corrected to match this file's own established `>= 1`
+  // convention rather than left silently unsatisfiable.
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-chain-item"]').length >= 1, { timeout: 15000 });
+  const chainCountBefore = await page.locator('[data-testid="scene-chain-item"]').count();
 
   const addSceneBtn = page.locator(`[data-testid="add-scene-btn"][data-scene-id="${cvScene.id}"]`);
   await addSceneBtn.waitFor({ state: "visible", timeout: 10000 });
@@ -96,15 +109,24 @@ test("CONSTRUCTION VIEW: picking an EXISTING place, then LINKING with a rough-di
   await noteInput.fill("~2 days' hard travel, rough terrain");
   await linkStep.locator('[data-testid="add-scene-link-confirm-btn"]').click();
 
+  // FIX (same reasoning as this test's opening waitForFunction above):
+  // asserted as a relative increase (this test's own real invariant, "a new
+  // chain-item appeared") rather than an absolute count that depended on an
+  // undercounted starting fixture (the world already has cvScene+tmScene
+  // before this test's own new scene is created).
   await assert.doesNotReject(async () => {
-    await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-chain-item"]').length === 2, { timeout: 10000 });
+    await page.waitForFunction(
+      (before) => document.querySelectorAll('[data-testid="scene-chain-item"]').length === before + 1,
+      chainCountBefore,
+      { timeout: 10000 }
+    );
   }, "a new scene chain-item must appear once the place+link flow completes");
 
   // Confirm via the REAL snapshot, not just UI state: the scene's anchor is
   // the picked existing place, AND a real edge with the note exists.
   const items = page.locator('[data-testid="scene-chain-item"]');
   const orderedIds = await items.evaluateAll((els) => els.map((el) => el.getAttribute("data-scene-id")));
-  const newSceneId = orderedIds.find((id) => id !== cvScene.id);
+  const newSceneId = orderedIds.find((id) => id !== cvScene.id && id !== tmScene.id);
   assert.ok(newSceneId);
 
   const brief = await (await fetch(`${base}/api/session-planner/brief?world=${WORLD}&sceneId=${newSceneId}`)).json();
@@ -123,6 +145,7 @@ test("CONSTRUCTION VIEW: picking an EXISTING place, then LINKING with a rough-di
 test("CONSTRUCTION VIEW: picking an EXISTING place, then choosing NOT to link, creates the scene with NO new edge at all", async () => {
   await page.goto(`${base}/#session-planner/${cvScene.id}`);
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-chain-item"]').length >= 1, { timeout: 15000 });
+  const chainCountBefore = await page.locator('[data-testid="scene-chain-item"]').count();
 
   const { snapshot: before1 } = loadSnapshot(dataDir, WORLD);
   const edgeCountBefore = before1.edges.length;
@@ -144,8 +167,13 @@ test("CONSTRUCTION VIEW: picking an EXISTING place, then choosing NOT to link, c
   await linkStep.waitFor({ state: "visible", timeout: 10000 });
   await linkStep.locator('[data-testid="add-scene-link-no-btn"]').click();
 
+  // FIX -- same relative-count reasoning as the prior test above.
   await assert.doesNotReject(async () => {
-    await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-chain-item"]').length === 2, { timeout: 10000 });
+    await page.waitForFunction(
+      (before) => document.querySelectorAll('[data-testid="scene-chain-item"]').length === before + 1,
+      chainCountBefore,
+      { timeout: 10000 }
+    );
   }, "declining to link must still create the new scene");
 
   const { snapshot: after1 } = loadSnapshot(dataDir, WORLD);
