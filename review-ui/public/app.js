@@ -78,8 +78,13 @@ async function initWorldSelect() {
 
 function parseHash() {
   const raw = (location.hash || "#queue").slice(1);
-  const [view, arg] = raw.split("/");
-  return { view: view || "queue", arg };
+  // Split off the leading view segment, but preserve the REST as a single arg
+  // (joined on "/") -- Phase 27 introduces the multi-segment
+  // `#session-planner/plan/<planId>` route, and every pre-existing arg is a
+  // single segment, so `rest.join("/")` is backward-compatible for them all
+  // (equal to `rest[0]`).
+  const [view, ...rest] = raw.split("/");
+  return { view: view || "queue", arg: rest.length ? rest.join("/") : undefined };
 }
 
 function navigate(view, arg) {

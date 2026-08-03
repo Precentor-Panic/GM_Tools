@@ -339,6 +339,12 @@ let entityInfoMapGlobal = new Map();
 let chainSceneIds = [];
 let currentSceneIdModule = null;
 let chainContainerEl = null;
+// Phase 27 task 27.4: the plan currently driving the construction view (null
+// in the legacy, no-active-plan fallback). Held at module scope so a later
+// task (27.8's remove-from-plan) can re-render the active plan's chain / fall
+// back to plan-empty-state without threading these through every caller.
+let activePlanIdModule = null;
+let activePlanContainerEl = null;
 const sceneRecordCache = new Map(); // sceneId -> Scene record
 const sceneExtrasCache = new Map(); // sceneId -> { brief, undoActions, encounters }
 const addedMembership = new Map(); // sceneId -> Set<entityId> -- task 23.2's client-tracked "added" nodes for THIS page session (see this file's own self-review report: no GET .../members route exists yet to durably resume this across a fresh reload -- a flagged, honest gap, not a silent one)
@@ -693,97 +699,15 @@ export function cancelActiveRecenter() {
 }
 
 // Phase 26 task 26.7, §26.B: renderBeyondCorridorSummary (the collapsed
-// content/structural-count summary, "Beyond this corridor") is REMOVED
-// entirely -- its former DOM position now hosts buildConnectExistingSceneZone
-// below, per phase26-fixture.mjs §6.
-
-/**
- * Phase 26 task 26.7. Repurposes renderBeyondCorridorSummary's old spot with
- * two QUICK, VISIBLE (never behind a `<details>`) options: connect this
- * scene to an existing one (surfacing BOTH scene-linkage.mjs's hop-based
- * candidates AND §26.3's explicitly-linked scenes together, per §26.C --
- * two genuinely distinct mechanisms, neither replaces the other), and
- * create-ad-hoc-scene (an alias for THIS scene's own "+Scene", never a
- * second/duplicate creation mechanism).
- *
- * @param {string} sceneId
- * @param {{btn:HTMLElement, panel:HTMLElement}} addSceneControl   this scene's own already-built "+Scene" control (26.4/26.6), reused as-is
- * @returns {HTMLElement}
- */
-function buildConnectExistingSceneZone(sceneId, addSceneControl) {
-  const wrap = document.createElement("div");
-  wrap.className = "connect-existing-scene-zone";
-
-  const list = document.createElement("div");
-  list.className = "connect-existing-scene-list";
-  list.setAttribute("data-testid", "connect-existing-scene-list");
-  list.setAttribute("data-scene-id", sceneId);
-
-  const status = document.createElement("div");
-  status.className = "hint";
-
-  async function renderList() {
-    list.innerHTML = "Loading nearby/linked scenes…";
-    try {
-      const [linkageRes, sceneLinksRes] = await Promise.all([
-        spApi(`/api/scene-planning/linkage${spWithWorld({ sceneId })}`),
-        spApi(`/api/scene-planning/scene-links${spWithWorld({ sceneId })}`)
-      ]);
-      list.innerHTML = "";
-      const linkageCandidates = (linkageRes.linked ?? []).map((l) => ({ sceneId: l.sceneId, source: "linkage", label: l.anchorEntityName ?? l.sceneId }));
-      const sceneLinkCandidates = (sceneLinksRes.linked ?? []).map((l) => ({ sceneId: l.sceneId, source: "scene-link", label: resolveSceneDisplayName(sceneRecordCache.get(l.sceneId) ?? { id: l.sceneId }) }));
-      const candidates = [...linkageCandidates, ...sceneLinkCandidates];
-      if (!candidates.length) {
-        const empty = document.createElement("div");
-        empty.className = "hint";
-        empty.textContent = "No nearby or linked scenes yet.";
-        list.appendChild(empty);
-      }
-      for (const c of candidates) {
-        const item = document.createElement("button");
-        item.type = "button";
-        item.className = "link-btn";
-        item.setAttribute("data-testid", "connect-existing-scene-item");
-        item.setAttribute("data-scene-id", c.sceneId);
-        item.setAttribute("data-connect-source", c.source);
-        item.textContent = c.source === "linkage" ? `${c.label} (nearby)` : `${c.label} (linked)`;
-        item.addEventListener("click", async () => {
-          item.disabled = true;
-          status.textContent = "Linking…";
-          try {
-            await spApi("/api/scene-planning/scene-links", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ world: currentWorld(), sceneIdA: sceneId, sceneIdB: c.sceneId })
-            });
-            status.textContent = "Linked.";
-          } catch (err) {
-            status.textContent = `Could not link: ${err.message}`;
-          } finally {
-            item.disabled = false;
-          }
-        });
-        list.appendChild(item);
-      }
-    } catch (err) {
-      list.textContent = `Could not load nearby/linked scenes: ${err.message}`;
-    }
-  }
-  renderList();
-
-  const adHocBtn = document.createElement("button");
-  adHocBtn.type = "button";
-  adHocBtn.className = "btn";
-  adHocBtn.setAttribute("data-testid", "create-ad-hoc-scene-btn");
-  adHocBtn.setAttribute("data-scene-id", sceneId);
-  adHocBtn.textContent = "+ New ad-hoc scene";
-  // §26.7: an ALIAS for this scene's own add-scene-btn -- clicking it opens
-  // the EXACT SAME add-scene-panel, never a second/duplicate mechanism.
-  adHocBtn.addEventListener("click", () => addSceneControl.btn.click());
-
-  wrap.append(list, adHocBtn, status);
-  return wrap;
-}
+// content/structural-count summary, "Beyond this corridor") was REMOVED
+// entirely.
+//
+// Phase 27 task 27.4, §F4/F12: buildConnectExistingSceneZone (the green
+// auto-surfaced connect-existing-scene-list/connect-existing-scene-item/
+// create-ad-hoc-scene-btn zone) is REMOVED ENTIRELY too -- a real DOM-
+// absence, asserted by beyond-path-removed.e2e.mjs. Its replacement, the
+// plan-scoped link/unlink list (plan-scene-links-list), is task 27.5's job,
+// deliberately NOT built here.
 
 function buildRecenterControl(sceneId, onRecentered) {
   const wrap = document.createElement("div");
@@ -1420,127 +1344,15 @@ async function onDevelopScene(sceneId, statusEl, reviewHolder) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 23.7 (Phase 26 task 26.5 reworked its inner flow, §26.A): mid-session
-// ad-hoc "+" quick-gen -- one field, one button, exactly one LLM call.
-// Top-level, not scoped to any one insertion point.
-//
-// Phase 26 task 26.6, §26.B: the old between-scenes "+ Insert Scene Here"
-// (buildInsertSceneControl/insert-scene-control/insert-scene-picker) lived
-// here and was REMOVED ENTIRELY -- it let a DM insert a scene between two
-// arbitrary chain positions regardless of whether those scenes' anchors
-// were actually graph-connected, the confirmed direct cause of real
-// reported confusion. Replaced by "+Scene" (26.4's buildAddSceneControl,
-// mounted inside each scene's own actions bar) -- an unambiguous "add a
-// scene from THIS scene" trigger instead. The real-place-creation coverage
-// this control used to provide lives on via add-scene-control.e2e.mjs/
-// scene-creation-place-required.e2e.mjs's own new-place-creation
-// assertions; transit-entity creation itself (session-planner/
-// transit-entity.mjs) is UNCHANGED, just no longer reachable from this
-// particular UI trigger.
+// Phase 27 task 27.4, §F5: the construction view's own top-level
+// "+ Quick add scene" (buildQuickAddScenePanel: quick-add-scene-btn/-panel/
+// -name-input/-submit-btn/-status) is RETIRED ENTIRELY, folded into the
+// single plan-level "+Scene" control (buildPlanAddSceneControl below), which
+// never calls quick-gen at all. Its removal is asserted by scene-construction
+// -quick-gen.e2e.mjs / scene-construction-loading-scope.e2e.mjs. Table Mode's
+// OWN, separate table-quick-gen-* control (buildTableQuickGenControl) is a
+// different control and is UNTOUCHED.
 // ---------------------------------------------------------------------------
-function buildQuickAddScenePanel() {
-  const wrap = document.createElement("div");
-  wrap.className = "quick-add-scene-wrap";
-
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "btn";
-  btn.setAttribute("data-testid", "quick-add-scene-btn");
-  btn.textContent = "+ Quick add scene";
-
-  const panel = document.createElement("div");
-  panel.setAttribute("data-testid", "quick-add-scene-panel");
-  panel.style.display = "none";
-
-  const nameInput = document.createElement("input");
-  nameInput.type = "text";
-  nameInput.setAttribute("data-testid", "quick-add-scene-name-input");
-  nameInput.placeholder = "Name this ad-hoc scene…";
-
-  const submitBtn = document.createElement("button");
-  submitBtn.type = "button";
-  submitBtn.className = "btn btn--accept";
-  submitBtn.setAttribute("data-testid", "quick-add-scene-submit-btn");
-  submitBtn.textContent = "Create";
-
-  const status = document.createElement("div");
-  status.className = "hint";
-  status.setAttribute("data-testid", "quick-add-scene-status");
-
-  const placeStepHost = document.createElement("div");
-
-  submitBtn.addEventListener("click", async () => {
-    const name = nameInput.value.trim();
-    if (!name) {
-      status.textContent = "Type a name first.";
-      return;
-    }
-    submitBtn.disabled = true;
-    status.innerHTML = "";
-    const promise = spApi("/api/scene-planning/quick-gen", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        world: currentWorld(),
-        prompt: `Briefly and evocatively describe a location or moment called "${name}", suitable for dropping into an ongoing tabletop RPG session on short notice. Two or three sentences.`
-      })
-    });
-    try {
-      const genRes = await withSlowNoticeIndicator(status, promise);
-      status.textContent = "";
-      nameInput.disabled = true;
-      submitBtn.style.display = "none";
-
-      // Phase 26 task 26.5, §26.A: quick-gen's generation step is still
-      // exactly one field/one button/one LLM call (unchanged from Phase
-      // 23) -- what changes is the success callback, which no longer
-      // creates an untethered scene. Instead it renders the SAME shared
-      // place-required-flow every scene-creation path in this phase uses
-      // (§3 of phase26-fixture.mjs's header), linking (if the DM chooses)
-      // from the CURRENTLY-loaded scene's own anchor -- the natural
-      // default target when this control is triggered mid-session.
-      placeStepHost.innerHTML = "";
-      const anchorEntityId = sceneRecordCache.get(currentSceneIdModule)?.locationEntityId ?? null;
-      const flow = buildPlaceRequiredFlow("quick-add-scene", {
-        linkFromEntityId: anchorEntityId,
-        onResolved: async (placeEntityId) => {
-          const flowStatus = flow.querySelector('[data-testid="quick-add-scene-status"]');
-          if (flowStatus) flowStatus.textContent = "Creating scene…";
-          const sceneRes = await spApi("/api/session-planner/scenes", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ world: currentWorld(), locationEntityId: placeEntityId, objectiveNote: `${name} — ${genRes.text}` })
-          });
-          appendNewSceneRecord(sceneRes.scene);
-          nameInput.value = "";
-          nameInput.disabled = false;
-          submitBtn.style.display = "";
-          placeStepHost.innerHTML = "";
-          panel.style.display = "none";
-        }
-      });
-      placeStepHost.appendChild(flow);
-    } catch (err) {
-      status.textContent = `Could not generate: ${err.message}`;
-      nameInput.disabled = false;
-      submitBtn.style.display = "";
-    } finally {
-      submitBtn.disabled = false;
-    }
-  });
-
-  // Idempotent-open, matching add-scene-btn's own established precedent
-  // (§26.H) -- a same-scene/same-hash re-navigation never fires a fresh
-  // render, so a strict toggle could close a panel a DM never actually saw
-  // finish opening on THIS visit.
-  btn.addEventListener("click", () => {
-    panel.style.display = "block";
-  });
-
-  panel.append(nameInput, submitBtn, placeStepHost, status);
-  wrap.append(btn, panel);
-  return wrap;
-}
 
 // ---------------------------------------------------------------------------
 // Phase 26 task 26.4, §26.A -- the ONE shared "resolve a place (existing or
@@ -1921,19 +1733,11 @@ function buildSceneBodyInto(body, sceneId) {
 
   const extras = sceneExtrasCache.get(sceneId);
 
-  // Phase 26 task 26.4/26.6, §26.B -- "+Scene", built once and reused both
-  // as the actions-bar button below AND as create-ad-hoc-scene-btn's alias
-  // target in the repurposed connect-existing-scene zone (task 26.7) -- one
-  // control, two entry points, never a duplicate mechanism.
-  const addSceneControl = buildAddSceneControl(sceneId, (newScene) => {
-    insertSceneRecord(sceneId, newScene);
-  });
-
-  // Phase 26 task 26.7, §26.B: renderBeyondCorridorSummary's old "Beyond
-  // this corridor" collapsed summary is REMOVED -- its former DOM position
-  // now hosts connect-existing-scene / create-ad-hoc-scene, quick and
-  // visible, never behind a <details>.
-  body.appendChild(buildConnectExistingSceneZone(sceneId, addSceneControl));
+  // Phase 27 task 27.4, §F6: the per-scene "+Scene" control is RETIRED here
+  // -- scene creation now lives at the plan level (buildPlanAddSceneControl,
+  // a single top-level control). §F4: buildConnectExistingSceneZone (the
+  // green auto-link zone) is likewise gone. The per-scene actions bar below
+  // is now EXACTLY add-node / develop-scene / add-event / add-encounter.
 
   const actionsBar = document.createElement("div");
   actionsBar.setAttribute("data-testid", "scene-actions-bar");
@@ -1959,21 +1763,15 @@ function buildSceneBodyInto(body, sceneId) {
   const { btn: addEventBtn, panel: addEventPanel } = mountAddEventControl(scene);
   const addEncounterBtn = mountAddEncounterControl(scene);
 
-  // Phase 26 task 26.4/26.6, §26.B -- "+Scene" lives at the BOTTOM of this
-  // scene's own actions bar, a sibling of develop-scene-btn etc. (replaces
-  // the old between-scenes insert-scene-control -- task 26.6 removes that
-  // mechanism entirely).
-  const { btn: addSceneBtn, panel: addScenePanel } = addSceneControl;
-
-  // DOM source order per this phase's own interface contract: add-node
-  // toggle, develop-scene, add-event, add-encounter, add-scene -- all direct
-  // siblings of the SAME actions bar, same button element type/class (task
-  // 23.6's equal-weight requirement).
-  actionsBar.append(addNodeToggle, developSceneBtn, addEventBtn, addEncounterBtn, addSceneBtn);
+  // Phase 27 task 27.4, §F6: the per-scene actions bar is now EXACTLY
+  // add-node toggle, develop-scene, add-event, add-encounter -- add-scene
+  // dropped (it moved to the plan level). All direct siblings of the SAME
+  // actions bar, same button element type/class (task 23.6's equal-weight
+  // requirement).
+  actionsBar.append(addNodeToggle, developSceneBtn, addEventBtn, addEncounterBtn);
   body.appendChild(actionsBar);
   body.appendChild(addNodePanel);
   body.appendChild(addEventPanel);
-  body.appendChild(addScenePanel);
   body.appendChild(developStatus);
   body.appendChild(developReviewHolder);
 
@@ -2089,6 +1887,11 @@ async function loadAndRenderChain(sceneId, container, opts = {}) {
   const ordered = buildChainOrder(allScenes.some((s) => s.id === sceneId) ? allScenes : [...allScenes, scene], sceneId, linked);
   chainSceneIds = ordered.map((s) => s.id);
   currentSceneIdModule = sceneId;
+  // Legacy fallback: this scene belongs to no Plan, so there's no active plan
+  // driving the view (buildPlanAddSceneControl renders with no data-plan-id
+  // and creates scenes without attaching them to any plan).
+  activePlanIdModule = null;
+  activePlanContainerEl = null;
   sceneExtrasCache.clear();
 
   container.innerHTML = "";
@@ -2098,6 +1901,10 @@ async function loadAndRenderChain(sceneId, container, opts = {}) {
   chainContainerEl.setAttribute("data-testid", "scene-chain");
   container.appendChild(chainContainerEl);
   rerenderChainOnly();
+
+  // Phase 27 task 27.4, §F6: the single, plan-level "+Scene" control -- a
+  // sibling of scene-chain. No data-plan-id in this legacy-fallback path.
+  container.appendChild(buildPlanAddSceneControl(null));
 
   // Phase 25 task 25.2: Table Mode toggle -- top-level, sibling of
   // scene-chain (matching quick-add-scene-btn's own established
@@ -2113,7 +1920,6 @@ async function loadAndRenderChain(sceneId, container, opts = {}) {
   });
   container.appendChild(tableModeToggleBtn);
 
-  container.appendChild(buildQuickAddScenePanel());
   container.appendChild(buildRecenterControl(sceneId, async (newSceneId) => {
     openNotePanels.clear();
     await loadAndRenderChain(newSceneId, container, { replaceState: true });
@@ -2132,6 +1938,204 @@ async function loadAndRenderChain(sceneId, container, opts = {}) {
     (el) => el.getAttribute && el.getAttribute("data-testid") === "scene-chain-item" && el.getAttribute("data-scene-id") === sceneId
   );
   if (currentItemEl) await currentItemEl._ensureBodyLoaded();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 27 task 27.4 (F3/F5/F6): plan-first construction view. Given a
+// resolved Plan, render ONLY that plan's own scenes (never a scene outside
+// the plan), hop-ordered from the "current"/expanded scene, alongside a
+// SINGLE plan-level "+Scene" control. An empty plan renders plan-empty-state
+// whose only construction action IS that "+Scene" control. loadAndRenderPlan
+// is re-callable via rerenderActivePlan(), so a later task (27.8's
+// remove-from-plan) can refresh the chain / fall back to plan-empty-state
+// after a membership change, with no separate plan-resolution path.
+// ---------------------------------------------------------------------------
+
+/** Plan-scoped variant of buildChainOrder: candidate set is the plan's own members, hop-ordered from the current scene (current at hop 0). */
+function buildPlanChainOrder(planScenes, currentSceneId, linked) {
+  const currentScene = planScenes.find((s) => s.id === currentSceneId);
+  if (!currentScene) return [...planScenes];
+  const others = planScenes.filter((s) => s.id !== currentSceneId);
+  const candidates = [currentScene, ...others];
+  const hopOf = new Map(linked.map((l) => [l.sceneId, l.hopDistance]));
+  const withHop = candidates.map((s) => ({
+    scene: s,
+    hop: s.id === currentSceneId ? 0 : (hopOf.has(s.id) ? hopOf.get(s.id) : Number.POSITIVE_INFINITY)
+  }));
+  withHop.sort((a, b) => a.hop - b.hop); // stable -- ties keep plan-membership order
+  return withHop.map((w) => w.scene);
+}
+
+/**
+ * The single, plan-level "+Scene" control (F6). `planId` is the active plan
+ * when one resolved (stamped as data-plan-id), or null in the legacy-fallback
+ * path (no data-plan-id). Runs the SAME shared buildPlaceRequiredFlow under
+ * the `plan-add-scene` prefix; on resolve it creates the scene via the
+ * existing POST /api/session-planner/scenes route, then -- only when an active
+ * plan exists -- attaches it via POST /api/scene-planning/plans/:planId/scenes
+ * and re-renders the plan; in the legacy path it appends to the whole-world
+ * chain instead.
+ */
+function buildPlanAddSceneControl(planId) {
+  const wrap = document.createElement("div");
+  wrap.className = "plan-add-scene-wrap";
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn";
+  btn.setAttribute("data-testid", "plan-add-scene-btn");
+  if (planId) btn.setAttribute("data-plan-id", planId);
+  btn.textContent = "+ Scene";
+
+  const panel = document.createElement("div");
+  panel.className = "plan-add-scene-panel";
+  panel.setAttribute("data-testid", "plan-add-scene-panel");
+  if (planId) panel.setAttribute("data-plan-id", planId);
+  panel.style.display = "none";
+
+  // Idempotent-open + rebuild-fresh, matching buildAddSceneControl's own
+  // established precedent (§26.H): a same-hash re-navigation never fires a
+  // fresh render, so a cached flow could silently resume mid-way.
+  btn.addEventListener("click", () => {
+    panel.style.display = "block";
+    panel.innerHTML = "";
+    const anchorEntityId = currentSceneIdModule
+      ? (sceneRecordCache.get(currentSceneIdModule)?.locationEntityId ?? null)
+      : null;
+    const flow = buildPlaceRequiredFlow("plan-add-scene", {
+      linkFromEntityId: anchorEntityId,
+      onResolved: async (placeEntityId) => {
+        const flowStatus = flow.querySelector('[data-testid="plan-add-scene-status"]');
+        if (flowStatus) flowStatus.textContent = "Creating scene…";
+        const { scene: newScene } = await spApi("/api/session-planner/scenes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: currentWorld(), locationEntityId: placeEntityId })
+        });
+        if (planId) {
+          // §F3: adding a scene attaches it to the active plan.
+          await spApi(`/api/scene-planning/plans/${encodeURIComponent(planId)}/scenes`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ world: currentWorld(), sceneId: newScene.id })
+          });
+          if (flowStatus) flowStatus.textContent = "Scene created.";
+          await rerenderActivePlan(newScene.id);
+        } else {
+          // Legacy fallback: no active plan -- append to the whole-world chain.
+          if (flowStatus) flowStatus.textContent = "Scene created.";
+          appendNewSceneRecord(newScene);
+        }
+      }
+    });
+    panel.appendChild(flow);
+  });
+
+  wrap.append(btn, panel);
+  return wrap;
+}
+
+/** F3's "a new/empty plan renders a screen whose only construction action is +Add scene." */
+function renderPlanEmptyState(container, planId) {
+  const empty = document.createElement("div");
+  empty.className = "plan-empty-state";
+  empty.setAttribute("data-testid", "plan-empty-state");
+  empty.setAttribute("data-plan-id", planId);
+
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.textContent = "This plan has no scenes yet. Add the first one to begin.";
+  empty.appendChild(hint);
+
+  empty.appendChild(buildPlanAddSceneControl(planId));
+  container.appendChild(empty);
+}
+
+async function loadAndRenderPlan(planId, currentSceneIdOverride, container, opts = {}) {
+  const world = currentWorld();
+
+  const [entityInfoMapRes, allScenesRes, planRes] = await Promise.all([
+    fetchEntityInfoMap(),
+    spApi(`/api/scene-planning/scenes${spWithWorld()}`),
+    spApi(`/api/scene-planning/plans/${encodeURIComponent(planId)}${spWithWorld()}`)
+  ]);
+  entityInfoMapGlobal = entityInfoMapRes;
+  const allScenes = allScenesRes.scenes ?? [];
+  const plan = planRes.plan;
+
+  // §F3: opening a plan makes it this world's active plan.
+  saveActivePlanId(world, planId);
+  activePlanIdModule = planId;
+  activePlanContainerEl = container;
+
+  sceneRecordCache.clear();
+  for (const s of allScenes) sceneRecordCache.set(s.id, s);
+
+  const planSceneIds = (plan && plan.sceneIds) ? plan.sceneIds : [];
+  const planScenes = planSceneIds.map((id) => sceneRecordCache.get(id)).filter(Boolean);
+
+  container.innerHTML = "";
+  container.appendChild(renderStartNewPlanBar());
+
+  if (!planScenes.length) {
+    // §F3: a new/empty plan's ONLY construction action is "+Add scene" -- no
+    // scene-chain, no per-scene body, anywhere.
+    chainContainerEl = null;
+    chainSceneIds = [];
+    currentSceneIdModule = null;
+    sceneExtrasCache.clear();
+    renderPlanEmptyState(container, planId);
+    return;
+  }
+
+  // The "current"/expanded scene: the caller's override when it's a real
+  // member, else the last-added scene (sceneIds[last], treated as current).
+  const currentId = (currentSceneIdOverride && planSceneIds.includes(currentSceneIdOverride))
+    ? currentSceneIdOverride
+    : planSceneIds[planSceneIds.length - 1];
+
+  const linkedRes = await spApi(`/api/scene-planning/linkage${spWithWorld({ sceneId: currentId })}`);
+  const linked = linkedRes.linked ?? [];
+
+  const ordered = buildPlanChainOrder(planScenes, currentId, linked);
+  chainSceneIds = ordered.map((s) => s.id);
+  currentSceneIdModule = currentId;
+  sceneExtrasCache.clear();
+
+  chainContainerEl = document.createElement("div");
+  chainContainerEl.setAttribute("data-testid", "scene-chain");
+  chainContainerEl.setAttribute("data-plan-id", planId);
+  container.appendChild(chainContainerEl);
+  rerenderChainOnly();
+
+  // §F6: the single, plan-level "+Scene" control -- a sibling of scene-chain.
+  container.appendChild(buildPlanAddSceneControl(planId));
+
+  const tableModeToggleBtn = document.createElement("button");
+  tableModeToggleBtn.type = "button";
+  tableModeToggleBtn.className = "btn";
+  tableModeToggleBtn.setAttribute("data-testid", "table-mode-toggle-btn");
+  tableModeToggleBtn.textContent = "🖥 Table Mode";
+  tableModeToggleBtn.addEventListener("click", () => {
+    location.hash = `session-planner/${currentSceneIdModule}?mode=table`;
+  });
+  container.appendChild(tableModeToggleBtn);
+
+  saveLastSceneId(world, currentId);
+  if (opts.replaceState) {
+    history.replaceState(null, "", `#session-planner/${currentId}`);
+  }
+
+  const currentItemEl = [...chainContainerEl.children].find(
+    (el) => el.getAttribute && el.getAttribute("data-testid") === "scene-chain-item" && el.getAttribute("data-scene-id") === currentId
+  );
+  if (currentItemEl) await currentItemEl._ensureBodyLoaded();
+}
+
+/** Re-render the active plan's chain (or fall back to plan-empty-state). Exposed for task 27.8's remove-from-plan flow. */
+async function rerenderActivePlan(currentSceneIdOverride) {
+  if (!activePlanIdModule || !activePlanContainerEl) return;
+  await loadAndRenderPlan(activePlanIdModule, currentSceneIdOverride ?? currentSceneIdModule, activePlanContainerEl, {});
 }
 
 // ===========================================================================
@@ -3147,6 +3151,27 @@ export async function renderSessionPlanner(sceneIdArg) {
     return;
   }
 
+  // Phase 27 task 27.4 (F3): the NEW `#session-planner/plan/<planId>` route
+  // opens that plan directly (empty -> plan-empty-state; non-empty ->
+  // plan-scoped scene-chain), and persists it as the world's active plan.
+  if (typeof sceneIdArg === "string" && sceneIdArg.startsWith("plan/")) {
+    const planId = sceneIdArg.slice("plan/".length);
+    const loading = document.createElement("p");
+    loading.className = "hint";
+    loading.textContent = "Loading plan…";
+    container.appendChild(loading);
+    try {
+      await loadAndRenderPlan(planId, null, container, {});
+    } catch (err) {
+      container.innerHTML = "";
+      const p = document.createElement("p");
+      p.className = "hint";
+      p.textContent = `Could not load plan: ${err.message}`;
+      container.appendChild(p);
+    }
+    return;
+  }
+
   const { sceneId: parsedSceneId, mode } = parseSceneModeArg(sceneIdArg);
 
   let effectiveSceneId = parsedSceneId;
@@ -3170,7 +3195,19 @@ export async function renderSessionPlanner(sceneIdArg) {
     if (mode === "table") {
       await loadAndRenderTableMode(effectiveSceneId, container, { replaceState: resumedFromStorage });
     } else {
-      await loadAndRenderChain(effectiveSceneId, container, { replaceState: resumedFromStorage });
+      // Phase 27 task 27.4 (F3): make the existing `#session-planner/<sceneId>`
+      // dispatch plan-AWARE via the SHARED resolveActivePlan (no second
+      // plan-resolution path). A scene that's a genuine member of a Plan
+      // renders the plan-scoped view with that scene as current; a scene that
+      // belongs to NO plan takes the LEGACY FALLBACK (whole-world chain),
+      // unchanged -- this is what keeps every pre-Phase-27 test green.
+      const plans = (await spApi(`/api/scene-planning/plans${spWithWorld()}`)).plans ?? [];
+      const activePlan = resolveActivePlan(world, effectiveSceneId, plans);
+      if (activePlan && activePlan.sceneIds.includes(effectiveSceneId)) {
+        await loadAndRenderPlan(activePlan.id, effectiveSceneId, container, { replaceState: resumedFromStorage });
+      } else {
+        await loadAndRenderChain(effectiveSceneId, container, { replaceState: resumedFromStorage });
+      }
     }
   } catch (err) {
     container.innerHTML = "";
