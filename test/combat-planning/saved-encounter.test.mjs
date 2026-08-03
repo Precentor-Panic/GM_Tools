@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -47,9 +47,13 @@ process.env.GM_TOOLS_BESTIARY_DIR = join(scratchDir, "bestiary");
 const {
   saveEncounter,
   listEncountersForScene,
+  listEncountersForWorld,
+  attachEncounterToScene,
+  detachEncounterFromScene,
   getSavedEncounter,
   removeSavedEncounter,
-  savedEncountersRoot
+  savedEncountersRoot,
+  SCHEMA_VERSION
 } = await import("../../combat-planning/saved-encounter.mjs");
 const { saveBestiaryEntry, updateBestiaryEntryScore } = await import("../../combat-planning/bestiary-store.mjs");
 
@@ -90,7 +94,7 @@ test("saveEncounter: round-trips via getSavedEncounter, defaults name when omitt
     scoreSnapshot: { expectedScore: 42, burstCeiling: 10, snowballDelta: {}, asymmetricRiskFlag: false }
   });
   assert.ok(saved.id);
-  assert.equal(saved.sceneId, "scene-1");
+  assert.deepEqual(saved.sceneIds, ["scene-1"], "Phase 27 task 27.2: sceneIds[] replaces the single sceneId field, created with just the origin scene");
   assert.equal(saved.name, "Encounter", "blank/omitted name must default to a real string, not undefined/null/empty");
   assert.deepEqual(saved.combination, [{ entryId: "wolf-1", count: 3 }]);
   assert.equal(saved.scoreSnapshot.expectedScore, 42);
@@ -120,6 +124,111 @@ test("listEncountersForScene: returns only encounters attached to that scene, in
 
 test("listEncountersForScene: a never-touched scene returns [], not an error", () => {
   assert.deepEqual(listEncountersForScene(WORLD, "scene-never-touched"), []);
+});
+
+// ------------------------------------------------- Phase 27 task 27.2 (F11)
+
+test("SCHEMA_VERSION is exported (2 = the sceneIds[] shape)", () => {
+  assert.equal(SCHEMA_VERSION, 2);
+});
+
+test("legacy normalization: a raw on-disk record with the old single `sceneId` field reads as `sceneIds:[sceneId]`, no `sceneId` field surfaced, no on-disk rewrite", () => {
+  const world = "saved-encounter-legacy-world";
+  const root = savedEncountersRoot();
+  mkdirSync(root, { recursive: true });
+  const legacyRecord = {
+    id: "legacy-enc-1",
+    world,
+    sceneId: "legacy-scene-1",
+    name: "Legacy Encounter",
+    combination: [],
+    knobs: {},
+    scoreSnapshot: {},
+    createdAt: "2026-01-01T00:00:00.000Z"
+  };
+  const filePath = `${root}/${world}.json`;
+  const rawBefore = JSON.stringify([legacyRecord], null, 2);
+  writeFileSync(filePath, rawBefore, "utf8");
+
+  const fetched = getSavedEncounter(world, "legacy-enc-1");
+  assert.deepEqual(fetched.sceneIds, ["legacy-scene-1"], "normalizes to sceneIds[] on read");
+  assert.equal(fetched.sceneId, undefined, "the legacy sceneId field is not surfaced on the normalized (in-memory) record");
+
+  const listed = listEncountersForScene(world, "legacy-scene-1");
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].id, "legacy-enc-1");
+
+  // No hard migration -- the on-disk file itself is untouched by a mere read.
+  const rawAfter = readFileSync(filePath, "utf8");
+  assert.equal(rawAfter, rawBefore, "reading must not rewrite the legacy on-disk shape");
+});
+
+test("attachEncounterToScene: idempotent, makes the SAME definition appear in two scenes' listEncountersForScene (a shared reference, not a copy)", () => {
+  const saved = saveEncounter(WORLD, "scene-attach-origin", { name: "Shared Ambush", combination: [{ entryId: "goblin-1", count: 2 }] });
+
+  const attached = attachEncounterToScene(WORLD, saved.id, "scene-attach-second");
+  assert.deepEqual(attached.sceneIds, ["scene-attach-origin", "scene-attach-second"]);
+
+  const inOrigin = listEncountersForScene(WORLD, "scene-attach-origin");
+  const inSecond = listEncountersForScene(WORLD, "scene-attach-second");
+  assert.equal(inOrigin.find((e) => e.id === saved.id).id, inSecond.find((e) => e.id === saved.id).id, "the exact same definition id shows up in both scenes' rosters");
+
+  // Idempotent: attaching the same scene again does not duplicate the entry.
+  const reattached = attachEncounterToScene(WORLD, saved.id, "scene-attach-second");
+  assert.deepEqual(reattached.sceneIds, ["scene-attach-origin", "scene-attach-second"], "re-attaching an already-attached scene must not duplicate it");
+});
+
+test("attachEncounterToScene: throws a clear error for an unknown encounterId", () => {
+  assert.throws(() => attachEncounterToScene(WORLD, "no-such-encounter", "scene-x"), /No saved encounter found/);
+});
+
+test("detachEncounterFromScene: removes membership from ONE scene only, the other scene's roster is unaffected, no duplication", () => {
+  const saved = saveEncounter(WORLD, "scene-detach-a", { name: "Two-Scene Encounter", combination: [] });
+  attachEncounterToScene(WORLD, saved.id, "scene-detach-b");
+
+  const detached = detachEncounterFromScene(WORLD, saved.id, "scene-detach-a");
+  assert.deepEqual(detached.sceneIds, ["scene-detach-b"]);
+
+  assert.deepEqual(listEncountersForScene(WORLD, "scene-detach-a").map((e) => e.id), [], "gone from scene-detach-a");
+  assert.deepEqual(listEncountersForScene(WORLD, "scene-detach-b").map((e) => e.id), [saved.id], "still present in scene-detach-b, untouched");
+});
+
+test("detachEncounterFromScene: emptying sceneIds does NOT delete the record -- it survives as an unplaced library entry, reachable via listEncountersForWorld", () => {
+  const saved = saveEncounter(WORLD, "scene-detach-orphan", { name: "Soon Orphaned", combination: [] });
+
+  const detached = detachEncounterFromScene(WORLD, saved.id, "scene-detach-orphan");
+  assert.deepEqual(detached.sceneIds, [], "sceneIds is now empty");
+  assert.notEqual(getSavedEncounter(WORLD, saved.id), null, "the record itself must still exist");
+
+  const worldList = listEncountersForWorld(WORLD);
+  assert.ok(worldList.some((e) => e.id === saved.id), "an orphaned (unplaced) definition still appears in the world-wide list, for re-attach");
+});
+
+test("detachEncounterFromScene: detaching an absent sceneId is a safe no-op, idempotent", () => {
+  const saved = saveEncounter(WORLD, "scene-detach-idempotent", { name: "X", combination: [] });
+  const first = detachEncounterFromScene(WORLD, saved.id, "scene-never-attached");
+  assert.deepEqual(first.sceneIds, ["scene-detach-idempotent"], "detaching a scene that was never attached changes nothing");
+});
+
+test("detachEncounterFromScene: throws a clear error for an unknown encounterId", () => {
+  assert.throws(() => detachEncounterFromScene(WORLD, "no-such-encounter", "scene-x"), /No saved encounter found/);
+});
+
+test("listEncountersForWorld: returns every definition for the world exactly ONCE, regardless of how many scenes reference it", () => {
+  const world = "saved-encounter-list-world-test";
+  const saved = saveEncounter(world, "scene-world-a", { name: "Multi-Scene", combination: [] });
+  saveEncounter(world, "scene-world-b", { name: "Single-Scene", combination: [] });
+  attachEncounterToScene(world, saved.id, "scene-world-b");
+  attachEncounterToScene(world, saved.id, "scene-world-c");
+
+  const all = listEncountersForWorld(world);
+  assert.equal(all.length, 2, "two DEFINITIONS total, even though the first one is now attached to three scenes");
+  const multiScene = all.find((e) => e.id === saved.id);
+  assert.deepEqual(multiScene.sceneIds, ["scene-world-a", "scene-world-b", "scene-world-c"]);
+});
+
+test("listEncountersForWorld: [] for a world with no encounters yet -- not an error", () => {
+  assert.deepEqual(listEncountersForWorld("a-totally-new-encounters-world"), []);
 });
 
 test("getSavedEncounter: an unknown id returns null, not an error", () => {

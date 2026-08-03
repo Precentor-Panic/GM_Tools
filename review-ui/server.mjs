@@ -216,7 +216,10 @@ import { quickGenerate } from "../mutation-engine/quick-gen.mjs";
 import {
   saveEncounter,
   listEncountersForScene,
-  removeSavedEncounter
+  removeSavedEncounter,
+  listEncountersForWorld,
+  attachEncounterToScene,
+  detachEncounterFromScene
 } from "../combat-planning/saved-encounter.mjs";
 // Only used to distinguish "the Anthropic API itself failed" (502, an
 // upstream/infra problem) from "this codebase's own library modules threw a
@@ -1863,11 +1866,33 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { encounters });
   }
 
+  // Phase 27 task 27.2, F11 -- GET /api/scene-planning/encounters?world=
+  // The world-picker feed (3-part path, distinct from the 5-part
+  // scene-scoped GET above): every saved-encounter DEFINITION for the world,
+  // each appearing exactly once regardless of how many scenes reference it.
+  if (method === "GET" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "encounters") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, { encounters: listEncountersForWorld(w) });
+  }
+
+  // Phase 27 task 27.2, F11 -- POST /api/scene-planning/scenes/:sceneId/encounters/:encounterId/attach   { world }
+  // Attaches an EXISTING encounter definition to this scene (a shared
+  // reference -- not a re-saved copy). Idempotent.
+  if (method === "POST" && parts.length === 7 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "encounters" && parts[6] === "attach") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const encounter = attachEncounterToScene(w, parts[5], parts[3]);
+    return sendJson(res, 200, { encounter });
+  }
+
   // DELETE /api/scene-planning/scenes/:sceneId/encounters/:encounterId   { world } (query or body, matching the sibling members route's own convention)
+  // Phase 27 task 27.2, F11 -- REDEFINED as detach-from-this-scene (removes
+  // ONLY this scene's membership), NOT delete-the-definition -- a shared
+  // encounter definition still referenced by another scene survives.
   if (method === "DELETE" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "encounters") {
     const body = await readBody(req);
     const w = resolveWorld(body.world ?? q.get("world"));
-    const encounter = removeSavedEncounter(w, parts[5]);
+    const encounter = detachEncounterFromScene(w, parts[5], parts[3]);
     return sendJson(res, 200, { encounter });
   }
 

@@ -28,21 +28,29 @@
  * computed" constraint.
  *
  * Storage: ONE JSON file PER WORLD — `<savedEncountersRoot>/<world>.json`, a
- * flat array of SavedEncounter objects, each carrying its own `sceneId`
- * field — the EXACT same shape session-planner/session-notes.mjs already
- * uses for its own scene-attachable "Add Event" records (a SessionNote is a
- * flat per-world array with a `sceneId` field; listPendingNotes filters that
- * array the same way listEncountersForScene does here), chosen specifically
- * so this module reads as a sibling of session-notes.mjs, not a differently-
- * shaped store for a conceptually equal-weight feature. getSavedEncounter
- * looks up by encounterId alone (no sceneId needed), which is exactly why a
- * flat per-world array beats a per-(world,sceneId) file layout here (unlike
+ * flat array of SavedEncounter objects. getSavedEncounter looks up by
+ * encounterId alone (no sceneId needed), which is exactly why a flat
+ * per-world array beats a per-(world,sceneId) file layout here (unlike
  * mutation-engine/scene-undo.mjs's per-session file, which is always looked
  * up by (world, sceneId) together and never needs a bare-id lookup).
  * Default root is GM_Tools/saved-encounters/ (sibling to session-notes/,
  * scene-membership/); override with GM_TOOLS_SAVED_ENCOUNTERS_DIR (tests use
  * this for isolation). Reuses review-state.mjs's withLock/
  * ConcurrentWriteError, same convention as every sibling store.
+ *
+ * Phase 27 task 27.2, F11 (SCHEMA_VERSION 2) — SHARED, MULTI-SCENE
+ * DEFINITION: an encounter is no longer a per-scene copy. `sceneIds: []`
+ * replaces the original single `sceneId` field (mirroring session-planner/
+ * plans.mjs's own many-to-many `sceneIds[]` precedent for Plans<->Scenes).
+ * saveEncounter keeps its `(world, sceneId, fields)` signature and creates
+ * with `sceneIds: [sceneId]` (the origin scene) -- everything past creation
+ * (attachEncounterToScene/detachEncounterFromScene/listEncountersForScene/
+ * listEncountersForWorld) operates on the array. Legacy (schema-version-1)
+ * records normalize to `sceneIds: [sceneId]` ON READ ONLY (normalizeEncounter,
+ * below) -- no hard migration, no on-disk rewrite. Picking an existing
+ * encounter for a second scene attaches the SAME definition (a shared
+ * reference), never mints a duplicate snapshot; a detach that empties
+ * `sceneIds` keeps the record as an unplaced library entry, not a delete.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -56,6 +64,35 @@ export function savedEncountersRoot() {
   return process.env.GM_TOOLS_SAVED_ENCOUNTERS_DIR || DEFAULT_ROOT;
 }
 
+/**
+ * Phase 27 task 27.2, F11: a saved encounter is now a SHARED, multi-scene
+ * definition -- `sceneIds: []` replaces the single `sceneId`, mirroring
+ * session-planner/plans.mjs's own many-to-many `sceneIds[]` precedent.
+ * SCHEMA_VERSION 2 = the `sceneIds[]` shape; version 1 (implicit, no field)
+ * is the original single-`sceneId` shape. No hard migration -- legacy
+ * records normalize to the current shape ON READ ONLY (see
+ * normalizeEncounter/readEncounters below); the on-disk file is never
+ * rewritten just to migrate it.
+ */
+export const SCHEMA_VERSION = 2;
+
+/**
+ * Normalizes one on-disk record to the current (`sceneIds: []`) shape.
+ * A record already carrying a real `sceneIds` array is returned unchanged
+ * (current shape). A legacy record (schema version 1, single `sceneId`
+ * field) reads as `sceneIds: [sceneId]` -- the `sceneId` field itself is
+ * dropped from the normalized (in-memory only) view so every caller past
+ * this point sees exactly one shape, never a mix.
+ *
+ * @param {object} e   a raw record as stored on disk
+ * @returns {object}   the normalized (in-memory) record
+ */
+function normalizeEncounter(e) {
+  if (Array.isArray(e.sceneIds)) return e;
+  const { sceneId, ...rest } = e;
+  return { ...rest, sceneIds: sceneId ? [sceneId] : [] };
+}
+
 function worldFilePath(world) {
   return join(savedEncountersRoot(), `${world}.json`);
 }
@@ -63,7 +100,8 @@ function worldFilePath(world) {
 function readEncounters(world) {
   const filePath = worldFilePath(world);
   if (!existsSync(filePath)) return [];
-  return JSON.parse(readFileSync(filePath, "utf8"));
+  const raw = JSON.parse(readFileSync(filePath, "utf8"));
+  return raw.map(normalizeEncounter);
 }
 
 function writeEncounters(world, encounters) {
@@ -107,7 +145,12 @@ export function saveEncounter(world, sceneId, { name, combination, knobs, scoreS
   const encounter = {
     id: makeId(),
     world,
-    sceneId,
+    // Phase 27 task 27.2: a shared, multi-scene definition -- created with
+    // ONLY the origin scene as a member, same as before except the field is
+    // now an array (attachEncounterToScene/detachEncounterFromScene grow and
+    // shrink it later; a detach that empties it keeps the record as an
+    // unplaced library entry, see detachEncounterFromScene below).
+    sceneIds: [sceneId],
     name: name && String(name).trim() ? String(name).trim() : "Encounter",
     // JSON round-trip: a real snapshot, not a reference to caller-held
     // objects (e.g. a bestiary entry or a live derivedScore) that could
@@ -122,9 +165,62 @@ export function saveEncounter(world, sceneId, { name, combination, knobs, scoreS
   return encounter;
 }
 
-/** @returns {object[]}   every SavedEncounter for `world` attached to `sceneId`, in save order. [] if none. */
+/** @returns {object[]}   every SavedEncounter for `world` whose `sceneIds` includes `sceneId`, in save order. [] if none. */
 export function listEncountersForScene(world, sceneId) {
-  return readEncounters(world).filter((e) => e.sceneId === sceneId);
+  return readEncounters(world).filter((e) => e.sceneIds.includes(sceneId));
+}
+
+/** @returns {object[]}   every SavedEncounter definition for `world`, each appearing exactly once regardless of how many scenes reference it -- the world-picker feed. [] if none. */
+export function listEncountersForWorld(world) {
+  return readEncounters(world);
+}
+
+/**
+ * Idempotent: attaching a scene the definition already includes is a no-op
+ * (no duplicate entry in `sceneIds`), still returns the current record.
+ *
+ * @param {string} world
+ * @param {string} encounterId
+ * @param {string} sceneId
+ * @returns {object}   the updated SavedEncounter. Throws a clear Error if `encounterId` is unknown.
+ */
+export function attachEncounterToScene(world, encounterId, sceneId) {
+  const encounters = readEncounters(world);
+  const encounter = encounters.find((e) => e.id === encounterId);
+  if (!encounter) {
+    throw new Error(`No saved encounter found: world="${world}" encounterId="${encounterId}"`);
+  }
+  if (!encounter.sceneIds.includes(sceneId)) {
+    encounter.sceneIds.push(sceneId);
+    writeEncounters(world, encounters);
+  }
+  return encounter;
+}
+
+/**
+ * Idempotent: detaching an absent sceneId is a safe no-op. A detach that
+ * empties `sceneIds` does NOT delete the record -- it survives as an
+ * unplaced library entry, still reachable via listEncountersForWorld for a
+ * later re-attach (orphan semantics per phase-27-tasks.md 27.2 -- a separate,
+ * explicit delete-the-definition affordance is out of scope here).
+ *
+ * @param {string} world
+ * @param {string} encounterId
+ * @param {string} sceneId
+ * @returns {object}   the updated SavedEncounter. Throws a clear Error if `encounterId` is unknown.
+ */
+export function detachEncounterFromScene(world, encounterId, sceneId) {
+  const encounters = readEncounters(world);
+  const encounter = encounters.find((e) => e.id === encounterId);
+  if (!encounter) {
+    throw new Error(`No saved encounter found: world="${world}" encounterId="${encounterId}"`);
+  }
+  const nextIds = encounter.sceneIds.filter((id) => id !== sceneId);
+  if (nextIds.length !== encounter.sceneIds.length) {
+    encounter.sceneIds = nextIds;
+    writeEncounters(world, encounters);
+  }
+  return encounter;
 }
 
 /** @returns {object|null}   the SavedEncounter with this id in `world`, or null if not found. */
