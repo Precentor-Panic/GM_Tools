@@ -1945,21 +1945,21 @@ async function handleApi(req, res, url, parts) {
   // session-planner/scene-links.mjs only.
   // -----------------------------------------------------------------------
 
-  // POST /api/scene-planning/scene-links   { world, sceneIdA, sceneIdB, reason? }
+  // POST /api/scene-planning/scene-links   { world, sceneIdA, sceneIdB, reason?, graphEdgeId? }  -- Phase 27 task 27.3 adds the optional graphEdgeId
   if (method === "POST" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "scene-links") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
-    const link = linkScenes(w, body.sceneIdA, body.sceneIdB, body.reason);
+    const link = linkScenes(w, body.sceneIdA, body.sceneIdB, body.reason, body.graphEdgeId);
     return sendJson(res, 200, { link });
   }
 
-  // GET /api/scene-planning/scene-links?world=&sceneId=
+  // GET /api/scene-planning/scene-links?world=&sceneId=   -- echoes graphEdgeId per entry (Phase 27 task 27.3)
   if (method === "GET" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "scene-links") {
     const w = resolveWorld(q.get("world"));
     return sendJson(res, 200, { linked: getLinkedScenes(w, q.get("sceneId")) });
   }
 
-  // DELETE /api/scene-planning/scene-links   { world, sceneIdA, sceneIdB }
+  // DELETE /api/scene-planning/scene-links   { world, sceneIdA, sceneIdB }   -- Phase 27 task 27.3: response body is {removed, link} incl. the removed record's graphEdgeId
   if (method === "DELETE" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "scene-links") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
