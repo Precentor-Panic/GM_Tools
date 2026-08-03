@@ -1348,6 +1348,20 @@ function mountAddEventControl(scene, testid = "add-event-btn") {
   return { btn, panel };
 }
 
+/**
+ * Phase 27 task 27.6, F11: reworked from an instant navigate-to-builder into
+ * a picker over the world's saved encounters (GET /api/scene-planning/
+ * encounters?world=) that ATTACHES the chosen shared definition to this
+ * scene (POST .../encounters/:encounterId/attach -- the same definition,
+ * not a re-saved copy, so it shows up in every scene it's attached to), plus
+ * an "open Encounter Builder" button preserving the old instant-navigate
+ * behavior one click deeper. Shared by both the construction view's plain
+ * `add-encounter-btn` call site and Table Mode's `table-add-encounter-btn`
+ * call site (mountAddEncounterControl's own established one-function-two-
+ * call-sites convention, matching mountAddEventControl).
+ *
+ * @returns {{btn: HTMLElement, panel: HTMLElement}}
+ */
 function mountAddEncounterControl(scene, testid = "add-encounter-btn") {
   const btn = document.createElement("button");
   btn.type = "button";
@@ -1355,10 +1369,90 @@ function mountAddEncounterControl(scene, testid = "add-encounter-btn") {
   btn.setAttribute("data-testid", testid);
   btn.setAttribute("data-scene-id", scene.id);
   btn.textContent = "Add Encounter";
-  btn.addEventListener("click", () => {
+
+  const panel = document.createElement("div");
+  panel.setAttribute("data-testid", "add-encounter-panel");
+  panel.setAttribute("data-scene-id", scene.id);
+  panel.style.display = "none";
+
+  const pickerList = document.createElement("div");
+  pickerList.setAttribute("data-testid", "add-encounter-picker-list");
+  pickerList.setAttribute("data-scene-id", scene.id);
+
+  const status = document.createElement("div");
+  status.className = "hint";
+  status.setAttribute("data-testid", "add-encounter-picker-status");
+  status.setAttribute("data-scene-id", scene.id);
+
+  const openBuilderBtn = document.createElement("button");
+  openBuilderBtn.type = "button";
+  openBuilderBtn.className = "btn";
+  openBuilderBtn.setAttribute("data-testid", "add-encounter-open-builder-btn");
+  openBuilderBtn.setAttribute("data-scene-id", scene.id);
+  openBuilderBtn.textContent = "Open Encounter Builder";
+  openBuilderBtn.addEventListener("click", () => {
     location.hash = `combat-planning/${scene.id}`;
   });
-  return btn;
+
+  function buildPickerItem(enc) {
+    const item = document.createElement("div");
+    item.className = "add-encounter-picker-item";
+    item.setAttribute("data-testid", "add-encounter-picker-item");
+    item.setAttribute("data-encounter-id", enc.id);
+
+    const name = document.createElement("span");
+    name.textContent = enc.name;
+    item.appendChild(name);
+
+    const selectBtn = document.createElement("button");
+    selectBtn.type = "button";
+    selectBtn.className = "btn";
+    selectBtn.setAttribute("data-testid", "add-encounter-picker-select-btn");
+    selectBtn.setAttribute("data-encounter-id", enc.id);
+    selectBtn.textContent = "Add to this scene";
+    selectBtn.addEventListener("click", async () => {
+      selectBtn.disabled = true;
+      try {
+        await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/encounters/${encodeURIComponent(enc.id)}/attach`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: currentWorld() })
+        });
+        status.textContent = `Added "${enc.name}".`;
+        await refreshSavedEncountersListInPlace(scene.id);
+      } catch (err) {
+        status.textContent = `Could not attach: ${err.message}`;
+        selectBtn.disabled = false;
+      }
+    });
+    item.appendChild(selectBtn);
+    return item;
+  }
+
+  async function refreshPicker() {
+    status.textContent = "Loading saved encounters…";
+    pickerList.innerHTML = "";
+    try {
+      const res = await spApi(`/api/scene-planning/encounters${spWithWorld()}`);
+      const encounters = res.encounters ?? [];
+      status.textContent = encounters.length ? "" : "No saved encounters yet in this world.";
+      for (const enc of encounters) {
+        pickerList.appendChild(buildPickerItem(enc));
+      }
+    } catch (err) {
+      status.textContent = `Could not load saved encounters: ${err.message}`;
+    }
+  }
+
+  // Idempotent-open + rebuild-fresh, matching this project's established
+  // toggle-panel precedent (e.g. buildPlanAddSceneControl, §26.H).
+  btn.addEventListener("click", () => {
+    panel.style.display = "block";
+    refreshPicker();
+  });
+
+  panel.append(pickerList, openBuilderBtn, status);
+  return { btn, panel };
 }
 
 async function fetchSavedEncounters(sceneId) {
@@ -1411,6 +1505,21 @@ function renderSavedEncountersList(sceneId, encounters) {
   }
 
   return wrap;
+}
+
+/** Phase 27 task 27.6: find this scene's own already-mounted saved-encounters-list, if its body has been loaded. */
+function findSavedEncountersListEl(sceneId) {
+  return [...document.querySelectorAll('[data-testid="saved-encounters-list"]')].find((el) => el.getAttribute("data-scene-id") === sceneId) ?? null;
+}
+
+/** Phase 27 task 27.6: re-fetch this scene's own encounters and swap its already-mounted saved-encounters-list for a fresh one -- used after an attach (the picker) so the newly-shared definition shows up without a full scene reload. */
+async function refreshSavedEncountersListInPlace(sceneId) {
+  const encounters = await fetchSavedEncounters(sceneId);
+  const cached = sceneExtrasCache.get(sceneId);
+  if (cached) cached.encounters = encounters;
+  const existing = findSavedEncountersListEl(sceneId);
+  if (!existing) return;
+  existing.replaceWith(renderSavedEncountersList(sceneId, encounters));
 }
 
 // ---------------------------------------------------------------------------
@@ -2016,7 +2125,7 @@ function buildSceneBodyInto(body, sceneId) {
   developSceneBtn.addEventListener("click", () => onDevelopScene(sceneId, developStatus, developReviewHolder));
 
   const { btn: addEventBtn, panel: addEventPanel } = mountAddEventControl(scene);
-  const addEncounterBtn = mountAddEncounterControl(scene);
+  const { btn: addEncounterBtn, panel: addEncounterPanel } = mountAddEncounterControl(scene);
 
   // Phase 27 task 27.4, §F6: the per-scene actions bar is now EXACTLY
   // add-node toggle, develop-scene, add-event, add-encounter -- add-scene
@@ -2027,6 +2136,7 @@ function buildSceneBodyInto(body, sceneId) {
   body.appendChild(actionsBar);
   body.appendChild(addNodePanel);
   body.appendChild(addEventPanel);
+  body.appendChild(addEncounterPanel);
   body.appendChild(developStatus);
   body.appendChild(developReviewHolder);
 
@@ -3278,7 +3388,7 @@ function buildTableActionsBar(scene) {
   wrap.setAttribute("data-scene-id", scene.id);
 
   const { btn: addEventBtn, panel: addEventPanel } = mountAddEventControl(scene, "table-add-event-btn");
-  const addEncounterBtn = mountAddEncounterControl(scene, "table-add-encounter-btn");
+  const { btn: addEncounterBtn, panel: addEncounterPanel } = mountAddEncounterControl(scene, "table-add-encounter-btn");
   const { btn: quickGenBtn, panel: quickGenPanel } = buildTableQuickGenControl();
 
   // Phase 26 task 26.4/26.6, §26.B -- "+Scene", a sibling of table-add-event
@@ -3291,7 +3401,7 @@ function buildTableActionsBar(scene) {
 
   // DOM source order matches the contract: add-event, add-encounter,
   // quick-gen, add-scene, all direct siblings of this ONE bar.
-  wrap.append(addEventBtn, addEncounterBtn, quickGenBtn, addSceneBtn, addEventPanel, quickGenPanel, addScenePanel);
+  wrap.append(addEventBtn, addEncounterBtn, quickGenBtn, addSceneBtn, addEventPanel, addEncounterPanel, quickGenPanel, addScenePanel);
 
   return wrap;
 }
