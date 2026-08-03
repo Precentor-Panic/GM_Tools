@@ -629,31 +629,95 @@ export function cancelActiveRecenter() {
   }
 }
 
-function renderBeyondCorridorSummary(beyondCorridor) {
-  const wrap = document.createElement("details");
-  wrap.className = "beyond-corridor-summary";
-  wrap.setAttribute("data-testid", "beyond-corridor-summary");
+// Phase 26 task 26.7, §26.B: renderBeyondCorridorSummary (the collapsed
+// content/structural-count summary, "Beyond this corridor") is REMOVED
+// entirely -- its former DOM position now hosts buildConnectExistingSceneZone
+// below, per phase26-fixture.mjs §6.
 
-  const summary = document.createElement("summary");
-  summary.textContent = "Beyond this corridor";
-  wrap.appendChild(summary);
+/**
+ * Phase 26 task 26.7. Repurposes renderBeyondCorridorSummary's old spot with
+ * two QUICK, VISIBLE (never behind a `<details>`) options: connect this
+ * scene to an existing one (surfacing BOTH scene-linkage.mjs's hop-based
+ * candidates AND §26.3's explicitly-linked scenes together, per §26.C --
+ * two genuinely distinct mechanisms, neither replaces the other), and
+ * create-ad-hoc-scene (an alias for THIS scene's own "+Scene", never a
+ * second/duplicate creation mechanism).
+ *
+ * @param {string} sceneId
+ * @param {{btn:HTMLElement, panel:HTMLElement}} addSceneControl   this scene's own already-built "+Scene" control (26.4/26.6), reused as-is
+ * @returns {HTMLElement}
+ */
+function buildConnectExistingSceneZone(sceneId, addSceneControl) {
+  const wrap = document.createElement("div");
+  wrap.className = "connect-existing-scene-zone";
 
-  const body = document.createElement("div");
-  body.className = "beyond-corridor-body";
+  const list = document.createElement("div");
+  list.setAttribute("data-testid", "connect-existing-scene-list");
+  list.setAttribute("data-scene-id", sceneId);
 
-  const contentP = document.createElement("p");
-  contentP.setAttribute("data-testid", "beyond-corridor-content-count");
-  const contentCount = beyondCorridor?.contentReadinessCount ?? 0;
-  contentP.textContent = `${contentCount} ${contentCount === 1 ? "entity" : "entities"} beyond the corridor still need content.`;
-  body.appendChild(contentP);
+  const status = document.createElement("div");
+  status.className = "hint";
 
-  const structP = document.createElement("p");
-  structP.setAttribute("data-testid", "beyond-corridor-structural-count");
-  const structCount = beyondCorridor?.structuralUnderConnectionCount ?? 0;
-  structP.textContent = `${structCount} ${structCount === 1 ? "entity is" : "entities are"} beyond the corridor and thinly connected.`;
-  body.appendChild(structP);
+  async function renderList() {
+    list.innerHTML = "Loading nearby/linked scenes…";
+    try {
+      const [linkageRes, sceneLinksRes] = await Promise.all([
+        spApi(`/api/scene-planning/linkage${spWithWorld({ sceneId })}`),
+        spApi(`/api/scene-planning/scene-links${spWithWorld({ sceneId })}`)
+      ]);
+      list.innerHTML = "";
+      const linkageCandidates = (linkageRes.linked ?? []).map((l) => ({ sceneId: l.sceneId, source: "linkage", label: l.anchorEntityName ?? l.sceneId }));
+      const sceneLinkCandidates = (sceneLinksRes.linked ?? []).map((l) => ({ sceneId: l.sceneId, source: "scene-link", label: resolveSceneDisplayName(sceneRecordCache.get(l.sceneId) ?? { id: l.sceneId }) }));
+      const candidates = [...linkageCandidates, ...sceneLinkCandidates];
+      if (!candidates.length) {
+        const empty = document.createElement("div");
+        empty.className = "hint";
+        empty.textContent = "No nearby or linked scenes yet.";
+        list.appendChild(empty);
+      }
+      for (const c of candidates) {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "link-btn";
+        item.setAttribute("data-testid", "connect-existing-scene-item");
+        item.setAttribute("data-scene-id", c.sceneId);
+        item.setAttribute("data-connect-source", c.source);
+        item.textContent = c.source === "linkage" ? `${c.label} (nearby)` : `${c.label} (linked)`;
+        item.addEventListener("click", async () => {
+          item.disabled = true;
+          status.textContent = "Linking…";
+          try {
+            await spApi("/api/scene-planning/scene-links", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ world: currentWorld(), sceneIdA: sceneId, sceneIdB: c.sceneId })
+            });
+            status.textContent = "Linked.";
+          } catch (err) {
+            status.textContent = `Could not link: ${err.message}`;
+          } finally {
+            item.disabled = false;
+          }
+        });
+        list.appendChild(item);
+      }
+    } catch (err) {
+      list.textContent = `Could not load nearby/linked scenes: ${err.message}`;
+    }
+  }
+  renderList();
 
-  wrap.appendChild(body);
+  const adHocBtn = document.createElement("button");
+  adHocBtn.type = "button";
+  adHocBtn.className = "btn";
+  adHocBtn.setAttribute("data-testid", "create-ad-hoc-scene-btn");
+  adHocBtn.setAttribute("data-scene-id", sceneId);
+  adHocBtn.textContent = "+ New ad-hoc scene";
+  // §26.7: an ALIAS for this scene's own add-scene-btn -- clicking it opens
+  // the EXACT SAME add-scene-panel, never a second/duplicate mechanism.
+  adHocBtn.addEventListener("click", () => addSceneControl.btn.click());
+
+  wrap.append(list, adHocBtn, status);
   return wrap;
 }
 
@@ -1786,7 +1850,20 @@ function buildSceneBodyInto(body, sceneId) {
   body.appendChild(grid);
 
   const extras = sceneExtrasCache.get(sceneId);
-  body.appendChild(renderBeyondCorridorSummary(extras.brief.beyondCorridor));
+
+  // Phase 26 task 26.4/26.6, §26.B -- "+Scene", built once and reused both
+  // as the actions-bar button below AND as create-ad-hoc-scene-btn's alias
+  // target in the repurposed connect-existing-scene zone (task 26.7) -- one
+  // control, two entry points, never a duplicate mechanism.
+  const addSceneControl = buildAddSceneControl(sceneId, (newScene) => {
+    insertSceneRecord(sceneId, newScene);
+  });
+
+  // Phase 26 task 26.7, §26.B: renderBeyondCorridorSummary's old "Beyond
+  // this corridor" collapsed summary is REMOVED -- its former DOM position
+  // now hosts connect-existing-scene / create-ad-hoc-scene, quick and
+  // visible, never behind a <details>.
+  body.appendChild(buildConnectExistingSceneZone(sceneId, addSceneControl));
 
   const actionsBar = document.createElement("div");
   actionsBar.setAttribute("data-testid", "scene-actions-bar");
@@ -1816,9 +1893,7 @@ function buildSceneBodyInto(body, sceneId) {
   // scene's own actions bar, a sibling of develop-scene-btn etc. (replaces
   // the old between-scenes insert-scene-control -- task 26.6 removes that
   // mechanism entirely).
-  const { btn: addSceneBtn, panel: addScenePanel } = buildAddSceneControl(sceneId, (newScene) => {
-    insertSceneRecord(sceneId, newScene);
-  });
+  const { btn: addSceneBtn, panel: addScenePanel } = addSceneControl;
 
   // DOM source order per this phase's own interface contract: add-node
   // toggle, develop-scene, add-event, add-encounter, add-scene -- all direct

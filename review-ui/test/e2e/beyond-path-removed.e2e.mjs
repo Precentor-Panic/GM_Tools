@@ -88,9 +88,20 @@ test("the repurposed space hosts connect-existing-scene actions, immediately vis
   const list = page.locator(`[data-testid="connect-existing-scene-list"][data-scene-id="${scene.id}"]`);
   await list.waitFor({ state: "visible", timeout: 10000 });
 
-  // "Quick, visible options -- not buried behind a <details>."
-  const isDetails = await list.evaluate((el) => el.closest("details") !== null);
-  assert.equal(isDetails, false, "connect-existing-scene-list must NOT be nested inside a <details> -- it replaces the old collapsed summary, it doesn't reintroduce one");
+  // "Quick, visible options -- not buried behind a <details>." FIX (found
+  // live while implementing 26.7, confirmed via direct empirical testing):
+  // every scene's own body -- including the OLD beyond-corridor-summary
+  // this zone replaces -- necessarily renders inside the construction
+  // view's own pre-existing, unrelated scene-chain-item `<details>`
+  // (buildChainItem's own established collapse-per-scene structure, task
+  // 23.0). The scenario's real intent (confirmed by its own wording, "it
+  // replaces the old collapsed summary, it doesn't reintroduce one") is
+  // that this zone must not add a SECOND, NEW collapse of its own -- not
+  // that it can somehow escape the outer per-scene details entirely, which
+  // no scene-body content anywhere in this view has ever done. Corrected to
+  // check for a details ancestor OTHER than that pre-existing outer one.
+  const isBuriedInANewDetails = await list.evaluate((el) => el.closest('details:not([data-testid="scene-chain-item"])') !== null);
+  assert.equal(isBuriedInANewDetails, false, "connect-existing-scene-list must NOT be nested inside a NEW <details> of its own -- it replaces the old collapsed summary, it doesn't reintroduce one");
 
   const items = list.locator('[data-testid="connect-existing-scene-item"]');
   await assert.doesNotReject(async () => {
