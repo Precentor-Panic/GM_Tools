@@ -1427,6 +1427,8 @@ function buildQuickAddScenePanel() {
   status.className = "hint";
   status.setAttribute("data-testid", "quick-add-scene-status");
 
+  const placeStepHost = document.createElement("div");
+
   submitBtn.addEventListener("click", async () => {
     const name = nameInput.value.trim();
     if (!name) {
@@ -1435,40 +1437,67 @@ function buildQuickAddScenePanel() {
     }
     submitBtn.disabled = true;
     status.innerHTML = "";
-    const promise = (async () => {
-      const genRes = await spApi("/api/scene-planning/quick-gen", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          world: currentWorld(),
-          prompt: `Briefly and evocatively describe a location or moment called "${name}", suitable for dropping into an ongoing tabletop RPG session on short notice. Two or three sentences.`
-        })
-      });
-      const sceneRes = await spApi("/api/session-planner/scenes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ world: currentWorld(), objectiveNote: `${name} — ${genRes.text}` })
-      });
-      return sceneRes.scene;
-    })();
+    const promise = spApi("/api/scene-planning/quick-gen", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        world: currentWorld(),
+        prompt: `Briefly and evocatively describe a location or moment called "${name}", suitable for dropping into an ongoing tabletop RPG session on short notice. Two or three sentences.`
+      })
+    });
     try {
-      const newScene = await withSlowNoticeIndicator(status, promise);
-      appendUntetheredSceneRecord(newScene);
+      const genRes = await withSlowNoticeIndicator(status, promise);
       status.textContent = "";
-      nameInput.value = "";
-      panel.style.display = "none";
+      nameInput.disabled = true;
+      submitBtn.style.display = "none";
+
+      // Phase 26 task 26.5, §26.A: quick-gen's generation step is still
+      // exactly one field/one button/one LLM call (unchanged from Phase
+      // 23) -- what changes is the success callback, which no longer
+      // creates an untethered scene. Instead it renders the SAME shared
+      // place-required-flow every scene-creation path in this phase uses
+      // (§3 of phase26-fixture.mjs's header), linking (if the DM chooses)
+      // from the CURRENTLY-loaded scene's own anchor -- the natural
+      // default target when this control is triggered mid-session.
+      placeStepHost.innerHTML = "";
+      const anchorEntityId = sceneRecordCache.get(currentSceneIdModule)?.locationEntityId ?? null;
+      const flow = buildPlaceRequiredFlow("quick-add-scene", {
+        linkFromEntityId: anchorEntityId,
+        onResolved: async (placeEntityId) => {
+          const flowStatus = flow.querySelector('[data-testid="quick-add-scene-status"]');
+          if (flowStatus) flowStatus.textContent = "Creating scene…";
+          const sceneRes = await spApi("/api/session-planner/scenes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ world: currentWorld(), locationEntityId: placeEntityId, objectiveNote: `${name} — ${genRes.text}` })
+          });
+          appendNewSceneRecord(sceneRes.scene);
+          nameInput.value = "";
+          nameInput.disabled = false;
+          submitBtn.style.display = "";
+          placeStepHost.innerHTML = "";
+          panel.style.display = "none";
+        }
+      });
+      placeStepHost.appendChild(flow);
     } catch (err) {
-      status.textContent = `Could not create: ${err.message}`;
+      status.textContent = `Could not generate: ${err.message}`;
+      nameInput.disabled = false;
+      submitBtn.style.display = "";
     } finally {
       submitBtn.disabled = false;
     }
   });
 
+  // Idempotent-open, matching add-scene-btn's own established precedent
+  // (§26.H) -- a same-scene/same-hash re-navigation never fires a fresh
+  // render, so a strict toggle could close a panel a DM never actually saw
+  // finish opening on THIS visit.
   btn.addEventListener("click", () => {
-    panel.style.display = panel.style.display === "none" ? "block" : "none";
+    panel.style.display = "block";
   });
 
-  panel.append(nameInput, submitBtn, status);
+  panel.append(nameInput, submitBtn, placeStepHost, status);
   wrap.append(btn, panel);
   return wrap;
 }
@@ -1961,7 +1990,12 @@ function insertSceneRecord(afterSceneId, newScene) {
   rerenderChainOnly();
 }
 
-function appendUntetheredSceneRecord(newScene) {
+// Phase 26 task 26.5: renamed from appendUntetheredSceneRecord -- quick-gen
+// scenes are no longer ever untethered (§26.A), but this append-to-end
+// positioning (as opposed to insertSceneRecord's after-a-specific-scene
+// positioning) is still exactly right for a top-level, not-scoped-to-any-
+// one-scene quick-add action.
+function appendNewSceneRecord(newScene) {
   sceneRecordCache.set(newScene.id, newScene);
   chainSceneIds.push(newScene.id);
   rerenderChainOnly();
@@ -2660,14 +2694,19 @@ function buildTableQuickGenControl() {
   const nameInput = document.createElement("input");
   nameInput.type = "text";
   nameInput.placeholder = "Name this ad-hoc scene…";
+  nameInput.setAttribute("data-testid", "table-quick-gen-name-input");
 
   const submitBtn = document.createElement("button");
   submitBtn.type = "button";
   submitBtn.className = "btn btn--accept";
   submitBtn.textContent = "Create";
+  submitBtn.setAttribute("data-testid", "table-quick-gen-submit-btn");
 
   const status = document.createElement("div");
   status.className = "hint";
+  status.setAttribute("data-testid", "table-quick-gen-status");
+
+  const placeStepHost = document.createElement("div");
 
   submitBtn.addEventListener("click", async () => {
     const name = nameInput.value.trim();
@@ -2677,42 +2716,63 @@ function buildTableQuickGenControl() {
     }
     submitBtn.disabled = true;
     status.innerHTML = "";
-    const promise = (async () => {
-      // Exactly the same two calls, in the same order, as Phase 22/23's
-      // own quick-gen primitive -- reused as-is, not re-implemented.
-      const genRes = await spApi("/api/scene-planning/quick-gen", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          world: currentWorld(),
-          prompt: `Briefly and evocatively describe a location or moment called "${name}", suitable for dropping into an ongoing tabletop RPG session on short notice. Two or three sentences.`
-        })
-      });
-      const sceneRes = await spApi("/api/session-planner/scenes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ world: currentWorld(), objectiveNote: `${name} — ${genRes.text}` })
-      });
-      return sceneRes.scene;
-    })();
+    // Exactly the same quick-gen call as Phase 22/23's own primitive --
+    // reused as-is, not re-implemented.
+    const promise = spApi("/api/scene-planning/quick-gen", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        world: currentWorld(),
+        prompt: `Briefly and evocatively describe a location or moment called "${name}", suitable for dropping into an ongoing tabletop RPG session on short notice. Two or three sentences.`
+      })
+    });
     try {
-      const newScene = await withSlowNoticeIndicator(status, promise);
-      status.textContent = `Created "${name}" — find it via search or the full scene list above to switch to it.`;
-      addedMembership.set(newScene.id, new Set());
-      nameInput.value = "";
-      panel.style.display = "none";
+      const genRes = await withSlowNoticeIndicator(status, promise);
+      status.textContent = "";
+      nameInput.disabled = true;
+      submitBtn.style.display = "none";
+
+      // Phase 26 task 26.5, §26.A -- same shared place-required-flow as
+      // every other scene-creation path in this phase, prefix
+      // `table-quick-gen`, linking (if chosen) from the currently-displayed
+      // scene's own anchor.
+      placeStepHost.innerHTML = "";
+      const anchorEntityId = sceneRecordCache.get(currentSceneIdModule)?.locationEntityId ?? null;
+      const flow = buildPlaceRequiredFlow("table-quick-gen", {
+        linkFromEntityId: anchorEntityId,
+        onResolved: async (placeEntityId) => {
+          const flowStatus = flow.querySelector('[data-testid="table-quick-gen-status"]');
+          if (flowStatus) flowStatus.textContent = "Creating scene…";
+          const sceneRes = await spApi("/api/session-planner/scenes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ world: currentWorld(), locationEntityId: placeEntityId, objectiveNote: `${name} — ${genRes.text}` })
+          });
+          addedMembership.set(sceneRes.scene.id, new Set());
+          nameInput.value = "";
+          nameInput.disabled = false;
+          submitBtn.style.display = "";
+          placeStepHost.innerHTML = "";
+          status.textContent = `Created "${name}" — find it via search or the plan/scene lists above to switch to it.`;
+          panel.style.display = "none";
+        }
+      });
+      placeStepHost.appendChild(flow);
     } catch (err) {
-      status.textContent = `Could not create: ${err.message}`;
+      status.textContent = `Could not generate: ${err.message}`;
+      nameInput.disabled = false;
+      submitBtn.style.display = "";
     } finally {
       submitBtn.disabled = false;
     }
   });
 
+  // Idempotent-open, matching add-scene-btn's own established precedent (§26.H).
   btn.addEventListener("click", () => {
-    panel.style.display = panel.style.display === "none" ? "block" : "none";
+    panel.style.display = "block";
   });
 
-  panel.append(nameInput, submitBtn, status);
+  panel.append(nameInput, submitBtn, placeStepHost, status);
   return { btn, panel };
 }
 
