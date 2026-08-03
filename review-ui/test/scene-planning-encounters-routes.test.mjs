@@ -35,8 +35,11 @@ import { test, before, after } from "node:test";
  * ---------------------------------------------------------------------------
  * DELETE /api/scene-planning/scenes/:sceneId/encounters/:encounterId   { world } (query or body, matching /api/scene-planning/scenes/:sceneId/members/:entityId's own established convention)
  * ---------------------------------------------------------------------------
- * Thin wrapper over removeSavedEncounter(w, encounterId). Response 200:
- * { encounter } (the removed record, or null if it was already gone).
+ * Phase 27 (task 27.2, F11): REDEFINED as detach-from-this-scene -- a thin
+ * wrapper over detachEncounterFromScene(w, encounterId, sceneId). Removes
+ * ONLY this scene's membership; a shared definition still referenced by
+ * another scene survives. Response 200: { encounter } (the updated record,
+ * or null if the id was already gone -- a safe, idempotent no-op).
  *
  * ---------------------------------------------------------------------------
  * SECURITY (every route above, per review-ui/test/routes.test.mjs's own
@@ -129,7 +132,7 @@ test("POST /api/scene-planning/scenes/:id/encounters saves a real encounter, per
   });
   assert.equal(status, 200);
   assert.ok(body.encounter?.id);
-  assert.equal(body.encounter.sceneId, scene.id);
+  assert.deepEqual(body.encounter.sceneIds, [scene.id]); // Phase 27: encounters are shared multi-scene definitions (sceneIds[])
   assert.equal(body.encounter.name, "Ambush");
   assert.deepEqual(body.encounter.combination, [{ entryId: "wolf-1", count: 3 }]);
 
@@ -155,7 +158,7 @@ test("GET /api/scene-planning/scenes/:id/encounters lists only that scene's save
   const { status, body } = await getJson(`/api/scene-planning/scenes/${scene.id}/encounters?world=${WORLD}`);
   assert.equal(status, 200);
   assert.ok(Array.isArray(body.encounters));
-  assert.ok(body.encounters.every((e) => e.sceneId === scene.id));
+  assert.ok(body.encounters.every((e) => e.sceneIds.includes(scene.id))); // Phase 27: membership via sceneIds[]
   assert.ok(body.encounters.some((e) => e.name === "Ambush"));
   assert.ok(!body.encounters.some((e) => e.name === "Other Scene's Fight"));
 });

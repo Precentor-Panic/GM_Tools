@@ -210,8 +210,11 @@ test("detachEncounterFromScene: detaching an absent sceneId is a safe no-op, ide
   assert.deepEqual(first.sceneIds, ["scene-detach-idempotent"], "detaching a scene that was never attached changes nothing");
 });
 
-test("detachEncounterFromScene: throws a clear error for an unknown encounterId", () => {
-  assert.throws(() => detachEncounterFromScene(WORLD, "no-such-encounter", "scene-x"), /No saved encounter found/);
+test("detachEncounterFromScene: returns null (safe, idempotent no-op) for an unknown encounterId", () => {
+  // Matches this codebase's DELETE convention (unlinkScenes / deleteScene /
+  // removeSavedEncounter all no-op on an absent target); the scene-scoped
+  // DELETE route echoes this null back as `{ encounter: null }`.
+  assert.equal(detachEncounterFromScene(WORLD, "no-such-encounter", "scene-x"), null);
 });
 
 test("listEncountersForWorld: returns every definition for the world exactly ONCE, regardless of how many scenes reference it", () => {

@@ -207,13 +207,17 @@ export function attachEncounterToScene(world, encounterId, sceneId) {
  * @param {string} world
  * @param {string} encounterId
  * @param {string} sceneId
- * @returns {object}   the updated SavedEncounter. Throws a clear Error if `encounterId` is unknown.
+ * @returns {object|null}   the updated SavedEncounter, or null if `encounterId` is unknown (a safe, idempotent no-op).
  */
 export function detachEncounterFromScene(world, encounterId, sceneId) {
   const encounters = readEncounters(world);
   const encounter = encounters.find((e) => e.id === encounterId);
   if (!encounter) {
-    throw new Error(`No saved encounter found: world="${world}" encounterId="${encounterId}"`);
+    // Idempotent, safe no-op for an unknown/already-removed id -- matching
+    // this codebase's DELETE-route convention (unlinkScenes, deleteScene,
+    // removeSavedEncounter all treat an absent target as a no-op; the
+    // scene-scoped DELETE route echoes this back as `{ encounter: null }`).
+    return null;
   }
   const nextIds = encounter.sceneIds.filter((id) => id !== sceneId);
   if (nextIds.length !== encounter.sceneIds.length) {
