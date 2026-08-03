@@ -188,6 +188,13 @@ import {
 // dataDir override anywhere below (the store never touches the graph
 // snapshot at all).
 import { createPlan, getPlan, listPlansForWorld, addSceneToPlan, removeSceneFromPlan } from "../session-planner/plans.mjs";
+
+// Phase 26 task 26.3 -- scene-link store, §26.C. Thin wrappers only, same
+// convention as every other route in this file: resolveWorld() with NO
+// client-supplied dataDir override anywhere below (the store never touches
+// the graph snapshot at all -- deliberately, per §26.C's "dedicated store,
+// not graph entities" decision).
+import { linkScenes, unlinkScenes, getLinkedScenes } from "../session-planner/scene-links.mjs";
 import { developScene } from "../mutation-engine/scene-develop.mjs";
 import { quickGenerate } from "../mutation-engine/quick-gen.mjs";
 
@@ -1861,6 +1868,34 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world ?? q.get("world"));
     const plan = removeSceneFromPlan(w, parts[3], parts[5]);
     return sendJson(res, 200, { plan });
+  }
+
+  // -----------------------------------------------------------------------
+  // Phase 26 task 26.3 -- scene-link store routes, prefix
+  // `/api/scene-planning/scene-links`. Thin wrappers over
+  // session-planner/scene-links.mjs only.
+  // -----------------------------------------------------------------------
+
+  // POST /api/scene-planning/scene-links   { world, sceneIdA, sceneIdB, reason? }
+  if (method === "POST" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "scene-links") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const link = linkScenes(w, body.sceneIdA, body.sceneIdB, body.reason);
+    return sendJson(res, 200, { link });
+  }
+
+  // GET /api/scene-planning/scene-links?world=&sceneId=
+  if (method === "GET" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "scene-links") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, { linked: getLinkedScenes(w, q.get("sceneId")) });
+  }
+
+  // DELETE /api/scene-planning/scene-links   { world, sceneIdA, sceneIdB }
+  if (method === "DELETE" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "scene-links") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const result = unlinkScenes(w, body.sceneIdA, body.sceneIdB);
+    return sendJson(res, 200, result);
   }
 
   sendJson(res, 404, { error: `No route: ${req.method} ${url.pathname}` });

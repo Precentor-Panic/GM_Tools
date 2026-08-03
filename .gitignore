@@ -90,6 +90,12 @@ saved-encounters/*
 session-plans/*
 !session-plans/.gitkeep
 
+# Phase 26 task 26.3 (added at spec time, not after the fact -- per this
+# project's own recurring-gap lesson): session-planner/scene-links.mjs is
+# flat per-world-file, same convention as session-plans/ above.
+scene-links/*
+!scene-links/.gitkeep
+
 node_modules/
 
 # never commit API keys / secrets
