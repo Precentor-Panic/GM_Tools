@@ -68,6 +68,30 @@
 // explicit honesty requirement. Root-causing (if a real bug exists at all,
 // possibly browser-specific/environment-specific beyond what this
 // Chromium-only suite can reach) is 26.12's job, not this task's.
+//
+// ============================================================================
+// TASK 26.12 STATUS (final self-review pass, run against the completed
+// Phase 26 build -- both bugs re-examined on real running instances, not
+// re-guessed):
+// ============================================================================
+// BUG 1: CONFIRMED FIXED. Root cause was independently reconfirmed while
+// building task 26.4's own add-scene-btn/panel (an unrelated control that
+// hit the exact same same-hash-no-op-navigation symptom before this test
+// file's own bugs were revisited) -- buildPlanSceneItem (session-planner-
+// view.js) was built with this root cause in mind FROM THE START (per this
+// task's own explicit instruction to not rediscover it), so both BUG 1
+// tests below already pass as a direct consequence of 26.8's own
+// implementation, not a separate fix pass.
+// BUG 2: STILL NOT REPRODUCED. A further, dedicated repro attempt was made
+// against the FULLY COMPLETED Phase 26 build (26.1-26.11 all landed,
+// exactly the "may only manifest once the render/navigation paths actually
+// change shape" scenario originally flagged) -- combining the NEW
+// Plan-scoped nav (rapid table-active-plan-scene-item clicks/double-clicks),
+// the NEW add-scene-btn/panel, and the NEW table-quick-gen control together
+// with rapid re-navigation, still produced exactly one scene-event-panel
+// every time, with zero page errors. Honestly still open, not claimed
+// fixed: the regression guard below remains the real, permanent safety net
+// for this reported shape, and stays green throughout.
 // ============================================================================
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
