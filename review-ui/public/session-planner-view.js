@@ -715,6 +715,7 @@ function buildConnectExistingSceneZone(sceneId, addSceneControl) {
   wrap.className = "connect-existing-scene-zone";
 
   const list = document.createElement("div");
+  list.className = "connect-existing-scene-list";
   list.setAttribute("data-testid", "connect-existing-scene-list");
   list.setAttribute("data-scene-id", sceneId);
 
@@ -1556,6 +1557,7 @@ function buildQuickAddScenePanel() {
 // ---------------------------------------------------------------------------
 function buildPlaceRequiredFlow(prefix, { linkFromEntityId, onResolved }) {
   const wrap = document.createElement("div");
+  wrap.className = "place-required-flow";
   wrap.setAttribute("data-testid", `${prefix}-place-step`);
 
   const status = document.createElement("div");
@@ -1563,6 +1565,7 @@ function buildPlaceRequiredFlow(prefix, { linkFromEntityId, onResolved }) {
   status.setAttribute("data-testid", `${prefix}-status`);
 
   const modeBar = document.createElement("div");
+  modeBar.className = "place-mode-bar";
   const existingModeBtn = document.createElement("button");
   existingModeBtn.type = "button";
   existingModeBtn.className = "link-btn place-mode-btn place-mode-btn--active";
@@ -1576,7 +1579,9 @@ function buildPlaceRequiredFlow(prefix, { linkFromEntityId, onResolved }) {
   modeBar.append(existingModeBtn, newModeBtn);
 
   const existingSubpanel = document.createElement("div");
+  existingSubpanel.className = "place-subpanel";
   const newSubpanel = document.createElement("div");
+  newSubpanel.className = "place-subpanel";
   newSubpanel.style.display = "none";
 
   function showExisting() {
@@ -1599,6 +1604,7 @@ function buildPlaceRequiredFlow(prefix, { linkFromEntityId, onResolved }) {
   function placeResolved(placeEntityId) {
     linkStepHost.innerHTML = "";
     const linkStep = document.createElement("div");
+    linkStep.className = "link-step";
     linkStep.setAttribute("data-testid", `${prefix}-link-step`);
     linkStep.setAttribute("data-place-entity-id", placeEntityId);
 
@@ -1741,6 +1747,7 @@ function buildAddSceneControl(sceneId, onCreated) {
   btn.textContent = "+ Scene";
 
   const panel = document.createElement("div");
+  panel.className = "add-scene-panel";
   panel.setAttribute("data-testid", "add-scene-panel");
   panel.setAttribute("data-scene-id", sceneId);
   panel.style.display = "none";
@@ -2238,7 +2245,7 @@ function buildTableTopStrip(scene, extras) {
 function buildPlanSceneItem(testid, s, currentSceneId, onNavigate, closeOnClick) {
   const item = document.createElement("button");
   item.type = "button";
-  item.className = "link-btn";
+  item.className = "link-btn plan-scene-item";
   item.setAttribute("data-testid", testid);
   item.setAttribute("data-scene-id", s.id);
   if (s.id === currentSceneId) item.setAttribute("data-current", "true");
@@ -2343,6 +2350,7 @@ function buildTableNavZone(scene, allScenes, linked, plans, activePlan) {
   startBtn.textContent = "+ Start new plan";
 
   const startPanel = document.createElement("div");
+  startPanel.className = "table-start-new-plan-panel";
   startPanel.setAttribute("data-testid", "table-start-new-plan-panel");
   startPanel.style.display = "none";
 
@@ -2398,6 +2406,7 @@ function buildTableNavZone(scene, allScenes, linked, plans, activePlan) {
 
   if (activePlan) {
     const activeList = document.createElement("details");
+    activeList.className = "table-plan-list table-active-plan-list";
     activeList.setAttribute("data-testid", "table-active-plan-list");
     activeList.setAttribute("data-plan-id", activePlan.id);
     activeList.open = true;
@@ -2461,10 +2470,12 @@ function buildTableNavZone(scene, allScenes, linked, plans, activePlan) {
   const otherPlans = plans.filter((p) => !activePlan || p.id !== activePlan.id);
   if (otherPlans.length) {
     const otherPlansWrap = document.createElement("div");
+    otherPlansWrap.className = "table-other-plans-list";
     otherPlansWrap.setAttribute("data-testid", "table-other-plans-list");
 
     for (const p of otherPlans) {
       const item = document.createElement("details");
+      item.className = "table-plan-list table-other-plan-item";
       item.setAttribute("data-testid", "table-other-plan-item");
       item.setAttribute("data-plan-id", p.id);
       item.open = false;

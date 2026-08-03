@@ -150,6 +150,8 @@ main { max-width: 860px; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
 .scene-chain-item-body { margin-top: 0.6rem; }
 .scene-members-grid { display: grid; gap: 0.75rem; margin-bottom: 0.5rem; }
 .insert-scene-wrap { margin: 0.25rem 0 0.75rem; }
+.scene-rename-control { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin-left: 0.75rem; font-size: 0.85rem; }
+.scene-rename-control input { font: inherit; padding: 0.15rem 0.4rem; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 .insert-scene-picker { border: 1px dashed var(--border); border-radius: 6px; padding: 0.5rem 0.75rem; margin-top: 0.35rem; }
 .quick-add-scene-wrap { margin: 1rem 0; }
 .scene-rollback-panel, .saved-encounters-list, .scene-event-panel, .add-node-panel { margin-top: 0.6rem; }
@@ -930,6 +932,30 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .table-full-list-body { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.4rem; padding-left: 0.5rem; }
 .table-full-list-item { text-align: left; padding: 0.1rem 0; }
 
+/* --- Phase 26: Plans, scene linking, Plan-scoped Table Mode --- */
+.table-start-new-plan-panel { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.3rem; }
+.table-plan-list { border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.7rem; }
+.table-plan-list > summary { cursor: pointer; font-weight: 600; list-style: none; font-size: 0.9rem; }
+.table-plan-list > summary::-webkit-details-marker { display: none; }
+.table-plan-list > summary::before { content: "\25B8"; color: var(--text-muted); font-size: 0.8rem; margin-right: 0.4rem; display: inline-block; }
+.table-plan-list[open] > summary::before { transform: rotate(90deg); }
+.table-other-plans-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.plan-scene-item { display: block; width: 100%; text-align: left; padding: 0.25rem 0.4rem; margin-top: 0.3rem; border-radius: 4px; }
+.plan-scene-item[data-current="true"] { font-weight: 600; background: color-mix(in srgb, var(--accent) 10%, transparent); }
+
+/* Phase 26 task 26.4/26.5's shared place-required-flow (add-scene/quick-add-scene/table-quick-gen prefixes). */
+.place-required-flow { border: 1px dashed var(--border); border-radius: 6px; padding: 0.6rem 0.75rem; margin-top: 0.35rem; }
+.place-mode-bar { display: flex; gap: 0.4rem; margin-bottom: 0.4rem; }
+.place-mode-btn--active { font-weight: 600; text-decoration: underline; }
+.place-subpanel { margin: 0.3rem 0; }
+.link-step { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.4rem; }
+.link-step input { flex: 1 1 220px; }
+.add-scene-panel { border: 1px dashed var(--border); border-radius: 6px; padding: 0.5rem 0.75rem; margin-top: 0.35rem; }
+
+/* Phase 26 task 26.7: repurposed "beyond this path" space. */
+.connect-existing-scene-zone { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.6rem 0; }
+.connect-existing-scene-list { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
 /* Roster + notes/encounters: side-by-side columns on wide viewports (design
    record §3: "Laptop: all zones visible at once"), collapsing to a single
    stacked column well before phone width -- ALWAYS in the same top-to-
@@ -955,13 +981,13 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   font-size: 0.72rem; background: var(--pill-pending-bg); color: var(--pill-pending-text);
   border-radius: 999px; padding: 0.1rem 0.5rem;
 }
-/* playerKnown gate -- deliberately more visually weighted than a plain
-   expand (design record §3/§5's "harder, more deliberate gate" ask). */
-.table-roster-playerknown-confirm-panel {
+/* Phase 26 task 26.10: "Drop this into Foundry" -- replaces the old
+   playerKnown gate, same deliberately-weighted confirm-panel treatment. */
+.table-roster-foundry-push-wrap { display: flex; flex-direction: column; gap: 0.3rem; }
+.table-roster-foundry-push-confirm-panel {
   border: 1px dashed var(--structural); border-radius: 6px; padding: 0.4rem 0.6rem;
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
 }
-.table-roster-playerknown-value { font-weight: 600; }
 
 .table-notes-encounters-zone { display: flex; flex-direction: column; gap: 0.5rem; }
 .table-notes-encounters-item { border: 1px solid var(--border); border-radius: 8px; padding: 0.55rem 0.75rem; background: var(--card-bg); }
