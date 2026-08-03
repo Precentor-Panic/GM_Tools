@@ -182,6 +182,12 @@ import {
   undoAllSceneActions,
   clearSceneUndoSession
 } from "../mutation-engine/scene-undo.mjs";
+
+// Phase 26 task 26.1 -- Plan store. Thin wrappers only, same convention as
+// every other route in this file: resolveWorld() with NO client-supplied
+// dataDir override anywhere below (the store never touches the graph
+// snapshot at all).
+import { createPlan, getPlan, listPlansForWorld, addSceneToPlan, removeSceneFromPlan } from "../session-planner/plans.mjs";
 import { developScene } from "../mutation-engine/scene-develop.mjs";
 import { quickGenerate } from "../mutation-engine/quick-gen.mjs";
 
@@ -1812,6 +1818,49 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world ?? q.get("world"));
     const encounter = removeSavedEncounter(w, parts[5]);
     return sendJson(res, 200, { encounter });
+  }
+
+  // -----------------------------------------------------------------------
+  // Phase 26 task 26.1 -- Plan store routes, prefix `/api/scene-planning/
+  // plans/*`, matching this file's established `/api/scene-planning/*`
+  // prefix (Phase 22) exactly. Thin wrappers over session-planner/plans.mjs
+  // only -- no independent business logic here, per gm-tools-conventions.
+  // -----------------------------------------------------------------------
+
+  // POST /api/scene-planning/plans   { world, name }
+  if (method === "POST" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "plans") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const plan = createPlan(w, { name: body.name });
+    return sendJson(res, 200, { plan });
+  }
+
+  // GET /api/scene-planning/plans?world=
+  if (method === "GET" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "plans") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, { plans: listPlansForWorld(w) });
+  }
+
+  // GET /api/scene-planning/plans/:planId?world=
+  if (method === "GET" && parts.length === 4 && parts[1] === "scene-planning" && parts[2] === "plans") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, { plan: getPlan(w, parts[3]) });
+  }
+
+  // POST /api/scene-planning/plans/:planId/scenes   { world, sceneId }
+  if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "plans" && parts[4] === "scenes") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const plan = addSceneToPlan(w, parts[3], body.sceneId);
+    return sendJson(res, 200, { plan });
+  }
+
+  // DELETE /api/scene-planning/plans/:planId/scenes/:sceneId   { world } (body or query, matching scene-membership's own DELETE convention)
+  if (method === "DELETE" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "plans" && parts[4] === "scenes") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world ?? q.get("world"));
+    const plan = removeSceneFromPlan(w, parts[3], parts[5]);
+    return sendJson(res, 200, { plan });
   }
 
   sendJson(res, 404, { error: `No route: ${req.method} ${url.pathname}` });
