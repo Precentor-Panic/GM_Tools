@@ -1292,111 +1292,23 @@ async function onDevelopScene(sceneId, statusEl, reviewHolder) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 23.3: "+" between scenes -- real place (existing Phase 16 scene
-// route) or transit/path (the real Phase 22 transit-entity route).
-// ---------------------------------------------------------------------------
-function buildInsertSceneControl(afterSceneId) {
-  const wrap = document.createElement("div");
-  wrap.className = "insert-scene-wrap";
-
-  const toggleBtn = document.createElement("button");
-  toggleBtn.type = "button";
-  toggleBtn.className = "link-btn insert-scene-toggle";
-  toggleBtn.setAttribute("data-testid", "insert-scene-control");
-  toggleBtn.setAttribute("data-after-scene-id", afterSceneId);
-  toggleBtn.textContent = "+ Insert scene here";
-
-  const picker = document.createElement("div");
-  picker.setAttribute("data-testid", "insert-scene-picker");
-  picker.setAttribute("data-after-scene-id", afterSceneId);
-  picker.style.display = "none";
-
-  const status = document.createElement("div");
-  status.className = "hint";
-
-  const placeHeading = document.createElement("div");
-  placeHeading.className = "hint";
-  placeHeading.textContent = "Existing place:";
-  const placePicker = buildEntityPicker({
-    testidPrefix: "insert-scene-place",
-    placeholder: "Search for an existing place…",
-    defaultTypeFilter: "place",
-    onSelect: async (entity, btn) => {
-      btn.disabled = true;
-      status.textContent = "Inserting…";
-      try {
-        const sceneRes = await spApi("/api/session-planner/scenes", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ world: currentWorld(), locationEntityId: entity.id })
-        });
-        insertSceneRecord(afterSceneId, sceneRes.scene);
-        status.textContent = "";
-        picker.style.display = "none";
-      } catch (err) {
-        status.textContent = `Could not insert: ${err.message}`;
-      } finally {
-        btn.disabled = false;
-      }
-    }
-  });
-
-  const transitHeading = document.createElement("div");
-  transitHeading.className = "hint";
-  transitHeading.textContent = "Or, a transit/path scene (name optional):";
-
-  const transitNameInput = document.createElement("input");
-  transitNameInput.type = "text";
-  transitNameInput.setAttribute("data-testid", "insert-scene-transit-name-input");
-  transitNameInput.placeholder = "e.g. \"The Old Coast Road\" (optional)";
-
-  const transitSubmitBtn = document.createElement("button");
-  transitSubmitBtn.type = "button";
-  transitSubmitBtn.className = "btn";
-  transitSubmitBtn.setAttribute("data-testid", "insert-scene-transit-submit-btn");
-  transitSubmitBtn.textContent = "Create transit scene";
-  transitSubmitBtn.addEventListener("click", async () => {
-    transitSubmitBtn.disabled = true;
-    status.textContent = "Creating…";
-    try {
-      const idx = chainSceneIds.indexOf(afterSceneId);
-      const nextSceneId = idx >= 0 ? chainSceneIds[idx + 1] : undefined; // undefined at the end of the chain -- no "next" scene to point to
-      const fromEntityId = sceneRecordCache.get(afterSceneId)?.locationEntityId;
-      const toEntityId = (nextSceneId && sceneRecordCache.get(nextSceneId)?.locationEntityId) || fromEntityId;
-      const transitRes = await spApi("/api/scene-planning/transit-entity", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ world: currentWorld(), fromEntityId, toEntityId, name: transitNameInput.value.trim() || undefined })
-      });
-      const sceneRes = await spApi("/api/session-planner/scenes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ world: currentWorld(), locationEntityId: transitRes.entity.entityId })
-      });
-      insertSceneRecord(afterSceneId, sceneRes.scene);
-      status.textContent = "";
-      transitNameInput.value = "";
-      picker.style.display = "none";
-    } catch (err) {
-      status.textContent = `Could not create transit scene: ${err.message}`;
-    } finally {
-      transitSubmitBtn.disabled = false;
-    }
-  });
-
-  picker.append(placeHeading, placePicker, transitHeading, transitNameInput, transitSubmitBtn, status);
-
-  toggleBtn.addEventListener("click", () => {
-    picker.style.display = picker.style.display === "none" ? "block" : "none";
-  });
-
-  wrap.append(toggleBtn, picker);
-  return wrap;
-}
-
-// ---------------------------------------------------------------------------
-// Task 23.7: mid-session ad-hoc "+" quick-gen -- one field, one button,
-// exactly one LLM call. Top-level, not scoped to any one insertion point.
+// Task 23.7 (Phase 26 task 26.5 reworked its inner flow, §26.A): mid-session
+// ad-hoc "+" quick-gen -- one field, one button, exactly one LLM call.
+// Top-level, not scoped to any one insertion point.
+//
+// Phase 26 task 26.6, §26.B: the old between-scenes "+ Insert Scene Here"
+// (buildInsertSceneControl/insert-scene-control/insert-scene-picker) lived
+// here and was REMOVED ENTIRELY -- it let a DM insert a scene between two
+// arbitrary chain positions regardless of whether those scenes' anchors
+// were actually graph-connected, the confirmed direct cause of real
+// reported confusion. Replaced by "+Scene" (26.4's buildAddSceneControl,
+// mounted inside each scene's own actions bar) -- an unambiguous "add a
+// scene from THIS scene" trigger instead. The real-place-creation coverage
+// this control used to provide lives on via add-scene-control.e2e.mjs/
+// scene-creation-place-required.e2e.mjs's own new-place-creation
+// assertions; transit-entity creation itself (session-planner/
+// transit-entity.mjs) is UNCHANGED, just no longer reachable from this
+// particular UI trigger.
 // ---------------------------------------------------------------------------
 function buildQuickAddScenePanel() {
   const wrap = document.createElement("div");
@@ -1976,8 +1888,11 @@ function rerenderChainOnly() {
   for (const id of chainSceneIds) {
     const item = buildChainItem(id, id === currentSceneIdModule);
     if (id === currentSceneIdModule) currentItemEl = item;
+    // Phase 26 task 26.6, §26.B: the old between-scenes insert-scene-control
+    // is REMOVED entirely -- "+Scene" (26.4's buildAddSceneControl, mounted
+    // inside each scene's own actions bar by buildSceneBodyInto) replaces
+    // it. No control is appended here between chain items any more.
     chainContainerEl.appendChild(item);
-    chainContainerEl.appendChild(buildInsertSceneControl(id));
   }
   if (currentItemEl) currentItemEl._ensureBodyLoaded();
 }
