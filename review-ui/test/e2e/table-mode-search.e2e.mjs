@@ -8,6 +8,24 @@
 // `table-nav-search-input`/`table-nav-search-results` exists yet. That
 // failure is the deliverable of this task, not a bug in this file.
 //
+// ***UPDATED by Phase 26 task 26.0*** (plans/phase-26-tasks.md §26.8, task
+// 26.0 REQUIRED SCENARIO 7, which explicitly names THIS file alongside
+// table-mode-navigation.e2e.mjs as carrying a now-stale assumption). Table
+// Mode's nav-zone search is now interpreted as PLAN-SCOPED, consistent with
+// "Table Mode is Plan-scoped" (§26.8) -- search filters over the ACTIVE
+// PLAN's own member scenes, not every scene in the whole world (the old
+// Phase 25 premise, back when Plans didn't exist and `table-full-list`
+// still browsed the flat world-wide scene list search shared its data
+// source with). This is a DELIBERATE, DOCUMENTED interpretation call made
+// while writing this contract (not left ambiguous) -- see phase26-fixture
+// .mjs's header §7 for the reasoning. Concretely: this file's fixture now
+// seeds a real Plan and adds BOTH scenes to it, so the "search finds a
+// genuinely non-adjacent scene" premise still holds -- scoped within a
+// Plan, not the whole world. The DOM testids (`table-nav-search-input`/
+// `-results`/`-result`) and the "stays in Table Mode" assertion are
+// UNCHANGED from the original contract; only the fixture (and therefore the
+// underlying data source the search bar filters over) changed.
+//
 // FIXTURE: two entirely DISCONNECTED place entities (zero edges between
 // them, or to anything) -- the strongest, least-ambiguous form of
 // "non-adjacent" this project's own linkage query recognizes
@@ -16,20 +34,24 @@
 // origin scene's adjacent-scenes strip is guaranteed empty and the target
 // scene is guaranteed reachable ONLY via search, never via the adjacent
 // strip -- proving this scenario actually exercises search, not a strip
-// entry that happens to also satisfy the assertion.
+// entry that happens to also satisfy the assertion. BOTH scenes are added
+// to the SAME real Plan (via the real Phase 26 Plan routes) so Plan-scoped
+// search has something to find.
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import { chromium } from "playwright";
 import {
-  setupSceneConstructionEnv,
+  setupPhase26Env,
   cleanupScratchEnv,
   createSceneViaRoute,
+  createPlanViaRoute,
+  addSceneToPlanViaRoute,
   primeWorldSelection,
-  gotoTableMode,
   DESKTOP_VIEWPORT
-} from "./table-mode-fixture.mjs";
+} from "./phase26-fixture.mjs";
+import { gotoTableMode } from "./table-mode-fixture.mjs";
 
-const { scratchDir, dataDir } = setupSceneConstructionEnv("gm-tools-e2e-tablemode-search-");
+const { scratchDir, dataDir } = setupPhase26Env("gm-tools-e2e-tablemode-search-");
 const WORLD = "e2e-tablemode-search-world";
 process.env.WF_DEFAULT_WORLD = WORLD;
 
@@ -54,6 +76,12 @@ before(async () => {
 
   originScene = await createSceneViaRoute(base, WORLD, { locationEntityId: "tmsearch-origin" });
   targetScene = await createSceneViaRoute(base, WORLD, { locationEntityId: "tmsearch-target" });
+
+  // Phase 26: search is Plan-scoped -- both scenes need to be real members
+  // of the SAME Plan for search to have anything to find.
+  const plan = await createPlanViaRoute(base, WORLD, "Search Scope Plan");
+  await addSceneToPlanViaRoute(base, WORLD, plan.id, originScene.id);
+  await addSceneToPlanViaRoute(base, WORLD, plan.id, targetScene.id);
 
   // Sanity check on the real, already-shipped linkage route: confirms the
   // fixture's own premise (genuinely disconnected, zero linked scenes)

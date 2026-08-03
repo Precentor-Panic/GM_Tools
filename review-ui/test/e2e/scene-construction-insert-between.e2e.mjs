@@ -1,22 +1,31 @@
-// Phase 23 task 23.0, REQUIRED SCENARIOS 3 + 4 -- "'+' between scenes --
-// real place: inserting an existing place entity as a new scene between two
-// others" and "'+' between scenes -- transit/path: inserting a transit
-// scene calls the real transit-entity route, committing a real entity
-// (assert via the actual store, not just a UI state check) -- confirm the
-// created entity's type is 'place' with attributes.isTransit === true."
-// Read scene-construction-fixture.mjs's header first (§3 is this file's own
-// section). EXPECTED TO FAIL right now with a Playwright selector-not-found/
-// timeout error -- none of this DOM exists yet. That failure is the
-// deliverable of this task, not a bug in this file.
+// ***SUPERSEDED by Phase 26 task 26.0*** (plans/phase-26-tasks.md §26.B/
+// task 26.6). This file ORIGINALLY (Phase 23 task 23.0) asserted that
+// "+ Insert Scene Here" (`insert-scene-control`/`insert-scene-picker`,
+// `buildInsertSceneControl`) let a DM insert a scene between two arbitrary
+// chain positions. Phase 26's grounding (§26.B) found this mechanism itself
+// was the direct cause of real reported confusion ("are all the nodes you
+// listed with + add scene here between them actually adjacent?") and
+// REMOVES it entirely, replacing it with a single "+Scene" action living at
+// the bottom of every scene's own box (add-scene-control.e2e.mjs's own new
+// contract, per phase26-fixture.mjs's header §5).
 //
-// FIXTURE: two scenes, anchored to two DISCONNECTED place entities
-// ("insbtw-start", "insbtw-end" -- no edge between them at all, deliberately,
-// so this file's real-place-insertion test can add a genuinely-new place in
-// between without that place needing to already be graph-adjacent to
-// anything -- adjacency is not this file's concern, transit-entity.mjs/
-// scene-membership.mjs's own already-shipped Phase 22 tests own that). A
-// separate real "insbtw-existing-place" entity exists in the graph for the
-// real-place insertion path to pick.
+// This file's ORIGINAL assertions (that inserting via insert-scene-control
+// works, both real-place and transit-entity paths) are now WRONG under the
+// new contract -- rewritten here to assert the mechanism's ABSENCE instead,
+// per plans/phase-26-tasks.md's own explicit instruction ("its old
+// assertions about insert-scene-control existing are now wrong and need
+// updating, not left as silently-contradictory frozen tests"). The
+// transit-entity real-route coverage this file used to provide is NOT lost
+// -- it lives on via add-scene-control.e2e.mjs's/scene-creation-place-
+// required.e2e.mjs's own new-place-creation assertions (transit-entity
+// creation itself, session-planner/transit-entity.mjs, is UNCHANGED by
+// Phase 26 -- only the UI trigger for reaching a "new place" changed).
+//
+// EXPECTED TO FAIL right now: `insert-scene-control` is still very much
+// present in the current, not-yet-reworked UI (Phase 23's real, live,
+// unmodified implementation) -- these DOM-absence assertions will currently
+// FAIL for that reason. That failure is the deliverable of this task, not a
+// bug in this file.
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import { chromium } from "playwright";
@@ -26,7 +35,7 @@ const { scratchDir, dataDir } = setupSceneConstructionEnv("gm-tools-e2e-scconstr
 const WORLD = "e2e-scconstruct-insbtw-world";
 process.env.WF_DEFAULT_WORLD = WORLD;
 
-const { snapshotFilePath, loadSnapshot } = await import("../../../wf-mcp-server/lib/snapshot.mjs");
+const { snapshotFilePath } = await import("../../../wf-mcp-server/lib/snapshot.mjs");
 const { bootstrapSnapshot, applyHeadless } = await import("../../../graph-import/headless-apply.mjs");
 const { createReviewServer } = await import("../../server.mjs");
 
@@ -34,8 +43,7 @@ const snapPath = snapshotFilePath(dataDir, WORLD);
 bootstrapSnapshot(snapPath, { worldId: WORLD });
 applyHeadless(snapPath, [
   { op: "upsert_entity", data: { id: "insbtw-start", name: "Insert-Between Start", type: "place", importance: 0.5 } },
-  { op: "upsert_entity", data: { id: "insbtw-end", name: "Insert-Between End", type: "place", importance: 0.5 } },
-  { op: "upsert_entity", data: { id: "insbtw-existing-place", name: "Insert-Between Waystop", type: "place", importance: 0.5 } }
+  { op: "upsert_entity", data: { id: "insbtw-end", name: "Insert-Between End", type: "place", importance: 0.5 } }
 ]);
 
 let server, base, browser, page;
@@ -60,88 +68,29 @@ after(async () => {
   cleanupScratchEnv(scratchDir);
 });
 
-test("real-place path: picking an existing place inserts a new scene chain-item between the two scenes", async () => {
+test("***Phase 26 fix***: insert-scene-control/insert-scene-picker are DOM-absent -- the confusing 'between two arbitrary chain positions' mechanism no longer exists anywhere in the construction view", async () => {
   await page.goto(`${base}/#session-planner/${sceneStart.id}`);
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-chain-item"]').length === 2, { timeout: 15000 });
 
-  const control = page.locator(`[data-testid="insert-scene-control"][data-after-scene-id="${sceneStart.id}"]`);
-  await control.waitFor({ state: "visible", timeout: 10000 });
-  await control.click();
+  const controlCount = await page.evaluate(() => document.querySelectorAll('[data-testid="insert-scene-control"]').length);
+  const pickerCount = await page.evaluate(() => document.querySelectorAll('[data-testid="insert-scene-picker"]').length);
+  assert.equal(controlCount, 0, "insert-scene-control must be COMPLETELY REMOVED per §26.B -- see add-scene-control.e2e.mjs for the replacement '+Scene' contract");
+  assert.equal(pickerCount, 0, "insert-scene-picker must be COMPLETELY REMOVED per §26.B");
 
-  const picker = page.locator(`[data-testid="insert-scene-picker"][data-after-scene-id="${sceneStart.id}"]`);
-  await picker.waitFor({ state: "visible", timeout: 5000 });
-
-  const placeInput = picker.locator('[data-testid="insert-scene-place-input"]');
-  await placeInput.fill("Insert-Between Waystop");
-  const option = picker.locator('[data-testid="insert-scene-place-option"][data-entity-id="insbtw-existing-place"]');
-  await option.waitFor({ state: "visible", timeout: 5000 });
-  await option.click();
-
-  await assert.doesNotReject(async () => {
-    await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-chain-item"]').length === 3, { timeout: 10000 });
-  }, "picking a real place must insert exactly one new scene chain-item");
-
-  const items = page.locator('[data-testid="scene-chain-item"]');
-  const orderedIds = await items.evaluateAll((els) => els.map((el) => el.getAttribute("data-scene-id")));
-  assert.equal(orderedIds[0], sceneStart.id);
-  assert.equal(orderedIds[2], sceneEnd.id);
-  const newSceneId = orderedIds[1];
-  assert.notEqual(newSceneId, sceneStart.id);
-  assert.notEqual(newSceneId, sceneEnd.id);
-
-  // Confirm via the real store, not just UI state: the new scene really is
-  // anchored to insbtw-existing-place.
-  const brief = await (await fetch(`${base}/api/session-planner/brief?world=${WORLD}&sceneId=${newSceneId}`)).json();
-  const anchorLoc = (brief.brief?.locations ?? []).find((l) => l.distance === 0);
-  assert.equal(anchorLoc?.entityId, "insbtw-existing-place", "the newly-inserted scene must be anchored to the picked real place entity");
+  const transitInputCount = await page.evaluate(() => document.querySelectorAll('[data-testid="insert-scene-transit-name-input"], [data-testid="insert-scene-transit-submit-btn"]').length);
+  assert.equal(transitInputCount, 0, "the old transit-entity UI trigger tied to insert-scene-picker must also be gone (transit-entity.mjs's own real route is unaffected and still reachable via the new '+Scene' new-place path, per add-scene-control.e2e.mjs / scene-creation-place-required.e2e.mjs)");
 });
 
-test("transit/path path: creates a real committed entity via the real transit-entity route (type:\"place\", attributes.isTransit===true), and inserts a new scene anchored to it", async () => {
-  await page.goto(`${base}/#session-planner/${sceneStart.id}`);
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-chain-item"]').length >= 2, { timeout: 15000 });
-
-  const control = page.locator(`[data-testid="insert-scene-control"][data-after-scene-id="${sceneEnd.id}"]`);
-  await control.waitFor({ state: "visible", timeout: 10000 });
-  await control.click();
-
-  const picker = page.locator(`[data-testid="insert-scene-picker"][data-after-scene-id="${sceneEnd.id}"]`);
-  await picker.waitFor({ state: "visible", timeout: 5000 });
-
-  const beforeCount = await page.locator('[data-testid="scene-chain-item"]').count();
-
-  // Leave the name field blank -- transit-entity.mjs's own established
-  // default-naming allowance ("stay exactly as generic as 'Path'
-  // indefinitely").
-  const submitBtn = picker.locator('[data-testid="insert-scene-transit-submit-btn"]');
-  await submitBtn.click();
-
-  await assert.doesNotReject(async () => {
-    await page.waitForFunction(
-      (expected) => document.querySelectorAll('[data-testid="scene-chain-item"]').length === expected,
-      beforeCount + 1,
-      { timeout: 10000 }
-    );
-  }, "submitting the transit path must insert exactly one new scene chain-item");
-
-  const items = page.locator('[data-testid="scene-chain-item"]');
-  const orderedIds = await items.evaluateAll((els) => els.map((el) => el.getAttribute("data-scene-id")));
-  const newSceneId = orderedIds.find((id) => id !== sceneStart.id && id !== sceneEnd.id);
-  assert.ok(newSceneId, "a new scene id must appear in the chain");
-
-  const brief = await (await fetch(`${base}/api/session-planner/brief?world=${WORLD}&sceneId=${newSceneId}`)).json();
-  const anchorLoc = (brief.brief?.locations ?? []).find((l) => l.distance === 0);
-  const transitEntityId = anchorLoc?.entityId;
-  assert.ok(transitEntityId, "the newly-inserted transit scene must have a real anchor entity id");
-  assert.notEqual(transitEntityId, "insbtw-start");
-  assert.notEqual(transitEntityId, "insbtw-end");
-
-  // ASSERT VIA THE ACTUAL STORE (not just a UI state check), per this
-  // scenario's own explicit requirement: reload the real snapshot from disk
-  // via the real snapshot.mjs loader and inspect the committed entity
-  // directly.
-  const { snapshot } = loadSnapshot(dataDir, WORLD);
-  const transitEntity = snapshot.entities.find((e) => e.id === transitEntityId);
-  assert.ok(transitEntity, "the transit entity must be a REAL committed entity in the live snapshot, not UI-only state");
-  assert.equal(transitEntity.type, "place", "a transit entity must commit as type:\"place\" -- no new entity-type enum value (plans/phase-21-review.md §12)");
-  assert.equal(transitEntity.attributes?.isTransit, true, "a transit entity must carry attributes.isTransit === true, the pinned Phase 22 distinguishing field");
+test("***Phase 26 fix***: the same absence holds even after this chain has more than two scenes (not just the boundary case)", async () => {
+  await page.goto(`${base}/#session-planner/${sceneEnd.id}`);
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-chain-item"]').length >= 1, { timeout: 15000 });
+  const toggles = page.locator('[data-testid="scene-chain-toggle"]');
+  const n = await toggles.count();
+  for (let i = 0; i < n; i++) {
+    const item = page.locator('[data-testid="scene-chain-item"]').nth(i);
+    if (!(await item.evaluate((el) => el.open))) await toggles.nth(i).click();
+  }
+  await page.waitForTimeout(200);
+  const controlCount = await page.evaluate(() => document.querySelectorAll('[data-testid="insert-scene-control"]').length);
+  assert.equal(controlCount, 0, "insert-scene-control must stay absent regardless of how many scenes are expanded");
 });

@@ -1,12 +1,25 @@
-// Phase 25 task 25.0, REQUIRED SCENARIOS 3 + 5 -- "Adjacent-scenes strip:
-// seed a real multi-scene chain, assert the immediate hop-1 neighbors
-// render as single-tap targets, no picker/no intermediate step" and
-// "Collapsed full list: the full scene list renders collapsed by default
-// beneath the adjacent-scenes strip, expandable." Read
-// table-mode-fixture.mjs's header FIRST (§3 is this file's own section).
-// EXPECTED TO FAIL right now -- none of `table-nav-zone`/
-// `table-adjacent-strip`/`table-full-list` exists yet. That failure is the
-// deliverable of this task, not a bug in this file.
+// Phase 25 task 25.0, REQUIRED SCENARIO 3 -- "Adjacent-scenes strip: seed a
+// real multi-scene chain, assert the immediate hop-1 neighbors render as
+// single-tap targets, no picker/no intermediate step." Read table-mode-
+// fixture.mjs's header FIRST (§3 is this file's own section). EXPECTED TO
+// FAIL right now -- none of `table-nav-zone`/`table-adjacent-strip` exists
+// yet. That failure is the deliverable of this task, not a bug in this
+// file.
+//
+// ***UPDATED by Phase 26 task 26.0*** (plans/phase-26-tasks.md §26.8, task
+// 26.0 REQUIRED SCENARIO 7 -- "Table Mode is Plan-scoped... replaces the old
+// flat 'all scenes' list contract from table-mode-navigation.e2e.mjs/
+// table-mode-search.e2e.mjs"). This file ORIGINALLY (Phase 25 task 25.0)
+// also carried "REQUIRED SCENARIO 5" (the collapsed `table-full-list`
+// flat-scene-list tests) -- THOSE TWO TESTS ARE REMOVED HERE, since
+// `table-full-list` itself is removed entirely by Phase 26 §26.8 (superseded
+// by the new Plan-scoped browse structure -- see table-mode-plan-scoped
+// .e2e.mjs for its replacement contract, including its own explicit
+// `table-full-list` DOM-absence assertion). The adjacent-scenes-strip tests
+// below are UNCHANGED and UNAFFECTED by Plan-scoping (a separate,
+// independent navigation mechanism, per phase26-fixture.mjs's header §7
+// "adjacent-scenes strip stays UNCHANGED") -- kept here as-is, not moved,
+// since their own contract never mentioned the flat list.
 //
 // FIXTURE: a straight-line chain of 4 place entities (a-b-c-d), matching
 // scene-construction-chain-display.e2e.mjs's / scenes-tab-linkage.e2e.mjs's
@@ -117,56 +130,19 @@ test("clicking an adjacent-scene item is a single tap that jumps directly to tha
   assert.equal(await tableView.getAttribute("data-scene-id"), sceneC.id);
 });
 
-test("the full scene list renders as a collapsed <details> by default, beneath the adjacent-scenes strip", async () => {
-  await gotoTableMode(page, base, sceneB.id);
-
-  const fullList = page.locator('[data-testid="table-full-list"]');
-  await fullList.waitFor({ state: "attached", timeout: 15000 });
-  assert.equal(await fullList.evaluate((el) => el.tagName.toLowerCase()), "details", "table-full-list must be a real <details> element -- free, JS-free collapse, matching this project's established scene-chain-item precedent");
-  assert.equal(await fullList.evaluate((el) => el.open), false, "the full scene list must be COLLAPSED by default");
-
-  // DOM order: the adjacent strip must precede the full list (§3a: "beneath
-  // the adjacent-scenes strip").
-  const zone = page.locator('[data-testid="table-nav-zone"]');
-  const order = await zone.evaluate((el) => {
-    const strip = el.querySelector('[data-testid="table-adjacent-strip"]');
-    const list = el.querySelector('[data-testid="table-full-list"]');
-    if (!strip || !list) return null;
-    // Node.DOCUMENT_POSITION_FOLLOWING === 4
-    return !!(strip.compareDocumentPosition(list) & 4);
-  });
-  assert.equal(order, true, "the full list must come AFTER (below) the adjacent-scenes strip in DOM order");
-
-  // Items are not present/visible while collapsed.
-  const itemsWhileCollapsed = fullList.locator('[data-testid="table-full-list-item"]');
-  assert.equal(await itemsWhileCollapsed.first().isVisible().catch(() => false), false, "full-list items must not be visible while the <details> is collapsed");
-});
-
-test("expanding the full list reveals all 4 scenes in the world, each a working navigation link (staying in Table Mode)", async () => {
-  await gotoTableMode(page, base, sceneB.id);
-
-  const fullList = page.locator('[data-testid="table-full-list"]');
-  const toggle = fullList.locator('[data-testid="table-full-list-toggle"]');
-  await toggle.waitFor({ state: "visible", timeout: 15000 });
-  await toggle.click();
-
-  await assert.doesNotReject(async () => {
-    await page.waitForFunction(() => document.querySelectorAll('[data-testid="table-full-list-item"]').length === 4, { timeout: 10000 });
-  }, "expanding the full list must reveal all 4 scenes (a,b,c,d)");
-  assert.equal(await fullList.evaluate((el) => el.open), true);
-
-  const itemD = fullList.locator(`[data-testid="table-full-list-item"][data-scene-id="${sceneD.id}"]`);
-  await itemD.waitFor({ state: "visible", timeout: 5000 });
-  await itemD.click();
-
-  await assert.doesNotReject(async () => {
-    await page.waitForFunction(
-      (expected) => location.hash === `#session-planner/${expected}?mode=table`,
-      sceneD.id,
-      { timeout: 5000 }
-    );
-  }, "clicking a full-list item (scene D, a non-adjacent scene from B) must jump straight to that scene, in Table Mode");
-  const tableView = page.locator('[data-testid="table-mode-view"]');
-  await tableView.waitFor({ state: "visible", timeout: 10000 });
-  assert.equal(await tableView.getAttribute("data-scene-id"), sceneD.id);
-});
+// ***REMOVED by Phase 26 task 26.0***: this file originally had two more
+// tests here ("the full scene list renders as a collapsed <details> by
+// default..." / "expanding the full list reveals all 4 scenes..."),
+// asserting Phase 25's `table-full-list` flat "all scenes" contract.
+// `table-full-list` is removed entirely by Phase 26 §26.8 (superseded by
+// Plan-scoped browsing) -- see table-mode-plan-scoped.e2e.mjs for its own
+// explicit `table-full-list` DOM-absence assertion plus the full replacement
+// contract (table-start-new-plan-btn / table-active-plan-list / table-other-
+// plans-list). Deleting rather than rewriting those two tests here (as
+// opposed to scene-construction-insert-between.e2e.mjs's own "rewrite to
+// assert absence" approach) since a dedicated absence assertion already
+// lives in table-mode-plan-scoped.e2e.mjs and duplicating it here would add
+// nothing; `sceneD` stays declared/seeded above since it remains useful
+// fixture context (confirms the adjacent-strip's hop-2 exclusion in the
+// first test above) even though it's no longer independently exercised by
+// a full-list test.

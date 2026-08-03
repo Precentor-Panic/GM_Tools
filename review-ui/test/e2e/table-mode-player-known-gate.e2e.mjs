@@ -1,27 +1,28 @@
-// Phase 25 task 25.0, REQUIRED SCENARIO 7 -- "playerKnown hard gate: assert
-// this field is NEVER visible via the same one-tap expand as description/
-// tags; requires a distinct, separate confirm step, real DOM assertion
-// that the value isn't present in the DOM at all until that separate step
-// fires (not just visually hidden via CSS)." Read table-mode-fixture.mjs's
-// header FIRST (§4 is this file's own section, the playerKnown-gate half).
-// EXPECTED TO FAIL right now -- none of `table-roster-playerknown-gate-btn`
-// / `table-roster-playerknown-confirm-panel` / `table-roster-playerknown-
-// value` exists yet. That failure is the deliverable of this task, not a
-// bug in this file.
+// ***SUPERSEDED by Phase 26 task 26.0*** (plans/phase-26-tasks.md §26.F/
+// task 26.10). This file ORIGINALLY (Phase 25 task 25.0) asserted the
+// `playerKnown` hard-gate contract (`table-roster-playerknown-gate-btn`
+// requiring a separate confirm step before the real value ever entered the
+// DOM). Phase 26's grounding (§26.F) found `buildPlayerKnownGate` to be a
+// pure read-only status display with no real action behind it (the project
+// owner's own assessment: "I don't care if I know that they know about some
+// element... nor do I know how this... would even know to tell me this
+// information") and REMOVES it entirely, replacing it with a genuine action
+// -- "Drop this into Foundry" (drop-into-foundry.e2e.mjs's own new
+// contract, per phase26-fixture.mjs's header §9).
 //
-// Every assertion in this file that checks "the value is absent" uses
-// `document.querySelector(...) === null` (via page.evaluate), NEVER
-// `.isVisible()`/`.isHidden()` -- the whole point of this scenario is that
-// a CSS-hidden-but-present element (e.g. display:none) would be a FAILED
-// implementation, and only a real DOM-presence check catches that
-// distinction. A naive `expect(locator).toBeHidden()`-shaped assertion
-// would incorrectly PASS a display:none leak; this file deliberately never
-// uses that shape.
+// This file's ORIGINAL assertions (that the playerKnown gate exists and
+// works a certain way) are now WRONG under the new contract -- rewritten
+// here to assert the mechanism's ABSENCE instead, per plans/phase-26-tasks
+// .md's own explicit instruction ("update the now-stale existing tests
+// rather than leaving them contradictory"), mirroring scene-construction-
+// insert-between.e2e.mjs's own "rewrite to assert absence" approach for the
+// same reason.
 //
-// FIXTURE: one anchor entity with playerKnown:true (a real WF entity field,
-// confirmed live in foundry_worldFabric/graph-service.mjs's upsertEntity
-// field list, boolean-typed per graph-import/writeup-import.mjs's own
-// z.boolean().optional() schema).
+// EXPECTED TO FAIL right now: `table-roster-playerknown-gate-btn` and its
+// siblings are still very much present in the current, not-yet-reworked UI
+// (Phase 25's real, live, unmodified `buildPlayerKnownGate`) -- these
+// DOM-absence assertions will currently FAIL for that reason. That failure
+// is the deliverable of this task, not a bug in this file.
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import { chromium } from "playwright";
@@ -60,11 +61,6 @@ let scene;
 
 const entityId = "tmpk-anchor";
 
-/** Real DOM-absence check -- never CSS-visibility-based. See header. */
-async function playerKnownValueCount(pg) {
-  return pg.evaluate(() => document.querySelectorAll('[data-testid="table-roster-playerknown-value"]').length);
-}
-
 before(async () => {
   server = createReviewServer({ port: 0 });
   await new Promise((resolve) => server.once("listening", resolve));
@@ -83,7 +79,7 @@ after(async () => {
   cleanupScratchEnv(scratchDir);
 });
 
-test("the plain roster expand renders description, but zero playerKnown-value elements exist anywhere in the DOM", async () => {
+test("***Phase 26 fix***: the plain roster expand still renders description, and the OLD playerKnown-gate DOM is COMPLETELY GONE (real DOM-absence, not CSS-hidden)", async () => {
   await gotoTableMode(page, base, scene.id);
   const row = page.locator(`[data-testid="table-roster-row"][data-entity-id="${entityId}"]`);
   await row.waitFor({ state: "visible", timeout: 15000 });
@@ -91,57 +87,24 @@ test("the plain roster expand renders description, but zero playerKnown-value el
 
   const detail = page.locator(`[data-testid="table-roster-detail"][data-entity-id="${entityId}"]`);
   await detail.waitFor({ state: "visible", timeout: 10000 });
-  assert.match((await detail.locator('[data-testid="table-roster-detail-description"]').textContent()) ?? "", /Ordinary description text/, "the plain expand must still show ordinary fields like description");
+  assert.match((await detail.locator('[data-testid="table-roster-detail-description"]').textContent()) ?? "", /Ordinary description text/, "the plain expand must still show ordinary fields like description -- unaffected by this removal");
 
-  assert.equal(await playerKnownValueCount(page), 0, "zero table-roster-playerknown-value elements may exist in the DOM after only the general (non-gated) expand -- playerKnown must never ride along with the casual reveal");
+  const oldGateSelectors = [
+    '[data-testid="table-roster-playerknown-gate-btn"]',
+    '[data-testid="table-roster-playerknown-confirm-panel"]',
+    '[data-testid="table-roster-playerknown-confirm-btn"]',
+    '[data-testid="table-roster-playerknown-cancel-btn"]',
+    '[data-testid="table-roster-playerknown-value"]'
+  ];
+  for (const sel of oldGateSelectors) {
+    const count = await page.evaluate((s) => document.querySelectorAll(s).length, sel);
+    assert.equal(count, 0, `${sel} must be COMPLETELY REMOVED per §26.F -- see drop-into-foundry.e2e.mjs for the replacement 'Drop this into Foundry' contract`);
+  }
 });
 
-test("clicking the gate button reveals a confirm panel, but the value STILL does not exist in the DOM until confirm is actually clicked", async () => {
+test("***Phase 26 fix***: the same absence holds even without expanding -- the old gate never lazily mounts elsewhere on the page either", async () => {
   await gotoTableMode(page, base, scene.id);
-  const row = page.locator(`[data-testid="table-roster-row"][data-entity-id="${entityId}"]`);
-  await row.waitFor({ state: "visible", timeout: 15000 });
-  await row.locator('[data-testid="table-roster-expand-btn"]').click();
-
-  const gateBtn = page.locator(`[data-testid="table-roster-playerknown-gate-btn"][data-entity-id="${entityId}"]`);
-  await gateBtn.waitFor({ state: "visible", timeout: 10000 });
-  await gateBtn.click();
-
-  const confirmPanel = page.locator('[data-testid="table-roster-playerknown-confirm-panel"]');
-  await confirmPanel.waitFor({ state: "visible", timeout: 10000 });
-
-  assert.equal(await playerKnownValueCount(page), 0, "the gate button alone (before the explicit confirm click) must NOT be enough to put the real value into the DOM -- this is the 'harder, more deliberate gate than a plain expand' the design record requires");
-});
-
-test("clicking confirm puts the real playerKnown value into the DOM, carrying the actual seeded value", async () => {
-  await gotoTableMode(page, base, scene.id);
-  const row = page.locator(`[data-testid="table-roster-row"][data-entity-id="${entityId}"]`);
-  await row.waitFor({ state: "visible", timeout: 15000 });
-  await row.locator('[data-testid="table-roster-expand-btn"]').click();
-  await page.locator(`[data-testid="table-roster-playerknown-gate-btn"][data-entity-id="${entityId}"]`).click();
-
-  const confirmBtn = page.locator('[data-testid="table-roster-playerknown-confirm-btn"]');
-  await confirmBtn.waitFor({ state: "visible", timeout: 10000 });
-  await confirmBtn.click();
-
-  const value = page.locator('[data-testid="table-roster-playerknown-value"]');
-  await value.waitFor({ state: "visible", timeout: 10000 });
-  assert.equal(await value.count(), 1);
-  assert.equal(await value.getAttribute("data-player-known"), "true", "the revealed value must reflect the real seeded playerKnown:true, not a placeholder");
-});
-
-test("cancelling the confirm panel leaves the value permanently absent (does not fall back to revealing it anyway)", async () => {
-  await gotoTableMode(page, base, scene.id);
-  const row = page.locator(`[data-testid="table-roster-row"][data-entity-id="${entityId}"]`);
-  await row.waitFor({ state: "visible", timeout: 15000 });
-  await row.locator('[data-testid="table-roster-expand-btn"]').click();
-  await page.locator(`[data-testid="table-roster-playerknown-gate-btn"][data-entity-id="${entityId}"]`).click();
-
-  const cancelBtn = page.locator('[data-testid="table-roster-playerknown-cancel-btn"]');
-  await cancelBtn.waitFor({ state: "visible", timeout: 10000 });
-  await cancelBtn.click();
-
-  await assert.doesNotReject(async () => {
-    await page.waitForFunction(() => !document.querySelector('[data-testid="table-roster-playerknown-confirm-panel"]'), { timeout: 5000 });
-  }, "cancelling must dismiss the confirm panel");
-  assert.equal(await playerKnownValueCount(page), 0, "cancelling must never leak the real value into the DOM");
+  await page.locator(`[data-testid="table-roster-row"][data-entity-id="${entityId}"]`).waitFor({ state: "visible", timeout: 15000 });
+  const count = await page.evaluate(() => document.querySelectorAll('[data-testid="table-roster-playerknown-gate-btn"]').length);
+  assert.equal(count, 0, "the old gate button must not exist anywhere on the page, expanded or not");
 });
