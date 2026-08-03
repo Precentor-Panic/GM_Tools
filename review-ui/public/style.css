@@ -155,6 +155,13 @@ main { max-width: 860px; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
 .insert-scene-picker { border: 1px dashed var(--border); border-radius: 6px; padding: 0.5rem 0.75rem; margin-top: 0.35rem; }
 .quick-add-scene-wrap { margin: 1rem 0; }
 .scene-rollback-panel, .saved-encounters-list, .scene-event-panel, .add-node-panel { margin-top: 0.6rem; }
+/* Phase 27 task 27.9, F10: light polish on the add-event textarea -- was
+   unstyled (relying on the raw UA default box), matching the established
+   .location-note-textarea treatment so it reads cleanly, still resizable. */
+.scene-event-textarea {
+  width: 100%; font: inherit; font-size: 0.88rem; padding: 0.45rem 0.6rem; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); resize: vertical; min-height: 4.5em;
+}
 .scene-rollback-panel ul, .saved-encounters-list { list-style: none; padding: 0; }
 .saved-encounter-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; }
 .prep-framing-options { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 0.5rem; }

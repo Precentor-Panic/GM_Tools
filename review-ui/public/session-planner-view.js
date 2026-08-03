@@ -1315,6 +1315,7 @@ function mountAddEventControl(scene, testid = "add-event-btn") {
   panel.style.display = "none";
 
   const textarea = document.createElement("textarea");
+  textarea.className = "scene-event-textarea";
   textarea.setAttribute("data-testid", "scene-event-textarea");
   textarea.placeholder = "Jot an event note — autosaves as you type…";
   panel.appendChild(textarea);
@@ -3364,6 +3365,7 @@ function buildTableQuickGenControl() {
 
   const panel = document.createElement("div");
   panel.className = "quick-add-scene-panel";
+  panel.setAttribute("data-testid", "table-quick-gen-panel");
   panel.style.display = "none";
 
   const nameInput = document.createElement("input");
@@ -3418,10 +3420,14 @@ function buildTableQuickGenControl() {
         onResolved: async (placeEntityId) => {
           const flowStatus = flow.querySelector('[data-testid="table-quick-gen-status"]');
           if (flowStatus) flowStatus.textContent = "Creating scene…";
+          // Phase 27 task 27.9, F2: neither `name` nor `objectiveNote` may
+          // carry the LLM-generated quick-gen text (genRes.text) -- leave
+          // both null so resolveSceneDisplayName falls back to the real
+          // place name, never "<typed name> — <LLM text>".
           const sceneRes = await spApi("/api/session-planner/scenes", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ world: currentWorld(), locationEntityId: placeEntityId, objectiveNote: `${name} — ${genRes.text}` })
+            body: JSON.stringify({ world: currentWorld(), locationEntityId: placeEntityId })
           });
           addedMembership.set(sceneRes.scene.id, new Set());
           nameInput.value = "";
