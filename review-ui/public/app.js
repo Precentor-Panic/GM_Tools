@@ -8,6 +8,7 @@ import { renderGraph, showCreateNodeForm, armPlacementMode, seedNodePosition, re
 import { renderSessionPlanner, flushActiveNoteSave, cancelActiveRecenter } from "./session-planner-view.js";
 import { renderCombatPlanning, renderCombatPlanningIngest, cancelActiveCombatPlanningRequest } from "./combat-planning-view.js";
 import { renderScenesTab } from "./scenes-view.js";
+import { renderPlansView } from "./plans-view.js";
 
 // ---------------------------------------------------------------------------
 // world selection
@@ -143,6 +144,7 @@ function renderCurrentView() {
   else if (view === "framing") renderFramingView();
   else if (view === "graph") renderGraphStandaloneView();
   else if (view === "entity") renderEntityDetail(arg);
+  else if (view === "plans") renderPlansView(arg);
   else if (view === "session-planner") renderSessionPlanner(arg);
   else if (view === "combat-planning") renderCombatPlanning(arg);
   else if (view === "combat-planning-ingest") renderCombatPlanningIngest(arg);

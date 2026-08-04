@@ -47,7 +47,7 @@ const before = existsSync(REPO_DEFAULT_ROOT) ? new Set(readdirSync(REPO_DEFAULT_
 
 const WORLD = "plans-test-world";
 
-const { createPlan, getPlan, listPlansForWorld, addSceneToPlan, removeSceneFromPlan, deletePlan, plansContainingScene, plansRoot } =
+const { createPlan, getPlan, listPlansForWorld, addSceneToPlan, removeSceneFromPlan, reorderPlanScenes, deletePlan, plansContainingScene, plansRoot } =
   await import("../../session-planner/plans.mjs");
 
 test("directory isolation: plansRoot() honors GM_TOOLS_PLANS_DIR, never the repo's real default", () => {
@@ -88,6 +88,46 @@ test("addSceneToPlan/removeSceneFromPlan: idempotent add and remove, scoped to O
   assert.deepEqual(getPlan(WORLD, planB.id).sceneIds, ["scene-shared"], "planB's own membership untouched");
 
   removeSceneFromPlan(WORLD, planA.id, "scene-never-there"); // safe no-op
+});
+
+// ------------------------------------------------- Phase 28 task 28.2, §E
+
+test("reorderPlanScenes: happy-path permutation persists as the new sceneIds order", () => {
+  const plan = createPlan(WORLD, { name: "Reorder Me" }, { makeId: () => "plan-reorder-happy" });
+  addSceneToPlan(WORLD, plan.id, "scene-r1");
+  addSceneToPlan(WORLD, plan.id, "scene-r2");
+  addSceneToPlan(WORLD, plan.id, "scene-r3");
+  assert.deepEqual(getPlan(WORLD, plan.id).sceneIds, ["scene-r1", "scene-r2", "scene-r3"]);
+
+  const updated = reorderPlanScenes(WORLD, plan.id, ["scene-r3", "scene-r1", "scene-r2"]);
+  assert.deepEqual(updated.sceneIds, ["scene-r3", "scene-r1", "scene-r2"]);
+  assert.deepEqual(getPlan(WORLD, plan.id).sceneIds, ["scene-r3", "scene-r1", "scene-r2"], "persisted, not just returned in-memory");
+
+  // A plain up/down swap is just a two-element instance of the same call.
+  const swapped = reorderPlanScenes(WORLD, plan.id, ["scene-r1", "scene-r3", "scene-r2"]);
+  assert.deepEqual(swapped.sceneIds, ["scene-r1", "scene-r3", "scene-r2"]);
+});
+
+test("reorderPlanScenes: rejects a non-permutation (missing/extra/duplicate id) with a clear error, leaves the stored order untouched", () => {
+  const plan = createPlan(WORLD, { name: "Reject Bad Reorder" }, { makeId: () => "plan-reorder-reject" });
+  addSceneToPlan(WORLD, plan.id, "scene-x1");
+  addSceneToPlan(WORLD, plan.id, "scene-x2");
+
+  assert.throws(
+    () => reorderPlanScenes(WORLD, plan.id, ["scene-x1"]), // missing scene-x2
+    /permutation/
+  );
+  assert.throws(
+    () => reorderPlanScenes(WORLD, plan.id, ["scene-x1", "scene-x2", "scene-never-a-member"]), // extra id
+    /permutation/
+  );
+  assert.throws(
+    () => reorderPlanScenes(WORLD, plan.id, ["scene-x1", "scene-x1"]), // duplicate, still missing scene-x2
+    /permutation/
+  );
+  assert.throws(() => reorderPlanScenes(WORLD, "plan-does-not-exist", ["a"]), /plan-does-not-exist/);
+
+  assert.deepEqual(getPlan(WORLD, plan.id).sceneIds, ["scene-x1", "scene-x2"], "a rejected reorder must not mutate the stored order");
 });
 
 // ------------------------------------------------- Phase 28 task 28.1

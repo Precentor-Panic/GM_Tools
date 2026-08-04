@@ -187,7 +187,7 @@ import {
 // every other route in this file: resolveWorld() with NO client-supplied
 // dataDir override anywhere below (the store never touches the graph
 // snapshot at all).
-import { createPlan, getPlan, listPlansForWorld, addSceneToPlan, removeSceneFromPlan, deletePlan, plansContainingScene } from "../session-planner/plans.mjs";
+import { createPlan, getPlan, listPlansForWorld, addSceneToPlan, removeSceneFromPlan, reorderPlanScenes, deletePlan, plansContainingScene } from "../session-planner/plans.mjs";
 
 // Phase 26 task 26.9, §26.E / Phase 28 task 28.1 -- post-session graph
 // update. Thin composition only: proposeUpdatesForPlan/proposeUpdatesForScene
@@ -1940,6 +1940,14 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const w = resolveWorld(body.world ?? q.get("world"));
     const plan = removeSceneFromPlan(w, parts[3], parts[5]);
+    return sendJson(res, 200, { plan });
+  }
+
+  // Phase 28 task 28.2, §E -- POST /api/scene-planning/plans/:planId/reorder   { world, sceneIds }   -> {plan}   thin wrapper over reorderPlanScenes (validates sceneIds is a permutation of the plan's current sceneIds, throws a clear error otherwise -- surfaced as a normal sendError non-200 response, same as every other thrown-Error route in this file).
+  if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "plans" && parts[4] === "reorder") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const plan = reorderPlanScenes(w, parts[3], body.sceneIds);
     return sendJson(res, 200, { plan });
   }
 

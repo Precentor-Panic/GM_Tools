@@ -1031,3 +1031,35 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   .table-roster-row, .table-notes-encounters-item { padding: 0.45rem 0.6rem; }
 }
 .linked-scene-anchor-name { font-weight: 600; }
+
+/* Phase 28 task 28.2 -- plans-view.js: the plan shelf (#plans) + plan detail
+   (#plans/<planId>)'s mountEditableList instantiation. Deliberately plain/
+   functional -- the printed-page design pass is 28.6's own later scope, not
+   this task's. */
+.plans-shelf-list { list-style: none; margin: 0.75rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.plan-shelf-item { border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.85rem; background: var(--card-bg); }
+.plan-shelf-name { font-weight: 700; font-size: 1.05rem; }
+.plan-shelf-actions { display: flex; gap: 0.5rem; margin-top: 0.4rem; flex-wrap: wrap; }
+
+.confirm-panel {
+  border: 1px dashed var(--structural); border-radius: 6px; padding: 0.5rem 0.7rem; margin-top: 0.5rem;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+}
+
+.editable-list { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.6rem; }
+.editable-list-row {
+  border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; background: var(--card-bg);
+  display: flex; align-items: center; gap: 0.6rem;
+}
+.editable-list-row--openable { cursor: pointer; }
+.editable-list-row-body { flex: 1 1 auto; min-width: 0; }
+.editable-list-row-controls { display: flex; align-items: center; gap: 0.15rem; flex-shrink: 0; }
+.editable-list-row-reorder-btn { font-size: 1rem; }
+.editable-list-row-remove { opacity: 0.55; }
+.editable-list-row-remove:hover { opacity: 1; color: var(--reject); }
+.editable-list-ghost-row {
+  border: 1px dashed var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; cursor: pointer; color: var(--text-muted);
+}
+.editable-list-ghost-row:hover { color: var(--text); border-color: var(--accent); }
+
+.plan-scene-row-name { font-weight: 600; }

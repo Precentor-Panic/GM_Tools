@@ -139,6 +139,43 @@ export function removeSceneFromPlan(world, planId, sceneId) {
 }
 
 /**
+ * Phase 28 task 28.2, §E: persists a full reorder of a Plan's own scenes.
+ * `orderedSceneIds` must be a PERMUTATION of the plan's current `sceneIds`
+ * (same elements, same length, no additions/removals/duplicates dropped) --
+ * a mismatch throws a clear Error rather than silently reconciling, since a
+ * partial/stale client-side array here would otherwise silently drop or
+ * duplicate a scene's membership. A plain ↑/↓ swap (the frontend's own
+ * baseline reorder gesture) is just a two-element instance of this same
+ * call, mirroring scene-elements.mjs's reorderElements own "simple ↑/↓ swap
+ * is a two-element instance of the general reorder-by-array" precedent.
+ *
+ * @param {string} world
+ * @param {string} planId
+ * @param {string[]} orderedSceneIds
+ * @returns {object}   the updated Plan
+ */
+export function reorderPlanScenes(world, planId, orderedSceneIds) {
+  const plans = readPlans(world);
+  const plan = plans.find((p) => p.id === planId);
+  if (!plan) {
+    throw new Error(`No plan found: world="${world}" planId="${planId}"`);
+  }
+  const current = [...plan.sceneIds].sort();
+  const proposed = [...(orderedSceneIds ?? [])].sort();
+  const isSamePermutation =
+    current.length === proposed.length && current.every((id, i) => id === proposed[i]);
+  if (!isSamePermutation) {
+    throw new Error(
+      `reorderPlanScenes: orderedSceneIds must be a permutation of the plan's current sceneIds. ` +
+      `current=${JSON.stringify(plan.sceneIds)} proposed=${JSON.stringify(orderedSceneIds)}`
+    );
+  }
+  plan.sceneIds = [...orderedSceneIds];
+  writePlans(world, plans);
+  return plan;
+}
+
+/**
  * Phase 28 task 28.1: removes ONLY the Plan record itself — every scene it
  * referenced is completely untouched (this store never touches scenes.mjs
  * anyway, so there is nothing else for a delete to cascade into). Idempotent:
