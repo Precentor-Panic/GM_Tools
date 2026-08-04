@@ -853,58 +853,117 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
    the stray .linked-scene-anchor-name rule (the old linked-scenes-panel's
    own per-item styling) -- both confirmed dead via grep. */
 
-/* Phase 28 task 28.2 -- plans-view.js: the plan shelf (#plans) + plan detail
-   (#plans/<planId>)'s mountEditableList instantiation. Deliberately plain/
-   functional -- the printed-page design pass is 28.6's own later scope, not
-   this task's. */
-.plans-shelf-list { list-style: none; margin: 0.75rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
-.plan-shelf-item { border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.85rem; background: var(--card-bg); }
+/* Phase 28 task 28.6 -- plans-view.js: the plan shelf (#plans) + plan detail
+   (#plans/<planId>)'s mountEditableList instantiation, restyled to read as a
+   clean binder / table-of-contents rather than a generic card list. Numbering
+   is pure CSS (counter-reset/counter-increment against the real row order),
+   never a DOM change -- the underlying markup/testids from 28.2 are
+   untouched. */
+.plans-shelf-list {
+  list-style: none; margin: 0.85rem 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 0.5rem;
+  counter-reset: plan-index;
+}
+.plan-shelf-item {
+  counter-increment: plan-index;
+  border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: 6px;
+  padding: 0.65rem 0.9rem; background: var(--bg);
+  transition: border-left-color 0.12s ease, background-color 0.12s ease;
+}
+.plan-shelf-item:hover { border-left-color: var(--accent); background: var(--card-bg); }
 .plan-shelf-name { font-weight: 700; font-size: 1.05rem; }
-.plan-shelf-actions { display: flex; gap: 0.5rem; margin-top: 0.4rem; flex-wrap: wrap; }
+.plan-shelf-name::before {
+  content: counter(plan-index) ".";
+  color: var(--text-muted); font-weight: 600; margin-right: 0.5rem;
+  font-variant-numeric: tabular-nums;
+}
+.plan-shelf-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
 
 .confirm-panel {
   border: 1px dashed var(--structural); border-radius: 6px; padding: 0.5rem 0.7rem; margin-top: 0.5rem;
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
 }
 
-.editable-list { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.6rem; }
+/* The runsheet (`#plans/<planId>`'s ordered scene rows): same binder logic
+   as the shelf above -- a numbered table-of-contents line, quiet border,
+   accent-on-hover -- reused generically since mountEditableList currently
+   has exactly one instantiation (the plan-scene list). */
+.editable-list { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.7rem; counter-reset: row-index; }
 .editable-list-row {
-  border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; background: var(--card-bg);
+  counter-increment: row-index;
+  border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: 6px;
+  padding: 0.55rem 0.8rem; background: var(--bg);
   display: flex; align-items: center; gap: 0.6rem;
+  transition: border-left-color 0.12s ease, background-color 0.12s ease;
 }
 .editable-list-row--openable { cursor: pointer; }
+.editable-list-row--openable:hover { border-left-color: var(--accent); background: var(--card-bg); }
 .editable-list-row-body { flex: 1 1 auto; min-width: 0; }
+.editable-list-row-body::before {
+  content: counter(row-index) ".";
+  color: var(--text-muted); font-weight: 600; margin-right: 0.5rem;
+  font-variant-numeric: tabular-nums;
+}
 .editable-list-row-controls { display: flex; align-items: center; gap: 0.15rem; flex-shrink: 0; }
 .editable-list-row-reorder-btn { font-size: 1rem; }
 .editable-list-row-remove { opacity: 0.55; }
 .editable-list-row-remove:hover { opacity: 1; color: var(--reject); }
 .editable-list-ghost-row {
-  border: 1px dashed var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; cursor: pointer; color: var(--text-muted);
+  border: 1px dashed var(--border); border-radius: 6px; padding: 0.55rem 0.8rem; cursor: pointer; color: var(--text-muted);
 }
 .editable-list-ghost-row:hover { color: var(--text); border-color: var(--accent); }
 
 .plan-scene-row-name { font-weight: 600; }
 
 /* =========================================================================
-   Phase 28 task 28.3 -- THE SCENE PAGE (edit-in-place, reads like a printed
-   module page). Functional first pass; the polished printed-page aesthetic is
-   task 28.6. The load-bearing rule here: edit chrome is invisible at rest --
-   a value looks like typeset text until clicked.
+   Phase 28 task 28.6 -- THE SCENE PAGE, printed-module design pass.
+   Task 28.3 built the functional shape (edit-in-place, click-to-edit,
+   invisible-at-rest chrome, only-non-empty fields); this pass is typography
+   and hierarchy ON TOP of that same DOM/testid contract -- no structural
+   change below. The load-bearing rule carried forward unchanged: a value
+   reads as typeset text until clicked, never as a form field at rest.
+
+   Responsive approach: SCALE, not reflow (design record's explicit rule).
+   Rather than swapping layouts at breakpoints, the type scale and a few key
+   dimensions use clamp() so the page shrinks continuously from desktop to
+   phone width while staying single-column throughout -- verified at 1280,
+   768 and 390px. The couple of `flex-wrap`s below are ordinary line-wrapping
+   safety nets (a breadcrumb or a button row wrapping to a second line is not
+   a "reflow" in the forbidden sense -- the page's actual information
+   structure never rearranges), not a second layout.
    ========================================================================= */
-.scene-page { max-width: 60rem; }
+.scene-page {
+  max-width: 60rem; margin: 0 auto;
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  padding: clamp(1rem, 0.6rem + 1.8vw, 2rem) clamp(1rem, 0.5rem + 2.4vw, 2.5rem) clamp(1.5rem, 1rem + 2vw, 2.5rem);
+}
 
 .scene-top-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-  padding-bottom: 0.5rem; margin-bottom: 0.75rem; border-bottom: 1px solid var(--border);
-  position: sticky; top: 0; background: var(--bg, var(--card-bg)); z-index: 2;
+  flex-wrap: wrap; row-gap: 0.4rem;
+  padding: 0.75rem 0 0.6rem;
+  margin: -0.75rem -0.1rem 0.9rem; /* claws back the page's own top padding so the bar sits flush at the very top of the "page" */
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--card-bg); z-index: 2;
 }
-.scene-breadcrumb { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-.scene-breadcrumb-back-btn { font-weight: 600; }
+/* Reads as a running page-header line: "‹ Plan  ·  ‹ Prev  ·  Next ›" */
+.scene-breadcrumb {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted);
+}
+.scene-breadcrumb-back-btn { font-weight: 700; letter-spacing: 0.04em; color: var(--text); }
+.scene-breadcrumb-prev-btn, .scene-breadcrumb-next-btn { color: var(--text-muted); }
+.scene-breadcrumb-prev-btn:hover, .scene-breadcrumb-next-btn:hover, .scene-breadcrumb-back-btn:hover { color: var(--accent); text-decoration: none; }
+.scene-breadcrumb-prev-btn::before { content: "· "; color: var(--border); }
+.scene-breadcrumb-next-btn::before { content: "· "; color: var(--border); }
 .scene-wrap-toggle-btn { flex-shrink: 0; }
 
-/* §A -- Wrap panel: an inline slide-down, not a modal. */
+/* §A -- Wrap panel: an inline slide-down, not a modal. Sits ON the
+   card-bg page surface, so it needs the app's base --bg to read as its own
+   distinct panel rather than blending into the page. */
 .wrap-panel {
-  border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg);
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
   padding: 0.9rem 1rem; margin: 0 0 1.25rem;
 }
 .wrap-section { padding: 0.5rem 0; }
@@ -917,17 +976,41 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 
 /* §C -- quiet `✦` functional-prep assist ghost links. */
 .scene-assist-ghost { margin: 0.3rem 0 0.6rem; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
-.scene-assist-propose-link, .scene-assist-draft-link { color: var(--accent); font-size: 0.85rem; opacity: 0.8; }
+.scene-assist-propose-link, .scene-assist-draft-link { color: var(--accent); font-size: 0.85rem; opacity: 0.75; }
 .scene-assist-propose-link:hover, .scene-assist-draft-link:hover { opacity: 1; }
 .scene-assist-status { font-size: 0.8rem; }
 
-.scene-place-header { margin-bottom: 1.25rem; }
-.scene-place-name { font-size: 1.6rem; font-weight: 700; margin: 0 0 0.4rem; cursor: text; }
+.scene-place-header { margin-bottom: clamp(1.1rem, 0.9rem + 0.8vw, 1.6rem); }
+/* The place name IS the page's title -- the single largest, heaviest text on
+   the page, everything else reads quieter than this. */
+.scene-place-name {
+  font-size: clamp(1.35rem, 1.1rem + 1.4vw, 1.85rem);
+  font-weight: 800; letter-spacing: -0.01em; line-height: 1.15;
+  margin: 0 0 0.5rem; padding-bottom: 0.5rem; cursor: text;
+  border-bottom: 2px solid var(--border);
+}
 
+/* This-scene read-aloud narration -- a serif "read this at the table" box.
+   The kicker label is a pure ::before (survives the click-to-edit field's
+   own textContent swaps untouched, since a pseudo-element isn't part of
+   .textContent). */
 .scene-narration.read-aloud {
-  font-family: Georgia, "Times New Roman", serif; font-size: 1.05rem; line-height: 1.5;
-  border-left: 3px solid var(--accent); background: var(--card-bg);
-  padding: 0.7rem 0.9rem; border-radius: 0 6px 6px 0; cursor: text; white-space: pre-wrap;
+  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
+  font-size: clamp(0.98rem, 0.92rem + 0.3vw, 1.08rem); line-height: 1.65;
+  border-left: 3px solid var(--accent);
+  /* Reuses the SAME parchment tokens Batch Review's own .narration-card
+     already established for "this is narration text" -- one consistent
+     visual language for read-aloud/narrative copy across the whole app,
+     and a tint that reads distinctly against the page's own --card-bg
+     surface in both themes. */
+  background: var(--narration-bg); color: var(--narration-text);
+  padding: 0.6rem 1rem 0.85rem; border-radius: 0 8px 8px 0; cursor: text; white-space: pre-wrap;
+}
+.scene-narration.read-aloud::before {
+  content: "Read Aloud"; display: block;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--accent); opacity: 0.75; margin-bottom: 0.3rem;
 }
 
 /* Any editable value at rest -- transparent, text-like; only the empty-state
@@ -939,35 +1022,99 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   border-radius: 4px; padding: 0.3rem 0.4rem; resize: none; overflow: hidden; min-height: 1.6em;
 }
 
-.scene-section-heading { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 1.5rem 0 0.5rem; }
+.scene-section-heading {
+  font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted);
+  margin: clamp(1.4rem, 1.1rem + 1vw, 1.9rem) 0 0.6rem;
+  padding-top: 0.8rem; border-top: 1px solid var(--border);
+}
 
-.scene-elements-list { display: flex; flex-direction: column; gap: 0.6rem; }
+.scene-elements-list { display: flex; flex-direction: column; gap: 0.45rem; }
+
+/* --- KEY vs MUNDANE, by visual weight, not by label. ---
+   KEY (a real graph node): a bordered, tinted card -- type-colored left
+   accent rule + type-colored glyph (set via the --element-type-color custom
+   property, session-planner-view.js) + the "⛓ graph" badge + full stacked
+   field-lines, reading like a proper stat entry.
+   MUNDANE (scene-local): no card at all, just a quiet hollow-bulleted line
+   that only gets a border/background on hover -- its field-lines collapse
+   onto ONE flowing line (see .scene-element-row--mundane .scene-element-fields
+   below) rather than a stacked list, so a whole shelf of mundane dressing
+   (cupboards, a rug, a broken window) reads as a single glance-able row
+   each, not a wall of identical-looking cards. */
 .scene-element-row {
-  border: 1px solid var(--border); border-radius: 8px; padding: 0.55rem 0.75rem; background: var(--card-bg);
+  border-radius: 8px;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
 }
-/* KEY vs MUNDANE by visual weight (functional first pass; polish in 28.6). */
-.scene-element-row--key { border-left: 4px solid var(--accent); }
-.scene-element-row--mundane { border-left: 4px solid transparent; opacity: 0.92; }
-.scene-element-row--mundane .scene-element-glyph { color: var(--text-muted); }
+.scene-element-row--key {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--element-type-color, var(--accent));
+  /* Mixed against the app's base --bg, not --card-bg -- the scene page's OWN
+     surface is now --card-bg (see .scene-page above), so a KEY row needs the
+     lighter/darker --bg tone underneath the tint to actually read as a
+     slightly raised card rather than disappearing into the page. */
+  background: color-mix(in srgb, var(--element-type-color, var(--accent)) 7%, var(--bg));
+  padding: 0.6rem 0.8rem;
+}
+.scene-element-row--mundane {
+  border: 1px solid transparent; border-left: 3px solid transparent;
+  padding: 0.3rem 0.7rem 0.3rem 0.55rem;
+}
+.scene-element-row--mundane:hover { background: var(--bg); border-color: var(--border); border-left-color: var(--border); }
+
 .scene-element-head { display: flex; align-items: center; gap: 0.5rem; }
-.scene-element-glyph { flex-shrink: 0; }
-.scene-element-name { font-weight: 600; cursor: text; flex: 1 1 auto; min-width: 0; }
+.scene-element-glyph { flex-shrink: 0; line-height: 1; }
+.scene-element-row--key .scene-element-glyph { color: var(--element-type-color, var(--accent)); font-size: 1.05em; }
+.scene-element-row--mundane .scene-element-glyph { color: var(--text-muted); font-size: 0.85em; }
+
+.scene-element-name { cursor: text; flex: 1 1 auto; min-width: 0; }
+.scene-element-row--key .scene-element-name { font-weight: 700; font-size: 1.02rem; }
+.scene-element-row--mundane .scene-element-name { font-weight: 500; color: var(--text); }
+
 .scene-element-graph-badge {
-  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em;
-  background: var(--accent); color: #fff; border-radius: 4px; padding: 0.05rem 0.35rem; flex-shrink: 0;
+  font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  background: var(--accent); color: var(--accent-contrast); border-radius: 4px; padding: 0.08rem 0.4rem; flex-shrink: 0;
 }
-.scene-element-controls { display: flex; align-items: center; gap: 0.15rem; margin-left: auto; flex-shrink: 0; }
-.scene-element-key-toggle { opacity: 0.6; }
-.scene-element-key-toggle[data-kind="graph"] { opacity: 1; color: var(--accent); }
+.scene-element-controls { display: flex; align-items: center; gap: 0.1rem; margin-left: auto; flex-shrink: 0; }
+.scene-element-key-toggle { opacity: 0.55; }
+.scene-element-key-toggle[data-kind="graph"] { opacity: 1; color: var(--element-type-color, var(--accent)); }
 .scene-element-key-toggle:hover { opacity: 1; }
-.scene-element-remove-btn { opacity: 0.5; }
+.scene-element-remove-btn { opacity: 0.4; }
 .scene-element-remove-btn:hover { opacity: 1; color: var(--reject); }
 
-.scene-element-fields { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.35rem; padding-left: 1.3rem; }
-.pf-line { display: flex; gap: 0.5rem; align-items: baseline; }
-.pf-label { flex: 0 0 5rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
-.pf-value { flex: 1 1 auto; min-width: 0; cursor: text; white-space: pre-wrap; }
-.scene-add-field { padding-left: 1.3rem; margin-top: 0.3rem; }
+/* KEY: a stacked, label-aligned field-line "stat block". */
+.scene-element-fields {
+  display: flex; flex-direction: column; gap: 0.15rem;
+  margin-top: 0.4rem; padding-left: clamp(1.1rem, 0.9rem + 0.8vw, 1.5rem);
+}
+.pf-line { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.06rem 0; }
+.pf-label {
+  flex: 0 0 clamp(3.4rem, 2.8rem + 2.4vw, 5.2rem);
+  font-size: clamp(0.66rem, 0.62rem + 0.15vw, 0.73rem);
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);
+}
+.pf-value { flex: 1 1 auto; min-width: 0; cursor: text; white-space: pre-wrap; line-height: 1.45; }
+/* Core lines (Trigger / Gives) are the ones that matter at the table --
+   render them heavier than every optional field, matching the DM persona's
+   ruthless-minimum ask. Targets the real data-field attribute the field-line
+   already carries (session-planner-view.js), no new markup needed. */
+.pf-line:has(.pf-value[data-field="trigger"]) .pf-label,
+.pf-line:has(.pf-value[data-field="gives"]) .pf-label { color: var(--text); font-weight: 700; }
+.pf-line:has(.pf-value[data-field="trigger"]) .pf-value,
+.pf-line:has(.pf-value[data-field="gives"]) .pf-value { font-weight: 500; }
+
+/* MUNDANE: the same field-line markup, laid out as one wrapping run instead
+   of a stack -- "quiet, one-line feel" without touching the DOM at all. */
+.scene-element-row--mundane .scene-element-fields {
+  flex-direction: row; flex-wrap: wrap; align-items: baseline;
+  column-gap: 0; row-gap: 0.1rem; margin-top: 0.15rem; padding-left: 1.5rem;
+}
+.scene-element-row--mundane .pf-line:not(:first-child)::before { content: "·"; color: var(--border); margin-right: 0.6rem; }
+.scene-element-row--mundane .pf-line { padding: 0; margin-right: 0.6rem; gap: 0.35rem; }
+.scene-element-row--mundane .pf-label { flex: 0 0 auto; }
+
+.scene-add-field { padding-left: clamp(1.1rem, 0.9rem + 0.8vw, 1.5rem); margin-top: 0.3rem; }
+.scene-add-field-btn { opacity: 0.6; font-size: 0.8rem; }
+.scene-add-field-btn:hover { opacity: 1; }
 .scene-add-field-menu { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.25rem; }
 
 .scene-add-element-row { margin-top: 0.2rem; }
@@ -975,9 +1122,27 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 
 .scene-extras-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 
-.beyond-room-drawer { margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 0.75rem; }
+.beyond-room-drawer { margin-top: 1.75rem; border-top: 1px solid var(--border); padding-top: 0.75rem; }
 .beyond-room-drawer-toggle { cursor: pointer; color: var(--text-muted); font-size: 0.9rem; }
 .beyond-room-drawer-body { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.5rem; }
 .beyond-room-neighbor-item { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 .beyond-room-neighbor-name { flex: 1 1 auto; min-width: 0; }
 .beyond-room-neighbor-delete-status { width: 100%; color: var(--reject); }
+
+/* At the very narrowest phone widths the page-card's own outer border/
+   padding is no longer worth the horizontal space it costs -- fold it back
+   to a borderless full-bleed page (still centered, still single-column,
+   nothing rearranges) rather than let clamp()'s own floor start feeling
+   cramped. This is the one discrete step in an otherwise continuous scale,
+   scoped ONLY to the outer chrome, not to any internal layout. */
+@media (max-width: 480px) {
+  .scene-page { border: none; border-radius: 0; padding: 0.85rem 0.15rem 2rem; }
+  .scene-top-bar { margin-left: -0.15rem; margin-right: -0.15rem; padding-left: 0.15rem; padding-right: 0.15rem; }
+  /* An element row's per-row controls (⭑ / ✦ draft fields / ✕) no longer
+     fit alongside a real name on the same line at this width without
+     squeezing the name into an unreadable 3-line stack -- drop the controls
+     to a second line instead. Still one column, still the same row, just
+     wrapped -- not a second layout. */
+  .scene-element-head { flex-wrap: wrap; row-gap: 0.3rem; }
+  .scene-element-controls { flex-basis: 100%; margin-left: 0; justify-content: flex-end; }
+}

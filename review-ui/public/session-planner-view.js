@@ -63,6 +63,11 @@
 // don't exist in the DOM yet, not just hidden.
 "use strict";
 import { createFlushableDebounce } from "./debounced-save.mjs";
+// Phase 28 task 28.6: the SAME deterministic type->color hash graph-view.js
+// already established for node fill colors (no second type-color mapping) --
+// used to tint a KEY element's glyph/accent-rule with its real graph entity
+// type, per the design record's "type-colored glyph" requirement.
+import { colorForType } from "./graph-view.js";
 // Phase 28 task 28.3: reuse the shared, generic undo-toast pattern (contract
 // Decision 3) for scene-element remove-with-undo, rather than a second toast
 // implementation. mountEditableList is NOT reused for the element list: the
@@ -933,12 +938,23 @@ function buildAddFieldControl(scene, element, fieldsEl) {
   return wrap;
 }
 
-function buildSceneElementRow(scene, element, refreshList) {
+function buildSceneElementRow(scene, element, refreshList, nodeMap) {
   const row = document.createElement("div");
   row.className = `scene-element-row ${element.kind === "graph" ? "scene-element-row--key" : "scene-element-row--mundane"}`;
   row.setAttribute("data-testid", "scene-element-row");
   row.setAttribute("data-element-id", element.id);
   row.setAttribute("data-kind", element.kind);
+
+  // Design pass (task 28.6): a KEY row's glyph/accent-rule/toggle are tinted
+  // with its real graph entity type's color (--element-type-color, read by
+  // style.css) -- a pure CSS custom property, no DOM restructuring, no
+  // testid touched. Falls back to the plain --accent token (style.css's own
+  // `var(--element-type-color, var(--accent))`) when the type is unknown,
+  // e.g. before `graph` finishes loading.
+  if (element.kind === "graph" && element.graphEntityId) {
+    const entityType = nodeMap?.get(element.graphEntityId)?.type;
+    if (entityType) row.style.setProperty("--element-type-color", colorForType(entityType));
+  }
 
   const head = document.createElement("div");
   head.className = "scene-element-head";
@@ -1115,7 +1131,7 @@ function buildAddElementGhostRow(scene, refreshList) {
   return ghost;
 }
 
-async function renderSceneElementsList(scene, listHost) {
+async function renderSceneElementsList(scene, listHost, nodeMap) {
   let elements = [];
   try {
     ({ elements } = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements${spWithWorld()}`));
@@ -1128,9 +1144,9 @@ async function renderSceneElementsList(scene, listHost) {
   wrap.setAttribute("data-testid", "scene-elements-list");
   wrap.setAttribute("data-scene-id", scene.id);
 
-  const refreshList = () => renderSceneElementsList(scene, listHost);
+  const refreshList = () => renderSceneElementsList(scene, listHost, nodeMap);
   for (const element of elements) {
-    wrap.appendChild(buildSceneElementRow(scene, element, refreshList));
+    wrap.appendChild(buildSceneElementRow(scene, element, refreshList, nodeMap));
   }
   wrap.appendChild(buildAddElementGhostRow(scene, refreshList));
   listHost.appendChild(wrap);
@@ -1715,7 +1731,7 @@ async function renderScenePage(container, sceneId, token) {
   elementsHeading.textContent = "Elements";
   elementsSection.appendChild(elementsHeading);
   const listHost = document.createElement("div");
-  const refreshElements = () => renderSceneElementsList(scene, listHost);
+  const refreshElements = () => renderSceneElementsList(scene, listHost, nodeMap);
   // §C: a quiet, scene-level `✦` ghost link to propose elements for this room
   // (additive/interruptible; the room is fully runnable without it).
   elementsSection.appendChild(buildProposeElementsGhostLink(scene, refreshElements));
