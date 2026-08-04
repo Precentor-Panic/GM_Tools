@@ -1,20 +1,25 @@
-// Phase 27 task 27.0 -- "Scene delete vs. remove-from-plan" (F1). Read
-// phase27-fixture.mjs's header FIRST (§1 is this file's own section).
-// EXPECTED TO FAIL right now: `DELETE /api/session-planner/scenes/:sceneId`
-// doesn't exist yet (session-planner/scenes.mjs has no `deleteScene`, per
-// plans/phase-27-tasks.md's own grounding pass, re-confirmed fresh against
-// the real file), so the route-level test gets a real 404; the Scenes-tab
-// delete button (`scene-list-item-delete`) doesn't exist yet in
-// scenes-view.js's real `renderSceneListItem`; and the plan-view "remove
-// from plan" control (`plan-scene-remove-btn`) doesn't exist yet since the
-// plan-first construction view itself (27.4) hasn't been built. All three
-// failures are the deliverable of this task, not a bug in this file.
+// Phase 27 task 27.0 -- "Scene delete vs. remove-from-plan" (F1).
 //
-// Two genuinely distinct affordances are asserted DISTINCTLY, per this
-// project owner's own explicit framing (Decision 2 in the design record):
-// Scenes-tab delete is a TRUE delete (record + all plan memberships + all
-// scene-links gone; the place ENTITY survives); plan-view "remove" is an
-// UNLINK ONLY (scene survives in the Scenes tab and any other plan).
+// ***TRIMMED by Phase 28 task 28.0*** (scrap-and-rebuild re-baseline): this
+// file ORIGINALLY also covered the plan-first construction view's own
+// "remove from plan" control (`plan-scene-remove-btn`, inside the now-
+// scrapped `scene-chain-item`/`#session-planner/plan/<planId>` chain view)
+// -- those two scenarios are REMOVED here (that DOM no longer exists in the
+// Phase 28 design; fresh, equivalent "remove-from-plan, scene survives,
+// undo toast" coverage lives in review-ui/test/e2e/
+// phase28-navigation-spine.e2e.mjs's own §2 scenario, against the NEW
+// `#plans/<planId>` scene-row DOM). The route-level cascade test below is
+// ALSO trimmed of its scene-links-specific assertion: scene-to-scene
+// linking is scrapped entirely this phase (session-planner/scene-links.mjs
+// itself is slated for removal by task 28.1, "Remove scene-links.mjs +
+// routes + deleteScene's scene-link cascade import") -- asserting on a
+// cascade path about to be deleted is testing a soon-dead contract, not the
+// surviving one. What SURVIVES and is KEPT here, unchanged in spirit: the
+// Scenes-tab delete-scene flow (`scene-list-item-delete` et al, still real,
+// still shipped, still green) and the plan-membership-cascade + place-
+// entity-survives guarantees of the real DELETE /api/session-planner/
+// scenes/:sceneId route (Decision 2: deleting a scene is never a graph
+// mutation).
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import { chromium } from "playwright";
@@ -24,7 +29,6 @@ import {
   createSceneViaRoute,
   createPlanViaRoute,
   addSceneToPlanViaRoute,
-  linkScenesViaRoute,
   primeWorldSelection,
   deleteSceneViaRoute,
   DESKTOP_VIEWPORT
@@ -64,15 +68,13 @@ after(async () => {
   cleanupScratchEnv(scratchDir);
 });
 
-test("ROUTE LEVEL: DELETE /api/session-planner/scenes/:sceneId cascades -- scene record gone, every plan membership gone, every scene-link gone, place entity untouched", async () => {
+test("ROUTE LEVEL: DELETE /api/session-planner/scenes/:sceneId cascades -- scene record gone, every plan membership gone, place entity untouched", async () => {
   const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "scdel-place-a" });
-  const otherScene = await createSceneViaRoute(base, WORLD, { locationEntityId: "scdel-place-b" });
 
   const planOne = await createPlanViaRoute(base, WORLD, "Scene-Delete Plan One");
   const planTwo = await createPlanViaRoute(base, WORLD, "Scene-Delete Plan Two");
   await addSceneToPlanViaRoute(base, WORLD, planOne.id, scene.id);
   await addSceneToPlanViaRoute(base, WORLD, planTwo.id, scene.id);
-  await linkScenesViaRoute(base, WORLD, scene.id, otherScene.id, "cascade check");
 
   const { status, body } = await deleteSceneViaRoute(base, WORLD, scene.id);
   assert.equal(status, 200, `expected 200 from the delete route, got ${status}: ${JSON.stringify(body)}`);
@@ -87,16 +89,11 @@ test("ROUTE LEVEL: DELETE /api/session-planner/scenes/:sceneId cascades -- scene
   assert.ok(!planOneAfter.plan.sceneIds.includes(scene.id), "deleting a scene must remove it from every plan it belonged to (plan one)");
   assert.ok(!planTwoAfter.plan.sceneIds.includes(scene.id), "deleting a scene must remove it from every plan it belonged to (plan two)");
 
-  // (3) every scene-link involving it is gone (queried from the OTHER side,
-  // since the deleted scene itself is no longer a valid query target).
-  const linkedFromOther = await (await fetch(`${base}/api/scene-planning/scene-links?world=${WORLD}&sceneId=${otherScene.id}`)).json();
-  assert.ok(!linkedFromOther.linked.some((l) => l.sceneId === scene.id), "deleting a scene must remove its scene-links -- the other scene must no longer see it as linked");
-
-  // (4) the place ENTITY survives -- deleting a scene is not a graph mutation.
+  // (3) the place ENTITY survives -- deleting a scene is not a graph mutation.
   const { snapshot } = loadSnapshot(dataDir, WORLD);
   assert.ok(snapshot.entities.some((e) => e.id === "scdel-place-a"), "the scene's own anchor place entity must survive scene deletion (Decision 2)");
 
-  // (5) idempotent-in-shape sanity: deleting an already-deleted scene must not 500.
+  // (4) idempotent-in-shape sanity: deleting an already-deleted scene must not 500.
   const { status: secondStatus } = await deleteSceneViaRoute(base, WORLD, scene.id);
   assert.notEqual(secondStatus, 500, "deleting an already-deleted scene must not crash the server");
 });
@@ -134,69 +131,11 @@ test("SCENES TAB: delete removes the scene entirely (real DELETE route, confirme
   assert.notEqual(getRes.status, 200, "the scene must be genuinely gone from the real store, not just hidden in the DOM");
 });
 
-test("PLAN VIEW: 'remove from plan' unlinks only -- scene survives in the Scenes tab and in any OTHER plan it belonged to", async () => {
-  const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "scdel-place-a" });
-  const otherScene = await createSceneViaRoute(base, WORLD, { locationEntityId: "scdel-place-b" });
-  const plan = await createPlanViaRoute(base, WORLD, "Remove-From-Plan Check");
-  const otherPlan = await createPlanViaRoute(base, WORLD, "Untouched Sibling Plan");
-  await addSceneToPlanViaRoute(base, WORLD, plan.id, scene.id);
-  await addSceneToPlanViaRoute(base, WORLD, plan.id, otherScene.id);
-  await addSceneToPlanViaRoute(base, WORLD, otherPlan.id, scene.id);
-
-  await page.goto(`${base}/#session-planner/plan/${plan.id}`);
-  const chainItem = page.locator(`[data-testid="scene-chain-item"][data-scene-id="${scene.id}"]`);
-  await chainItem.waitFor({ state: "visible", timeout: 15000 });
-  if (!(await chainItem.evaluate((el) => el.open))) {
-    await chainItem.locator('[data-testid="scene-chain-toggle"]').click();
-  }
-
-  const removeBtn = chainItem.locator('[data-testid="plan-scene-remove-btn"]');
-  await removeBtn.waitFor({ state: "visible", timeout: 10000 });
-  await removeBtn.click();
-
-  await assert.doesNotReject(async () => {
-    await page.waitForFunction(
-      (id) => document.querySelectorAll(`[data-testid="scene-chain-item"][data-scene-id="${id}"]`).length === 0,
-      scene.id,
-      { timeout: 10000 }
-    );
-  }, "removing a scene from the active plan must remove its chain-item from THIS plan's own view");
-
-  // The scene itself is COMPLETELY untouched: still a real, fetchable
-  // record, still a member of the OTHER plan.
-  const getRes = await fetch(`${base}/api/session-planner/scenes/${scene.id}?world=${WORLD}`);
-  assert.equal(getRes.status, 200, "removing a scene from ONE plan must never delete the scene record itself");
-
-  const planAfter = await (await fetch(`${base}/api/scene-planning/plans/${plan.id}?world=${WORLD}`)).json();
-  assert.ok(!planAfter.plan.sceneIds.includes(scene.id), "the scene must genuinely be gone from THIS plan's own sceneIds");
-
-  const otherPlanAfter = await (await fetch(`${base}/api/scene-planning/plans/${otherPlan.id}?world=${WORLD}`)).json();
-  assert.ok(otherPlanAfter.plan.sceneIds.includes(scene.id), "removing from ONE plan must never touch the scene's membership in ANY OTHER plan");
-
-  // And it's still reachable from the Scenes tab.
-  await page.goto(`${base}/#scenes`);
-  const scenesTabItem = page.locator(`[data-testid="scene-list-item"][data-scene-id="${scene.id}"]`);
-  await scenesTabItem.waitFor({ state: "visible", timeout: 15000 });
-});
-
-test("PLAN VIEW: removing the CURRENTLY-VIEWED scene from the active plan never dead-ends -- falls back to a remaining scene or the empty-plan screen", async () => {
-  const soleScene = await createSceneViaRoute(base, WORLD, { locationEntityId: "scdel-place-a" });
-  const plan = await createPlanViaRoute(base, WORLD, "Dead-End Check (single scene)");
-  await addSceneToPlanViaRoute(base, WORLD, plan.id, soleScene.id);
-
-  await page.goto(`${base}/#session-planner/plan/${plan.id}`);
-  const chainItem = page.locator(`[data-testid="scene-chain-item"][data-scene-id="${soleScene.id}"]`);
-  await chainItem.waitFor({ state: "visible", timeout: 15000 });
-  if (!(await chainItem.evaluate((el) => el.open))) {
-    await chainItem.locator('[data-testid="scene-chain-toggle"]').click();
-  }
-  await chainItem.locator('[data-testid="plan-scene-remove-btn"]').click();
-
-  // Removing the ONLY scene in the plan must land on the empty-plan screen,
-  // never a blank/broken view.
-  const emptyState = page.locator(`[data-testid="plan-empty-state"][data-plan-id="${plan.id}"]`);
-  await assert.doesNotReject(async () => {
-    await emptyState.waitFor({ state: "visible", timeout: 10000 });
-  }, "removing the last/only scene from the active plan while viewing it must land on the empty-plan +Add scene screen, not a dead end");
-  assert.equal(await page.locator('[data-testid="plan-add-scene-btn"]').count(), 1, "the empty-plan screen's only construction action must still be +Add scene");
-});
+// The two former "PLAN VIEW: remove from plan" scenarios that used to live
+// here (against the OLD `#session-planner/plan/<planId>` chain view's
+// `scene-chain-item`/`plan-scene-remove-btn`/`plan-empty-state` DOM) are
+// REMOVED by Phase 28 task 28.0 -- that whole view is scrapped this phase.
+// Equivalent, updated coverage (remove-from-plan is immediate/no-confirm
+// with an undo toast, scene survives, and the empty-plan screen's own
+// ghost add-scene row) now lives in review-ui/test/e2e/
+// phase28-navigation-spine.e2e.mjs, against the NEW `#plans/<planId>` DOM.
