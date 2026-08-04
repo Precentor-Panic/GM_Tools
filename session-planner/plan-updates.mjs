@@ -95,3 +95,56 @@ export async function proposeUpdatesForPlan(dir, world, planId, opts = {}) {
   }
   return importWriteup(world, text, { entities, edges, entityTypes }, { llmOpts: opts.llmOpts });
 }
+
+/**
+ * Phase 28 task 28.1: the scene-scoped mirror of assembleWriteupTextForPlan
+ * above, one level down -- a SINGLE scene's own pending notes (not a Plan's
+ * worth across many scenes). Same per-scene section-heading logic
+ * (name/anchor-name fallback), just scoped to one sceneId instead of
+ * iterating a Plan's `sceneIds`.
+ *
+ * @param {string} world
+ * @param {string} sceneId
+ * @param {Map<string,string>} entityNameById   anchor-entity id -> real name, caller-loaded (this module has no snapshot access of its own)
+ * @returns {{text:string, noteIds:string[]}}
+ */
+export function assembleWriteupTextForScene(world, sceneId, entityNameById) {
+  const scene = getScene(world, sceneId); // throws "No scene found" if unknown, uncaught/unreinterpreted
+
+  const notes = listPendingNotes(world).filter((n) => n.sceneId === sceneId);
+  if (!notes.length) return { text: "", noteIds: [] };
+
+  const anchorName = scene.locationEntityId ? (entityNameById.get(scene.locationEntityId) ?? scene.locationEntityId) : null;
+  const sceneName = scene.name || anchorName || scene.objectiveNote || "Ad-hoc scene";
+  const heading = anchorName && anchorName !== sceneName ? `## ${sceneName} (at ${anchorName})` : `## ${sceneName}`;
+
+  return {
+    text: [heading, ...notes.map((n) => n.text)].join("\n"),
+    noteIds: notes.map((n) => n.id)
+  };
+}
+
+/**
+ * The scene-scoped mirror of proposeUpdatesForPlan above: assemble ONE
+ * scene's own pending notes, then delegate straight to the EXISTING
+ * importWriteup() -- zero change to importWriteup, no logic duplicated.
+ * Response shape is byte-identical to proposeUpdatesForPlan's own
+ * `{batchId, mutationCount, importSummary, suggestions, headline}`, per the
+ * Wrap route contract (review-ui/test/e2e/phase28-fixture.mjs §6).
+ *
+ * @param {string} dir
+ * @param {string} world
+ * @param {string} sceneId
+ * @param {object} [opts]
+ * @param {object} [opts.llmOpts]   forwarded to importWriteup unchanged
+ * @returns {Promise<{batchId:string, mutationCount:number, importSummary:object, suggestions:object[], headline:string}>}
+ */
+export async function proposeUpdatesForScene(dir, world, sceneId, opts = {}) {
+  const { entities, edges, entityTypes } = loadSnapshot(dir, world).snapshot;
+  const entityNameById = new Map(entities.map((e) => [e.id, e.name]));
+  const { text } = assembleWriteupTextForScene(world, sceneId, entityNameById);
+  if (!text.trim()) {
+    throw new Error(`Scene "${sceneId}" has no pending notes to propose updates from yet -- add some Add Event notes first.`);
+  }
+  return importWriteup(world, text, { entities, edges, entityTypes }, { llmOpts: opts.llmOpts });
+}

@@ -187,20 +187,24 @@ import {
 // every other route in this file: resolveWorld() with NO client-supplied
 // dataDir override anywhere below (the store never touches the graph
 // snapshot at all).
-import { createPlan, getPlan, listPlansForWorld, addSceneToPlan, removeSceneFromPlan } from "../session-planner/plans.mjs";
+import { createPlan, getPlan, listPlansForWorld, addSceneToPlan, removeSceneFromPlan, deletePlan, plansContainingScene } from "../session-planner/plans.mjs";
 
-// Phase 26 task 26.3 -- scene-link store, §26.C. Thin wrappers only, same
-// convention as every other route in this file: resolveWorld() with NO
-// client-supplied dataDir override anywhere below (the store never touches
-// the graph snapshot at all -- deliberately, per §26.C's "dedicated store,
-// not graph entities" decision).
-import { linkScenes, unlinkScenes, getLinkedScenes } from "../session-planner/scene-links.mjs";
+// Phase 26 task 26.9, §26.E / Phase 28 task 28.1 -- post-session graph
+// update. Thin composition only: proposeUpdatesForPlan/proposeUpdatesForScene
+// (session-planner/plan-updates.mjs) assemble a Plan's/Scene's own pending
+// notes then delegate straight to the EXISTING, completely unmodified
+// importWriteup -- no logic duplicated here.
+import { proposeUpdatesForPlan, proposeUpdatesForScene } from "../session-planner/plan-updates.mjs";
 
-// Phase 26 task 26.9, §26.E -- post-session graph update. Thin composition
-// only: proposeUpdatesForPlan (session-planner/plan-updates.mjs) assembles
-// a Plan's scenes' notes then delegates straight to the EXISTING,
-// completely unmodified importWriteup -- no logic duplicated here.
-import { proposeUpdatesForPlan } from "../session-planner/plan-updates.mjs";
+// Phase 28 task 28.1 -- per-scene ordered elements + per-scene narration.
+// Thin wrappers only, same convention as every other route in this file:
+// resolveWorld()/resolveDir() with NO client-supplied dataDir override
+// anywhere below. promoteElement is the one op here that touches the live
+// graph (a direct manual edit, same surface as POST /api/graph/nodes -- see
+// scene-elements.mjs's own header comment for why this is NOT a
+// no-silent-auto-write violation), so its route resolves `dir` too.
+import { createElement, listElementsForScene, updateElement, removeElement, promoteElement, demoteElement } from "../session-planner/scene-elements.mjs";
+import { getCurrentSceneNarration, saveSceneNarration } from "../session-planner/scene-narration.mjs";
 
 // Phase 26 task 26.10, §26.F -- "Drop this into Foundry". Lives directly
 // under review-ui/ (not wf-mcp-server/lib/) -- see foundry-push.mjs's own
@@ -1939,31 +1943,100 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { plan });
   }
 
-  // -----------------------------------------------------------------------
-  // Phase 26 task 26.3 -- scene-link store routes, prefix
-  // `/api/scene-planning/scene-links`. Thin wrappers over
-  // session-planner/scene-links.mjs only.
-  // -----------------------------------------------------------------------
-
-  // POST /api/scene-planning/scene-links   { world, sceneIdA, sceneIdB, reason?, graphEdgeId? }  -- Phase 27 task 27.3 adds the optional graphEdgeId
-  if (method === "POST" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "scene-links") {
+  // Phase 28 task 28.1 -- DELETE /api/scene-planning/plans/:planId   { world } (body or query, matching this file's own established DELETE convention). Idempotent -- an unknown/already-deleted planId returns {deleted:false}, never 500. Removes ONLY the Plan record; every scene it referenced survives untouched.
+  if (method === "DELETE" && parts.length === 4 && parts[1] === "scene-planning" && parts[2] === "plans") {
     const body = await readBody(req);
-    const w = resolveWorld(body.world);
-    const link = linkScenes(w, body.sceneIdA, body.sceneIdB, body.reason, body.graphEdgeId);
-    return sendJson(res, 200, { link });
+    const w = resolveWorld(body.world ?? q.get("world"));
+    const result = deletePlan(w, parts[3]);
+    return sendJson(res, 200, result);
   }
 
-  // GET /api/scene-planning/scene-links?world=&sceneId=   -- echoes graphEdgeId per entry (Phase 27 task 27.3)
-  if (method === "GET" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "scene-links") {
+  // Phase 28 task 28.1 -- GET /api/scene-planning/scenes/:sceneId/plans?world=   -> {plans:[...]} every FULL Plan record containing this scene, in listPlansForWorld's own stable append order. [] for an orphaned scene -- never a 404.
+  if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "plans") {
     const w = resolveWorld(q.get("world"));
-    return sendJson(res, 200, { linked: getLinkedScenes(w, q.get("sceneId")) });
+    return sendJson(res, 200, { plans: plansContainingScene(w, parts[3]) });
   }
 
-  // DELETE /api/scene-planning/scene-links   { world, sceneIdA, sceneIdB }   -- Phase 27 task 27.3: response body is {removed, link} incl. the removed record's graphEdgeId
-  if (method === "DELETE" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "scene-links") {
+  // -----------------------------------------------------------------------
+  // Phase 28 task 28.1 -- per-scene ordered elements, prefix
+  // `/api/scene-planning/scenes/:sceneId/elements*`. Thin wrappers over
+  // session-planner/scene-elements.mjs only -- no independent business logic
+  // here, per gm-tools-conventions.
+  // -----------------------------------------------------------------------
+
+  // POST /api/scene-planning/scenes/:sceneId/elements   { world, name, kind?, fields? }   -> {element}   (kind defaults to "local" when omitted)
+  if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "elements") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
-    const result = unlinkScenes(w, body.sceneIdA, body.sceneIdB);
+    const element = createElement(w, parts[3], { name: body.name, kind: body.kind, fields: body.fields });
+    return sendJson(res, 200, { element });
+  }
+
+  // GET /api/scene-planning/scenes/:sceneId/elements?world=   -> {elements:[...]}, in `order`
+  if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "elements") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, { elements: listElementsForScene(w, parts[3]) });
+  }
+
+  // POST /api/scene-planning/scenes/:sceneId/elements/:elementId/promote   { world }   -> {element}   makes a REAL graph node + containment edge -- resolveDir() needed, unlike the other scene-elements routes below.
+  if (method === "POST" && parts.length === 7 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "elements" && parts[6] === "promote") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const dir = resolveDir();
+    const element = await promoteElement(dir, w, parts[3], parts[5]);
+    return sendJson(res, 200, { element });
+  }
+
+  // POST /api/scene-planning/scenes/:sceneId/elements/:elementId/demote   { world }   -> {element}   never deletes the underlying graph node.
+  if (method === "POST" && parts.length === 7 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "elements" && parts[6] === "demote") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const element = demoteElement(w, parts[3], parts[5]);
+    return sendJson(res, 200, { element });
+  }
+
+  // POST /api/scene-planning/scenes/:sceneId/elements/:elementId   { world, name?, fields? }   -> {element}   (PATCH-style via POST, matching this file's own POST /api/graph/nodes/:entityId precedent)
+  if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "elements") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const element = updateElement(w, parts[3], parts[5], { name: body.name, fields: body.fields });
+    return sendJson(res, 200, { element });
+  }
+
+  // DELETE /api/scene-planning/scenes/:sceneId/elements/:elementId   { world } (body or query)   -> {deleted:true}
+  if (method === "DELETE" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "elements") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world ?? q.get("world"));
+    const result = removeElement(w, parts[3], parts[5]);
+    return sendJson(res, 200, result);
+  }
+
+  // -----------------------------------------------------------------------
+  // Phase 28 task 28.1 -- per-scene narration, prefix `/api/scene-planning/
+  // scenes/:sceneId/narration`. Thin wrappers over
+  // session-planner/scene-narration.mjs only.
+  // -----------------------------------------------------------------------
+
+  // POST /api/scene-planning/scenes/:sceneId/narration   { world, text }   -> {narration:{sceneId, text, ...}}
+  if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "narration") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const narration = saveSceneNarration(w, parts[3], { text: body.text });
+    return sendJson(res, 200, { narration });
+  }
+
+  // GET /api/scene-planning/scenes/:sceneId/narration?world=   -> {narration: {...}|null}   -- never a 404, absence is a valid state
+  if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "narration") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, { narration: getCurrentSceneNarration(w, parts[3]) });
+  }
+
+  // Phase 28 task 28.1 -- POST /api/scene-planning/scenes/:sceneId/propose-updates   { world }   -- the scene-scoped mirror of POST /api/scene-planning/plans/:planId/propose-updates below. Same response shape, same review-gated "proposes, never auto-writes" contract.
+  if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "propose-updates") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const result = await proposeUpdatesForScene(dir, w, parts[3]);
     return sendJson(res, 200, result);
   }
 

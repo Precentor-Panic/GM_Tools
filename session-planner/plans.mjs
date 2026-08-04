@@ -138,4 +138,36 @@ export function removeSceneFromPlan(world, planId, sceneId) {
   return plan;
 }
 
+/**
+ * Phase 28 task 28.1: removes ONLY the Plan record itself — every scene it
+ * referenced is completely untouched (this store never touches scenes.mjs
+ * anyway, so there is nothing else for a delete to cascade into). Idempotent:
+ * deleting an already-deleted/unknown planId is a safe no-op, never throws.
+ *
+ * @param {string} world
+ * @param {string} planId
+ * @returns {{deleted:boolean}}
+ */
+export function deletePlan(world, planId) {
+  const plans = readPlans(world);
+  const next = plans.filter((p) => p.id !== planId);
+  const deleted = next.length !== plans.length;
+  if (deleted) writePlans(world, next);
+  return { deleted };
+}
+
+/**
+ * Phase 28 task 28.1: every FULL Plan record whose `sceneIds` includes
+ * `sceneId`, in `listPlansForWorld`'s own stable append order (the scene
+ * page's breadcrumb-back-btn contract depends on this exact ordering being
+ * "first plan created that contains this scene").
+ *
+ * @param {string} world
+ * @param {string} sceneId
+ * @returns {object[]}   [] for a scene that belongs to no Plan -- never throws.
+ */
+export function plansContainingScene(world, sceneId) {
+  return listPlansForWorld(world).filter((p) => p.sceneIds.includes(sceneId));
+}
+
 export { ConcurrentWriteError };

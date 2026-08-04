@@ -92,9 +92,23 @@ session-plans/*
 
 # Phase 26 task 26.3 (added at spec time, not after the fact -- per this
 # project's own recurring-gap lesson): session-planner/scene-links.mjs is
-# flat per-world-file, same convention as session-plans/ above.
+# flat per-world-file, same convention as session-plans/ above. Phase 28
+# task 28.1 deleted that module -- this directory's ignore rule stays (any
+# real leftover scene-links/ data from before the scrap is harmless and
+# still ignored); the module scrap itself is handled in session-planner/.
 scene-links/*
 !scene-links/.gitkeep
+
+# Phase 28 task 28.1 (added at spec time, not after the fact -- per this
+# project's own recurring-gap lesson): session-planner/scene-elements.mjs is
+# flat per-world-file, same convention as session-plans/ above.
+scene-elements/*
+!scene-elements/.gitkeep
+
+# session-planner/scene-narration.mjs is per-(world,sceneId)-file under a
+# per-world subdir, same convention as entity-narration/ above.
+scene-narration/*/
+!scene-narration/.gitkeep
 
 node_modules/
 

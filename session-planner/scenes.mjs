@@ -25,7 +25,6 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 import { listPlansForWorld, removeSceneFromPlan } from "./plans.mjs";
-import { getLinkedScenes, unlinkScenes } from "./scene-links.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "session-scenes");
@@ -166,21 +165,21 @@ export function listScenesForWorld(world) {
  *   - every Plan membership (`listPlansForWorld` x `removeSceneFromPlan`,
  *     session-planner/plans.mjs -- each plan that lists this sceneId gets it
  *     stripped; plans that never had it are untouched, and other plans'
- *     memberships of OTHER scenes are untouched);
- *   - every scene-link (`getLinkedScenes` x `unlinkScenes`,
- *     session-planner/scene-links.mjs -- every explicit link touching this
- *     scene is removed).
+ *     memberships of OTHER scenes are untouched).
+ * Phase 28 task 28.1: the scene-link cascade (session-planner/scene-links.mjs)
+ * was removed along with that module -- scene-to-scene linking is scrapped
+ * in favor of the Plan-scoped "shared by reference" model (design record).
  * Deliberately does NOT touch the place (World Fabric) entity or any graph
  * edge (Decision 2, design record) -- this module has zero Foundry-facing
  * import (see this file's own header comment / scenes.test.mjs's assertion),
- * and neither plans.mjs nor scene-links.mjs touch the graph either, so the
- * place entity is untouched by construction, not by a special-cased skip.
+ * and plans.mjs doesn't touch the graph either, so the place entity is
+ * untouched by construction, not by a special-cased skip.
  *
  * Idempotent: deleting an already-absent/unknown sceneId is a safe no-op on
- * the scene record itself (matches this directory's removeSavedEncounter/
- * unlinkScenes convention) -- the cascades run regardless but are themselves
- * idempotent no-ops when there's nothing to strip, so a repeat call (or a
- * call for a sceneId that was never a real scene) is harmless.
+ * the scene record itself (matches this directory's removeSavedEncounter
+ * convention) -- the cascade runs regardless but is itself an idempotent
+ * no-op when there's nothing to strip, so a repeat call (or a call for a
+ * sceneId that was never a real scene) is harmless.
  *
  * @param {string} world
  * @param {string} sceneId
@@ -197,10 +196,6 @@ export function deleteScene(world, sceneId) {
     if (plan.sceneIds.includes(sceneId)) {
       removeSceneFromPlan(world, plan.id, sceneId);
     }
-  }
-
-  for (const linked of getLinkedScenes(world, sceneId)) {
-    unlinkScenes(world, sceneId, linked.sceneId);
   }
 
   return { deleted };
