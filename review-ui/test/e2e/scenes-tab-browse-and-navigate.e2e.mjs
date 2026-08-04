@@ -298,12 +298,19 @@ test("clicking a scene in the main list navigates into the EXISTING Session Plan
   }, "clicking a scene's open control must route to #session-planner/<thatSceneId>");
 
   await page.locator("#view-session-planner.active").waitFor({ state: "attached", timeout: 5000 });
-  const anchorCard = page.locator('[data-testid="location-card"][data-card-role="anchor"]');
-  await anchorCard.waitFor({ state: "visible", timeout: 15000 });
+  // Phase 28 task 28.3 retirement: the Session Planner view is now the single
+  // edit-in-place Scene page (the chain-view location-card anchor is scrapped
+  // per the design record). Its place-header carries the anchor place's own
+  // entity id, so the "SAME scene loaded" intent of this assertion targets
+  // that instead of the retired location-card.
+  const scenePage = page.locator(`[data-testid="scene-page"][data-scene-id="${sceneWillowbrook.id}"]`);
+  await scenePage.waitFor({ state: "visible", timeout: 15000 });
+  const placeName = scenePage.locator('[data-testid="scene-place-name"]');
+  await placeName.waitFor({ state: "visible", timeout: 5000 });
   assert.equal(
-    await anchorCard.getAttribute("data-entity-id"),
+    await placeName.getAttribute("data-entity-id"),
     "scenes-tab-willowbrook",
-    "the Session Planner view that loads must be the SAME scene clicked from the Scenes tab, not some other/default scene"
+    "the Scene page that loads must be the SAME scene clicked from the Scenes tab, not some other/default scene"
   );
 });
 

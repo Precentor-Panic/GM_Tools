@@ -63,6 +63,14 @@
 // don't exist in the DOM yet, not just hidden.
 "use strict";
 import { createFlushableDebounce } from "./debounced-save.mjs";
+// Phase 28 task 28.3: reuse the shared, generic undo-toast pattern (contract
+// Decision 3) for scene-element remove-with-undo, rather than a second toast
+// implementation. mountEditableList is NOT reused for the element list: the
+// element row's own testid contract (scene-element-row + scene-element-
+// remove-btn, NOT the helper's derived scene-element-row-remove-btn) plus its
+// custom per-field click-to-edit body don't fit that helper's fixed
+// body+controls shape -- see this file's scene-page section header.
+import { showUndoToast } from "./plans-view.js";
 
 // ---------------------------------------------------------------------------
 // local api/world helpers (see file header -- deliberately not imported
@@ -204,6 +212,14 @@ const openNotePanels = new Map(); // key -> { panelEl, debounce }
 
 export function flushActiveNoteSave() {
   for (const { debounce } of openNotePanels.values()) {
+    debounce.flush();
+  }
+  // Phase 28 task 28.3: the scene page's click-to-edit fields (place name,
+  // narration, element name, element field-lines) each register their live
+  // autosave debounce here while their textarea is open, so a nav that fires
+  // before the 500ms debounce lands never silently drops a typed-but-
+  // -unsaved edit (same guarantee the note panels above already have).
+  for (const debounce of sceneEditDebounces) {
     debounce.flush();
   }
 }
@@ -3571,15 +3587,780 @@ async function loadAndRenderTableMode(sceneId, container, opts = {}) {
  * "start fresh" sentinel (always construction mode -- there's no scene yet
  * for Table Mode to render).
  */
+// ===========================================================================
+// Phase 28 task 28.3 -- THE ONE SCENE PAGE (edit-in-place, reads like a
+// printed module page). Everything below replaces the old three-renderer
+// dispatch (chain/plan/table). The old helpers above are left physically in
+// the file for 28.5's scrap sweep, but the ACTIVE render path never calls
+// them and never touches the localStorage where-am-I heuristics
+// (loadLastSceneId/loadActivePlanId/resolveActivePlan) -- the URL is the
+// sole source of truth, the sceneId comes straight from the hash.
+//
+// Contract: review-ui/test/e2e/phase28-fixture.mjs §3/§4/§5/§6/§10(d). Every
+// data-testid / route below is pinned there and matched verbatim.
+// ===========================================================================
+
+// Live autosave debounces for the scene page's open click-to-edit textareas
+// (registered on enter-edit, flushed on blur AND on navigation via
+// flushActiveNoteSave above). At most a handful ever coexist.
+const sceneEditDebounces = new Set();
+
+// The scene page's [ / ] / Esc keyboard handler, held at module scope so each
+// re-render can detach the previous one before wiring a fresh one (never
+// stacked). The e2e drives the buttons, but the design record calls for the
+// shortcuts too (run the session by pressing next).
+let activeSceneKeydownHandler = null;
+
+// Monotonic render token. A page.goto that only changes the hash can fire a
+// second renderCurrentView while the first render is still awaiting its
+// fetches; without this guard both async renders reach `container.appendChild
+// (root)` after both have cleared the container, leaving TWO scene-page roots
+// (and duplicate element rows sharing a data-element-id). Every awaiting
+// render carries the token it started with and bails the moment a newer
+// render supersedes it.
+let sceneRenderToken = 0;
+
+function detachSceneKeydownHandler() {
+  if (activeSceneKeydownHandler) {
+    document.removeEventListener("keydown", activeSceneKeydownHandler);
+    activeSceneKeydownHandler = null;
+  }
+}
+
+// Element field vocabulary (verbatim from scene-elements.mjs / contract §4).
+// trigger + gives are the always-offered core (surfaced first in the add-field
+// menu); every field renders a field-line ONLY when non-empty -- the GM is
+// never confronted with an empty box (design record's ruthless-minimum rule).
+const SCENE_FIELD_ORDER = ["trigger", "gives", "looks", "means", "checks", "function", "wants", "secret"];
+const SCENE_TEXT_FIELDS = ["trigger", "gives", "looks", "means", "function", "wants", "secret"];
+const SCENE_FIELD_LABELS = {
+  trigger: "Trigger", gives: "Gives", looks: "Looks", means: "Means",
+  checks: "Checks", function: "Function", wants: "Wants", secret: "Secret"
+};
+
+/**
+ * The click-to-edit primitive shared by every editable value on the page
+ * (place name, narration, element name, element field-lines). Renders as
+ * plain typeset text at rest -- NO visible input chrome. A real `.click()`
+ * (never focus alone -- the display element is not focusable) swaps in an
+ * auto-growing textarea, autosaving via createFlushableDebounce (debounced on
+ * input, flushed on blur + on navigation). Mutates its OWN DOM in place on
+ * commit; never re-renders anything else.
+ *
+ * @returns {{el:HTMLElement, enterEdit:()=>void, setValue:(v:string)=>void}}
+ */
+function makeClickToEditField({ tag = "div", className = "", testid, dataAttrs = {}, inputTestid, inputDataAttrs = {}, value = "", placeholder = "", emptyText = "", save }) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  el.setAttribute("data-testid", testid);
+  for (const [k, v] of Object.entries(dataAttrs)) el.setAttribute(k, v);
+  let currentValue = value ?? "";
+  let editing = false;
+
+  function renderRest() {
+    const has = currentValue != null && String(currentValue).length > 0;
+    el.textContent = has ? currentValue : emptyText;
+    el.classList.toggle("scene-field--empty", !has);
+  }
+
+  function enterEdit() {
+    if (editing) return;
+    editing = true;
+    el.textContent = "";
+    el.classList.remove("scene-field--empty");
+    const ta = document.createElement("textarea");
+    ta.className = "scene-edit-textarea";
+    ta.setAttribute("data-testid", inputTestid);
+    for (const [k, v] of Object.entries(inputDataAttrs)) ta.setAttribute(k, v);
+    if (placeholder) ta.placeholder = placeholder;
+    ta.value = currentValue;
+    ta.rows = 1;
+
+    const debounce = createFlushableDebounce((v) => { Promise.resolve(save(v)).catch(() => {}); }, { debounceMs: 500 });
+    sceneEditDebounces.add(debounce);
+
+    function autoGrow() {
+      ta.style.height = "auto";
+      ta.style.height = `${ta.scrollHeight}px`;
+    }
+    ta.addEventListener("input", () => { autoGrow(); debounce.onInput(ta.value); });
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.stopPropagation(); ta.blur(); }
+    });
+    ta.addEventListener("blur", () => {
+      debounce.onBlur(ta.value); // flush the pending save immediately
+      sceneEditDebounces.delete(debounce);
+      currentValue = ta.value;
+      editing = false;
+      renderRest();
+    });
+    el.appendChild(ta);
+    ta.focus();
+    autoGrow();
+  }
+
+  el.addEventListener("click", () => { if (!editing) enterEdit(); });
+  renderRest();
+  return { el, enterEdit, setValue(v) { currentValue = v ?? ""; if (!editing) renderRest(); } };
+}
+
+// ---------------------------------------------------------------------------
+// §5/§6 -- the elements list (data-driven: any structural op -- add / remove /
+// promote / demote -- re-fetches and re-renders the whole list; only per-field
+// TYPING mutates DOM in place, never a full re-render).
+// ---------------------------------------------------------------------------
+
+function buildElementFieldLine(scene, element, field, value, { autoEdit = false } = {}) {
+  const line = document.createElement("div");
+  line.className = "pf-line";
+  const label = document.createElement("span");
+  label.className = "pf-label";
+  label.textContent = SCENE_FIELD_LABELS[field] ?? field;
+  const valueField = makeClickToEditField({
+    tag: "span",
+    className: "pf-value",
+    testid: "scene-element-field",
+    dataAttrs: { "data-field": field },
+    inputTestid: "scene-element-field-input",
+    inputDataAttrs: { "data-field": field },
+    value,
+    placeholder: `${SCENE_FIELD_LABELS[field] ?? field}…`,
+    emptyText: `+ ${SCENE_FIELD_LABELS[field] ?? field}`,
+    save: (v) => spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/${encodeURIComponent(element.id)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), fields: { [field]: v } })
+    })
+  });
+  line.append(label, valueField.el);
+  if (autoEdit) valueField.enterEdit();
+  return line;
+}
+
+function buildChecksLine(checks) {
+  const line = document.createElement("div");
+  line.className = "pf-line";
+  const label = document.createElement("span");
+  label.className = "pf-label";
+  label.textContent = SCENE_FIELD_LABELS.checks;
+  const val = document.createElement("span");
+  val.className = "pf-value";
+  val.setAttribute("data-testid", "scene-element-field");
+  val.setAttribute("data-field", "checks");
+  val.textContent = checks.map((c) => `${c.skill} DC ${c.dc}${c.purpose ? ` — ${c.purpose}` : ""}`).join("; ");
+  line.append(label, val);
+  return line;
+}
+
+function renderElementFieldLines(scene, element, fieldsEl) {
+  fieldsEl.innerHTML = "";
+  for (const f of SCENE_FIELD_ORDER) {
+    if (f === "checks") {
+      const checks = element.fields?.checks;
+      if (Array.isArray(checks) && checks.length) fieldsEl.appendChild(buildChecksLine(checks));
+      continue;
+    }
+    const raw = element.fields?.[f];
+    if (raw == null || String(raw).trim() === "") continue;
+    fieldsEl.appendChild(buildElementFieldLine(scene, element, f, String(raw)));
+  }
+}
+
+function buildAddFieldControl(scene, element, fieldsEl) {
+  const present = new Set(
+    SCENE_TEXT_FIELDS.filter((f) => element.fields?.[f] != null && String(element.fields[f]).trim() !== "")
+  );
+  const missing = SCENE_TEXT_FIELDS.filter((f) => !present.has(f));
+  if (!missing.length) return null;
+
+  const wrap = document.createElement("div");
+  wrap.className = "scene-add-field";
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "link-btn scene-add-field-btn";
+  addBtn.textContent = "+ field";
+  const menu = document.createElement("div");
+  menu.className = "scene-add-field-menu";
+  menu.style.display = "none";
+
+  for (const f of missing) {
+    const opt = document.createElement("button");
+    opt.type = "button";
+    opt.className = "link-btn scene-add-field-option";
+    opt.textContent = SCENE_FIELD_LABELS[f];
+    opt.addEventListener("click", () => {
+      menu.style.display = "none";
+      // Insert an empty field-line already in edit mode -- a real value on
+      // blur persists (only-non-empty rule keeps a blank one from sticking).
+      fieldsEl.appendChild(buildElementFieldLine(scene, element, f, "", { autoEdit: true }));
+      opt.remove();
+    });
+    menu.appendChild(opt);
+  }
+
+  addBtn.addEventListener("click", () => {
+    menu.style.display = menu.style.display === "none" ? "" : "none";
+  });
+  wrap.append(addBtn, menu);
+  return wrap;
+}
+
+function buildSceneElementRow(scene, element, refreshList) {
+  const row = document.createElement("div");
+  row.className = `scene-element-row ${element.kind === "graph" ? "scene-element-row--key" : "scene-element-row--mundane"}`;
+  row.setAttribute("data-testid", "scene-element-row");
+  row.setAttribute("data-element-id", element.id);
+  row.setAttribute("data-kind", element.kind);
+
+  const head = document.createElement("div");
+  head.className = "scene-element-head";
+
+  const glyph = document.createElement("span");
+  glyph.className = "scene-element-glyph";
+  glyph.textContent = element.kind === "graph" ? "◆" : "◦";
+  head.appendChild(glyph);
+
+  if (element.kind === "graph" && element.graphEntityId) {
+    const badge = document.createElement("span");
+    badge.className = "scene-element-graph-badge";
+    badge.setAttribute("data-testid", "scene-element-graph-badge");
+    badge.setAttribute("data-graph-entity-id", element.graphEntityId);
+    badge.textContent = "⛓ graph";
+    badge.title = "This element is a KEY graph node";
+    head.appendChild(badge);
+  }
+
+  const nameField = makeClickToEditField({
+    tag: "span",
+    className: "scene-element-name",
+    testid: "scene-element-name",
+    inputTestid: "scene-element-name-input",
+    value: element.name,
+    placeholder: "Element name…",
+    emptyText: "(unnamed element)",
+    save: (v) => spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/${encodeURIComponent(element.id)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), name: v })
+    })
+  });
+  head.appendChild(nameField.el);
+
+  const controls = document.createElement("div");
+  controls.className = "scene-element-controls";
+
+  const keyToggle = document.createElement("button");
+  keyToggle.type = "button";
+  keyToggle.className = "icon-btn scene-element-key-toggle";
+  keyToggle.setAttribute("data-testid", "scene-element-key-toggle");
+  keyToggle.setAttribute("data-element-id", element.id);
+  keyToggle.setAttribute("data-kind", element.kind);
+  keyToggle.textContent = "⭑";
+  keyToggle.title = element.kind === "graph" ? "Demote to scene-local (keeps the graph node)" : "Promote to a KEY graph node";
+  keyToggle.addEventListener("click", async () => {
+    keyToggle.disabled = true;
+    const verb = element.kind === "graph" ? "demote" : "promote";
+    try {
+      await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/${encodeURIComponent(element.id)}/${verb}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      });
+      await refreshList();
+    } catch {
+      keyToggle.disabled = false;
+    }
+  });
+  controls.appendChild(keyToggle);
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "icon-btn scene-element-remove-btn";
+  removeBtn.setAttribute("data-testid", "scene-element-remove-btn");
+  removeBtn.setAttribute("data-element-id", element.id);
+  removeBtn.title = "Remove element";
+  removeBtn.textContent = "✕";
+  removeBtn.addEventListener("click", async () => {
+    removeBtn.disabled = true;
+    try {
+      await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/${encodeURIComponent(element.id)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      });
+      await refreshList();
+      // Reversible -- undo toast (contract Decision 3), re-creating via the
+      // SAME add route (a demoted-graph element re-creates as scene-local; its
+      // former node was never deleted, so no double-node is created).
+      showUndoToast("Element removed.", async () => {
+        await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: currentWorld(), name: element.name, fields: element.fields ?? {} })
+        });
+        await refreshList();
+      });
+    } catch {
+      removeBtn.disabled = false;
+    }
+  });
+  controls.appendChild(removeBtn);
+
+  head.appendChild(controls);
+  row.appendChild(head);
+
+  const fieldsEl = document.createElement("div");
+  fieldsEl.className = "scene-element-fields";
+  renderElementFieldLines(scene, element, fieldsEl);
+  row.appendChild(fieldsEl);
+
+  const addField = buildAddFieldControl(scene, element, fieldsEl);
+  if (addField) row.appendChild(addField);
+
+  return row;
+}
+
+function buildAddElementGhostRow(scene, refreshList) {
+  const ghost = document.createElement("div");
+  ghost.className = "scene-add-element-row editable-list-ghost-row";
+  ghost.setAttribute("data-testid", "scene-add-element-row");
+  ghost.setAttribute("data-scene-id", scene.id);
+
+  const label = document.createElement("span");
+  label.className = "editable-list-ghost-row-label";
+  label.textContent = "+ add element";
+  ghost.appendChild(label);
+
+  const panelHost = document.createElement("div");
+  ghost.appendChild(panelHost);
+
+  let opened = false;
+  ghost.addEventListener("click", () => {
+    if (opened) return;
+    opened = true;
+    label.style.display = "none";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "scene-add-element-name-input";
+    input.setAttribute("data-testid", "scene-add-element-name-input");
+    input.placeholder = "New element name — Enter to add…";
+
+    const submit = document.createElement("button");
+    submit.type = "button";
+    submit.className = "btn scene-add-element-submit-btn";
+    submit.setAttribute("data-testid", "scene-add-element-submit-btn");
+    submit.textContent = "Add";
+
+    async function doAdd() {
+      const name = input.value.trim();
+      if (!name) return;
+      submit.disabled = true;
+      input.disabled = true;
+      try {
+        await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: currentWorld(), name })
+        });
+        // Re-render the whole list -- the row appears and a FRESH ghost row
+        // re-arms at the bottom, ready for the next add.
+        await refreshList();
+      } catch {
+        submit.disabled = false;
+        input.disabled = false;
+      }
+    }
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); doAdd(); }
+    });
+    submit.addEventListener("click", doAdd);
+
+    panelHost.append(input, submit);
+    input.focus();
+  });
+
+  return ghost;
+}
+
+async function renderSceneElementsList(scene, listHost) {
+  let elements = [];
+  try {
+    ({ elements } = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements${spWithWorld()}`));
+  } catch {
+    elements = [];
+  }
+  listHost.innerHTML = "";
+  const wrap = document.createElement("div");
+  wrap.className = "scene-elements-list";
+  wrap.setAttribute("data-testid", "scene-elements-list");
+  wrap.setAttribute("data-scene-id", scene.id);
+
+  const refreshList = () => renderSceneElementsList(scene, listHost);
+  for (const element of elements) {
+    wrap.appendChild(buildSceneElementRow(scene, element, refreshList));
+  }
+  wrap.appendChild(buildAddElementGhostRow(scene, refreshList));
+  listHost.appendChild(wrap);
+}
+
+// ---------------------------------------------------------------------------
+// §3 -- breadcrumb + prev/next. The FIRST plan containing this scene (stable
+// listPlansForWorld order, via the plansContainingScene route) is the owning
+// context; prev/next step within THAT plan's own sceneIds order and are
+// absent (real DOM absence) at the ends / for an orphaned scene.
+// ---------------------------------------------------------------------------
+function buildSceneBreadcrumb(scene, plans) {
+  const firstPlan = plans && plans.length ? plans[0] : null;
+  const bc = document.createElement("div");
+  bc.className = "scene-breadcrumb";
+  bc.setAttribute("data-testid", "scene-breadcrumb");
+
+  const backBtn = document.createElement("button");
+  backBtn.type = "button";
+  backBtn.className = "link-btn scene-breadcrumb-back-btn";
+  backBtn.setAttribute("data-testid", "scene-breadcrumb-back-btn");
+  backBtn.textContent = `‹ ${firstPlan ? (firstPlan.name || "Plan") : "Plans"}`;
+  backBtn.addEventListener("click", () => {
+    location.hash = firstPlan ? `plans/${firstPlan.id}` : "plans";
+  });
+  bc.appendChild(backBtn);
+
+  let prevId = null;
+  let nextId = null;
+  if (firstPlan) {
+    const ids = firstPlan.sceneIds || [];
+    const idx = ids.indexOf(scene.id);
+    if (idx > 0) prevId = ids[idx - 1];
+    if (idx >= 0 && idx < ids.length - 1) nextId = ids[idx + 1];
+  }
+
+  if (prevId) {
+    const prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "link-btn scene-breadcrumb-prev-btn";
+    prevBtn.setAttribute("data-testid", "scene-breadcrumb-prev-btn");
+    prevBtn.textContent = "‹ Prev";
+    prevBtn.addEventListener("click", () => { location.hash = `session-planner/${prevId}`; });
+    bc.appendChild(prevBtn);
+  }
+  if (nextId) {
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.className = "link-btn scene-breadcrumb-next-btn";
+    nextBtn.setAttribute("data-testid", "scene-breadcrumb-next-btn");
+    nextBtn.textContent = "Next ›";
+    nextBtn.addEventListener("click", () => { location.hash = `session-planner/${nextId}`; });
+    bc.appendChild(nextBtn);
+  }
+
+  return { bc, firstPlan, prevId, nextId };
+}
+
+// ---------------------------------------------------------------------------
+// §10(d) -- the "beyond this room" drawer (a real <details>, collapsed by
+// default) listing the anchor place's graph neighbors, each with a guarded
+// delete-node-from-graph (real confirm step; cascadeEdgeCount sourced DIRECTLY
+// from the DELETE route's own response, never precomputed client-side).
+// ---------------------------------------------------------------------------
+function sceneNeighborEntityIds(placeId, edges) {
+  const ids = new Set();
+  for (const e of edges || []) {
+    if (e.sourceId === placeId && e.targetId && e.targetId !== placeId) ids.add(e.targetId);
+    else if (e.targetId === placeId && e.sourceId && e.sourceId !== placeId) ids.add(e.sourceId);
+  }
+  return [...ids];
+}
+
+function buildBeyondRoomDrawer(scene, nodeMap, edges) {
+  const details = document.createElement("details");
+  details.className = "beyond-room-drawer";
+  details.setAttribute("data-testid", "beyond-room-drawer");
+  details.setAttribute("data-scene-id", scene.id);
+
+  const summary = document.createElement("summary");
+  summary.className = "beyond-room-drawer-toggle";
+  summary.setAttribute("data-testid", "beyond-room-drawer-toggle");
+  summary.setAttribute("data-scene-id", scene.id);
+  summary.textContent = "Beyond this room (graph neighbors)";
+  details.appendChild(summary);
+
+  const body = document.createElement("div");
+  body.className = "beyond-room-drawer-body";
+  details.appendChild(body);
+
+  const neighborIds = scene.locationEntityId ? sceneNeighborEntityIds(scene.locationEntityId, edges) : [];
+  if (!neighborIds.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No graph neighbors for this room's place.";
+    body.appendChild(empty);
+    return details;
+  }
+
+  for (const id of neighborIds) {
+    const info = nodeMap.get(id);
+    const item = document.createElement("div");
+    item.className = "beyond-room-neighbor-item";
+    item.setAttribute("data-testid", "beyond-room-neighbor-item");
+    item.setAttribute("data-entity-id", id);
+
+    const name = document.createElement("span");
+    name.className = "beyond-room-neighbor-name";
+    name.textContent = `${info?.name ?? id}${info?.type ? ` (${info.type})` : ""}`;
+    item.appendChild(name);
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "btn btn--ghost beyond-room-neighbor-delete-btn";
+    delBtn.setAttribute("data-testid", "beyond-room-neighbor-delete-btn");
+    delBtn.setAttribute("data-entity-id", id);
+    delBtn.textContent = "Delete from graph";
+    item.appendChild(delBtn);
+
+    const confirmHost = document.createElement("div");
+    item.appendChild(confirmHost);
+
+    delBtn.addEventListener("click", () => {
+      if (confirmHost.childElementCount) return; // already open
+      const panel = document.createElement("div");
+      panel.className = "confirm-panel beyond-room-neighbor-delete-confirm-panel";
+      panel.setAttribute("data-testid", "beyond-room-neighbor-delete-confirm-panel");
+      panel.setAttribute("data-entity-id", id);
+
+      const warn = document.createElement("p");
+      warn.className = "hint";
+      warn.textContent = "Delete this node from the graph? Connected edges are removed too. This is not a scene-only action.";
+      panel.appendChild(warn);
+
+      const confirmBtn = document.createElement("button");
+      confirmBtn.type = "button";
+      confirmBtn.className = "btn btn--danger beyond-room-neighbor-delete-confirm-btn";
+      confirmBtn.setAttribute("data-testid", "beyond-room-neighbor-delete-confirm-btn");
+      confirmBtn.textContent = "Yes, delete node";
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "btn beyond-room-neighbor-delete-cancel-btn";
+      cancelBtn.setAttribute("data-testid", "beyond-room-neighbor-delete-cancel-btn");
+      cancelBtn.textContent = "Cancel";
+
+      cancelBtn.addEventListener("click", () => { confirmHost.innerHTML = ""; });
+
+      confirmBtn.addEventListener("click", async () => {
+        confirmBtn.disabled = true;
+        cancelBtn.disabled = true;
+        try {
+          const result = await spApi(`/api/graph/nodes/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ world: currentWorld() })
+          });
+          confirmHost.innerHTML = "";
+          delBtn.disabled = true;
+          const status = document.createElement("div");
+          status.className = "beyond-room-neighbor-delete-status hint";
+          status.setAttribute("data-testid", "beyond-room-neighbor-delete-status");
+          // cascadeEdgeCount sourced DIRECTLY from the engine's own response.
+          status.setAttribute("data-cascade-edge-count", String(result?.cascadeEdgeCount ?? 0));
+          status.textContent = `Deleted "${result?.name ?? id}" and ${result?.cascadeEdgeCount ?? 0} connected edge${(result?.cascadeEdgeCount ?? 0) === 1 ? "" : "s"}.`;
+          item.appendChild(status);
+        } catch (err) {
+          confirmBtn.disabled = false;
+          cancelBtn.disabled = false;
+          warn.textContent = `Could not delete: ${err.message}`;
+        }
+      });
+
+      panel.append(confirmBtn, cancelBtn);
+      confirmHost.appendChild(panel);
+    });
+
+    body.appendChild(item);
+  }
+
+  return details;
+}
+
+// ---------------------------------------------------------------------------
+// The full scene page assembly.
+// ---------------------------------------------------------------------------
+async function renderScenePage(container, sceneId, token) {
+  const stale = () => token !== sceneRenderToken;
+  const loading = document.createElement("p");
+  loading.className = "hint";
+  loading.textContent = "Loading scene…";
+  container.appendChild(loading);
+
+  let scene, graph, narration, plans;
+  try {
+    ({ scene } = await spApi(`/api/session-planner/scenes/${encodeURIComponent(sceneId)}${spWithWorld()}`));
+  } catch (err) {
+    if (stale()) return;
+    container.innerHTML = "";
+    const p = document.createElement("p");
+    p.className = "hint";
+    p.textContent = `Could not load scene: ${err.message}`;
+    container.appendChild(p);
+    return;
+  }
+  if (!scene) {
+    container.innerHTML = "";
+    const p = document.createElement("p");
+    p.className = "hint";
+    p.textContent = "Scene not found.";
+    container.appendChild(p);
+    return;
+  }
+
+  graph = await spApi(`/api/graph${spWithWorld({ filter: "all" })}`).catch(() => ({ nodes: [], edges: [] }));
+  const nodeMap = new Map((graph.nodes || []).map((n) => [n.id, n]));
+  narration = (await spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/narration${spWithWorld()}`).catch(() => ({ narration: null }))).narration;
+  plans = (await spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/plans${spWithWorld()}`).catch(() => ({ plans: [] }))).plans ?? [];
+  if (stale()) return;
+
+  container.innerHTML = "";
+  const root = document.createElement("div");
+  root.className = "scene-page";
+  root.setAttribute("data-testid", "scene-page");
+  root.setAttribute("data-scene-id", scene.id);
+
+  // Top bar: breadcrumb (left) + Wrap toggle placeholder (right, filled by 28.4).
+  const topBar = document.createElement("div");
+  topBar.className = "scene-top-bar";
+  const { bc, firstPlan, prevId, nextId } = buildSceneBreadcrumb(scene, plans);
+  topBar.appendChild(bc);
+
+  const wrapBtn = document.createElement("button");
+  wrapBtn.type = "button";
+  wrapBtn.className = "btn scene-wrap-toggle-btn";
+  wrapBtn.setAttribute("data-testid", "wrap-toggle-btn");
+  wrapBtn.setAttribute("data-scene-id", scene.id);
+  wrapBtn.textContent = "Wrap ▸";
+  wrapBtn.title = "Wrap this scene (coming in task 28.4)";
+  topBar.appendChild(wrapBtn);
+  root.appendChild(topBar);
+
+  // Place header (the room).
+  const header = document.createElement("div");
+  header.className = "scene-place-header";
+  if (scene.locationEntityId) {
+    const placeName = nodeMap.get(scene.locationEntityId)?.name ?? scene.locationEntityId;
+    const nameField = makeClickToEditField({
+      tag: "h2",
+      className: "scene-place-name",
+      testid: "scene-place-name",
+      dataAttrs: { "data-entity-id": scene.locationEntityId },
+      inputTestid: "scene-place-name-input",
+      value: placeName,
+      placeholder: "Place name…",
+      save: (v) => spApi(`/api/graph/nodes/${encodeURIComponent(scene.locationEntityId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), data: { name: v } })
+      })
+    });
+    header.appendChild(nameField.el);
+  } else {
+    const noPlace = document.createElement("p");
+    noPlace.className = "hint";
+    noPlace.textContent = "This scene has no anchor place.";
+    header.appendChild(noPlace);
+  }
+
+  // This-scene narration (serif read-aloud box). Always rendered, even empty.
+  const narrationField = makeClickToEditField({
+    tag: "div",
+    className: "scene-narration read-aloud",
+    testid: "scene-narration",
+    dataAttrs: { "data-scene-id": scene.id },
+    inputTestid: "scene-narration-input",
+    value: narration?.text ?? "",
+    placeholder: "Read-aloud narration for this scene…",
+    emptyText: "Click to add this scene's read-aloud narration…",
+    save: (v) => spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/narration`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), text: v })
+    })
+  });
+  header.appendChild(narrationField.el);
+  root.appendChild(header);
+
+  // Elements list.
+  const elementsSection = document.createElement("div");
+  elementsSection.className = "scene-elements-section";
+  const elementsHeading = document.createElement("h3");
+  elementsHeading.className = "scene-section-heading";
+  elementsHeading.textContent = "Elements";
+  elementsSection.appendChild(elementsHeading);
+  const listHost = document.createElement("div");
+  elementsSection.appendChild(listHost);
+  root.appendChild(elementsSection);
+  if (stale()) return;
+  await renderSceneElementsList(scene, listHost);
+  if (stale()) return;
+
+  // Inline events / encounters / notes (task-required, reusing existing
+  // per-scene SessionNote + saved-encounter mechanisms). Not e2e-gated here.
+  const extrasSection = document.createElement("div");
+  extrasSection.className = "scene-extras-section";
+  const extrasHeading = document.createElement("h3");
+  extrasHeading.className = "scene-section-heading";
+  extrasHeading.textContent = "Events, encounters & notes";
+  extrasSection.appendChild(extrasHeading);
+
+  const extrasBar = document.createElement("div");
+  extrasBar.className = "scene-extras-bar";
+  const eventCtl = mountAddEventControl(scene);
+  const encounterCtl = mountAddEncounterControl(scene);
+  extrasBar.append(eventCtl.btn, encounterCtl.btn);
+  extrasSection.append(extrasBar, eventCtl.panel, encounterCtl.panel);
+
+  const savedEncounters = await fetchSavedEncounters(scene.id);
+  if (stale()) return;
+  extrasSection.appendChild(renderSavedEncountersList(scene.id, savedEncounters));
+  root.appendChild(extrasSection);
+
+  // Beyond-this-room drawer (disclosure -- graph neighbors + guarded delete).
+  root.appendChild(buildBeyondRoomDrawer(scene, nodeMap, graph.edges || []));
+
+  if (stale()) return;
+  container.innerHTML = "";
+  container.appendChild(root);
+
+  // [ / ] / Esc keyboard shortcuts (design record). Detach any prior handler
+  // first so navigations never stack listeners.
+  detachSceneKeydownHandler();
+  const handler = (e) => {
+    const t = e.target;
+    if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) return;
+    if (e.key === "[") { if (prevId) location.hash = `session-planner/${prevId}`; }
+    else if (e.key === "]") { if (nextId) location.hash = `session-planner/${nextId}`; }
+    else if (e.key === "Escape") { location.hash = firstPlan ? `plans/${firstPlan.id}` : "plans"; }
+  };
+  document.addEventListener("keydown", handler);
+  activeSceneKeydownHandler = handler;
+}
+
+/**
+ * Phase 28 task 28.3: `#session-planner/<sceneId>` renders THE one edit-in-
+ * place scene page. The URL is the sole source of truth -- the sceneId comes
+ * straight from the hash; no localStorage where-am-I heuristics, no chain /
+ * plan / table dispatch. A bare `#session-planner` or `#session-planner/new`
+ * (no real sceneId) is out of scope per the contract -- a minimal hint points
+ * back to the plan shelf, where scene creation lives.
+ */
 export async function renderSessionPlanner(sceneIdArg) {
   const container = document.getElementById("session-planner-body");
   if (!container) return;
 
+  const myToken = ++sceneRenderToken;
+  detachSceneKeydownHandler();
   openNotePanels.clear();
+  sceneEditDebounces.clear();
   container.innerHTML = "";
-  chainContainerEl = null;
-  chainSceneIds = [];
-  sceneExtrasCache.clear();
 
   if (!currentWorld()) {
     const p = document.createElement("p");
@@ -3589,84 +4370,21 @@ export async function renderSessionPlanner(sceneIdArg) {
     return;
   }
 
-  const world = currentWorld();
-
-  if (sceneIdArg === "new") {
-    clearLastSceneId(world);
-    renderBootstrap(container);
+  // No real sceneId -> out of scope for this page. Scene creation is always
+  // plan-scoped now (via `#plans/<planId>`'s add-scene ghost-row).
+  if (!sceneIdArg || sceneIdArg === "new" || (typeof sceneIdArg === "string" && sceneIdArg.startsWith("plan/"))) {
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    const link = document.createElement("a");
+    link.href = "#plans";
+    link.textContent = "Go to Plans";
+    hint.append("Open a scene from a plan to edit it. ", link);
+    container.appendChild(hint);
     return;
   }
 
-  // Phase 27 task 27.4 (F3): the NEW `#session-planner/plan/<planId>` route
-  // opens that plan directly (empty -> plan-empty-state; non-empty ->
-  // plan-scoped scene-chain), and persists it as the world's active plan.
-  if (typeof sceneIdArg === "string" && sceneIdArg.startsWith("plan/")) {
-    const planId = sceneIdArg.slice("plan/".length);
-    const loading = document.createElement("p");
-    loading.className = "hint";
-    loading.textContent = "Loading plan…";
-    container.appendChild(loading);
-    try {
-      await loadAndRenderPlan(planId, null, container, {});
-    } catch (err) {
-      container.innerHTML = "";
-      const p = document.createElement("p");
-      p.className = "hint";
-      p.textContent = `Could not load plan: ${err.message}`;
-      container.appendChild(p);
-    }
-    return;
-  }
-
-  const { sceneId: parsedSceneId, mode } = parseSceneModeArg(sceneIdArg);
-
-  let effectiveSceneId = parsedSceneId;
-  let resumedFromStorage = false;
-  if (!effectiveSceneId) {
-    effectiveSceneId = loadLastSceneId(world);
-    resumedFromStorage = !!effectiveSceneId;
-  }
-
-  if (!effectiveSceneId) {
-    renderBootstrap(container);
-    return;
-  }
-
-  const loading = document.createElement("p");
-  loading.className = "hint";
-  loading.textContent = "Loading session brief…";
-  container.appendChild(loading);
-
-  try {
-    if (mode === "table") {
-      await loadAndRenderTableMode(effectiveSceneId, container, { replaceState: resumedFromStorage });
-    } else {
-      // Phase 27 task 27.4 (F3): make the existing `#session-planner/<sceneId>`
-      // dispatch plan-AWARE via the SHARED resolveActivePlan (no second
-      // plan-resolution path). A scene that's a genuine member of a Plan
-      // renders the plan-scoped view with that scene as current; a scene that
-      // belongs to NO plan takes the LEGACY FALLBACK (whole-world chain),
-      // unchanged -- this is what keeps every pre-Phase-27 test green.
-      const plans = (await spApi(`/api/scene-planning/plans${spWithWorld()}`)).plans ?? [];
-      const activePlan = resolveActivePlan(world, effectiveSceneId, plans);
-      if (activePlan && activePlan.sceneIds.includes(effectiveSceneId)) {
-        await loadAndRenderPlan(activePlan.id, effectiveSceneId, container, { replaceState: resumedFromStorage });
-      } else {
-        await loadAndRenderChain(effectiveSceneId, container, { replaceState: resumedFromStorage });
-      }
-    }
-  } catch (err) {
-    container.innerHTML = "";
-    if (resumedFromStorage) {
-      // The persisted scene no longer resolves -- never trap the DM on a
-      // dead resume target with no escape hatch.
-      clearLastSceneId(world);
-      renderBootstrap(container);
-      return;
-    }
-    const p = document.createElement("p");
-    p.className = "hint";
-    p.textContent = `Could not load session brief: ${err.message}`;
-    container.appendChild(p);
-  }
+  // The arg may carry a legacy `?mode=table` suffix from an old bookmark --
+  // strip it; there are no modes any more.
+  const sceneId = String(sceneIdArg).split("?")[0];
+  await renderScenePage(container, sceneId, myToken);
 }

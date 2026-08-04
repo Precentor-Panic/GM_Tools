@@ -1063,3 +1063,81 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .editable-list-ghost-row:hover { color: var(--text); border-color: var(--accent); }
 
 .plan-scene-row-name { font-weight: 600; }
+
+/* =========================================================================
+   Phase 28 task 28.3 -- THE SCENE PAGE (edit-in-place, reads like a printed
+   module page). Functional first pass; the polished printed-page aesthetic is
+   task 28.6. The load-bearing rule here: edit chrome is invisible at rest --
+   a value looks like typeset text until clicked.
+   ========================================================================= */
+.scene-page { max-width: 60rem; }
+
+.scene-top-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding-bottom: 0.5rem; margin-bottom: 0.75rem; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--bg, var(--card-bg)); z-index: 2;
+}
+.scene-breadcrumb { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.scene-breadcrumb-back-btn { font-weight: 600; }
+.scene-wrap-toggle-btn { flex-shrink: 0; }
+
+.scene-place-header { margin-bottom: 1.25rem; }
+.scene-place-name { font-size: 1.6rem; font-weight: 700; margin: 0 0 0.4rem; cursor: text; }
+
+.scene-narration.read-aloud {
+  font-family: Georgia, "Times New Roman", serif; font-size: 1.05rem; line-height: 1.5;
+  border-left: 3px solid var(--accent); background: var(--card-bg);
+  padding: 0.7rem 0.9rem; border-radius: 0 6px 6px 0; cursor: text; white-space: pre-wrap;
+}
+
+/* Any editable value at rest -- transparent, text-like; only the empty-state
+   placeholder is dimmed so the GM knows it is clickable. */
+.scene-field--empty { color: var(--text-muted); font-style: italic; }
+.scene-edit-textarea {
+  width: 100%; box-sizing: border-box; font: inherit; color: inherit;
+  background: var(--input-bg, transparent); border: 1px solid var(--accent);
+  border-radius: 4px; padding: 0.3rem 0.4rem; resize: none; overflow: hidden; min-height: 1.6em;
+}
+
+.scene-section-heading { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 1.5rem 0 0.5rem; }
+
+.scene-elements-list { display: flex; flex-direction: column; gap: 0.6rem; }
+.scene-element-row {
+  border: 1px solid var(--border); border-radius: 8px; padding: 0.55rem 0.75rem; background: var(--card-bg);
+}
+/* KEY vs MUNDANE by visual weight (functional first pass; polish in 28.6). */
+.scene-element-row--key { border-left: 4px solid var(--accent); }
+.scene-element-row--mundane { border-left: 4px solid transparent; opacity: 0.92; }
+.scene-element-row--mundane .scene-element-glyph { color: var(--text-muted); }
+.scene-element-head { display: flex; align-items: center; gap: 0.5rem; }
+.scene-element-glyph { flex-shrink: 0; }
+.scene-element-name { font-weight: 600; cursor: text; flex: 1 1 auto; min-width: 0; }
+.scene-element-graph-badge {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em;
+  background: var(--accent); color: #fff; border-radius: 4px; padding: 0.05rem 0.35rem; flex-shrink: 0;
+}
+.scene-element-controls { display: flex; align-items: center; gap: 0.15rem; margin-left: auto; flex-shrink: 0; }
+.scene-element-key-toggle { opacity: 0.6; }
+.scene-element-key-toggle[data-kind="graph"] { opacity: 1; color: var(--accent); }
+.scene-element-key-toggle:hover { opacity: 1; }
+.scene-element-remove-btn { opacity: 0.5; }
+.scene-element-remove-btn:hover { opacity: 1; color: var(--reject); }
+
+.scene-element-fields { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.35rem; padding-left: 1.3rem; }
+.pf-line { display: flex; gap: 0.5rem; align-items: baseline; }
+.pf-label { flex: 0 0 5rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.pf-value { flex: 1 1 auto; min-width: 0; cursor: text; white-space: pre-wrap; }
+.scene-add-field { padding-left: 1.3rem; margin-top: 0.3rem; }
+.scene-add-field-menu { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.25rem; }
+
+.scene-add-element-row { margin-top: 0.2rem; }
+.scene-add-element-name-input { width: 20rem; max-width: 100%; }
+
+.scene-extras-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+.beyond-room-drawer { margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 0.75rem; }
+.beyond-room-drawer-toggle { cursor: pointer; color: var(--text-muted); font-size: 0.9rem; }
+.beyond-room-drawer-body { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.5rem; }
+.beyond-room-neighbor-item { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.beyond-room-neighbor-name { flex: 1 1 auto; min-width: 0; }
+.beyond-room-neighbor-delete-status { width: 100%; color: var(--reject); }
