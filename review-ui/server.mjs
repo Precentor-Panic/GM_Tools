@@ -206,6 +206,15 @@ import { proposeUpdatesForPlan, proposeUpdatesForScene } from "../session-planne
 import { createElement, listElementsForScene, updateElement, removeElement, promoteElement, demoteElement } from "../session-planner/scene-elements.mjs";
 import { getCurrentSceneNarration, saveSceneNarration } from "../session-planner/scene-narration.mjs";
 
+// Phase 28 task 28.4, §E -- the inline `✦` functional-prep assist. Thin
+// wrapper over the pure, Foundry-free assistScenePrep (client injection stays
+// in-process only, same established HTTP-round-trip limitation as
+// propose-updates / writeup-propose -- a live client cannot survive fetch()).
+// It returns validated element DRAFTS; the frontend persists them through the
+// ordinary scene-elements create/update routes (a scene-local authoring aid,
+// NOT a graph write -- see element-assist.mjs's header).
+import { assistScenePrep } from "../session-planner/element-assist.mjs";
+
 // Phase 26 task 26.10, §26.F -- "Drop this into Foundry". Lives directly
 // under review-ui/ (not wf-mcp-server/lib/) -- see foundry-push.mjs's own
 // header for why (playwright's runtime dependency only resolves from
@@ -2045,6 +2054,17 @@ async function handleApi(req, res, url, parts) {
     const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await proposeUpdatesForScene(dir, w, parts[3]);
+    return sendJson(res, 200, result);
+  }
+
+  // Phase 28 task 28.4, §E -- POST /api/scene-planning/scenes/:sceneId/assist-prep
+  // { world, mode?, elementName? } -- the inline `✦` functional-prep assist.
+  // Returns { elements } (validated drafts, never persisted server-side).
+  if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "assist-prep") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const result = await assistScenePrep(dir, w, parts[3], { mode: body.mode, elementName: body.elementName });
     return sendJson(res, 200, result);
   }
 

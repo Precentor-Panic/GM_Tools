@@ -1081,6 +1081,25 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .scene-breadcrumb-back-btn { font-weight: 600; }
 .scene-wrap-toggle-btn { flex-shrink: 0; }
 
+/* §A -- Wrap panel: an inline slide-down, not a modal. */
+.wrap-panel {
+  border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg);
+  padding: 0.9rem 1rem; margin: 0 0 1.25rem;
+}
+.wrap-section { padding: 0.5rem 0; }
+.wrap-section + .wrap-section { border-top: 1px solid var(--border); margin-top: 0.5rem; }
+.wrap-section-heading { margin: 0 0 0.4rem; font-size: 0.95rem; font-weight: 700; }
+.wrap-note-intake-result { margin-top: 0.6rem; }
+.wrap-note-intake-headline { margin: 0 0 0.3rem; font-weight: 600; }
+.wrap-promote-list { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.6rem; }
+.wrap-promote-item { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+
+/* §C -- quiet `✦` functional-prep assist ghost links. */
+.scene-assist-ghost { margin: 0.3rem 0 0.6rem; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.scene-assist-propose-link, .scene-assist-draft-link { color: var(--accent); font-size: 0.85rem; opacity: 0.8; }
+.scene-assist-propose-link:hover, .scene-assist-draft-link:hover { opacity: 1; }
+.scene-assist-status { font-size: 0.8rem; }
+
 .scene-place-header { margin-bottom: 1.25rem; }
 .scene-place-name { font-size: 1.6rem; font-weight: 700; margin: 0 0 0.4rem; cursor: text; }
 

@@ -5,7 +5,7 @@
 // <script> tag was switched to type="module" for this).
 "use strict";
 import { renderGraph, showCreateNodeForm, armPlacementMode, seedNodePosition, removeNodePosition } from "./graph-view.js";
-import { renderSessionPlanner, flushActiveNoteSave, cancelActiveRecenter } from "./session-planner-view.js";
+import { renderSessionPlanner, flushActiveNoteSave, cancelActiveRecenter, cancelActiveAssist } from "./session-planner-view.js";
 import { renderCombatPlanning, renderCombatPlanningIngest, cancelActiveCombatPlanningRequest } from "./combat-planning-view.js";
 import { renderScenesTab } from "./scenes-view.js";
 import { renderPlansView } from "./plans-view.js";
@@ -125,6 +125,9 @@ function renderCurrentView() {
   // mechanism, and both are safe to call unconditionally.
   flushActiveNoteSave();
   cancelActiveRecenter();
+  // Phase 28 task 28.4, §C: same cancel-on-navigate convention for the scene
+  // page's inline `✦` functional-prep assist (additive/interruptible LLM call).
+  cancelActiveAssist();
   // Phase 19: the same cancel-on-navigate convention, for this phase's two
   // (and only two) LLM call sites (ingestion submit, non-blank theme-box
   // submit) -- see combat-planning-view.js's own header.

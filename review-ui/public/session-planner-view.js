@@ -735,6 +735,20 @@ export function cancelActiveRecenter() {
   }
 }
 
+// Phase 28 task 28.4, §C -- the inline `✦` functional-prep assist is ADDITIVE
+// and INTERRUPTIBLE: a scene is fully runnable with hand-typed elements and
+// zero model round-trips, and any in-flight assist is abandoned the instant
+// the DM navigates away (mirroring cancelActiveRecenter/cancelActiveScan
+// exactly -- app.js calls this from its single nav-cancel hook).
+let activeAssistController = null;
+
+export function cancelActiveAssist() {
+  if (activeAssistController) {
+    activeAssistController.abort();
+    activeAssistController = null;
+  }
+}
+
 // Phase 26 task 26.7, §26.B: renderBeyondCorridorSummary (the collapsed
 // content/structural-count summary, "Beyond this corridor") was REMOVED
 // entirely.
@@ -3873,6 +3887,9 @@ function buildSceneElementRow(scene, element, refreshList) {
   });
   controls.appendChild(keyToggle);
 
+  // §C: a quiet `✦` draft-fields ghost link (additive/interruptible LLM assist).
+  controls.appendChild(buildDraftFieldsGhostLink(scene, element, refreshList));
+
   const removeBtn = document.createElement("button");
   removeBtn.type = "button";
   removeBtn.className = "icon-btn scene-element-remove-btn";
@@ -4184,6 +4201,294 @@ function buildBeyondRoomDrawer(scene, nodeMap, edges) {
 }
 
 // ---------------------------------------------------------------------------
+// §A -- "Wrap this scene": an inline slide-down panel (never a modal, never a
+// navigation) with two review-gated, proposes-never-auto-writes sub-sections:
+//   (1) note-intake -> POST .../propose-updates (the real 28.1 route) surfaces
+//       a REAL, reachable review batch reached through the EXISTING, unmodified
+//       #review/<batchId> screen -- nothing writes to the graph until it's
+//       accepted there (the standing no-silent-auto-write invariant).
+//   (2) element-promotion -> a pre-checked, skimmable checklist over this
+//       scene's CURRENTLY scene-local elements; confirming promotes ONLY the
+//       still-checked ones through the SAME per-element promote route the `⭑`
+//       gesture uses (no second promotion mechanism). Merely opening the panel
+//       / rendering the checklist promotes NOTHING.
+// ---------------------------------------------------------------------------
+function buildWrapPanel(scene, refreshElements) {
+  const panel = document.createElement("div");
+  panel.className = "wrap-panel";
+  panel.setAttribute("data-testid", "wrap-panel");
+  panel.setAttribute("data-scene-id", scene.id);
+  panel.hidden = true;
+
+  // (1) Note-intake sub-section.
+  const noteSection = document.createElement("div");
+  noteSection.className = "wrap-section wrap-note-intake";
+  const noteHeading = document.createElement("h4");
+  noteHeading.className = "wrap-section-heading";
+  noteHeading.textContent = "Propose graph updates from this scene's notes";
+  noteSection.appendChild(noteHeading);
+
+  const noteHint = document.createElement("p");
+  noteHint.className = "hint";
+  noteHint.textContent = "Reads this scene's Add Event notes and proposes graph updates for review. Nothing is written until you accept it in Batch Review.";
+  noteSection.appendChild(noteHint);
+
+  const runBtn = document.createElement("button");
+  runBtn.type = "button";
+  runBtn.className = "btn wrap-note-intake-run-btn";
+  runBtn.setAttribute("data-testid", "wrap-note-intake-run-btn");
+  runBtn.setAttribute("data-scene-id", scene.id);
+  runBtn.textContent = "Propose from notes";
+  noteSection.appendChild(runBtn);
+
+  const resultHost = document.createElement("div");
+  resultHost.className = "wrap-note-intake-result-host";
+  noteSection.appendChild(resultHost);
+
+  runBtn.addEventListener("click", async () => {
+    runBtn.disabled = true;
+    resultHost.innerHTML = "";
+    const pending = document.createElement("p");
+    pending.className = "hint";
+    pending.textContent = "Reading this scene's notes…";
+    resultHost.appendChild(pending);
+    try {
+      const data = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/propose-updates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      });
+      resultHost.innerHTML = "";
+      const result = document.createElement("div");
+      result.className = "wrap-note-intake-result";
+      result.setAttribute("data-testid", "wrap-note-intake-result");
+
+      const headline = document.createElement("p");
+      headline.className = "wrap-note-intake-headline";
+      headline.textContent = data.headline || `${data.mutationCount ?? 0} proposed update${(data.mutationCount ?? 0) === 1 ? "" : "s"} from this scene's notes.`;
+      result.appendChild(headline);
+
+      const link = document.createElement("button");
+      link.type = "button";
+      link.className = "link-btn wrap-review-batch-link";
+      link.setAttribute("data-testid", "wrap-review-batch-link");
+      link.setAttribute("data-batch-id", data.batchId);
+      link.textContent = "Review proposed updates →";
+      link.addEventListener("click", () => { location.hash = `review/${data.batchId}`; });
+      result.appendChild(link);
+
+      resultHost.appendChild(result);
+    } catch (err) {
+      resultHost.innerHTML = "";
+      const errP = document.createElement("p");
+      errP.className = "hint";
+      errP.textContent = `Could not propose updates: ${err.message}`;
+      resultHost.appendChild(errP);
+      runBtn.disabled = false;
+    }
+  });
+  panel.appendChild(noteSection);
+
+  // (2) Element-promotion sub-section (checklist populated on open).
+  const promoteSection = document.createElement("div");
+  promoteSection.className = "wrap-section wrap-promote";
+  const promoteHeading = document.createElement("h4");
+  promoteHeading.className = "wrap-section-heading";
+  promoteHeading.textContent = "Promote scene-local elements to the graph";
+  promoteSection.appendChild(promoteHeading);
+
+  const promoteHost = document.createElement("div");
+  promoteHost.className = "wrap-promote-host";
+  promoteHost.setAttribute("data-wrap-promote-host", scene.id);
+  promoteSection.appendChild(promoteHost);
+  panel.appendChild(promoteSection);
+
+  return panel;
+}
+
+/**
+ * (Re)render the Wrap panel's promotion checklist over this scene's CURRENTLY
+ * scene-local elements. Pre-checked by default; confirm promotes only checked
+ * items via the SAME per-element promote route the `⭑` gesture uses, then
+ * re-renders the scene-element rows in place (data-kind flips to "graph") and
+ * refreshes this checklist (freshly-promoted items drop off it).
+ */
+async function populateWrapPromoteList(scene, panel, refreshElements) {
+  const host = panel.querySelector("[data-wrap-promote-host]");
+  if (!host) return;
+  host.innerHTML = "";
+
+  let elements = [];
+  try {
+    ({ elements } = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements${spWithWorld()}`));
+  } catch {
+    elements = [];
+  }
+  const locals = elements.filter((e) => e.kind === "local");
+
+  const list = document.createElement("div");
+  list.className = "wrap-promote-list";
+  list.setAttribute("data-testid", "wrap-promote-list");
+  list.setAttribute("data-scene-id", scene.id);
+
+  if (!locals.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No scene-local elements to promote.";
+    list.appendChild(empty);
+    host.appendChild(list);
+    return;
+  }
+
+  for (const el of locals) {
+    const item = document.createElement("label");
+    item.className = "wrap-promote-item";
+    item.setAttribute("data-testid", "wrap-promote-item");
+    item.setAttribute("data-element-id", el.id);
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "wrap-promote-checkbox";
+    cb.setAttribute("data-testid", "wrap-promote-checkbox");
+    cb.setAttribute("data-element-id", el.id);
+    cb.checked = true; // pre-selected -- skimmable, reject-easy
+
+    const name = document.createElement("span");
+    name.className = "wrap-promote-item-name";
+    name.textContent = el.name || "(unnamed element)";
+
+    item.append(cb, name);
+    list.appendChild(item);
+  }
+  host.appendChild(list);
+
+  const confirm = document.createElement("button");
+  confirm.type = "button";
+  confirm.className = "btn wrap-promote-confirm-btn";
+  confirm.setAttribute("data-testid", "wrap-promote-confirm-btn");
+  confirm.setAttribute("data-scene-id", scene.id);
+  confirm.textContent = "Promote selected";
+  confirm.addEventListener("click", async () => {
+    confirm.disabled = true;
+    const checkedIds = [...list.querySelectorAll('[data-testid="wrap-promote-checkbox"]')]
+      .filter((c) => c.checked)
+      .map((c) => c.getAttribute("data-element-id"));
+    try {
+      for (const elementId of checkedIds) {
+        await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/${encodeURIComponent(elementId)}/promote`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: currentWorld() })
+        });
+      }
+      // Re-render the scene-element rows in place so each promoted row's
+      // data-kind flips to "graph" (no full-page reload), then refresh this
+      // checklist so freshly-promoted elements drop off it.
+      await refreshElements();
+      await populateWrapPromoteList(scene, panel, refreshElements);
+    } catch (err) {
+      confirm.disabled = false;
+      const errP = document.createElement("p");
+      errP.className = "hint";
+      errP.textContent = `Could not promote: ${err.message}`;
+      host.appendChild(errP);
+    }
+  });
+  host.appendChild(confirm);
+}
+
+// ---------------------------------------------------------------------------
+// §C -- the inline `✦` functional-prep assist: quiet ghost links, never a
+// button bar, never a gate. Each call is interruptible (AbortController,
+// cancelled on navigation via app.js's cancelActiveAssist()). Drafts write
+// ONLY to the scene-elements store (a scene-local authoring aid, same surface
+// as hand-typing) -- NEVER to the graph; promotion stays the explicit `⭑` /
+// Wrap step.
+// ---------------------------------------------------------------------------
+async function runSceneAssist(scene, params, statusEl) {
+  cancelActiveAssist();
+  const controller = new AbortController();
+  activeAssistController = controller;
+  try {
+    const data = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/assist-prep`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), ...params }),
+      signal: controller.signal
+    });
+    if (activeAssistController === controller) activeAssistController = null;
+    return data;
+  } catch (err) {
+    if (err.name === "AbortError") return null; // superseded / navigated away -- not a real failure
+    if (statusEl) statusEl.textContent = `✦ assist unavailable: ${err.message}`;
+    return null;
+  }
+}
+
+function buildProposeElementsGhostLink(scene, refreshElements) {
+  const wrap = document.createElement("div");
+  wrap.className = "scene-assist-ghost";
+
+  const link = document.createElement("button");
+  link.type = "button";
+  link.className = "link-btn scene-assist-propose-link";
+  link.setAttribute("data-testid", "scene-assist-propose-link");
+  link.setAttribute("data-scene-id", scene.id);
+  link.textContent = "✦ propose elements here";
+  link.title = "Ask the model to suggest interactable elements for this room (additive — you review and keep what you want)";
+
+  const status = document.createElement("span");
+  status.className = "scene-assist-status hint";
+
+  link.addEventListener("click", async () => {
+    link.disabled = true;
+    status.textContent = "✦ thinking…";
+    const data = await runSceneAssist(scene, { mode: "propose-elements" }, status);
+    link.disabled = false;
+    if (!data) return;
+    const drafts = data.elements || [];
+    if (!drafts.length) { status.textContent = "✦ no suggestions."; return; }
+    // Persist each draft through the ORDINARY scene-elements create route (a
+    // scene-local authoring aid -- not a graph write, not review-gated).
+    for (const el of drafts) {
+      await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), name: el.name, fields: el.fields || {} })
+      }).catch(() => {});
+    }
+    status.textContent = `✦ added ${drafts.length} suggested element${drafts.length === 1 ? "" : "s"} — edit or remove freely.`;
+    await refreshElements();
+  });
+
+  wrap.append(link, status);
+  return wrap;
+}
+
+function buildDraftFieldsGhostLink(scene, element, refreshList) {
+  const link = document.createElement("button");
+  link.type = "button";
+  link.className = "link-btn scene-assist-draft-link";
+  link.setAttribute("data-testid", "scene-assist-draft-link");
+  link.setAttribute("data-element-id", element.id);
+  link.textContent = "✦ draft fields";
+  link.title = "Ask the model to draft functional-prep fields for this element (additive; you keep what you want)";
+  link.addEventListener("click", async () => {
+    link.disabled = true;
+    const data = await runSceneAssist(scene, { mode: "draft-fields", elementName: element.name });
+    if (!data || !(data.elements || []).length) { link.disabled = false; return; }
+    const draft = data.elements[0];
+    await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/${encodeURIComponent(element.id)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), fields: draft.fields || {} })
+    }).catch(() => {});
+    await refreshList();
+  });
+  return link;
+}
+
+// ---------------------------------------------------------------------------
 // The full scene page assembly.
 // ---------------------------------------------------------------------------
 async function renderScenePage(container, sceneId, token) {
@@ -4238,7 +4543,7 @@ async function renderScenePage(container, sceneId, token) {
   wrapBtn.setAttribute("data-testid", "wrap-toggle-btn");
   wrapBtn.setAttribute("data-scene-id", scene.id);
   wrapBtn.textContent = "Wrap ▸";
-  wrapBtn.title = "Wrap this scene (coming in task 28.4)";
+  wrapBtn.title = "Wrap this scene: propose graph updates from notes + promote elements";
   topBar.appendChild(wrapBtn);
   root.appendChild(topBar);
 
@@ -4296,11 +4601,27 @@ async function renderScenePage(container, sceneId, token) {
   elementsHeading.textContent = "Elements";
   elementsSection.appendChild(elementsHeading);
   const listHost = document.createElement("div");
+  const refreshElements = () => renderSceneElementsList(scene, listHost);
+  // §C: a quiet, scene-level `✦` ghost link to propose elements for this room
+  // (additive/interruptible; the room is fully runnable without it).
+  elementsSection.appendChild(buildProposeElementsGhostLink(scene, refreshElements));
   elementsSection.appendChild(listHost);
   root.appendChild(elementsSection);
   if (stale()) return;
-  await renderSceneElementsList(scene, listHost);
+  await refreshElements();
   if (stale()) return;
+
+  // §A: the Wrap panel -- an inline slide-down under the top bar (no modal, no
+  // navigation). Built here (after listHost/refreshElements exist) and slotted
+  // right beneath the top bar so it reads as a slide-down from `Wrap ▸`.
+  const wrapPanel = buildWrapPanel(scene, refreshElements);
+  topBar.after(wrapPanel);
+  wrapBtn.addEventListener("click", async () => {
+    const opening = wrapPanel.hidden;
+    wrapPanel.hidden = !opening;
+    wrapBtn.textContent = opening ? "Wrap ▾" : "Wrap ▸";
+    if (opening) await populateWrapPromoteList(scene, wrapPanel, refreshElements);
+  });
 
   // Inline events / encounters / notes (task-required, reusing existing
   // per-scene SessionNote + saved-encounter mechanisms). Not e2e-gated here.

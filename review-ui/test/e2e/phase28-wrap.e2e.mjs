@@ -58,14 +58,19 @@ after(async () => {
   cleanupScratchEnv(scratchDir);
 });
 
-test("ROUTE LEVEL: POST .../scenes/:sceneId/propose-updates does not exist yet (404), the new contract this suite locks in", async () => {
+test("ROUTE LEVEL: POST .../scenes/:sceneId/propose-updates is genuinely wired (28.1) -- a scene with no pending notes yields the built no-notes validation error, NOT a 404 'no route'", async () => {
   const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "wrap-place-a" });
-  const { status } = await proposeUpdatesForSceneViaRoute(base, WORLD, scene.id);
-  // Deliberately asserting the CURRENT (red) state -- once 28.1 builds this
-  // route, this specific assertion is expected to need updating to a real
-  // 200/shape check; that update is 28.1's own acceptance criterion, not
-  // this task's.
-  assert.equal(status, 404, "this locks in that the scene-scoped propose-updates route is genuinely new, not accidentally already present under a different name");
+  const { status, body } = await proposeUpdatesForSceneViaRoute(base, WORLD, scene.id);
+  // 28.1 built the route + proposeUpdatesForScene (session-planner/plan-
+  // updates.mjs); this test now proves the BUILT reality without a real LLM
+  // call. This scene has no pending Add Event notes, so proposeUpdatesForScene
+  // throws its deliberate "no pending notes" validation error BEFORE ever
+  // reaching importWriteup / the model -- review-ui/server.mjs's statusForError
+  // maps that ordinary caller-facing validation throw to 400 (definitively NOT
+  // the old 404 "No route", which would mean the route was never wired).
+  assert.notEqual(status, 404, "the scene-scoped propose-updates route now EXISTS (28.1) -- a 404 here would mean it was never wired");
+  assert.equal(status, 400, "a scene with no pending notes surfaces proposeUpdatesForScene's deliberate no-notes validation error, mapped to 400 by statusForError");
+  assert.match(body?.error ?? "", /no pending notes/i, "the built route reached proposeUpdatesForScene and surfaced its real no-notes message, proving genuine wiring rather than a generic route miss");
 });
 
 test("UI: Wrap opens an inline panel (no navigation); running note-intake (mocked route) surfaces a REAL, reachable review batch -- proposes, never auto-writes", async () => {
