@@ -26,13 +26,11 @@ import { test, before, after } from "node:test";
  * `/api/combat-planning/*` precedent exactly, one segment per feature area.
  *
  * ---------------------------------------------------------------------------
- * GET /api/scene-planning/linkage?world=&sceneId=&maxHops=
- * ---------------------------------------------------------------------------
- * Thin wrapper: loads the live snapshot (resolveDir(), no client override)
- * then calls session-planner/scene-linkage.mjs's
- * linkedScenesForScene(w, sceneId, {entities,edges}, {maxHops: Number(maxHops)||undefined}).
- * Response 200: { linked: [...] }.
- *
+ * GET /api/scene-planning/linkage?world=&sceneId=&maxHops= -- REMOVED (Phase
+ * 28 task 28.5, along with session-planner/scene-linkage.mjs and its own
+ * route tests below): scene-to-scene linking is dropped entirely, per the
+ * design record; the Scenes tab's "In plans" chip row replaced its only
+ * real consumer.
  * ---------------------------------------------------------------------------
  * POST /api/scene-planning/transit-entity   { world, fromEntityId, toEntityId, name? }
  * ---------------------------------------------------------------------------
@@ -175,13 +173,10 @@ async function deleteJson(path, body) {
 
 // ------------------------------------------------------------ functional flow
 
-test("GET /api/scene-planning/linkage returns linked scenes for a valid scene", async () => {
-  const other = createScene(WORLD, { locationEntityId: "sp-mid" });
-  const { status, body } = await getJson(`/api/scene-planning/linkage?world=${WORLD}&sceneId=${anchoredScene.id}`);
-  assert.equal(status, 200);
-  assert.ok(Array.isArray(body.linked));
-  assert.ok(body.linked.some((l) => l.sceneId === other.id));
-});
+// Phase 28 task 28.5 removed GET /api/scene-planning/linkage (+ its route
+// tests, formerly here) along with session-planner/scene-linkage.mjs -- the
+// Scenes tab's "linked scenes" panel that was its only real consumer is
+// replaced by the read-only "In plans" chip row.
 
 test("POST /api/scene-planning/transit-entity creates a real place entity with attributes.isTransit", async () => {
   const { status, body } = await postJson("/api/scene-planning/transit-entity", {
@@ -247,12 +242,6 @@ test("scene-undo session routes: start -> record -> peek -> last -> clear, real 
 // -------------------------------------------------------------------- SECURITY
 
 const MALICIOUS_WORLD = "../../../../etc";
-
-test("SECURITY: GET /api/scene-planning/linkage rejects a path-traversal-shaped world id with 400", async () => {
-  const { status, body } = await getJson(`/api/scene-planning/linkage?world=${encodeURIComponent(MALICIOUS_WORLD)}&sceneId=x`);
-  assert.equal(status, 400);
-  assert.match(body.error, /Invalid world id/);
-});
 
 test("SECURITY: POST /api/scene-planning/transit-entity rejects a path-traversal-shaped world id with 400", async () => {
   const { status, body } = await postJson("/api/scene-planning/transit-entity", { world: MALICIOUS_WORLD, fromEntityId: "a", toEntityId: "b" });
@@ -330,14 +319,6 @@ test("SECURITY: POST /api/scene-planning/quick-gen rejects a path-traversal-shap
   const { status, body } = await postJson("/api/scene-planning/quick-gen", { world: MALICIOUS_WORLD, prompt: "x" });
   assert.equal(status, 400);
   assert.match(body.error, /Invalid world id/);
-});
-
-test("SECURITY: a client-supplied dataDir is never honored by GET /api/scene-planning/linkage -- resolves from server-side env config regardless", async () => {
-  const { status, body } = await getJson(
-    `/api/scene-planning/linkage?world=${WORLD}&sceneId=${anchoredScene.id}&dataDir=${encodeURIComponent("../../../etc")}`
-  );
-  assert.equal(status, 200, "must still succeed against the REAL configured dataDir, completely ignoring the bogus client-supplied one");
-  assert.ok(Array.isArray(body.linked));
 });
 
 test("SECURITY: a client-supplied dataDir is never honored by POST /api/scene-planning/transit-entity -- resolves from server-side env config regardless", async () => {

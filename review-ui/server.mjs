@@ -171,7 +171,6 @@ import { suggestEncounter, scoreCombination } from "../combat-planning/encounter
 // with NO client-supplied dataDir override anywhere below. getScene is
 // already imported above (Phase 16's session-planner import block) and
 // reused here unmodified.
-import { linkedScenesForScene } from "../session-planner/scene-linkage.mjs";
 import { createTransitEntity } from "../session-planner/transit-entity.mjs";
 import { addNodeToScene, removeNodeFromScene, getSceneMembership, offerInterveningNodes } from "../session-planner/scene-membership.mjs";
 import {
@@ -1722,16 +1721,12 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { scenes });
   }
 
-  // GET /api/scene-planning/linkage?world=&sceneId=&maxHops=
-  if (method === "GET" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "linkage") {
-    const w = resolveWorld(q.get("world"));
-    const dir = resolveDir();
-    const { entities, edges } = loadSnapshot(dir, w).snapshot;
-    const maxHopsRaw = q.get("maxHops");
-    const maxHops = maxHopsRaw ? Number(maxHopsRaw) : undefined;
-    const linked = linkedScenesForScene(w, q.get("sceneId"), { entities, edges }, { maxHops });
-    return sendJson(res, 200, { linked });
-  }
+  // Phase 28 task 28.5 removed GET /api/scene-planning/linkage (+ its
+  // session-planner/scene-linkage.mjs import): the Scenes tab's "linked
+  // scenes" panel that was its only real consumer is replaced by the
+  // read-only "In plans" chip row (GET /api/scene-planning/scenes/:sceneId/
+  // plans, below) -- scene-to-scene linking is dropped entirely, per the
+  // design record.
 
   // POST /api/scene-planning/transit-entity   { world, fromEntityId, toEntityId, name? }
   if (method === "POST" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "transit-entity") {

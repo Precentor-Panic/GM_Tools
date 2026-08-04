@@ -5,7 +5,7 @@
 // <script> tag was switched to type="module" for this).
 "use strict";
 import { renderGraph, showCreateNodeForm, armPlacementMode, seedNodePosition, removeNodePosition } from "./graph-view.js";
-import { renderSessionPlanner, flushActiveNoteSave, cancelActiveRecenter, cancelActiveAssist } from "./session-planner-view.js";
+import { renderSessionPlanner, flushActiveNoteSave, cancelActiveAssist } from "./session-planner-view.js";
 import { renderCombatPlanning, renderCombatPlanningIngest, cancelActiveCombatPlanningRequest } from "./combat-planning-view.js";
 import { renderScenesTab } from "./scenes-view.js";
 import { renderPlansView } from "./plans-view.js";
@@ -115,16 +115,14 @@ function renderCurrentView() {
   // appear, with no way to know it happened short of stumbling onto it
   // later in the Queue.
   cancelActiveScan();
-  // Phase 17 tasks 17.3/17.5: the SAME cancellation step cancelActiveScan()
-  // already uses on every navigation, extended with two session-planner
-  // siblings -- a guaranteed flush for any open inline note editor (typed
-  // text the DM expects kept, never silently lost just because they
-  // navigated away before the debounce timer fired) and an abort for any
-  // in-flight re-center sequence (derived view state, safe to discard, same
-  // shape as cancelActiveScan itself). Not a second navigation-hook
-  // mechanism, and both are safe to call unconditionally.
+  // Phase 17 task 17.3: the SAME cancellation step cancelActiveScan() already
+  // uses on every navigation -- a guaranteed flush for any open inline note
+  // editor (typed text the DM expects kept, never silently lost just because
+  // they navigated away before the debounce timer fired). Not a second
+  // navigation-hook mechanism. (Phase 28 task 28.5 retired the sibling
+  // cancelActiveRecenter() call -- the re-center feature it guarded is
+  // scrapped along with the old chain view.)
   flushActiveNoteSave();
-  cancelActiveRecenter();
   // Phase 28 task 28.4, §C: same cancel-on-navigate convention for the scene
   // page's inline `✦` functional-prep assist (additive/interruptible LLM call).
   cancelActiveAssist();

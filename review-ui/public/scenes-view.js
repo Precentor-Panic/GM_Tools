@@ -83,104 +83,77 @@ function anchorNameFor(scene, entityInfoMap) {
 }
 
 // ---------------------------------------------------------------------------
-// Linked-scenes inline panel (scene-list-item-linked-toggle ->
-// linked-scenes-panel). A separate, explicit "inspect this scene's chain"
-// action from scene-list-item-open's "jump into planning it" navigation --
-// see this file's sibling DOM-contract test (scenes-tab-linkage.e2e.mjs)
-// header for why those two intents must stay independently reachable.
+// "In plans" read-only chip panel (scene-list-item-plans-toggle ->
+// in-plans-panel). Phase 28 task 28.5: replaces the old scene-to-scene
+// "linked scenes" panel entirely -- containment-in-a-plan is now the
+// organizing principle (see plans/phase-28-tasks.md, the design record's
+// "What gets SCRAPPED" section). Read-only: no link/unlink affordance here,
+// just "which plans is this scene in" plus a jump-in navigation per chip.
 // ---------------------------------------------------------------------------
 
-function renderLinkedSceneItem(entry) {
-  const li = document.createElement("li");
-  li.className = "linked-scene-item";
-  li.setAttribute("data-testid", "linked-scene-item");
-  li.setAttribute("data-scene-id", entry.sceneId);
-
-  const nameEl = document.createElement("span");
-  nameEl.className = "linked-scene-anchor-name";
-  nameEl.setAttribute("data-testid", "linked-scene-anchor-name");
-  // linkedScenesForScene already resolves anchorEntityName server-side --
-  // no second graph lookup needed for this specific field.
-  nameEl.textContent = entry.anchorEntityName ?? entry.anchorEntityId;
-  li.appendChild(nameEl);
-
-  const hopEl = document.createElement("span");
-  hopEl.className = "hint linked-scene-hop-distance";
-  hopEl.setAttribute("data-testid", "linked-scene-hop-distance");
-  hopEl.textContent = ` — ${entry.hopDistance} hop${entry.hopDistance === 1 ? "" : "s"} away`;
-  li.appendChild(hopEl);
-
-  const openBtn = document.createElement("button");
-  openBtn.type = "button";
-  openBtn.className = "btn btn--ghost";
-  openBtn.setAttribute("data-testid", "linked-scene-open");
-  openBtn.textContent = "Open";
-  openBtn.addEventListener("click", () => {
-    // Same real-navigation convention session-planner-view.js's own
-    // renderBootstrap onSelect uses (location.hash assignment, not
-    // history.replaceState) -- this genuinely leaves the Scenes tab.
-    location.hash = `session-planner/${entry.sceneId}`;
+function renderInPlansChip(plan) {
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "btn btn--ghost in-plans-chip";
+  chip.setAttribute("data-testid", "in-plans-chip");
+  chip.setAttribute("data-plan-id", plan.id);
+  chip.textContent = plan.name;
+  chip.addEventListener("click", () => {
+    location.hash = `plans/${plan.id}`;
   });
-  li.appendChild(openBtn);
-
-  return li;
+  return chip;
 }
 
 /**
- * Opens (never closes) the inline linked-scenes panel for one scene-list
- * item. Deliberately idempotent rather than a strict open/close toggle: each
- * scene-list item owns its OWN panelSlot (independent of every other item),
- * so there is no shared/global "currently open panel" to manage, and no
- * test in this phase's DOM contract exercises a close affordance -- a
- * second click while already open/loading is a safe no-op rather than
- * collapsing a panel the DM may still be reading.
+ * Opens (never closes) the inline "In plans" panel for one scene-list item.
+ * Deliberately idempotent rather than a strict open/close toggle -- same
+ * contract the old linked-scenes toggle established: each scene-list item
+ * owns its OWN panelSlot (independent of every other item), so there is no
+ * shared/global "currently open panel" to manage, and a second click while
+ * already open/loading is a safe no-op.
  */
-async function toggleLinkedPanel(sceneId, panelSlot) {
-  if (panelSlot.querySelector('[data-testid="linked-scenes-panel"]')) return;
+async function toggleInPlansPanel(sceneId, panelSlot) {
+  if (panelSlot.querySelector('[data-testid="in-plans-panel"]')) return;
 
   const panel = document.createElement("div");
-  panel.className = "linked-scenes-panel";
-  panel.setAttribute("data-testid", "linked-scenes-panel");
+  panel.className = "in-plans-panel";
+  panel.setAttribute("data-testid", "in-plans-panel");
   panel.setAttribute("data-scene-id", sceneId);
   const loading = document.createElement("div");
   loading.className = "hint";
-  loading.textContent = "Loading linked scenes…";
+  loading.textContent = "Loading plans…";
   panel.appendChild(loading);
   panelSlot.appendChild(panel);
 
-  let linked;
+  let plans;
   try {
-    ({ linked } = await svApi(`/api/scene-planning/linkage${svWithWorld({ sceneId })}`));
+    ({ plans } = await svApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/plans${svWithWorld()}`));
   } catch (err) {
     panel.innerHTML = "";
     const errEl = document.createElement("div");
     errEl.className = "hint";
-    errEl.textContent = `Could not load linked scenes: ${err.message}`;
+    errEl.textContent = `Could not load plans: ${err.message}`;
     panel.appendChild(errEl);
     return;
   }
 
   panel.innerHTML = "";
 
-  if (!linked.length) {
+  if (!plans.length) {
     const empty = document.createElement("div");
-    empty.setAttribute("data-testid", "linked-scenes-empty");
+    empty.setAttribute("data-testid", "in-plans-empty");
     empty.className = "hint";
-    empty.textContent = "No linked scenes nearby.";
+    empty.textContent = "Not in any plan yet.";
     panel.appendChild(empty);
     return;
   }
 
-  // `linked` arrives from GET /api/scene-planning/linkage ALREADY sorted
-  // ascending by hopDistance -- linkedScenesForScene's own documented
-  // contract (session-planner/scene-linkage.mjs). Rendered in that exact
-  // order below; no client-side re-sort.
-  const list = document.createElement("ul");
-  list.className = "linked-scenes-list";
-  for (const entry of linked) {
-    list.appendChild(renderLinkedSceneItem(entry));
+  const chipRow = document.createElement("div");
+  chipRow.className = "in-plans-chip-row";
+  for (const plan of plans) {
+    chipRow.appendChild(renderInPlansChip(plan));
   }
-  panel.appendChild(list);
+  panel.appendChild(chipRow);
 }
 
 // ---------------------------------------------------------------------------
@@ -222,12 +195,13 @@ function renderSceneListItem(scene, entityInfoMap) {
   });
   actions.appendChild(openBtn);
 
-  const linkedToggle = document.createElement("button");
-  linkedToggle.type = "button";
-  linkedToggle.className = "btn btn--ghost";
-  linkedToggle.setAttribute("data-testid", "scene-list-item-linked-toggle");
-  linkedToggle.textContent = "Linked scenes";
-  actions.appendChild(linkedToggle);
+  const plansToggle = document.createElement("button");
+  plansToggle.type = "button";
+  plansToggle.className = "btn btn--ghost";
+  plansToggle.setAttribute("data-testid", "scene-list-item-plans-toggle");
+  plansToggle.setAttribute("data-scene-id", scene.id);
+  plansToggle.textContent = "In plans";
+  actions.appendChild(plansToggle);
 
   // Phase 27 task 27.8, F1: a TRUE delete -- the scene record, every plan
   // membership, and every scene-link are gone; the place entity survives
@@ -249,7 +223,7 @@ function renderSceneListItem(scene, entityInfoMap) {
   panelSlot.className = "scene-list-item-panel-slot";
   li.appendChild(panelSlot);
 
-  linkedToggle.addEventListener("click", () => toggleLinkedPanel(scene.id, panelSlot));
+  plansToggle.addEventListener("click", () => toggleInPlansPanel(scene.id, panelSlot));
 
   let confirmPanel = null;
   deleteBtn.addEventListener("click", () => {
@@ -261,7 +235,7 @@ function renderSceneListItem(scene, entityInfoMap) {
 
     const warning = document.createElement("p");
     warning.className = "hint";
-    warning.textContent = "Delete this scene entirely? It will be removed from every plan and every scene-link -- the underlying location survives, but this scene itself is gone for good.";
+    warning.textContent = "Delete this scene entirely? It will be removed from every plan it's in -- the underlying location survives, but this scene itself is gone for good.";
     confirmPanel.appendChild(warning);
 
     const status = document.createElement("span");
