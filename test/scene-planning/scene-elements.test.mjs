@@ -71,6 +71,7 @@ const {
   updateElement,
   removeElement,
   reorderElements,
+  attachExistingNodeAsElement,
   promoteElement,
   demoteElement,
   sceneElementsRoot,
@@ -83,7 +84,8 @@ const { bootstrapSnapshot, applyHeadless } = await import("../../graph-import/he
 const snapPath = snapshotFilePath(dataDir, WORLD);
 bootstrapSnapshot(snapPath, { worldId: WORLD });
 applyHeadless(snapPath, [
-  { op: "upsert_entity", data: { id: "place-anchor-1", name: "The Sunken Chapel", type: "place", importance: 0.6 } }
+  { op: "upsert_entity", data: { id: "place-anchor-1", name: "The Sunken Chapel", type: "place", importance: 0.6 } },
+  { op: "upsert_entity", data: { id: "npc-fromgraph-1", name: "Ashen Warden Cael", type: "person", importance: 0.5 } }
 ]);
 
 const anchoredScene = createScene(WORLD, { locationEntityId: "place-anchor-1" }, { makeId: () => "scene-anchored-1" });
@@ -94,8 +96,8 @@ test("directory isolation: sceneElementsRoot() honors GM_TOOLS_SCENE_ELEMENTS_DI
   assert.notEqual(sceneElementsRoot(), REPO_DEFAULT_ROOT);
 });
 
-test("SCHEMA_VERSION is exported", () => {
-  assert.equal(SCHEMA_VERSION, 1);
+test("SCHEMA_VERSION is exported -- bumped to 2 by Phase 29 task 29.1's additive `stat` field", () => {
+  assert.equal(SCHEMA_VERSION, 2);
 });
 
 test("listElementsForScene: [] for a scene with no elements yet -- not an error", () => {
@@ -196,6 +198,99 @@ test("reorderElements: reassigns `order` to the given array's index order, obser
 
   const reread = listElementsForScene(world, scene.id);
   assert.deepEqual(reread.map((e) => e.id), ["elem-reorder-3", "elem-reorder-1", "elem-reorder-2"], "persists, re-readable in the new order");
+});
+
+// ------------------------------------------------- stat (Phase 29 task 29.1)
+
+test("createElement: stat defaults to null when omitted, round-trips when provided", () => {
+  const noStat = createElement(WORLD, anchoredScene.id, { name: "No stat" }, { makeId: () => "elem-stat-omit" });
+  assert.equal(noStat.stat, null);
+
+  const withStat = createElement(
+    WORLD,
+    anchoredScene.id,
+    { name: "A gaunt sexton", stat: { count: 1, ac: "13", hp: "22 (4d8+4)", speed: "30 ft.", cr: "1/2 (100 XP)", raw: "", foundryActor: "" } },
+    { makeId: () => "elem-stat-create" }
+  );
+  assert.deepEqual(withStat.stat, { count: 1, ac: "13", hp: "22 (4d8+4)", speed: "30 ft.", cr: "1/2 (100 XP)", raw: "", foundryActor: "" });
+
+  const reread = getElement(WORLD, anchoredScene.id, "elem-stat-create");
+  assert.equal(reread.stat.ac, "13", "must genuinely persist, not just echo the input");
+});
+
+test("updateElement: stat shallow-merges onto the existing stat object, creating one from {} if the element had none", () => {
+  createElement(WORLD, anchoredScene.id, { name: "Fresh element, no stat yet" }, { makeId: () => "elem-stat-merge-1" });
+
+  const first = updateElement(WORLD, anchoredScene.id, "elem-stat-merge-1", {
+    stat: { count: 1, ac: "13", hp: "22 (4d8+4)", speed: "30 ft.", cr: "1/2 (100 XP)", raw: "", foundryActor: "" }
+  });
+  assert.equal(first.stat.ac, "13");
+  assert.equal(first.stat.hp, "22 (4d8+4)");
+
+  // Partial patch touching only `ac` must leave every OTHER stat sub-field untouched.
+  const second = updateElement(WORLD, anchoredScene.id, "elem-stat-merge-1", { stat: { ac: "15" } });
+  assert.equal(second.stat.ac, "15", "the targeted sub-field is updated");
+  assert.equal(second.stat.hp, "22 (4d8+4)", "an UNMENTIONED stat sub-field must survive a partial patch");
+  assert.equal(second.stat.speed, "30 ft.", "another unmentioned sub-field must also survive");
+
+  const reread = getElement(WORLD, anchoredScene.id, "elem-stat-merge-1");
+  assert.equal(reread.stat.ac, "15", "must genuinely persist the merge, not just echo it");
+  assert.equal(reread.stat.hp, "22 (4d8+4)");
+});
+
+test("updateElement: a `name`-only patch never touches an element's existing stat", () => {
+  createElement(WORLD, anchoredScene.id, { name: "Has a stat", stat: { ac: "10" } }, { makeId: () => "elem-stat-untouched" });
+  const updated = updateElement(WORLD, anchoredScene.id, "elem-stat-untouched", { name: "Renamed" });
+  assert.equal(updated.name, "Renamed");
+  assert.equal(updated.stat.ac, "10", "stat must survive a patch that never mentions it");
+});
+
+// ------------------------------------------------- attachExistingNodeAsElement (Phase 29 task 29.1, "from-graph")
+
+await testAsync("attachExistingNodeAsElement: creates a kind:'graph' element referencing an EXISTING node id -- creates NO new graph node", async () => {
+  const before = loadSnapshot(dataDir, WORLD).snapshot.entities.length;
+
+  const element = attachExistingNodeAsElement(dataDir, WORLD, anchoredScene.id, "npc-fromgraph-1", {}, { makeId: () => "elem-fromgraph-1" });
+  assert.equal(element.kind, "graph");
+  assert.equal(element.graphEntityId, "npc-fromgraph-1", "must reference the EXISTING node's own id, never a freshly-created one");
+  assert.equal(element.name, "Ashen Warden Cael", "name defaults to the entity's own real name from the live snapshot when omitted");
+  assert.equal(element.stat, null);
+
+  const after = loadSnapshot(dataDir, WORLD).snapshot.entities.length;
+  assert.equal(after, before, "must never duplicate/create a new graph node");
+
+  const reread = getElement(WORLD, anchoredScene.id, "elem-fromgraph-1");
+  assert.equal(reread.graphEntityId, "npc-fromgraph-1", "must genuinely persist, not just echo the input");
+});
+
+test("attachExistingNodeAsElement: an explicit `name` wins over the entity's own real name", () => {
+  const element = attachExistingNodeAsElement(
+    dataDir,
+    WORLD,
+    anchoredScene.id,
+    "npc-fromgraph-1",
+    { name: "The Warden (disguised)" },
+    { makeId: () => "elem-fromgraph-2" }
+  );
+  assert.equal(element.name, "The Warden (disguised)");
+});
+
+test("attachExistingNodeAsElement: appended at max(order)+1, same ordering convention as createElement", () => {
+  // Explicit `name` deliberately avoids the live-snapshot name lookup here --
+  // this test is about ordering, not the name-default behaviour (already
+  // covered above), and this world has no bootstrapped snapshot.
+  const world = "scene-elements-fromgraph-order-world";
+  const scene = createScene(world, { locationEntityId: "place-anchor-1" }, { makeId: () => "scene-fromgraph-order" });
+  createElement(world, scene.id, { name: "First" }, { makeId: () => "elem-fromgraph-order-1" });
+  const attached = attachExistingNodeAsElement(
+    dataDir,
+    world,
+    scene.id,
+    "npc-fromgraph-1",
+    { name: "Explicit name" },
+    { makeId: () => "elem-fromgraph-order-2" }
+  );
+  assert.equal(attached.order, 1);
 });
 
 // ------------------------------------------------- promote / demote (async, real graph writes)

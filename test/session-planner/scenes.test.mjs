@@ -127,7 +127,7 @@ const before = existsSync(REPO_DEFAULT_ROOT) ? new Set(readdirSync(REPO_DEFAULT_
 const WORLD = "session-planner-scenes-test-world";
 
 (async () => {
-  const { createScene, forkScene, getScene, listScenesForWorld, renameScene, deleteScene, sessionScenesRoot } =
+  const { createScene, forkScene, getScene, listScenesForWorld, renameScene, updateScene, deleteScene, sessionScenesRoot } =
     await import("../../session-planner/scenes.mjs");
   const { createPlan, getPlan, addSceneToPlan } = await import("../../session-planner/plans.mjs");
 
@@ -251,6 +251,39 @@ const WORLD = "session-planner-scenes-test-world";
     });
     const child = forkScene(WORLD, parent.id, {}, { makeId: () => "scene-name-fork-child", now: "2026-07-22T22:25:00.000Z" });
     assert.equal(child.name, null, "a fork must not silently inherit the parent's bespoke name");
+  });
+
+  // ------------------------------------------------- Phase 29 task 29.1
+
+  test("updateScene: patches objectiveNote, leaves name untouched", () => {
+    const scene = createScene(WORLD, { locationEntityId: "chapel-1", objectiveNote: "Find the sexton", name: "Opening scene" }, {
+      makeId: () => "scene-update-1"
+    });
+    const updated = updateScene(WORLD, "scene-update-1", { objectiveNote: "Recover the drowned ledger" });
+    assert.equal(updated.objectiveNote, "Recover the drowned ledger");
+    assert.equal(updated.name, "Opening scene", "name must survive a patch that never mentions it");
+
+    const reread = getScene(WORLD, "scene-update-1");
+    assert.equal(reread.objectiveNote, "Recover the drowned ledger", "must genuinely persist, not just echo the input");
+  });
+
+  test("updateScene: patches name, leaves objectiveNote untouched (independent, patch-style fields)", () => {
+    const scene = createScene(WORLD, { locationEntityId: "chapel-1", objectiveNote: "Find the sexton" }, { makeId: () => "scene-update-2" });
+    const updated = updateScene(WORLD, "scene-update-2", { name: "Chapel confrontation" });
+    assert.equal(updated.name, "Chapel confrontation");
+    assert.equal(updated.objectiveNote, "Find the sexton", "objectiveNote must survive a patch that never mentions it");
+    void scene;
+  });
+
+  test("updateScene: both fields together update independently in one call", () => {
+    createScene(WORLD, { locationEntityId: "chapel-1" }, { makeId: () => "scene-update-3" });
+    const updated = updateScene(WORLD, "scene-update-3", { name: "New name", objectiveNote: "New objective" });
+    assert.equal(updated.name, "New name");
+    assert.equal(updated.objectiveNote, "New objective");
+  });
+
+  test("updateScene: throws a clear error for an unknown sceneId", () => {
+    assert.throws(() => updateScene(WORLD, "does-not-exist-update-scene", { name: "X" }), /does-not-exist-update-scene/);
   });
 
   // ------------------------------------------------- Phase 27 task 27.1 (F1)

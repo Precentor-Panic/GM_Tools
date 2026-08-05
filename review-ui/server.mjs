@@ -142,7 +142,7 @@ import {
 // Phase 16 -- Session Planner engine (task 16.6). Thin wrappers only, same
 // convention as every other route in this file: resolveWorld/resolveDir()
 // with NO client-supplied dataDir override anywhere below.
-import { createScene, forkScene, getScene, listScenesForWorld, renameScene, deleteScene } from "../session-planner/scenes.mjs";
+import { createScene, forkScene, getScene, listScenesForWorld, renameScene, updateScene, deleteScene } from "../session-planner/scenes.mjs";
 import { buildSessionBrief } from "../session-planner/brief.mjs";
 import { captureNote, runBatchIntake } from "../session-planner/session-notes.mjs";
 
@@ -202,7 +202,7 @@ import { proposeUpdatesForPlan, proposeUpdatesForScene } from "../session-planne
 // graph (a direct manual edit, same surface as POST /api/graph/nodes -- see
 // scene-elements.mjs's own header comment for why this is NOT a
 // no-silent-auto-write violation), so its route resolves `dir` too.
-import { createElement, listElementsForScene, updateElement, removeElement, promoteElement, demoteElement } from "../session-planner/scene-elements.mjs";
+import { createElement, listElementsForScene, updateElement, removeElement, promoteElement, demoteElement, attachExistingNodeAsElement, reorderElements } from "../session-planner/scene-elements.mjs";
 import { getCurrentSceneNarration, saveSceneNarration } from "../session-planner/scene-narration.mjs";
 
 // Phase 28 task 28.4, §E -- the inline `✦` functional-prep assist. Thin
@@ -1455,6 +1455,14 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { scene });
   }
 
+  // POST /api/session-planner/scenes/:sceneId  { world, name?, objectiveNote? }  -> {scene}   Phase 29 task 29.1 -- patch-style update, independent optional fields (mirrors updateElement's own "only patch what's provided" convention). Length-4 path -- does not collide with the length-3 create route above, the length-5 fork/rename routes below, or the length-4 GET-by-id route (different method). Backs the scene page's inline objective edit. NOT a rename of the existing POST .../scenes/:id/rename route below (that stays name-only, unmodified).
+  if (method === "POST" && parts.length === 4 && parts[1] === "session-planner" && parts[2] === "scenes") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const scene = updateScene(w, parts[3], { name: body.name, objectiveNote: body.objectiveNote });
+    return sendJson(res, 200, { scene });
+  }
+
   // POST /api/session-planner/scenes/:id/rename  { world, name }  -- Phase 26 task 26.2
   if (method === "POST" && parts.length === 5 && parts[1] === "session-planner" && parts[2] === "scenes" && parts[4] === "rename") {
     const body = await readBody(req);
@@ -1981,11 +1989,11 @@ async function handleApi(req, res, url, parts) {
   // here, per gm-tools-conventions.
   // -----------------------------------------------------------------------
 
-  // POST /api/scene-planning/scenes/:sceneId/elements   { world, name, kind?, fields? }   -> {element}   (kind defaults to "local" when omitted)
+  // POST /api/scene-planning/scenes/:sceneId/elements   { world, name, kind?, fields?, stat? }   -> {element}   (kind defaults to "local" when omitted; stat -- Phase 29 task 29.1 -- lets a create call carry an already-open stat block in one shot, e.g. the "NPC or creature" button)
   if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "elements") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
-    const element = createElement(w, parts[3], { name: body.name, kind: body.kind, fields: body.fields });
+    const element = createElement(w, parts[3], { name: body.name, kind: body.kind, fields: body.fields, stat: body.stat });
     return sendJson(res, 200, { element });
   }
 
@@ -2012,11 +2020,35 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { element });
   }
 
-  // POST /api/scene-planning/scenes/:sceneId/elements/:elementId   { world, name?, fields? }   -> {element}   (PATCH-style via POST, matching this file's own POST /api/graph/nodes/:entityId precedent)
+  // Phase 29 task 29.1 -- POST .../elements/from-graph and .../elements/reorder
+  // are BOTH length-6 literal paths that would otherwise collide with the
+  // generic PATCH-by-elementId route immediately below (which reads
+  // parts[5] as an `elementId` -- "from-graph"/"reorder" would be treated as
+  // literal element ids, throwing "No scene element found" -> 400). They
+  // MUST be checked first, ahead of that generic handler.
+
+  // POST /api/scene-planning/scenes/:sceneId/elements/from-graph   { world, entityId, name? }   -> {element}   attaches an EXISTING graph node (attachExistingNodeAsElement) -- creates NO new node/edge, unlike promote.
+  if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "elements" && parts[5] === "from-graph") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const dir = resolveDir();
+    const element = await attachExistingNodeAsElement(dir, w, parts[3], body.entityId, { name: body.name });
+    return sendJson(res, 200, { element });
+  }
+
+  // POST /api/scene-planning/scenes/:sceneId/elements/reorder   { world, elementIds }   -> {elements}   thin wrapper over the already-built reorderElements() store op (mirrors POST /api/scene-planning/plans/:planId/reorder above, one layer down).
+  if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "elements" && parts[5] === "reorder") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const elements = reorderElements(w, parts[3], body.elementIds);
+    return sendJson(res, 200, { elements });
+  }
+
+  // POST /api/scene-planning/scenes/:sceneId/elements/:elementId   { world, name?, fields?, stat? }   -> {element}   (PATCH-style via POST, matching this file's own POST /api/graph/nodes/:entityId precedent). stat -- Phase 29 task 29.1 -- shallow-merges onto the element's existing stat object (updateElement's own merge semantics).
   if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "elements") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
-    const element = updateElement(w, parts[3], parts[5], { name: body.name, fields: body.fields });
+    const element = updateElement(w, parts[3], parts[5], { name: body.name, fields: body.fields, stat: body.stat });
     return sendJson(res, 200, { element });
   }
 

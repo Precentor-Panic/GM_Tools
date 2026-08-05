@@ -153,6 +153,34 @@ export function renameScene(world, sceneId, name) {
   return scene;
 }
 
+/**
+ * Phase 29 task 29.1: patch-update `name` and/or `objectiveNote` on an
+ * existing scene -- independent optional fields (passing only one leaves
+ * the other untouched, matching `updateElement`'s own "only patch what's
+ * provided" convention). NOT a rename of `renameScene` above (that stays
+ * exactly as-is, name-only, still used by whatever currently calls it) --
+ * this is the new backing store op for the scene page's inline objective
+ * edit (and a general-purpose name patch alongside it). Throws the same
+ * clear "No scene found" error as getScene/renameScene for an unknown
+ * sceneId.
+ *
+ * @param {string} world
+ * @param {string} sceneId
+ * @param {{name?:string|null, objectiveNote?:string|null}} patch
+ * @returns {object}   the updated Scene
+ */
+export function updateScene(world, sceneId, { name, objectiveNote } = {}) {
+  const scenes = readScenes(world);
+  const scene = scenes.find((s) => s.id === sceneId);
+  if (!scene) {
+    throw new Error(`No scene found: world="${world}" sceneId="${sceneId}"`);
+  }
+  if (name !== undefined) scene.name = name;
+  if (objectiveNote !== undefined) scene.objectiveNote = objectiveNote;
+  writeScenes(world, scenes);
+  return scene;
+}
+
 /** @returns {object[]}   every scene for `world`, in creation (append) order. [] if none. */
 export function listScenesForWorld(world) {
   return readScenes(world);
