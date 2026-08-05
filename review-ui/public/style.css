@@ -1540,3 +1540,358 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   --sp-toast-bg: oklch(0.26 0.015 60);
   --sp-toast-text: oklch(1 0 0);
 }
+
+/* ===========================================================================
+   Phase 29 task 29.2 — RE-SKIN: plan shelf / runsheet / scene page to the
+   Claude-Designer look, expressed entirely through the scoped --sp-* tokens
+   29.0 laid down (design/session-planner/README.md §§A/B/C, and the .dc.html
+   prototypes for the pixel authority).
+
+   This is a PURE PRESENTATION pass on the EXISTING Phase 28 DOM — zero markup
+   or data-testid changes (the two view JS files are untouched). Every rule is
+   prefixed with one of the two Session-Planner view roots (#view-plans /
+   #view-session-planner), so it layers over (and, being id+class, out-ranks)
+   the Phase 28 printed-page rules earlier in this file without deleting them.
+
+   Deliberately OUT OF SCOPE here (owned by later feature tasks, so the Phase
+   28 DOM simply doesn't carry the nodes yet): per-card scene-index lists on
+   the shelf; the runsheet rows' place-name / element-meta / objective columns
+   and the "N scenes · est M min · Delete plan" meta row; the scene page's
+   mono place-label kicker, the objective line, the place-description grid, the
+   missing-description banner and the draft-read-aloud link (29.3); stat blocks
+   (29.4); the Page|Cards + Prep|Run segmented controls (29.5 — the sub-bar
+   here leaves the right-hand room for them); and the reshaped Wrap rail (29.6,
+   themed only lightly below). Light-mode desktop match is the bar for 29.2;
+   the --sp-* tokens already carry a dark variant that 29.7 deep-polishes.
+   =========================================================================== */
+
+/* ---- View roots: base type + paper surface --------------------------- */
+#view-plans, #view-session-planner {
+  font-family: var(--sp-font-ui);
+  color: var(--sp-ink-primary);
+  background: var(--sp-surface-page);
+}
+#view-plans > h1, #view-session-planner > h1 {
+  font-family: var(--sp-font-serif); font-weight: 500; font-size: 30px;
+  letter-spacing: -0.01em; line-height: 1.15;
+  color: var(--sp-ink-heading); margin: 0 0 6px;
+}
+#view-plans > .hint, #view-session-planner > .hint {
+  font-size: 13.5px; line-height: 1.5; color: var(--sp-meta-text);
+  max-width: 64ch; margin: 0 0 10px;
+}
+
+/* =========================================================================
+   §A — Plan shelf (#plans): a card grid, not a vertical list.
+   ========================================================================= */
+#view-plans .plans-shelf-list {
+  list-style: none; margin: 18px 0 0; padding: 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+#view-plans .plan-shelf-item {
+  border: 1px solid var(--sp-plan-card-border);
+  border-top: 3px solid transparent;
+  border-radius: var(--sp-radius-md);
+  background: var(--sp-surface-card);
+  padding: 16px 16px 14px;
+  transition: border-color 0.12s ease;
+}
+#view-plans .plan-shelf-item:hover {
+  border-color: var(--sp-plan-card-hover-border);
+  border-top-color: var(--sp-plan-card-hover-border);
+}
+#view-plans .plan-shelf-name {
+  font-family: var(--sp-font-serif); font-weight: 500; font-size: 18px;
+  color: var(--sp-ink-heading);
+}
+#view-plans .plan-shelf-name::before { content: none; } /* drop the vertical-list number */
+#view-plans .plan-shelf-scene-count {
+  font-family: var(--sp-font-mono); font-size: 10.5px; letter-spacing: 0.04em;
+  color: var(--sp-meta-text); margin-top: 6px;
+}
+#view-plans .plan-shelf-actions { margin-top: 12px; gap: 8px; }
+
+/* The primary "+ New Plan" control, re-cast as the design's dashed add-card
+   (it lives just above the grid rather than as a grid cell). */
+#view-plans [data-testid="new-plan-btn"] {
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-md);
+  background: transparent; color: var(--sp-ink-muted);
+  font-family: var(--sp-font-ui); font-size: 14px; padding: 12px 18px;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+#view-plans [data-testid="new-plan-btn"]:hover {
+  border-color: var(--sp-accent-teal); color: var(--sp-accent-teal);
+}
+
+#view-plans .confirm-panel, #view-session-planner .confirm-panel {
+  border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-md);
+}
+
+/* =========================================================================
+   §B — Plan runsheet (#plans/<planId>): a numbered table-of-contents.
+   ========================================================================= */
+#view-plans [data-testid="plan-detail"] { max-width: 860px; }
+#view-plans [data-testid="plan-detail"]::before {
+  content: "RUN SHEET"; display: block;
+  font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--sp-ink-muted); margin-bottom: 6px;
+}
+#view-plans .plan-detail-name, #view-plans [data-testid="plan-detail-name"] {
+  font-family: var(--sp-font-serif); font-weight: 500; font-size: 32px;
+  line-height: 1.15; color: var(--sp-ink-heading); max-width: 20ch; margin: 0 0 14px;
+}
+#view-plans .editable-list { margin-top: 14px; gap: 0; }
+#view-plans .editable-list-row {
+  border: none; border-top: 1px solid var(--sp-border-hairline);
+  border-radius: 0; background: transparent;
+  padding: 15px 12px 15px 6px; gap: 12px;
+  transition: background-color 0.12s ease;
+}
+#view-plans .editable-list-row--openable:hover {
+  background: var(--sp-row-hover-bg);
+}
+#view-plans .editable-list-row-body::before {
+  content: counter(row-index, decimal-leading-zero);
+  font-family: var(--sp-font-mono); font-size: 12px; font-weight: 400;
+  color: var(--sp-row-index-ink); margin-right: 12px;
+  display: inline-block; min-width: 20px;
+}
+#view-plans .plan-scene-row-name {
+  font-family: var(--sp-font-serif); font-weight: 500; font-size: 17.5px;
+  color: var(--sp-ink-primary);
+}
+#view-plans .editable-list-ghost-row {
+  border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-md);
+  color: var(--sp-ink-muted); padding: 12px 14px; margin-top: 12px;
+}
+#view-plans .editable-list-ghost-row:hover {
+  border-color: var(--sp-accent-teal); color: var(--sp-accent-teal);
+}
+
+/* =========================================================================
+   §C — Scene page (#session-planner/<sceneId>): a centred 780px column that
+   reads like a printed module page.
+   ========================================================================= */
+#view-session-planner .scene-page {
+  max-width: 780px; margin: 0 auto;
+  background: transparent; border: none; box-shadow: none; border-radius: 0;
+  padding: 0 30px 90px; color: var(--sp-ink-primary);
+}
+
+/* The sub-bar: prev/next (left) + Wrap button (right), with the middle left
+   deliberately open for 29.5's Page|Cards + Prep|Run segmented controls. */
+#view-session-planner .scene-top-bar {
+  background: var(--sp-surface-subbar);
+  border: none; border-bottom: 1px solid var(--sp-border-hairline);
+  border-radius: 0; position: static;
+  min-height: 40px; box-sizing: border-box;
+  padding: 8px 30px; margin: 0 -30px 26px;
+}
+#view-session-planner .scene-breadcrumb {
+  font-family: var(--sp-font-mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--sp-ink-muted); gap: 10px;
+}
+#view-session-planner .scene-breadcrumb-back-btn {
+  color: var(--sp-ink-secondary); font-weight: 500; letter-spacing: 0.06em;
+}
+#view-session-planner .scene-breadcrumb-prev-btn,
+#view-session-planner .scene-breadcrumb-next-btn { color: var(--sp-ink-muted); }
+#view-session-planner .scene-breadcrumb-back-btn:hover,
+#view-session-planner .scene-breadcrumb-prev-btn:hover,
+#view-session-planner .scene-breadcrumb-next-btn:hover { color: var(--sp-accent-teal); }
+#view-session-planner .scene-breadcrumb-prev-btn::before,
+#view-session-planner .scene-breadcrumb-next-btn::before { color: var(--sp-border-control); }
+#view-session-planner .scene-wrap-toggle-btn {
+  flex-shrink: 0;
+  border: 1px solid var(--sp-wrap-btn-border); background: transparent;
+  color: var(--sp-wrap-btn-text); border-radius: var(--sp-radius-lg);
+  font-family: var(--sp-font-ui); font-size: 12.5px; padding: 5px 12px;
+}
+#view-session-planner .scene-wrap-toggle-btn:hover { background: var(--sp-badge-promote-bg); }
+
+/* Place name — the page title (Spectral 34px). */
+#view-session-planner .scene-place-header { margin-bottom: 20px; }
+#view-session-planner .scene-place-name {
+  font-family: var(--sp-font-serif); font-weight: 500; font-size: 34px;
+  letter-spacing: -0.01em; line-height: 1.12; color: var(--sp-ink-heading);
+  border-bottom: none; padding: 0; margin: 0 0 14px; cursor: text;
+}
+
+/* Read aloud — a 2px teal left rule, Spectral italic body, mono kicker. */
+#view-session-planner .scene-narration.read-aloud {
+  font-family: var(--sp-font-serif); font-style: italic; font-size: 16px;
+  line-height: 1.55; color: var(--sp-ink-primary);
+  background: transparent; border-left: 2px solid var(--sp-readaloud-rule);
+  border-radius: 0; padding: 2px 0 2px 18px; margin: 0; white-space: pre-wrap;
+}
+#view-session-planner .scene-narration.read-aloud::before {
+  content: "Read Aloud"; display: block; text-transform: uppercase;
+  font-family: var(--sp-font-mono); font-size: 9.5px; font-weight: 400;
+  font-style: normal; letter-spacing: 0.11em; color: var(--sp-accent-teal);
+  opacity: 1; margin-bottom: 6px;
+}
+#view-session-planner .scene-field--empty { color: var(--sp-ink-muted); font-style: italic; }
+
+/* The swapped-in edit textarea (click-to-edit): inherits the typeset font of
+   the value it replaced, and paints the design's focus halo. */
+#view-session-planner .scene-edit-textarea {
+  width: 100%; box-sizing: border-box; font: inherit; color: inherit;
+  background: var(--sp-surface-input); border: 1px solid var(--sp-accent-teal);
+  border-radius: var(--sp-radius-md); box-shadow: 0 0 0 3px var(--sp-focus-halo);
+  padding: 4px 6px; resize: none; overflow: hidden; min-height: 1.6em;
+}
+
+/* Section labels ("Elements", "Events, encounters & notes"). */
+#view-session-planner .scene-section-heading {
+  font-family: var(--sp-font-mono); font-size: 10px; font-weight: 400;
+  text-transform: uppercase; letter-spacing: 0.09em; color: var(--sp-ink-muted);
+  border-top: none; padding-top: 0; margin: 30px 0 12px;
+}
+
+/* --- Elements: KEY vs MUNDANE, separated by 1px top rules --- */
+#view-session-planner .scene-elements-list { gap: 0; }
+#view-session-planner .scene-element-row { border-radius: 0; }
+#view-session-planner .scene-element-row--key {
+  border: none; border-top: 1px solid var(--sp-border-hairline);
+  border-left: 2px solid var(--element-type-color, var(--sp-accent-amber));
+  background: transparent; padding: 12px 0 12px 12px;
+}
+#view-session-planner .scene-element-row--mundane {
+  border: none; border-top: 1px solid var(--sp-border-hairline);
+  border-left: 2px solid transparent; padding: 10px 0 10px 12px;
+}
+#view-session-planner .scene-element-row--mundane:hover {
+  background: transparent; border-top-color: var(--sp-border-hairline);
+}
+#view-session-planner .scene-element-glyph { line-height: 1; }
+#view-session-planner .scene-element-row--key .scene-element-glyph {
+  color: var(--element-type-color, var(--sp-accent-amber)); font-size: 1em;
+}
+#view-session-planner .scene-element-row--mundane .scene-element-glyph {
+  color: var(--sp-ink-muted); font-size: 0.9em;
+}
+#view-session-planner .scene-element-name { cursor: text; }
+#view-session-planner .scene-element-row--key .scene-element-name {
+  font-family: var(--sp-font-serif); font-weight: 600; font-size: 18px;
+  color: var(--sp-ink-heading);
+}
+#view-session-planner .scene-element-row--mundane .scene-element-name {
+  font-family: var(--sp-font-serif); font-weight: 400; font-size: 15px;
+  color: var(--sp-ink-primary);
+}
+#view-session-planner .scene-element-graph-badge {
+  font-family: var(--sp-font-mono); font-size: 9px; font-weight: 400;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  background: var(--sp-entity-badge-bg); color: var(--sp-ink-heading);
+  border-radius: var(--sp-radius-sm); padding: 2px 6px;
+}
+#view-session-planner .scene-element-key-toggle,
+#view-session-planner .scene-element-remove-btn { color: var(--sp-ink-muted); }
+#view-session-planner .scene-element-key-toggle[data-kind="graph"] {
+  color: var(--element-type-color, var(--sp-accent-amber)); opacity: 1;
+}
+#view-session-planner .scene-element-key-toggle:hover { color: var(--sp-accent-amber); }
+#view-session-planner .scene-element-remove-btn:hover { color: var(--sp-accent-danger); }
+
+/* Field-lines: a 76px mono label column + value. */
+#view-session-planner .scene-element-fields {
+  display: flex; flex-direction: column; gap: 3px; margin-top: 8px; padding-left: 0;
+}
+#view-session-planner .pf-line {
+  display: grid; grid-template-columns: 76px 1fr; gap: 12px;
+  align-items: baseline; padding: 1px 0; margin: 0;
+}
+#view-session-planner .scene-element-row--mundane .pf-line::before { content: none; }
+#view-session-planner .pf-label {
+  flex: none; font-family: var(--sp-font-mono); font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: 0.06em; text-align: right;
+  color: var(--sp-ink-muted);
+}
+#view-session-planner .pf-value {
+  min-width: 0; min-height: 20px; white-space: pre-wrap; line-height: 1.5; cursor: text;
+}
+#view-session-planner .scene-element-row--key .pf-value {
+  font-size: 13.5px; color: var(--sp-key-field-ink);
+}
+#view-session-planner .scene-element-row--mundane .pf-value {
+  font-size: 12.5px; color: var(--sp-mundane-field-ink);
+}
+/* Core lines (Trigger / Gives) read a touch heavier. */
+#view-session-planner .pf-line:has(.pf-value[data-field="trigger"]) .pf-value,
+#view-session-planner .pf-line:has(.pf-value[data-field="gives"]) .pf-value {
+  font-weight: 500; color: var(--sp-ink-primary);
+}
+
+/* Add-field: dashed pill chips ("+ TRIGGER" …). */
+#view-session-planner .scene-add-field { padding-left: 0; margin-top: 6px; }
+#view-session-planner .scene-add-field-btn,
+#view-session-planner .scene-add-field-option {
+  font-family: var(--sp-font-mono); font-size: 9.5px; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--sp-ink-muted); opacity: 1;
+  border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-pill);
+  padding: 3px 10px;
+}
+#view-session-planner .scene-add-field-option::before { content: "+ "; }
+#view-session-planner .scene-add-field-btn:hover,
+#view-session-planner .scene-add-field-option:hover {
+  border-color: var(--sp-accent-teal); color: var(--sp-accent-teal);
+}
+#view-session-planner .scene-add-field-menu { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+
+/* Add-element ghost row + quiet ✦ assist links. */
+#view-session-planner .scene-add-element-row.editable-list-ghost-row {
+  border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-md);
+  color: var(--sp-ink-muted); padding: 10px 14px; margin-top: 14px;
+}
+#view-session-planner .scene-add-element-row.editable-list-ghost-row:hover {
+  border-color: var(--sp-accent-teal); color: var(--sp-accent-teal);
+}
+#view-session-planner .scene-assist-propose-link,
+#view-session-planner .scene-assist-draft-link {
+  font-family: var(--sp-font-ui); font-size: 12px; color: var(--sp-accent-teal); opacity: 1;
+}
+
+/* Wrap panel — themed only (29.6 reshapes it into the proposal rail). */
+#view-session-planner .wrap-panel {
+  border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-md);
+  background: var(--sp-wrap-rail-bg); padding: 14px 16px; margin: 0 0 26px;
+}
+#view-session-planner .wrap-section + .wrap-section { border-top: 1px solid var(--sp-border-hairline); }
+#view-session-planner .wrap-section-heading {
+  font-family: var(--sp-font-ui); font-size: 13px; font-weight: 600; color: var(--sp-ink-heading);
+}
+
+/* Extras + Beyond-this-room drawer. */
+#view-session-planner .scene-extras-bar { gap: 8px; }
+#view-session-planner .beyond-room-drawer {
+  margin-top: 26px; border-top: 1px solid var(--sp-border-hairline); padding-top: 12px;
+}
+#view-session-planner .beyond-room-drawer-toggle {
+  font-family: var(--sp-font-mono); font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--sp-ink-muted);
+}
+
+/* --- Click-to-edit halos: at rest typeset, hover paints a 4px halo. --- */
+#view-session-planner .scene-place-name,
+#view-session-planner .scene-narration.read-aloud,
+#view-session-planner .scene-element-name,
+#view-session-planner .pf-value {
+  border-radius: var(--sp-radius-sm);
+  transition: box-shadow 0.1s ease, background-color 0.1s ease;
+}
+#view-session-planner .scene-place-name:hover,
+#view-session-planner .scene-narration.read-aloud:hover,
+#view-session-planner .scene-element-name:hover,
+#view-session-planner .pf-value:hover {
+  background: var(--sp-hover-halo);
+  box-shadow: 0 0 0 4px var(--sp-hover-halo);
+}
+
+/* Narrow phones: keep the column readable (29.7 owns the full responsive/dark
+   pass; this is just a floor so nothing clips). */
+@media (max-width: 480px) {
+  #view-session-planner .scene-page { padding: 0 16px 60px; }
+  #view-session-planner .scene-top-bar { padding: 8px 16px; margin: 0 -16px 20px; }
+}
