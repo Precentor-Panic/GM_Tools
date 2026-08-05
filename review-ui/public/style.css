@@ -1333,6 +1333,15 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   --sp-diff-removed-bg: oklch(0.90 0.030 25 / 0.35);
   --sp-diff-added-bg: oklch(0.90 0.045 150 / 0.40);
   --sp-proposal-accepted-bg: oklch(0.96 0.020 150);
+  /* 29.7: the diff-row/status TEXT colours, split out from the tinted row
+     BACKGROUNDS above -- dark mode needs a genuinely different (lighter)
+     ink here, not just an inverted background, or the text goes unreadable
+     against its own tinted row (found via a real dark-mode screenshot). */
+  --sp-diff-removed-ink: oklch(0.40 0.030 25);
+  --sp-diff-added-ink: oklch(0.35 0.045 150);
+  --sp-accepted-status-ink: oklch(0.45 0.070 150);
+  --sp-badge-teal-ink: oklch(0.38 0.070 185);
+  --sp-badge-promote-ink: oklch(0.40 0.09 65);
 
   /* Click-to-edit halos (README "Interactions & Behaviour") */
   --sp-hover-halo: oklch(0.90 0.012 85);
@@ -1406,6 +1415,13 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
     --sp-diff-removed-bg: oklch(0.40 0.050 25 / 0.35);
     --sp-diff-added-bg: oklch(0.38 0.060 150 / 0.40);
     --sp-proposal-accepted-bg: oklch(0.24 0.035 150);
+    /* 29.7: lighter inks for dark mode -- the light-mode values above are
+       dark-on-dark against these dark-tinted row backgrounds otherwise. */
+    --sp-diff-removed-ink: oklch(0.82 0.070 25);
+    --sp-diff-added-ink: oklch(0.82 0.090 150);
+    --sp-accepted-status-ink: oklch(0.78 0.100 150);
+    --sp-badge-teal-ink: oklch(0.85 0.070 185);
+    --sp-badge-promote-ink: oklch(0.85 0.090 65);
 
     --sp-hover-halo: oklch(0.32 0.014 85);
     --sp-focus-halo: oklch(0.40 0.060 185 / 0.50);
@@ -1533,6 +1549,11 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   --sp-diff-removed-bg: oklch(0.90 0.030 25 / 0.35);
   --sp-diff-added-bg: oklch(0.90 0.045 150 / 0.40);
   --sp-proposal-accepted-bg: oklch(0.96 0.020 150);
+  --sp-diff-removed-ink: oklch(0.40 0.030 25);
+  --sp-diff-added-ink: oklch(0.35 0.045 150);
+  --sp-accepted-status-ink: oklch(0.45 0.070 150);
+  --sp-badge-teal-ink: oklch(0.38 0.070 185);
+  --sp-badge-promote-ink: oklch(0.40 0.09 65);
 
   --sp-hover-halo: oklch(0.90 0.012 85);
   --sp-focus-halo: oklch(0.86 0.045 185 / 0.45);
@@ -1579,6 +1600,81 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 #view-plans > .hint, #view-session-planner > .hint {
   font-size: 13.5px; line-height: 1.5; color: var(--sp-meta-text);
   max-width: 64ch; margin: 0 0 10px;
+}
+
+/* ---- 29.7 fidelity sweep: quiet-down for the app's generic `.btn`/
+   `.icon-btn`/`.link-btn` controls that a 29.2-29.6 per-feature rule never
+   individually re-targeted (plan-shelf Open/Delete, runsheet row
+   Open/reorder/remove, "Add Event"/"Add Encounter", Wrap's "Propose from
+   notes"/"Promote selected", the Beyond-this-room neighbour delete confirm,
+   the +Add-scene inline panel's buttons) -- these were still rendering in
+   the app's default grey-box global button skin, which read as leftover
+   Phase-16-era chrome next to the redesigned surface around them. Inserted
+   DELIBERATELY EARLY (right after the view-root base block, same
+   `#view-<root> .btn` one-class specificity every later per-feature rule in
+   this file also uses) so every existing/future specific rule further down
+   this stylesheet still wins by source order -- this is only the FLOOR for
+   whatever nothing more specific already retargets, never a repaint of
+   already-themed controls (scene-wrap-toggle-btn, npc-creature-btn,
+   wrap-apply-btn, wrap-proposal-accept/reject-btn, etc. all keep their own
+   look, confirmed by reading each one's own rule further down). CSS-only,
+   no DOM/testid changes. */
+#view-plans .btn, #view-session-planner .btn {
+  font-family: var(--sp-font-ui); font-size: 12.5px;
+  border: 1px solid var(--sp-border-control); border-radius: var(--sp-radius-lg);
+  background: var(--sp-surface-input); color: var(--sp-ink-primary);
+  padding: 5px 11px; cursor: pointer;
+  transition: border-color 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+}
+#view-plans .btn:hover, #view-session-planner .btn:hover {
+  background: var(--sp-hover-halo); border-color: var(--sp-accent-teal);
+}
+#view-plans .btn.btn--accept, #view-session-planner .btn.btn--accept {
+  background: var(--sp-accent-teal); border-color: var(--sp-accent-teal); color: oklch(0.99 0.005 85);
+}
+#view-plans .btn.btn--accept:hover, #view-session-planner .btn.btn--accept:hover {
+  filter: brightness(1.06);
+}
+#view-plans .btn.btn--ghost, #view-session-planner .btn.btn--ghost {
+  background: transparent;
+}
+#view-plans .btn.btn--reject, #view-session-planner .btn.btn--reject,
+#view-plans .btn.btn--danger, #view-session-planner .btn.btn--danger {
+  background: transparent; color: var(--sp-accent-danger); border-color: var(--sp-accent-danger);
+}
+#view-plans .btn.btn--reject:hover, #view-session-planner .btn.btn--reject:hover,
+#view-plans .btn.btn--danger:hover, #view-session-planner .btn.btn--danger:hover {
+  background: var(--sp-accent-danger); color: oklch(0.99 0.005 25);
+}
+#view-plans .btn:disabled, #view-session-planner .btn:disabled { opacity: 0.5; cursor: default; }
+
+#view-plans .icon-btn, #view-session-planner .icon-btn {
+  color: var(--sp-ink-muted); border-radius: var(--sp-radius-md);
+  min-width: 22px; min-height: 22px; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 1.05rem;
+}
+#view-plans .icon-btn:hover, #view-session-planner .icon-btn:hover {
+  color: var(--sp-accent-teal); background: var(--sp-hover-halo);
+}
+#view-plans .editable-list-row-remove:hover, #view-session-planner .editable-list-row-remove:hover {
+  color: var(--sp-accent-danger); background: var(--sp-diff-removed-bg);
+}
+#view-plans .link-btn, #view-session-planner .link-btn {
+  color: var(--sp-accent-teal); font-family: var(--sp-font-ui);
+}
+#view-plans .link-btn:hover, #view-session-planner .link-btn:hover { opacity: 0.8; }
+
+/* "Add Event"/"Add Encounter" — same dashed-pill family as the elements-list
+   actions row directly above them (README has no spec for this Phase-23
+   feature; matching the sibling dashed-action-button treatment reads as one
+   system rather than a foreign control). */
+#view-session-planner .scene-action-btn {
+  border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-lg);
+  background: transparent; color: var(--sp-ink-muted);
+  font-family: var(--sp-font-ui); font-size: 12.5px; padding: 7px 12px;
+}
+#view-session-planner .scene-action-btn:hover {
+  border-color: var(--sp-accent-teal); color: var(--sp-accent-teal); background: transparent;
 }
 
 /* =========================================================================
@@ -1895,7 +1991,11 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   border-color: oklch(0.72 0.055 150); background: var(--sp-proposal-accepted-bg);
 }
 #view-session-planner .wrap-proposal-card--rejected {
-  border-color: var(--sp-border-hairline); background: oklch(0.955 0.005 85);
+  /* 29.7: was a hardcoded near-white bg -- rendered as a jarring bright card
+     in dark mode. var(--sp-surface-page) is the same "flat, muted" neutral
+     tone in light mode (near-identical to the original literal) and the
+     theme's own flat dark grey in dark mode. */
+  border-color: var(--sp-border-hairline); background: var(--sp-surface-page);
   opacity: 0.85;
 }
 
@@ -1905,10 +2005,10 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 #view-session-planner .wrap-proposal-kind-badge {
   font-family: var(--sp-font-mono); font-size: 9px; letter-spacing: 0.08em;
   text-transform: uppercase; padding: 2px 6px; border-radius: var(--sp-radius-sm);
-  background: var(--sp-badge-teal-bg); color: oklch(0.38 0.070 185); flex-shrink: 0;
+  background: var(--sp-badge-teal-bg); color: var(--sp-badge-teal-ink); flex-shrink: 0;
 }
 #view-session-planner .wrap-proposal-kind-badge[data-kind="promote"] {
-  background: var(--sp-badge-promote-bg); color: oklch(0.40 0.09 65);
+  background: var(--sp-badge-promote-bg); color: var(--sp-badge-promote-ink);
 }
 #view-session-planner .wrap-proposal-target {
   font-family: var(--sp-font-ui); font-size: 13px; font-weight: 500; color: var(--sp-ink-heading);
@@ -1917,18 +2017,21 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 #view-session-planner .wrap-proposal-status {
   font-family: var(--sp-font-mono); font-size: 9.5px; color: var(--sp-ink-muted); flex-shrink: 0;
 }
-#view-session-planner .wrap-proposal-card--accepted .wrap-proposal-status { color: oklch(0.45 0.070 150); }
+#view-session-planner .wrap-proposal-card--accepted .wrap-proposal-status { color: var(--sp-accepted-status-ink); }
 
-/* Diff rows: removed on red-ish, added on green-ish (README §D). */
+/* Diff rows: removed on red-ish, added on green-ish (README §D). Ink comes
+   from a theme-aware token (29.7) -- dark mode needs a genuinely lighter
+   ink here, not the light-mode value, or the text is unreadable against its
+   own dark-tinted row background. */
 #view-session-planner .wrap-proposal-diff {
   display: flex; gap: 8px; font-family: var(--sp-font-ui); font-size: 12px;
   line-height: 1.45; padding: 3px 8px; border-radius: var(--sp-radius-sm); margin-bottom: 3px;
 }
 #view-session-planner .wrap-proposal-diff--removed {
-  background: var(--sp-diff-removed-bg); color: oklch(0.40 0.030 25);
+  background: var(--sp-diff-removed-bg); color: var(--sp-diff-removed-ink);
 }
 #view-session-planner .wrap-proposal-diff--added {
-  background: var(--sp-diff-added-bg); color: oklch(0.35 0.045 150);
+  background: var(--sp-diff-added-bg); color: var(--sp-diff-added-ink);
 }
 #view-session-planner .wrap-proposal-diff-sign {
   font-family: var(--sp-font-mono); opacity: 0.7; flex-shrink: 0;
@@ -2049,7 +2152,8 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 #view-session-planner .scene-page[data-mode="run"] .scene-wrap-toggle-btn,
 #view-session-planner .scene-page[data-mode="run"] .scene-assist-propose-link,
 #view-session-planner .scene-page[data-mode="run"] .scene-assist-draft-link,
-#view-session-planner .scene-page[data-mode="run"] .draft-read-aloud-link {
+#view-session-planner .scene-page[data-mode="run"] .draft-read-aloud-link,
+#view-session-planner .scene-page[data-mode="run"] .scene-extras-section {
   display: none !important;
 }
 /* Read-aloud jumps to 20px. */
