@@ -142,13 +142,18 @@ test("UI: Wrap opens an inline panel (no navigation); running note-intake (mocke
   await panel.locator('[data-testid="wrap-note-intake-run-btn"]').click();
   const result = panel.locator('[data-testid="wrap-note-intake-result"]');
   await result.waitFor({ state: "visible", timeout: 10000 });
-  const link = result.locator(`[data-testid="wrap-review-batch-link"][data-batch-id="${realBatchId}"]`);
-  await link.waitFor({ state: "visible", timeout: 5000 });
-
-  await link.click();
-  await assert.doesNotReject(async () => {
-    await page.waitForFunction((id) => location.hash === `#review/${id}`, realBatchId, { timeout: 10000 });
-  }, "clicking the proposed-batch link must navigate to the EXISTING, unmodified #review/<batchId> screen");
+  // UPDATED for Phase 29 task 29.6: 28.4's link-out to #review/<batchId> is
+  // deliberately REPLACED by the inline proposal-card rail. Running note-intake
+  // now renders the batch's mutations INLINE (no navigation) -- so instead of
+  // finding + clicking a `wrap-review-batch-link` and asserting a hash change
+  // to #review, this now asserts the inline rail renders in place and the hash
+  // stays on the scene page. The no-silent-auto-write assertion below is
+  // unchanged (proposing still never writes to the graph). phase29-wrap-
+  // rail.e2e.mjs owns the full accept/reject/apply coverage of the reshaped rail.
+  const card = panel.locator(`[data-testid="wrap-proposal-card"][data-batch-id="${realBatchId}"]`);
+  await card.first().waitFor({ state: "visible", timeout: 10000 });
+  assert.equal(await panel.locator('[data-testid="wrap-review-batch-link"]').count(), 0, "the #review link-out is replaced by the inline rail (29.6)");
+  assert.equal(await page.evaluate(() => location.hash), `#session-planner/${scene.id}`, "the reshaped rail renders inline -- running note-intake must not navigate away");
 
   // Proposing must never silently write -- the entity is still only PENDING.
   const graphRes = await fetch(`${base}/api/graph?world=${WORLD}&filter=all`);

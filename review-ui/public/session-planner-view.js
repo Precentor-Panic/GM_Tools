@@ -1627,22 +1627,21 @@ function buildWrapPanel(scene, refreshElements) {
       const result = document.createElement("div");
       result.className = "wrap-note-intake-result";
       result.setAttribute("data-testid", "wrap-note-intake-result");
+      result.setAttribute("data-batch-id", data.batchId);
 
-      const headline = document.createElement("p");
-      headline.className = "wrap-note-intake-headline";
-      headline.textContent = data.headline || `${data.mutationCount ?? 0} proposed update${(data.mutationCount ?? 0) === 1 ? "" : "s"} from this scene's notes.`;
-      result.appendChild(headline);
-
-      const link = document.createElement("button");
-      link.type = "button";
-      link.className = "link-btn wrap-review-batch-link";
-      link.setAttribute("data-testid", "wrap-review-batch-link");
-      link.setAttribute("data-batch-id", data.batchId);
-      link.textContent = "Review proposed updates →";
-      link.addEventListener("click", () => { location.hash = `review/${data.batchId}`; });
-      result.appendChild(link);
-
+      // README §D blurb -- shown immediately above the inline proposal cards.
+      const blurb = document.createElement("p");
+      blurb.className = "wrap-rail-blurb";
+      const n = data.mutationCount ?? 0;
+      blurb.textContent = `Read your table notes for this scene and proposed ${n} graph edit${n === 1 ? "" : "s"}. Nothing is written until you apply.`;
+      result.appendChild(blurb);
       resultHost.appendChild(result);
+
+      // 29.6: reshaped inline rail -- fetch the (real, reachable) batch and
+      // render one proposal card per mutation, INLINE. This deliberately
+      // REPLACES 28.4's link-out to #review/<batchId> (see buildWrapProposalRail).
+      // No navigation; nothing is written until Accept + Apply.
+      await buildWrapProposalRail(scene, data.batchId, resultHost);
     } catch (err) {
       resultHost.innerHTML = "";
       const errP = document.createElement("p");
@@ -1669,6 +1668,284 @@ function buildWrapPanel(scene, refreshElements) {
   panel.appendChild(promoteSection);
 
   return panel;
+}
+
+// ---------------------------------------------------------------------------
+// §D -- the reshaped inline Wrap PROPOSAL RAIL (29.6). Once note-intake has
+// produced a real, reachable batchId, fetch GET /api/batches/:batchId and
+// render one proposal card per mutation INLINE inside the Wrap panel -- no
+// navigation to #review (that 28.4 link-out is deliberately replaced here).
+// Every card's Accept/Reject calls the EXISTING per-mutation accept|reject
+// route (scope:'entity'); the footer "Apply N to graph" calls the EXISTING
+// /sync route (applies only status==='accepted'). NO NEW BACKEND. The
+// no-silent-auto-write invariant is preserved end to end: fetching + rendering
+// cards writes NOTHING; only Accept (-> status) and Apply (/sync) touch the
+// graph.
+// ---------------------------------------------------------------------------
+
+/** README §D kind badge, DERIVED client-side from a mutation's own op + diff (no new server field). The `(created)` sentinel diff.mjs emits for a brand-new entity/edge is the "new node"/"new edge" signal; an upsert_entity with a real field-level diff is a "field edit". */
+function deriveProposalKind(entity) {
+  const created = Array.isArray(entity.diff) && entity.diff.some((d) => d.field === "(created)");
+  if (entity.op === "upsert_edge") return created ? "new edge" : "field edit";
+  if (entity.op === "upsert_entity") return created ? "new node" : "field edit";
+  return "field edit";
+}
+
+function formatProposalValue(v) {
+  if (v == null) return "";
+  return typeof v === "string" ? v : JSON.stringify(v);
+}
+
+/** README §D diff rows for one proposal card. A `(created)` sentinel yields a SINGLE added (`+`) row summarizing the new node/edge (never a removed row -- there is no prior value). A field-level diff yields a removed (`−`) row ONLY when `from` is non-null, plus an added (`+`) row for `to`. */
+function buildProposalDiffRows(entity) {
+  const rows = [];
+  const diff = Array.isArray(entity.diff) ? entity.diff : [];
+  for (const d of diff) {
+    if (d.field === "(created)") {
+      const after = (d.to && typeof d.to === "object") ? d.to : (entity.data || {});
+      const typeWord = after.type ? `${after.type} ` : "";
+      const nounWord = entity.op === "upsert_edge" ? "edge" : "node";
+      const name = after.name || entity.name || "node";
+      rows.push({ sign: "+", text: `New ${typeWord}${nounWord} “${name}”` });
+      continue;
+    }
+    if (d.from != null && d.from !== "") {
+      rows.push({ sign: "-", text: `${d.field}: ${formatProposalValue(d.from)}` });
+    }
+    rows.push({ sign: "+", text: `${d.field}: ${formatProposalValue(d.to)}` });
+  }
+  if (!rows.length) {
+    for (const [k, val] of Object.entries(entity.data || {})) {
+      rows.push({ sign: "+", text: `${k}: ${formatProposalValue(val)}` });
+    }
+  }
+  return rows;
+}
+
+/**
+ * One proposal card. Accept/Reject call the EXISTING per-mutation route
+ * (`POST /api/batches/:batchId/accept|reject {scope:'entity', id}`) -- the SAME
+ * route Batch Review's list/graph modes use, never a second implementation.
+ * On accept the card turns green-bordered; on reject it goes flat grey.
+ * Returns handles so "Accept all" can drive every card programmatically.
+ */
+function buildProposalCard(batchId, entity, decisions, onDecision) {
+  const card = document.createElement("div");
+  card.className = "wrap-proposal-card";
+  card.setAttribute("data-testid", "wrap-proposal-card");
+  card.setAttribute("data-mutation-id", entity.mutationId);
+  card.setAttribute("data-batch-id", batchId);
+
+  const header = document.createElement("div");
+  header.className = "wrap-proposal-header";
+
+  const kind = deriveProposalKind(entity);
+  const badge = document.createElement("span");
+  badge.className = "wrap-proposal-kind-badge";
+  badge.setAttribute("data-testid", "wrap-proposal-kind-badge");
+  badge.setAttribute("data-kind", kind);
+  badge.textContent = kind;
+
+  const target = document.createElement("span");
+  target.className = "wrap-proposal-target";
+  target.textContent = entity.name || entity.entityId || "(unnamed)";
+
+  const spacer = document.createElement("span");
+  spacer.className = "wrap-proposal-spacer";
+
+  const statusWord = document.createElement("span");
+  statusWord.className = "wrap-proposal-status";
+  statusWord.setAttribute("data-testid", "wrap-proposal-status");
+
+  header.append(badge, target, spacer, statusWord);
+  card.appendChild(header);
+
+  for (const row of buildProposalDiffRows(entity)) {
+    const added = row.sign === "+";
+    const line = document.createElement("div");
+    line.className = `wrap-proposal-diff ${added ? "wrap-proposal-diff--added" : "wrap-proposal-diff--removed"}`;
+    line.setAttribute("data-testid", added ? "wrap-proposal-diff-added" : "wrap-proposal-diff-removed");
+    const sign = document.createElement("span");
+    sign.className = "wrap-proposal-diff-sign";
+    sign.textContent = row.sign;
+    const val = document.createElement("span");
+    val.className = "wrap-proposal-diff-text";
+    val.textContent = row.text;
+    line.append(sign, val);
+    card.appendChild(line);
+  }
+
+  if (entity.rationale) {
+    const why = document.createElement("div");
+    why.className = "wrap-proposal-why";
+    why.textContent = entity.rationale;
+    card.appendChild(why);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "wrap-proposal-actions";
+  const acceptBtn = document.createElement("button");
+  acceptBtn.type = "button";
+  acceptBtn.className = "btn wrap-proposal-accept-btn";
+  acceptBtn.setAttribute("data-testid", "wrap-proposal-accept");
+  acceptBtn.setAttribute("data-mutation-id", entity.mutationId);
+  acceptBtn.textContent = "Accept";
+  const rejectBtn = document.createElement("button");
+  rejectBtn.type = "button";
+  rejectBtn.className = "btn wrap-proposal-reject-btn";
+  rejectBtn.setAttribute("data-testid", "wrap-proposal-reject");
+  rejectBtn.setAttribute("data-mutation-id", entity.mutationId);
+  rejectBtn.textContent = "Reject";
+  actions.append(acceptBtn, rejectBtn);
+  card.appendChild(actions);
+
+  function paint() {
+    const d = decisions.get(entity.mutationId) || "pending";
+    card.setAttribute("data-decision", d);
+    card.classList.toggle("wrap-proposal-card--accepted", d === "accepted");
+    card.classList.toggle("wrap-proposal-card--rejected", d === "rejected");
+    statusWord.textContent = d === "accepted" ? "accepted" : d === "rejected" ? "rejected" : "";
+    acceptBtn.classList.toggle("wrap-proposal-accept-btn--on", d === "accepted");
+    rejectBtn.classList.toggle("wrap-proposal-reject-btn--on", d === "rejected");
+  }
+
+  async function decide(decision) {
+    if (decisions.get(entity.mutationId) === decision) return;
+    acceptBtn.disabled = true;
+    rejectBtn.disabled = true;
+    try {
+      await spApi(`/api/batches/${encodeURIComponent(batchId)}/${decision === "accepted" ? "accept" : "reject"}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), scope: "entity", id: entity.mutationId })
+      });
+      decisions.set(entity.mutationId, decision);
+      paint();
+      onDecision();
+    } catch (err) {
+      statusWord.textContent = `error: ${err.message}`;
+    } finally {
+      acceptBtn.disabled = false;
+      rejectBtn.disabled = false;
+    }
+  }
+
+  acceptBtn.addEventListener("click", () => decide("accepted"));
+  rejectBtn.addEventListener("click", () => decide("rejected"));
+  paint();
+  return { card, accept: () => decide("accepted") };
+}
+
+/**
+ * Fetch the batch and render the inline proposal-card rail into `host`. Seeds
+ * each card's decision from the batch's OWN server-side status (so re-opening
+ * after a decision reflects reality), renders the cards + an "Accept all" ghost
+ * + a primary "Apply N to graph" that stays disabled-looking until at least one
+ * card is accepted. Apply calls /sync (accepted-only) -- the only graph write.
+ */
+async function buildWrapProposalRail(scene, batchId, host) {
+  const prior = host.querySelector('[data-testid="wrap-proposal-rail"]');
+  if (prior) prior.remove();
+
+  const rail = document.createElement("div");
+  rail.className = "wrap-proposal-rail";
+  rail.setAttribute("data-testid", "wrap-proposal-rail");
+  rail.setAttribute("data-batch-id", batchId);
+  host.appendChild(rail);
+
+  let payload;
+  try {
+    payload = await spApi(`/api/batches/${encodeURIComponent(batchId)}${spWithWorld()}`);
+  } catch (err) {
+    const p = document.createElement("p");
+    p.className = "hint";
+    p.textContent = `Could not load proposed edits: ${err.message}`;
+    rail.appendChild(p);
+    return;
+  }
+
+  const entities = (payload.regions || []).flatMap((r) => r.entities || []);
+  const decisions = new Map();
+  for (const e of entities) {
+    if (e.status === "accepted") decisions.set(e.mutationId, "accepted");
+    else if (e.status === "rejected") decisions.set(e.mutationId, "rejected");
+  }
+
+  const cardsHost = document.createElement("div");
+  cardsHost.className = "wrap-proposal-cards";
+  rail.appendChild(cardsHost);
+
+  const footer = document.createElement("div");
+  footer.className = "wrap-proposal-footer";
+  const acceptAllBtn = document.createElement("button");
+  acceptAllBtn.type = "button";
+  acceptAllBtn.className = "btn btn--ghost wrap-accept-all-btn";
+  acceptAllBtn.setAttribute("data-testid", "wrap-accept-all-btn");
+  acceptAllBtn.setAttribute("data-batch-id", batchId);
+  acceptAllBtn.textContent = "Accept all";
+  const applyBtn = document.createElement("button");
+  applyBtn.type = "button";
+  applyBtn.className = "btn wrap-apply-btn";
+  applyBtn.setAttribute("data-testid", "wrap-apply-btn");
+  applyBtn.setAttribute("data-batch-id", batchId);
+  footer.append(acceptAllBtn, applyBtn);
+
+  const acceptedCount = () => [...decisions.values()].filter((v) => v === "accepted").length;
+  function updateApply() {
+    const n = acceptedCount();
+    applyBtn.textContent = n ? `Apply ${n} to graph` : "Apply to graph";
+    applyBtn.disabled = n === 0;
+    applyBtn.classList.toggle("wrap-apply-btn--ready", n > 0);
+  }
+
+  const cards = [];
+  if (!entities.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No proposed graph edits from this scene's notes.";
+    cardsHost.appendChild(empty);
+  } else {
+    for (const entity of entities) {
+      const handle = buildProposalCard(batchId, entity, decisions, updateApply);
+      cards.push(handle);
+      cardsHost.appendChild(handle.card);
+    }
+  }
+  rail.appendChild(footer);
+
+  acceptAllBtn.addEventListener("click", async () => {
+    acceptAllBtn.disabled = true;
+    for (const c of cards) {
+      // eslint-disable-next-line no-await-in-loop
+      await c.accept();
+    }
+    acceptAllBtn.disabled = false;
+  });
+
+  applyBtn.addEventListener("click", async () => {
+    if (applyBtn.disabled) return;
+    applyBtn.disabled = true;
+    const label = applyBtn.textContent;
+    applyBtn.textContent = "Applying…";
+    try {
+      const res = await spApi(`/api/batches/${encodeURIComponent(batchId)}/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      });
+      rail.setAttribute("data-applied", "true");
+      applyBtn.textContent = `Applied ${res.syncedCount ?? 0} to graph`;
+    } catch (err) {
+      applyBtn.textContent = label;
+      applyBtn.disabled = false;
+      const errP = document.createElement("p");
+      errP.className = "hint";
+      errP.textContent = `Could not apply: ${err.message}`;
+      footer.after(errP);
+    }
+  });
+
+  updateApply();
 }
 
 /**

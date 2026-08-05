@@ -1853,14 +1853,124 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   font-family: var(--sp-font-ui); font-size: 12px; color: var(--sp-accent-teal); opacity: 1;
 }
 
-/* Wrap panel — themed only (29.6 reshapes it into the proposal rail). */
+/* =========================================================================
+   §29.6 — the reshaped inline Wrap PROPOSAL RAIL (README §D).
+
+   The Phase 28 outer shell (an inline slide-down `.wrap-panel` under the top
+   bar) is preserved; what's reshaped is what renders INSIDE it once note-intake
+   produces a real batch — a column of per-proposal accept/reject/apply cards
+   replacing 28.4's link-out. Styled to the §D spec (400px-rail card chrome,
+   amber `promote` / teal other kind badges, red/green diff rows, accept-green
+   accepted card) with the scoped --sp-* tokens.
+   ========================================================================= */
 #view-session-planner .wrap-panel {
   border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-md);
   background: var(--sp-wrap-rail-bg); padding: 14px 16px; margin: 0 0 26px;
+  max-width: 400px;
 }
-#view-session-planner .wrap-section + .wrap-section { border-top: 1px solid var(--sp-border-hairline); }
+#view-session-planner .wrap-section + .wrap-section {
+  border-top: 1px solid var(--sp-border-hairline); margin-top: 12px; padding-top: 12px;
+}
 #view-session-planner .wrap-section-heading {
   font-family: var(--sp-font-ui); font-size: 13px; font-weight: 600; color: var(--sp-ink-heading);
+}
+
+/* README §D blurb above the cards. */
+#view-session-planner .wrap-rail-blurb {
+  font-family: var(--sp-font-ui); font-size: 12.5px; line-height: 1.5;
+  color: var(--sp-ink-secondary); margin: 8px 0 4px;
+}
+
+#view-session-planner .wrap-proposal-cards {
+  display: flex; flex-direction: column; gap: 8px; margin-top: 6px;
+}
+
+/* Proposal card: 1px border, radius 4px; accepted -> green border + tint,
+   rejected -> flat grey (README §D). */
+#view-session-planner .wrap-proposal-card {
+  border: 1px solid var(--sp-border-control); border-radius: var(--sp-radius-md);
+  background: var(--sp-surface-card); padding: 11px 12px;
+}
+#view-session-planner .wrap-proposal-card--accepted {
+  border-color: oklch(0.72 0.055 150); background: var(--sp-proposal-accepted-bg);
+}
+#view-session-planner .wrap-proposal-card--rejected {
+  border-color: var(--sp-border-hairline); background: oklch(0.955 0.005 85);
+  opacity: 0.85;
+}
+
+#view-session-planner .wrap-proposal-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 7px;
+}
+#view-session-planner .wrap-proposal-kind-badge {
+  font-family: var(--sp-font-mono); font-size: 9px; letter-spacing: 0.08em;
+  text-transform: uppercase; padding: 2px 6px; border-radius: var(--sp-radius-sm);
+  background: var(--sp-badge-teal-bg); color: oklch(0.38 0.070 185); flex-shrink: 0;
+}
+#view-session-planner .wrap-proposal-kind-badge[data-kind="promote"] {
+  background: var(--sp-badge-promote-bg); color: oklch(0.40 0.09 65);
+}
+#view-session-planner .wrap-proposal-target {
+  font-family: var(--sp-font-ui); font-size: 13px; font-weight: 500; color: var(--sp-ink-heading);
+}
+#view-session-planner .wrap-proposal-spacer { flex: 1; }
+#view-session-planner .wrap-proposal-status {
+  font-family: var(--sp-font-mono); font-size: 9.5px; color: var(--sp-ink-muted); flex-shrink: 0;
+}
+#view-session-planner .wrap-proposal-card--accepted .wrap-proposal-status { color: oklch(0.45 0.070 150); }
+
+/* Diff rows: removed on red-ish, added on green-ish (README §D). */
+#view-session-planner .wrap-proposal-diff {
+  display: flex; gap: 8px; font-family: var(--sp-font-ui); font-size: 12px;
+  line-height: 1.45; padding: 3px 8px; border-radius: var(--sp-radius-sm); margin-bottom: 3px;
+}
+#view-session-planner .wrap-proposal-diff--removed {
+  background: var(--sp-diff-removed-bg); color: oklch(0.40 0.030 25);
+}
+#view-session-planner .wrap-proposal-diff--added {
+  background: var(--sp-diff-added-bg); color: oklch(0.35 0.045 150);
+}
+#view-session-planner .wrap-proposal-diff-sign {
+  font-family: var(--sp-font-mono); opacity: 0.7; flex-shrink: 0;
+}
+#view-session-planner .wrap-proposal-diff-text { word-break: break-word; }
+
+#view-session-planner .wrap-proposal-why {
+  font-family: var(--sp-font-ui); font-size: 11.5px; line-height: 1.45;
+  color: var(--sp-ink-muted); margin-top: 7px;
+}
+
+#view-session-planner .wrap-proposal-actions { display: flex; gap: 6px; margin-top: 9px; }
+#view-session-planner .wrap-proposal-accept-btn,
+#view-session-planner .wrap-proposal-reject-btn {
+  padding: 4px 11px; border-radius: var(--sp-radius-md); font-size: 11.5px;
+  border: 1px solid var(--sp-border-control); background: transparent;
+  color: var(--sp-ink-primary); cursor: pointer;
+}
+#view-session-planner .wrap-proposal-accept-btn--on {
+  border-color: var(--sp-accent-accept); background: var(--sp-accent-accept); color: oklch(0.99 0.005 150);
+}
+#view-session-planner .wrap-proposal-reject-btn--on {
+  border-color: oklch(0.55 0.10 25); background: oklch(0.55 0.10 25); color: oklch(0.99 0.005 25);
+}
+
+/* Footer: ghost "Accept all" + primary "Apply N to graph" (disabled-looking
+   until >=1 accepted). */
+#view-session-planner .wrap-proposal-footer {
+  display: flex; align-items: center; gap: 9px; margin-top: 12px;
+  padding-top: 12px; border-top: 1px solid var(--sp-border-hairline);
+}
+#view-session-planner .wrap-accept-all-btn {
+  padding: 7px 12px; border-radius: var(--sp-radius-lg); font-size: 12.5px;
+  border: 1px solid var(--sp-border-control); background: transparent; color: var(--sp-ink-primary);
+  cursor: pointer;
+}
+#view-session-planner .wrap-apply-btn {
+  margin-left: auto; padding: 7px 15px; border-radius: var(--sp-radius-lg); font-size: 12.5px;
+  border: none; background: var(--sp-border-control); color: var(--sp-ink-muted); cursor: default;
+}
+#view-session-planner .wrap-apply-btn--ready {
+  background: var(--sp-accent-accept); color: oklch(0.99 0.005 150); cursor: pointer;
 }
 
 /* =========================================================================
