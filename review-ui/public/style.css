@@ -1863,6 +1863,95 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   font-family: var(--sp-font-ui); font-size: 13px; font-weight: 600; color: var(--sp-ink-heading);
 }
 
+/* =========================================================================
+   §29.5 — Page|Cards layout + Prep|Run mode.
+
+   Two sub-bar segmented controls (view-local state, driven by a `data-layout`
+   attribute on the scene-elements-list and a `data-mode` attribute on the
+   scene-page root). Everything below is pure CSS keyed off those attributes, so
+   toggling is instant and never re-renders (edit state preserved).
+   ========================================================================= */
+
+/* Sub-bar right cluster: the two segmented controls + the Wrap button. */
+#view-session-planner .scene-subbar-controls {
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0; flex-wrap: wrap;
+}
+#view-session-planner .sp-segmented {
+  display: inline-flex; align-items: stretch;
+  border: 1px solid var(--sp-border-control); border-radius: var(--sp-radius-md);
+  overflow: hidden; background: var(--sp-surface-input);
+}
+#view-session-planner .sp-segmented-btn {
+  font-family: var(--sp-font-ui); font-size: 12px; line-height: 1.1;
+  padding: 4px 12px; border: none; background: transparent;
+  color: var(--sp-ink-muted); cursor: pointer; transition: background-color 0.12s ease, color 0.12s ease;
+}
+#view-session-planner .sp-segmented-btn + .sp-segmented-btn {
+  border-left: 1px solid var(--sp-border-control);
+}
+#view-session-planner .sp-segmented-btn:hover { color: var(--sp-accent-teal); }
+#view-session-planner .sp-segmented-btn--active {
+  background: var(--sp-accent-teal-selected); color: var(--sp-ink-heading); font-weight: 600;
+}
+
+/* ---- Cards layout: a responsive grid, card chrome, label-above-value. ---- */
+#view-session-planner .scene-elements-list[data-layout="cards"] {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+#view-session-planner .scene-elements-list[data-layout="cards"] .scene-element-row {
+  border: 1px solid var(--sp-border-hairline);
+  border-radius: var(--sp-radius-sm); padding: 13px 14px 12px;
+}
+#view-session-planner .scene-elements-list[data-layout="cards"] .scene-element-row--key {
+  border-top: 3px solid var(--element-type-color, var(--sp-accent-amber));
+  border-left: 1px solid var(--sp-border-hairline);
+  background: var(--sp-card-key-bg);
+}
+#view-session-planner .scene-elements-list[data-layout="cards"] .scene-element-row--mundane {
+  border-top: 3px solid var(--sp-border-control);
+  border-left: 1px solid var(--sp-border-hairline);
+  background: var(--sp-surface-card);
+}
+/* Label above its value (rather than the 76px beside-column of Page layout). */
+#view-session-planner .scene-elements-list[data-layout="cards"] .pf-line {
+  display: block; padding: 3px 0;
+}
+#view-session-planner .scene-elements-list[data-layout="cards"] .pf-label {
+  display: block; text-align: left; margin-bottom: 2px;
+}
+/* The add-element ghost row spans the full grid width, not a single cell. */
+#view-session-planner .scene-elements-list[data-layout="cards"] .scene-add-element-row {
+  grid-column: 1 / -1;
+}
+
+/* ---- Run mode: hide edit chrome, enlarge read-aloud, collapse MUNDANE. ---- */
+/* All edit chrome hides (README §E) — hidden, not removed, so a switch back to
+   Prep restores it instantly with no re-render. */
+#view-session-planner .scene-page[data-mode="run"] .scene-element-remove-btn,
+#view-session-planner .scene-page[data-mode="run"] .scene-element-key-toggle,
+#view-session-planner .scene-page[data-mode="run"] .scene-add-field,
+#view-session-planner .scene-page[data-mode="run"] .scene-add-element-row,
+#view-session-planner .scene-page[data-mode="run"] .npc-creature-btn,
+#view-session-planner .scene-page[data-mode="run"] .from-graph-btn,
+#view-session-planner .scene-page[data-mode="run"] .suggest-dressing-btn,
+#view-session-planner .scene-page[data-mode="run"] .add-element-btn,
+#view-session-planner .scene-page[data-mode="run"] .scene-wrap-toggle-btn,
+#view-session-planner .scene-page[data-mode="run"] .scene-assist-propose-link,
+#view-session-planner .scene-page[data-mode="run"] .scene-assist-draft-link,
+#view-session-planner .scene-page[data-mode="run"] .draft-read-aloud-link {
+  display: none !important;
+}
+/* Read-aloud jumps to 20px. */
+#view-session-planner .scene-page[data-mode="run"] .scene-narration.read-aloud {
+  font-size: 20px;
+}
+/* MUNDANE (local, no stat block) rows collapse to their Gives line only; KEY
+   rows (data-kind="graph") and stat-bearing NPC rows stay full. */
+#view-session-planner .scene-page[data-mode="run"] .scene-element-row[data-kind="local"][data-has-stat="false"] .scene-element-fields .pf-line:not([data-field="gives"]) {
+  display: none;
+}
+
 /* Extras + Beyond-this-room drawer. */
 #view-session-planner .scene-extras-bar { gap: 8px; }
 #view-session-planner .beyond-room-drawer {

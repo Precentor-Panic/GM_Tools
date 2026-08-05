@@ -763,6 +763,16 @@ let activeSceneKeydownHandler = null;
 // render supersedes it.
 let sceneRenderToken = 0;
 
+// Phase 29 task 29.5: Page|Cards layout + Prep|Run mode. View-local state only
+// -- NOT persisted (no localStorage), reset per scene render. The URL stays the
+// single source of truth for LOCATION; these are pure presentation toggles.
+// Driven by a `data-layout` attribute on the scene-elements-list and a
+// `data-mode` attribute on the scene-page root + CSS, so toggling never
+// full-re-renders the element rows (edit state is preserved), matching this
+// app's "never full-re-render on keystroke" ethos.
+let scenePageLayout = "page"; // "page" | "cards"
+let scenePageMode = "prep";   // "prep" | "run"
+
 function detachSceneKeydownHandler() {
   if (activeSceneKeydownHandler) {
     document.removeEventListener("keydown", activeSceneKeydownHandler);
@@ -856,6 +866,10 @@ function makeClickToEditField({ tag = "div", className = "", testid, dataAttrs =
 function buildElementFieldLine(scene, element, field, value, { autoEdit = false } = {}) {
   const line = document.createElement("div");
   line.className = "pf-line";
+  // Phase 29 task 29.5: mirror the field name onto the line itself so Run-mode
+  // CSS can keep only the Gives line ([data-field="gives"]) on a collapsed
+  // MUNDANE row without an :has() query.
+  line.setAttribute("data-field", field);
   const label = document.createElement("span");
   label.className = "pf-label";
   label.textContent = SCENE_FIELD_LABELS[field] ?? field;
@@ -883,6 +897,7 @@ function buildElementFieldLine(scene, element, field, value, { autoEdit = false 
 function buildChecksLine(checks) {
   const line = document.createElement("div");
   line.className = "pf-line";
+  line.setAttribute("data-field", "checks");
   const label = document.createElement("span");
   label.className = "pf-label";
   label.textContent = SCENE_FIELD_LABELS.checks;
@@ -1152,6 +1167,10 @@ function buildSceneElementRow(scene, element, refreshList, nodeMap) {
   row.setAttribute("data-testid", "scene-element-row");
   row.setAttribute("data-element-id", element.id);
   row.setAttribute("data-kind", element.kind);
+  // Phase 29 task 29.5: Run mode collapses a MUNDANE (local, no stat) row to
+  // its Gives line only; a local row that carries a stat block (an NPC/creature)
+  // is NOT collapsed. This attribute lets the CSS distinguish the two cleanly.
+  row.setAttribute("data-has-stat", element.stat ? "true" : "false");
 
   // Design pass (task 28.6): a KEY row's glyph/accent-rule/toggle are tinted
   // with its real graph entity type's color (--element-type-color, read by
@@ -1356,6 +1375,9 @@ async function renderSceneElementsList(scene, listHost, nodeMap) {
   wrap.className = "scene-elements-list";
   wrap.setAttribute("data-testid", "scene-elements-list");
   wrap.setAttribute("data-scene-id", scene.id);
+  // Phase 29 task 29.5: current Page|Cards layout, re-applied on every list
+  // re-render so a structural op (add/remove/promote) preserves the toggle.
+  wrap.setAttribute("data-layout", scenePageLayout);
 
   const refreshList = () => renderSceneElementsList(scene, listHost, nodeMap);
   for (const element of elements) {
@@ -2297,6 +2319,41 @@ function buildSceneActionsRow(scene, refreshElements, place) {
 // ---------------------------------------------------------------------------
 // The full scene page assembly.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Phase 29 task 29.5 -- the two sub-bar segmented controls (Page|Cards layout,
+// Prep|Run mode). Pure presentation; view-local state (scenePageLayout /
+// scenePageMode). Returns the DOM group plus its four buttons so renderScenePage
+// can wire the click handlers with closure access to the scene-page root, the
+// live elements-list, and the Wrap panel.
+// ---------------------------------------------------------------------------
+function buildSegmentedControl(sceneId, options) {
+  const group = document.createElement("div");
+  group.className = "sp-segmented";
+  group.setAttribute("role", "group");
+  const buttons = {};
+  for (const opt of options) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "sp-segmented-btn";
+    btn.setAttribute("data-testid", opt.testid);
+    btn.setAttribute("data-scene-id", sceneId);
+    btn.textContent = opt.label;
+    btn.setAttribute("aria-pressed", opt.active ? "true" : "false");
+    if (opt.active) btn.classList.add("sp-segmented-btn--active");
+    buttons[opt.key] = btn;
+    group.appendChild(btn);
+  }
+  const setActive = (key) => {
+    for (const opt of options) {
+      const btn = buttons[opt.key];
+      const on = opt.key === key;
+      btn.classList.toggle("sp-segmented-btn--active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+  };
+  return { group, buttons, setActive };
+}
+
 async function renderScenePage(container, sceneId, token) {
   const stale = () => token !== sceneRenderToken;
   const loading = document.createElement("p");
@@ -2332,16 +2389,37 @@ async function renderScenePage(container, sceneId, token) {
   if (stale()) return;
 
   container.innerHTML = "";
+  // Phase 29 task 29.5: a fresh scene render always opens in Page + Prep (the
+  // toggles are view-local and never persisted across a navigation).
+  scenePageLayout = "page";
+  scenePageMode = "prep";
   const root = document.createElement("div");
   root.className = "scene-page";
   root.setAttribute("data-testid", "scene-page");
   root.setAttribute("data-scene-id", scene.id);
+  root.setAttribute("data-mode", scenePageMode); // "prep" by default; "run" hides edit chrome via CSS
 
-  // Top bar: breadcrumb (left) + Wrap toggle placeholder (right, filled by 28.4).
+  // Top bar: breadcrumb (left) + Page|Cards / Prep|Run segmented controls +
+  // Wrap toggle (right, filled by 28.4).
   const topBar = document.createElement("div");
   topBar.className = "scene-top-bar";
   const { bc, firstPlan, prevId, nextId } = buildSceneBreadcrumb(scene, plans);
   topBar.appendChild(bc);
+
+  // Right-hand cluster: the two segmented controls, then the Wrap button. Wrap
+  // stays furthest right (README §C sub-bar order).
+  const subBarRight = document.createElement("div");
+  subBarRight.className = "scene-subbar-controls";
+
+  const layoutControl = buildSegmentedControl(scene.id, [
+    { key: "page", label: "Page", testid: "layout-page-btn", active: true },
+    { key: "cards", label: "Cards", testid: "layout-cards-btn", active: false }
+  ]);
+  const modeControl = buildSegmentedControl(scene.id, [
+    { key: "prep", label: "Prep", testid: "mode-prep-btn", active: true },
+    { key: "run", label: "Run", testid: "mode-run-btn", active: false }
+  ]);
+  subBarRight.append(layoutControl.group, modeControl.group);
 
   const wrapBtn = document.createElement("button");
   wrapBtn.type = "button";
@@ -2350,8 +2428,21 @@ async function renderScenePage(container, sceneId, token) {
   wrapBtn.setAttribute("data-scene-id", scene.id);
   wrapBtn.textContent = "Wrap ▸";
   wrapBtn.title = "Wrap this scene: propose graph updates from notes + promote elements";
-  topBar.appendChild(wrapBtn);
+  subBarRight.appendChild(wrapBtn);
+  topBar.appendChild(subBarRight);
   root.appendChild(topBar);
+
+  // Layout toggle: flip the live scene-elements-list's data-layout attribute in
+  // place (no re-render -- edit state is preserved). scenePageLayout is also
+  // read by renderSceneElementsList so a later structural re-render keeps it.
+  const applyLayout = (layout) => {
+    scenePageLayout = layout;
+    layoutControl.setActive(layout);
+    const list = root.querySelector('[data-testid="scene-elements-list"]');
+    if (list) list.setAttribute("data-layout", layout);
+  };
+  layoutControl.buttons.page.addEventListener("click", () => applyLayout("page"));
+  layoutControl.buttons.cards.addEventListener("click", () => applyLayout("cards"));
 
   // Place header (the room).
   const header = document.createElement("div");
@@ -2468,6 +2559,22 @@ async function renderScenePage(container, sceneId, token) {
     wrapBtn.textContent = opening ? "Wrap ▾" : "Wrap ▸";
     if (opening) await populateWrapPromoteList(scene, wrapPanel, refreshElements);
   });
+
+  // Phase 29 task 29.5: Prep|Run mode. Run flips the scene-page's data-mode
+  // attribute (CSS hides all edit chrome, bumps read-aloud to 20px, collapses
+  // MUNDANE rows to their Gives line) and force-closes the Wrap panel (the Wrap
+  // toggle itself is CSS-hidden in run mode, so it must not be left open).
+  const applyMode = (mode) => {
+    scenePageMode = mode;
+    modeControl.setActive(mode);
+    root.setAttribute("data-mode", mode);
+    if (mode === "run" && !wrapPanel.hidden) {
+      wrapPanel.hidden = true;
+      wrapBtn.textContent = "Wrap ▸";
+    }
+  };
+  modeControl.buttons.prep.addEventListener("click", () => applyMode("prep"));
+  modeControl.buttons.run.addEventListener("click", () => applyMode("run"));
 
   // Inline events / encounters / notes (task-required, reusing existing
   // per-scene SessionNote + saved-encounter mechanisms). Not e2e-gated here.
