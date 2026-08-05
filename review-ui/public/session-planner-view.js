@@ -738,6 +738,16 @@ function resolveSceneDisplayName(scene) {
 // flushActiveNoteSave above). At most a handful ever coexist.
 const sceneEditDebounces = new Set();
 
+// Phase 29 task 29.4: which elements currently have their stat-block panel
+// OPEN. View-local disclosure state (same status as the `openFields` chips in
+// the prototype) held at module scope so a structural re-render of the whole
+// elements list -- which every add/remove/promote/stat-chip op triggers --
+// re-renders an element's panel in the SAME open/closed state it was in,
+// rather than snapping shut. Keyed by elementId; cleared implicitly when the
+// element stops existing (a stale id in the Set is harmless -- no element row
+// reads it).
+const openStatPanels = new Set();
+
 // The scene page's [ / ] / Esc keyboard handler, held at module scope so each
 // re-render can detach the previous one before wiring a fresh one (never
 // stacked). The e2e drives the buttons, but the design record calls for the
@@ -899,42 +909,240 @@ function renderElementFieldLines(scene, element, fieldsEl) {
   }
 }
 
-function buildAddFieldControl(scene, element, fieldsEl) {
+function buildAddFieldControl(scene, element, fieldsEl, refreshList) {
   const present = new Set(
     SCENE_TEXT_FIELDS.filter((f) => element.fields?.[f] != null && String(element.fields[f]).trim() !== "")
   );
   const missing = SCENE_TEXT_FIELDS.filter((f) => !present.has(f));
-  if (!missing.length) return null;
+  // Phase 29 task 29.4: the "+ STAT BLOCK" chip joins the same dashed add-field
+  // chip row, and only when the element has NO stat yet (same "only unfilled
+  // things get a chip" rule the text-field chips follow). An element can carry
+  // stat AND still have missing text fields, so these two are independent.
+  const canAddStat = !element.stat;
+  if (!missing.length && !canAddStat) return null;
 
   const wrap = document.createElement("div");
   wrap.className = "scene-add-field";
-  const addBtn = document.createElement("button");
-  addBtn.type = "button";
-  addBtn.className = "link-btn scene-add-field-btn";
-  addBtn.textContent = "+ field";
-  const menu = document.createElement("div");
-  menu.className = "scene-add-field-menu";
-  menu.style.display = "none";
 
-  for (const f of missing) {
-    const opt = document.createElement("button");
-    opt.type = "button";
-    opt.className = "link-btn scene-add-field-option";
-    opt.textContent = SCENE_FIELD_LABELS[f];
-    opt.addEventListener("click", () => {
-      menu.style.display = "none";
-      // Insert an empty field-line already in edit mode -- a real value on
-      // blur persists (only-non-empty rule keeps a blank one from sticking).
-      fieldsEl.appendChild(buildElementFieldLine(scene, element, f, "", { autoEdit: true }));
-      opt.remove();
+  if (missing.length) {
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "link-btn scene-add-field-btn";
+    addBtn.textContent = "+ field";
+    const menu = document.createElement("div");
+    menu.className = "scene-add-field-menu";
+    menu.style.display = "none";
+
+    for (const f of missing) {
+      const opt = document.createElement("button");
+      opt.type = "button";
+      opt.className = "link-btn scene-add-field-option";
+      opt.textContent = SCENE_FIELD_LABELS[f];
+      opt.addEventListener("click", () => {
+        menu.style.display = "none";
+        // Insert an empty field-line already in edit mode -- a real value on
+        // blur persists (only-non-empty rule keeps a blank one from sticking).
+        fieldsEl.appendChild(buildElementFieldLine(scene, element, f, "", { autoEdit: true }));
+        opt.remove();
+      });
+      menu.appendChild(opt);
+    }
+
+    addBtn.addEventListener("click", () => {
+      menu.style.display = menu.style.display === "none" ? "" : "none";
     });
-    menu.appendChild(opt);
+    wrap.append(addBtn, menu);
   }
 
-  addBtn.addEventListener("click", () => {
-    menu.style.display = menu.style.display === "none" ? "" : "none";
+  if (canAddStat) {
+    const statChip = document.createElement("button");
+    statChip.type = "button";
+    statChip.className = "link-btn scene-add-field-btn add-statblock-chip";
+    statChip.setAttribute("data-testid", "add-statblock-chip");
+    statChip.setAttribute("data-element-id", element.id);
+    statChip.textContent = "+ STAT BLOCK";
+    statChip.addEventListener("click", async () => {
+      statChip.disabled = true;
+      try {
+        // Attach an empty stat AND a default statblockRef label in one PATCH --
+        // the backend shallow-merges both `stat` and `fields`, so no other
+        // field is disturbed. Open the panel, then re-render the row.
+        await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/${encodeURIComponent(element.id)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            world: currentWorld(),
+            stat: { count: 1, ac: "", hp: "", speed: "", cr: "", raw: "", foundryActor: "" },
+            fields: { statblockRef: "Stat block" }
+          })
+        });
+      } catch {
+        statChip.disabled = false;
+        return;
+      }
+      openStatPanels.add(element.id);
+      await refreshList();
+    });
+    wrap.appendChild(statChip);
+  }
+
+  return wrap;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 29 task 29.4 -- the stat-block disclosure + panel. Rendered on any
+// element carrying a `stat`. The disclosure line toggles the panel (view-local
+// via openStatPanels). Inside: a header with the element name + a `− N +`
+// count stepper; a repeat(4,1fr) grid of editable AC/HP/Speed/CR boxes; a
+// free-text raw paste block; and an editable Foundry actor-id line (teal when
+// set). Every editable field reuses the SAME click-to-edit textarea-swap
+// (makeClickToEditField) as the rest of the page, autosaving a PARTIAL
+// `{stat:{<field>:value}}` PATCH -- the backend shallow-merge keeps every
+// sibling stat field untouched. `count` is a number; the rest are strings.
+// `foundryActor` is stored only -- no push is wired (design record's decision).
+// ---------------------------------------------------------------------------
+function buildStatBlock(scene, element, refreshList) {
+  const stat = element.stat || {};
+  const label = (element.fields && element.fields.statblockRef) || "Stat block";
+  let count = typeof stat.count === "number" ? stat.count : 1;
+
+  const patchStat = (patch) => spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/${encodeURIComponent(element.id)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: currentWorld(), ...patch })
   });
-  wrap.append(addBtn, menu);
+
+  const wrap = document.createElement("div");
+  wrap.className = "sp-statblock";
+
+  const panel = document.createElement("div");
+  panel.className = "sp-statblock-panel";
+  panel.setAttribute("data-testid", "element-statblock-panel");
+  panel.setAttribute("data-element-id", element.id);
+  const startOpen = openStatPanels.has(element.id);
+  panel.style.display = startOpen ? "" : "none";
+
+  const toggle = document.createElement("div");
+  toggle.className = "sp-statblock-toggle";
+  toggle.setAttribute("data-testid", "element-statblock-toggle");
+  toggle.setAttribute("data-element-id", element.id);
+  const toggleText = (open) => `${open ? "▾" : "▸"} ${label}${count > 1 ? `  ×${count}` : ""}`;
+  toggle.textContent = toggleText(startOpen);
+  toggle.addEventListener("click", () => {
+    const nowOpen = panel.style.display === "none";
+    panel.style.display = nowOpen ? "" : "none";
+    if (nowOpen) openStatPanels.add(element.id);
+    else openStatPanels.delete(element.id);
+    toggle.textContent = toggleText(nowOpen);
+  });
+  wrap.appendChild(toggle);
+
+  // Header: element name + count stepper.
+  const header = document.createElement("div");
+  header.className = "sp-statblock-header";
+  const nameEl = document.createElement("div");
+  nameEl.className = "sp-statblock-name";
+  nameEl.textContent = element.name;
+  header.appendChild(nameEl);
+
+  const stepper = document.createElement("div");
+  stepper.className = "sp-statblock-count-stepper";
+  const downBtn = document.createElement("button");
+  downBtn.type = "button";
+  downBtn.className = "sp-statblock-count-btn";
+  downBtn.setAttribute("data-testid", "statblock-count-down-btn");
+  downBtn.setAttribute("data-element-id", element.id);
+  downBtn.textContent = "−";
+  const countEl = document.createElement("span");
+  countEl.className = "sp-statblock-count";
+  countEl.setAttribute("data-testid", "statblock-count");
+  countEl.setAttribute("data-element-id", element.id);
+  countEl.textContent = `×${count}`;
+  const upBtn = document.createElement("button");
+  upBtn.type = "button";
+  upBtn.className = "sp-statblock-count-btn";
+  upBtn.setAttribute("data-testid", "statblock-count-up-btn");
+  upBtn.setAttribute("data-element-id", element.id);
+  upBtn.textContent = "+";
+  const applyCount = (next) => {
+    const clamped = Math.max(1, next); // README's floor -- can't step below ×1
+    if (clamped === count) return;
+    count = clamped;
+    countEl.textContent = `×${count}`;
+    toggle.textContent = toggleText(panel.style.display !== "none");
+    patchStat({ stat: { count } }).catch(() => {});
+  };
+  downBtn.addEventListener("click", () => applyCount(count - 1));
+  upBtn.addEventListener("click", () => applyCount(count + 1));
+  stepper.append(downBtn, countEl, upBtn);
+  header.appendChild(stepper);
+  panel.appendChild(header);
+
+  // AC / HP / Speed / CR grid.
+  const grid = document.createElement("div");
+  grid.className = "sp-statblock-grid";
+  for (const [key, lab] of [["ac", "AC"], ["hp", "HP"], ["speed", "Speed"], ["cr", "CR"]]) {
+    const box = document.createElement("div");
+    box.className = "sp-statblock-box";
+    const boxLabel = document.createElement("div");
+    boxLabel.className = "sp-statblock-box-label";
+    boxLabel.textContent = lab;
+    const field = makeClickToEditField({
+      tag: "div",
+      className: "sp-statblock-box-value",
+      testid: `statblock-${key}`,
+      dataAttrs: { "data-element-id": element.id },
+      inputTestid: `statblock-${key}-input`,
+      inputDataAttrs: { "data-element-id": element.id },
+      value: stat[key] || "",
+      emptyText: "",
+      save: (v) => patchStat({ stat: { [key]: v } })
+    });
+    box.append(boxLabel, field.el);
+    grid.appendChild(box);
+  }
+  panel.appendChild(grid);
+
+  // Raw paste block.
+  const rawLabel = document.createElement("div");
+  rawLabel.className = "sp-statblock-raw-label";
+  rawLabel.textContent = "Paste the rest — abilities, traits, actions";
+  panel.appendChild(rawLabel);
+  const rawField = makeClickToEditField({
+    tag: "div",
+    className: "sp-statblock-raw",
+    testid: "statblock-raw",
+    dataAttrs: { "data-element-id": element.id },
+    inputTestid: "statblock-raw-input",
+    inputDataAttrs: { "data-element-id": element.id },
+    value: stat.raw || "",
+    emptyText: "",
+    save: (v) => patchStat({ stat: { raw: v } })
+  });
+  panel.appendChild(rawField.el);
+
+  // Foundry actor-id line (stored only).
+  const foundryRow = document.createElement("div");
+  foundryRow.className = "sp-statblock-foundry-row";
+  const foundryLabel = document.createElement("span");
+  foundryLabel.className = "sp-statblock-foundry-label";
+  foundryLabel.textContent = "Foundry";
+  const foundryField = makeClickToEditField({
+    tag: "span",
+    className: "sp-statblock-foundry",
+    testid: "statblock-foundry",
+    dataAttrs: { "data-element-id": element.id },
+    inputTestid: "statblock-foundry-input",
+    inputDataAttrs: { "data-element-id": element.id },
+    value: stat.foundryActor || "",
+    placeholder: "Actor.xxxxxxxx",
+    emptyText: "Not linked to a Foundry actor",
+    save: (v) => patchStat({ stat: { foundryActor: v.trim() } })
+  });
+  foundryRow.append(foundryLabel, foundryField.el);
+  panel.appendChild(foundryRow);
+
+  wrap.appendChild(panel);
   return wrap;
 }
 
@@ -1061,8 +1269,13 @@ function buildSceneElementRow(scene, element, refreshList, nodeMap) {
   renderElementFieldLines(scene, element, fieldsEl);
   row.appendChild(fieldsEl);
 
-  const addField = buildAddFieldControl(scene, element, fieldsEl);
+  const addField = buildAddFieldControl(scene, element, fieldsEl, refreshList);
   if (addField) row.appendChild(addField);
+
+  // Phase 29 task 29.4: the stat-block disclosure + panel, on any element that
+  // carries a `stat`. Rendered after the add-field chips (the "+ STAT BLOCK"
+  // chip disappears once a stat exists, replaced by this disclosure line).
+  if (element.stat) row.appendChild(buildStatBlock(scene, element, refreshList));
 
   return row;
 }
@@ -1976,9 +2189,58 @@ async function suggestDressing(scene, place, refreshElements, btn) {
 }
 
 /**
- * The action row below the elements list -- `◇ From graph` (with its inline
- * picker) and `✦ Suggest dressing`. `+ Add element` already lives as the
- * ghost row inside the list; `▣ NPC or creature` (29.4) slots in here later.
+ * Phase 29 task 29.4 -- the "▣ NPC or creature" action. Creates a NEW
+ * scene-local element in ONE create call already carrying an open, empty stat
+ * block (the create route accepts `stat`, 29.1), opens its panel, re-renders,
+ * scrolls it into view, and offers an undo (matching the element-add undo
+ * pattern). `foundryActor` is stored only -- nothing is pushed to Foundry.
+ */
+async function addNpcCreature(scene, refreshElements, btn) {
+  btn.disabled = true;
+  let created;
+  try {
+    created = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        world: currentWorld(),
+        name: "New NPC or creature",
+        fields: { statblockRef: "Stat block" },
+        stat: { count: 1, ac: "", hp: "", speed: "", cr: "", raw: "", foundryActor: "" }
+      })
+    });
+  } catch {
+    btn.disabled = false;
+    return;
+  }
+  const id = created && created.element && created.element.id;
+  if (id) openStatPanels.add(id);
+  await refreshElements();
+  btn.disabled = false;
+
+  if (id) {
+    const rowEl = document.querySelector(`[data-testid="scene-element-row"][data-element-id="${id}"]`);
+    if (rowEl) rowEl.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+
+  showUndoToast("NPC or creature added.", async () => {
+    if (id) {
+      await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      }).catch(() => {});
+      openStatPanels.delete(id);
+    }
+    await refreshElements();
+  });
+}
+
+/**
+ * The action row below the elements list -- `▣ NPC or creature` (creates a
+ * scene-local element with an open stat block), `◇ From graph` (with its
+ * inline picker) and `✦ Suggest dressing`. `+ Add element` already lives as
+ * the ghost row inside the list.
  */
 function buildSceneActionsRow(scene, refreshElements, place) {
   const wrap = document.createElement("div");
@@ -1989,6 +2251,17 @@ function buildSceneActionsRow(scene, refreshElements, place) {
 
   const pickerHost = document.createElement("div");
   pickerHost.className = "scene-actions-picker-host";
+
+  const npcBtn = document.createElement("button");
+  npcBtn.type = "button";
+  npcBtn.className = "btn scene-action-dashed-btn npc-creature-btn";
+  npcBtn.setAttribute("data-testid", "npc-creature-btn");
+  npcBtn.setAttribute("data-scene-id", scene.id);
+  const npcGlyph = document.createElement("span");
+  npcGlyph.className = "scene-action-glyph scene-action-glyph--rust";
+  npcGlyph.textContent = "▣";
+  npcBtn.append(npcGlyph, " NPC or creature");
+  npcBtn.addEventListener("click", () => addNpcCreature(scene, refreshElements, npcBtn));
 
   const fromGraphBtn = document.createElement("button");
   fromGraphBtn.type = "button";
@@ -2016,7 +2289,7 @@ function buildSceneActionsRow(scene, refreshElements, place) {
   dressBtn.append(dsGlyph, " Suggest dressing");
   dressBtn.addEventListener("click", () => suggestDressing(scene, place, refreshElements, dressBtn));
 
-  row.append(fromGraphBtn, dressBtn);
+  row.append(npcBtn, fromGraphBtn, dressBtn);
   wrap.append(row, pickerHost);
   return wrap;
 }

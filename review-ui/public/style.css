@@ -2013,9 +2013,112 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 #view-session-planner .from-graph-picker-footer { margin-top: 10px; font-size: 11.5px; }
 #view-session-planner .from-graph-no-results { padding: 10px 9px; font-size: 12.5px; }
 
+/* =========================================================================
+   §C (29.4) — stat blocks: the "+ STAT BLOCK" chip, the disclosure line, the
+   open panel (element name + `− N +` count stepper, AC/HP/Speed/CR grid, raw
+   paste block, Foundry actor line) and the "▣ NPC or creature" action glyph.
+   ========================================================================= */
+
+/* "+ STAT BLOCK" chip — the same dashed-pill shape as the add-field chips,
+   tinted toward the rust stat-block accent. */
+#view-session-planner .add-statblock-chip {
+  font-family: var(--sp-font-mono); font-size: 9.5px; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--sp-statblock-header-ink); opacity: 1;
+  border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-pill);
+  padding: 3px 10px;
+}
+#view-session-planner .add-statblock-chip:hover {
+  border-color: var(--sp-accent-rust); color: var(--sp-accent-rust);
+}
+
+/* Disclosure line — mono, teal, `▸ <ref>  ×N`. */
+#view-session-planner .sp-statblock { margin-top: 10px; }
+#view-session-planner .sp-statblock-toggle {
+  display: inline-block; cursor: pointer;
+  font-family: var(--sp-font-mono); font-size: 10.5px; color: var(--sp-accent-teal);
+}
+
+/* Open panel — 1px border, 3px rust top rule, rust-tinted paper background. */
+#view-session-planner .sp-statblock-panel {
+  margin-top: 8px; border: 1px solid var(--sp-border-control);
+  border-top: 3px solid var(--sp-statblock-border-top);
+  border-radius: var(--sp-radius-sm); background: var(--sp-statblock-bg);
+  padding: 12px 14px;
+}
+#view-session-planner .sp-statblock-header {
+  display: flex; align-items: center; gap: 9px; margin-bottom: 10px;
+}
+#view-session-planner .sp-statblock-name {
+  font-family: var(--sp-font-serif); font-size: 15px; font-weight: 600;
+  color: var(--sp-statblock-header-ink);
+}
+#view-session-planner .sp-statblock-count-stepper {
+  display: flex; align-items: center; gap: 4px; margin-left: auto;
+}
+#view-session-planner .sp-statblock-count-btn {
+  width: 20px; height: 20px; display: grid; place-items: center;
+  border: 1px solid var(--sp-border-control); border-radius: var(--sp-radius-md);
+  background: transparent; cursor: pointer; font-size: 12px; color: var(--sp-ink-secondary);
+  transition: border-color 0.12s ease;
+}
+#view-session-planner .sp-statblock-count-btn:hover { border-color: var(--sp-accent-rust); }
+#view-session-planner .sp-statblock-count {
+  font-family: var(--sp-font-mono); font-size: 12px; min-width: 26px;
+  text-align: center; color: var(--sp-ink-heading);
+}
+
+/* AC / HP / Speed / CR — a repeat(4,1fr) grid of white editable boxes. */
+#view-session-planner .sp-statblock-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px;
+}
+#view-session-planner .sp-statblock-box {
+  border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-sm);
+  background: var(--sp-surface-input); padding: 5px 8px;
+}
+#view-session-planner .sp-statblock-box-label {
+  font-family: var(--sp-font-mono); font-size: 8.5px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--sp-ink-muted);
+}
+#view-session-planner .sp-statblock-box-value {
+  font-family: var(--sp-font-mono); font-size: 12.5px; color: var(--sp-ink-primary);
+  min-height: 18px; cursor: text;
+}
+
+/* Raw paste block — free-text, pre-wrap, always a visible white box. */
+#view-session-planner .sp-statblock-raw-label {
+  font-family: var(--sp-font-mono); font-size: 8.5px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--sp-ink-muted); margin-bottom: 4px;
+}
+#view-session-planner .sp-statblock-raw {
+  font-family: var(--sp-font-mono); font-size: 11.5px; line-height: 1.55;
+  white-space: pre-wrap; color: var(--sp-ink-primary);
+  border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-sm);
+  background: var(--sp-surface-input); padding: 9px 11px; min-height: 56px; cursor: text;
+}
+
+/* Foundry actor-id line — teal when set, grey placeholder when empty. */
+#view-session-planner .sp-statblock-foundry-row {
+  display: flex; align-items: baseline; gap: 8px; margin-top: 9px;
+}
+#view-session-planner .sp-statblock-foundry-label {
+  font-family: var(--sp-font-mono); font-size: 9px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--sp-ink-muted);
+}
+#view-session-planner .sp-statblock-foundry {
+  font-family: var(--sp-font-mono); font-size: 11px; color: var(--sp-accent-teal);
+  min-width: 140px; min-height: 16px; cursor: text;
+}
+#view-session-planner .sp-statblock-foundry.scene-field--empty {
+  color: var(--sp-ink-muted); font-style: normal;
+}
+
+/* The "▣ NPC or creature" glyph reads in the rust stat-block accent. */
+#view-session-planner .scene-action-glyph--rust { color: var(--sp-accent-rust); }
+
 /* Narrow phones: keep the column readable (29.7 owns the full responsive/dark
    pass; this is just a floor so nothing clips). */
 @media (max-width: 480px) {
   #view-session-planner .scene-page { padding: 0 16px 60px; }
   #view-session-planner .scene-top-bar { padding: 8px 16px; margin: 0 -16px 20px; }
+  #view-session-planner .sp-statblock-grid { grid-template-columns: repeat(2, 1fr); }
 }
