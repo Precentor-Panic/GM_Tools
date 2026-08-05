@@ -1146,3 +1146,397 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   .scene-element-head { flex-wrap: wrap; row-gap: 0.3rem; }
   .scene-element-controls { flex-basis: 100%; margin-left: 0; justify-content: flex-end; }
 }
+
+/* ===========================================================================
+   Phase 29 task 29.0 — Session Planner design tokens + fonts.
+   Source of truth: design/session-planner/README.md's "Design Tokens"
+   section (colours quoted directly, oklch, no hex) plus the per-screen specs
+   the same README lays out (plan shelf/runsheet, scene page, stat blocks,
+   Wrap rail) for values that recur across screens but aren't in that one
+   summary paragraph.
+
+   SCOPING (explicit project decision, plans/phase-29-tasks.md /
+   design record's "settled decisions"): these custom properties are declared
+   ONLY on `#view-plans` and `#view-session-planner` — the two view roots
+   index.html already gives the Plan shelf/runsheet and the Scene page
+   (app.js's `renderCurrentView` toggles `.active` on `#view-<name>`, so
+   these are exactly and only the Session-Planner surfaces). The GLOBAL
+   `:root` block above this comment is UNTOUCHED — every other view (Queue,
+   Review, Import, Encounter Builder, Scenes, Graph, Settings) inherits
+   nothing from here and renders byte-identically to before this change.
+   Prefixed `--sp-` throughout so nothing here can ever collide with the
+   existing global `--bg`/`--text`/... token family above.
+
+   Light values are the README's own numbers verbatim. Dark values are a
+   DERIVED variant (the README specifies light only) — same hue/chroma
+   family, lightness inverted for a dark surface, tuned by eye for
+   readability/contrast rather than a mechanical formula. Gated the same way
+   the existing global dark tokens above are: `prefers-color-scheme: dark`
+   as the default signal, with `:root[data-theme="dark"]` /
+   `:root[data-theme="light"]` overrides winning in both directions (the
+   app's existing theme-toggle hook, same convention as the global block).
+
+   29.2–29.6 (the re-skin/feature tasks) are the consumers of this token
+   set — this task only lays the foundation, no DOM/testid changes.
+   =========================================================================== */
+
+@font-face {
+  font-family: "Spectral";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/spectral-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Spectral";
+  font-style: italic;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/spectral-500-italic.woff2") format("woff2");
+}
+/* IBM Plex Sans ships from Google as ONE variable-weight woff2 covering
+   400/500/600 (confirmed by diffing the URLs Google's own css2 API returns
+   per weight to a modern-Chrome UA — all three are byte-identical) — three
+   @font-face blocks below, one physical file, exactly matching how
+   fonts.googleapis.com itself serves this family. See fonts/LICENSE. */
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-sans-var.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-sans-var.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-sans-var.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-500.woff2") format("woff2");
+}
+
+#view-plans, #view-session-planner {
+  /* ---- Type (README "Type") ------------------------------------------- */
+  --sp-font-serif: "Spectral", Georgia, "Times New Roman", serif;
+  --sp-font-ui: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --sp-font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --sp-mono-label-tracking: 0.09em; /* README: "9-10.5px, uppercase, letter-spacing 0.07-0.11em" -- mid value as the default */
+
+  /* ---- Spacing scale (README "Spacing": 4/6/8/12/14/18/26/34px) -------- */
+  --sp-space-1: 4px;
+  --sp-space-2: 6px;
+  --sp-space-3: 8px;
+  --sp-space-4: 12px;
+  --sp-space-5: 14px;
+  --sp-space-6: 18px;
+  --sp-space-7: 26px;
+  --sp-space-8: 34px;
+
+  /* ---- Radii (README "Radii") ------------------------------------------ */
+  --sp-radius-sm: 3px;   /* paper-ish panels */
+  --sp-radius-md: 4px;   /* rows, inputs */
+  --sp-radius-lg: 6px;   /* buttons (5-6px) */
+  --sp-radius-pill: 20px; /* pills */
+
+  /* ---- Shadows (README "Shadows": "only the toast") --------------------- */
+  --sp-toast-shadow: 0 8px 26px oklch(0.26 0.015 60 / 0.28);
+
+  /* ---- Surfaces (README "Surfaces") ------------------------------------ */
+  --sp-surface-page: oklch(0.955 0.008 85);
+  --sp-surface-chrome: oklch(0.938 0.009 85);
+  --sp-surface-topbar: oklch(0.925 0.009 85);
+  --sp-surface-card: oklch(0.985 0.005 85);
+  --sp-surface-input: oklch(1 0 0);
+  --sp-surface-subbar: oklch(0.945 0.009 85);
+
+  /* ---- Rules & borders (README "Rules & borders") ----------------------- */
+  --sp-border-hairline: oklch(0.88 0.010 80);
+  --sp-border-control: oklch(0.86 0.010 80);
+  --sp-border-dashed: oklch(0.80 0.010 80);
+
+  /* ---- Ink (README "Ink") ------------------------------------------------ */
+  --sp-ink-primary: oklch(0.27 0.015 60);
+  --sp-ink-heading: oklch(0.24 0.015 60);
+  --sp-ink-secondary: oklch(0.47 0.014 65);
+  --sp-ink-muted: oklch(0.58 0.012 70);
+
+  /* ---- Accents (README "Accents") ---------------------------------------- */
+  --sp-accent-teal: oklch(0.55 0.075 185);
+  --sp-accent-teal-selected: oklch(0.90 0.020 185);
+  --sp-accent-amber: oklch(0.62 0.10 65);
+  --sp-accent-rust: oklch(0.55 0.11 40);
+  --sp-accent-danger: oklch(0.50 0.13 25);
+  --sp-accent-accept: oklch(0.55 0.070 150);
+
+  /* ---- Per-screen recurring values (from the README's own per-screen specs,
+     not in the "Design Tokens" summary paragraph but reused enough across
+     29.2-29.6 to name once here rather than have every task re-derive its
+     own constant). Grouped by the screen section that introduces them. */
+
+  /* Plan shelf (README §A) */
+  --sp-plan-card-border: oklch(0.87 0.010 80);
+  --sp-plan-card-hover-border: oklch(0.70 0.030 185);
+  --sp-meta-text: oklch(0.50 0.012 70);
+
+  /* Plan runsheet (README §B) */
+  --sp-row-index-ink: oklch(0.65 0.012 70);
+  --sp-place-label: oklch(0.50 0.075 185);
+  --sp-row-active-bg: oklch(0.935 0.014 185);
+  --sp-row-hover-bg: oklch(0.925 0.009 85);
+
+  /* Scene page sub-bar / Wrap button (README §C) */
+  --sp-wrap-btn-border: oklch(0.68 0.09 65);
+  --sp-wrap-btn-text: oklch(0.42 0.09 65);
+
+  /* Missing-description banner (README §C.5) */
+  --sp-banner-border: oklch(0.80 0.070 65);
+  --sp-banner-bg: oklch(0.96 0.030 65);
+
+  /* Read aloud rule (README §C.6) */
+  --sp-readaloud-rule: oklch(0.72 0.055 185);
+
+  /* Element field ink (README §C, "Element rendering") */
+  --sp-key-field-ink: oklch(0.31 0.015 60);
+  --sp-mundane-field-ink: oklch(0.46 0.014 65);
+  --sp-entity-badge-bg: oklch(0.88 0.050 65);
+  --sp-card-key-bg: oklch(0.985 0.008 78); /* Cards layout KEY card background */
+
+  /* Stat blocks (README §C, "Stat blocks") */
+  --sp-statblock-border-top: oklch(0.55 0.11 40);
+  --sp-statblock-bg: oklch(0.985 0.008 75);
+  --sp-statblock-header-ink: oklch(0.38 0.11 40);
+
+  /* Wrap-up rail / proposal cards (README §D) */
+  --sp-wrap-rail-bg: oklch(0.945 0.009 85);
+  --sp-badge-promote-bg: oklch(0.90 0.045 65);
+  --sp-badge-teal-bg: oklch(0.90 0.030 185);
+  --sp-diff-removed-bg: oklch(0.90 0.030 25 / 0.35);
+  --sp-diff-added-bg: oklch(0.90 0.045 150 / 0.40);
+  --sp-proposal-accepted-bg: oklch(0.96 0.020 150);
+
+  /* Click-to-edit halos (README "Interactions & Behaviour") */
+  --sp-hover-halo: oklch(0.90 0.012 85);
+  --sp-focus-halo: oklch(0.86 0.045 185 / 0.45);
+
+  /* Undo toast (README "Interactions & Behaviour") */
+  --sp-toast-bg: oklch(0.26 0.015 60);
+  --sp-toast-text: oklch(1 0 0);
+}
+
+/* ---- Dark variant — derived, gated the same two ways the existing global
+   dark block above uses: prefers-color-scheme as the default signal, then
+   the app's own [data-theme] hook overriding in either direction. Same hue
+   families as light, lightness/chroma re-tuned for a dark surface — the
+   README specifies light values only, this is this task's own derivation,
+   not a second source of truth. */
+@media (prefers-color-scheme: dark) {
+  #view-plans, #view-session-planner {
+    --sp-surface-page: oklch(0.19 0.010 85);
+    --sp-surface-chrome: oklch(0.22 0.011 85);
+    --sp-surface-topbar: oklch(0.24 0.011 85);
+    --sp-surface-card: oklch(0.26 0.008 85);
+    --sp-surface-input: oklch(0.29 0.006 85);
+    --sp-surface-subbar: oklch(0.23 0.010 85);
+
+    --sp-border-hairline: oklch(0.34 0.012 80);
+    --sp-border-control: oklch(0.38 0.012 80);
+    --sp-border-dashed: oklch(0.42 0.012 80);
+
+    --sp-ink-primary: oklch(0.88 0.014 60);
+    --sp-ink-heading: oklch(0.92 0.014 60);
+    --sp-ink-secondary: oklch(0.74 0.014 65);
+    --sp-ink-muted: oklch(0.64 0.012 70);
+
+    --sp-accent-teal: oklch(0.68 0.090 185);
+    --sp-accent-teal-selected: oklch(0.28 0.035 185);
+    --sp-accent-amber: oklch(0.72 0.110 65);
+    --sp-accent-rust: oklch(0.62 0.120 40);
+    --sp-accent-danger: oklch(0.62 0.140 25);
+    --sp-accent-accept: oklch(0.66 0.090 150);
+
+    --sp-plan-card-border: oklch(0.36 0.014 80);
+    --sp-plan-card-hover-border: oklch(0.60 0.070 185);
+    --sp-meta-text: oklch(0.66 0.012 70);
+
+    --sp-row-index-ink: oklch(0.62 0.012 70);
+    --sp-place-label: oklch(0.68 0.090 185);
+    --sp-row-active-bg: oklch(0.26 0.030 185);
+    --sp-row-hover-bg: oklch(0.25 0.011 85);
+
+    --sp-wrap-btn-border: oklch(0.60 0.100 65);
+    --sp-wrap-btn-text: oklch(0.78 0.110 65);
+
+    --sp-banner-border: oklch(0.55 0.090 65);
+    --sp-banner-bg: oklch(0.26 0.045 65);
+
+    --sp-readaloud-rule: oklch(0.55 0.080 185);
+
+    --sp-key-field-ink: oklch(0.86 0.016 60);
+    --sp-mundane-field-ink: oklch(0.70 0.014 65);
+    --sp-entity-badge-bg: oklch(0.30 0.060 65);
+    --sp-card-key-bg: oklch(0.26 0.020 78);
+
+    --sp-statblock-border-top: oklch(0.62 0.120 40);
+    --sp-statblock-bg: oklch(0.27 0.020 75);
+    --sp-statblock-header-ink: oklch(0.78 0.130 40);
+
+    --sp-wrap-rail-bg: oklch(0.22 0.011 85);
+    --sp-badge-promote-bg: oklch(0.30 0.060 65);
+    --sp-badge-teal-bg: oklch(0.28 0.050 185);
+    --sp-diff-removed-bg: oklch(0.40 0.050 25 / 0.35);
+    --sp-diff-added-bg: oklch(0.38 0.060 150 / 0.40);
+    --sp-proposal-accepted-bg: oklch(0.24 0.035 150);
+
+    --sp-hover-halo: oklch(0.32 0.014 85);
+    --sp-focus-halo: oklch(0.40 0.060 185 / 0.50);
+
+    --sp-toast-bg: oklch(0.20 0.015 60);
+    --sp-toast-text: oklch(0.98 0.004 85);
+  }
+}
+:root[data-theme="dark"] #view-plans, :root[data-theme="dark"] #view-session-planner {
+  --sp-surface-page: oklch(0.19 0.010 85);
+  --sp-surface-chrome: oklch(0.22 0.011 85);
+  --sp-surface-topbar: oklch(0.24 0.011 85);
+  --sp-surface-card: oklch(0.26 0.008 85);
+  --sp-surface-input: oklch(0.29 0.006 85);
+  --sp-surface-subbar: oklch(0.23 0.010 85);
+
+  --sp-border-hairline: oklch(0.34 0.012 80);
+  --sp-border-control: oklch(0.38 0.012 80);
+  --sp-border-dashed: oklch(0.42 0.012 80);
+
+  --sp-ink-primary: oklch(0.88 0.014 60);
+  --sp-ink-heading: oklch(0.92 0.014 60);
+  --sp-ink-secondary: oklch(0.74 0.014 65);
+  --sp-ink-muted: oklch(0.64 0.012 70);
+
+  --sp-accent-teal: oklch(0.68 0.090 185);
+  --sp-accent-teal-selected: oklch(0.28 0.035 185);
+  --sp-accent-amber: oklch(0.72 0.110 65);
+  --sp-accent-rust: oklch(0.62 0.120 40);
+  --sp-accent-danger: oklch(0.62 0.140 25);
+  --sp-accent-accept: oklch(0.66 0.090 150);
+
+  --sp-plan-card-border: oklch(0.36 0.014 80);
+  --sp-plan-card-hover-border: oklch(0.60 0.070 185);
+  --sp-meta-text: oklch(0.66 0.012 70);
+
+  --sp-row-index-ink: oklch(0.62 0.012 70);
+  --sp-place-label: oklch(0.68 0.090 185);
+  --sp-row-active-bg: oklch(0.26 0.030 185);
+  --sp-row-hover-bg: oklch(0.25 0.011 85);
+
+  --sp-wrap-btn-border: oklch(0.60 0.100 65);
+  --sp-wrap-btn-text: oklch(0.78 0.110 65);
+
+  --sp-banner-border: oklch(0.55 0.090 65);
+  --sp-banner-bg: oklch(0.26 0.045 65);
+
+  --sp-readaloud-rule: oklch(0.55 0.080 185);
+
+  --sp-key-field-ink: oklch(0.86 0.016 60);
+  --sp-mundane-field-ink: oklch(0.70 0.014 65);
+  --sp-entity-badge-bg: oklch(0.30 0.060 65);
+  --sp-card-key-bg: oklch(0.26 0.020 78);
+
+  --sp-statblock-border-top: oklch(0.62 0.120 40);
+  --sp-statblock-bg: oklch(0.27 0.020 75);
+  --sp-statblock-header-ink: oklch(0.78 0.130 40);
+
+  --sp-wrap-rail-bg: oklch(0.22 0.011 85);
+  --sp-badge-promote-bg: oklch(0.30 0.060 65);
+  --sp-badge-teal-bg: oklch(0.28 0.050 185);
+  --sp-diff-removed-bg: oklch(0.40 0.050 25 / 0.35);
+  --sp-diff-added-bg: oklch(0.38 0.060 150 / 0.40);
+  --sp-proposal-accepted-bg: oklch(0.24 0.035 150);
+
+  --sp-hover-halo: oklch(0.32 0.014 85);
+  --sp-focus-halo: oklch(0.40 0.060 185 / 0.50);
+
+  --sp-toast-bg: oklch(0.20 0.015 60);
+  --sp-toast-text: oklch(0.98 0.004 85);
+}
+:root[data-theme="light"] #view-plans, :root[data-theme="light"] #view-session-planner {
+  --sp-surface-page: oklch(0.955 0.008 85);
+  --sp-surface-chrome: oklch(0.938 0.009 85);
+  --sp-surface-topbar: oklch(0.925 0.009 85);
+  --sp-surface-card: oklch(0.985 0.005 85);
+  --sp-surface-input: oklch(1 0 0);
+  --sp-surface-subbar: oklch(0.945 0.009 85);
+
+  --sp-border-hairline: oklch(0.88 0.010 80);
+  --sp-border-control: oklch(0.86 0.010 80);
+  --sp-border-dashed: oklch(0.80 0.010 80);
+
+  --sp-ink-primary: oklch(0.27 0.015 60);
+  --sp-ink-heading: oklch(0.24 0.015 60);
+  --sp-ink-secondary: oklch(0.47 0.014 65);
+  --sp-ink-muted: oklch(0.58 0.012 70);
+
+  --sp-accent-teal: oklch(0.55 0.075 185);
+  --sp-accent-teal-selected: oklch(0.90 0.020 185);
+  --sp-accent-amber: oklch(0.62 0.10 65);
+  --sp-accent-rust: oklch(0.55 0.11 40);
+  --sp-accent-danger: oklch(0.50 0.13 25);
+  --sp-accent-accept: oklch(0.55 0.070 150);
+
+  --sp-plan-card-border: oklch(0.87 0.010 80);
+  --sp-plan-card-hover-border: oklch(0.70 0.030 185);
+  --sp-meta-text: oklch(0.50 0.012 70);
+
+  --sp-row-index-ink: oklch(0.65 0.012 70);
+  --sp-place-label: oklch(0.50 0.075 185);
+  --sp-row-active-bg: oklch(0.935 0.014 185);
+  --sp-row-hover-bg: oklch(0.925 0.009 85);
+
+  --sp-wrap-btn-border: oklch(0.68 0.09 65);
+  --sp-wrap-btn-text: oklch(0.42 0.09 65);
+
+  --sp-banner-border: oklch(0.80 0.070 65);
+  --sp-banner-bg: oklch(0.96 0.030 65);
+
+  --sp-readaloud-rule: oklch(0.72 0.055 185);
+
+  --sp-key-field-ink: oklch(0.31 0.015 60);
+  --sp-mundane-field-ink: oklch(0.46 0.014 65);
+  --sp-entity-badge-bg: oklch(0.88 0.050 65);
+  --sp-card-key-bg: oklch(0.985 0.008 78);
+
+  --sp-statblock-border-top: oklch(0.55 0.11 40);
+  --sp-statblock-bg: oklch(0.985 0.008 75);
+  --sp-statblock-header-ink: oklch(0.38 0.11 40);
+
+  --sp-wrap-rail-bg: oklch(0.945 0.009 85);
+  --sp-badge-promote-bg: oklch(0.90 0.045 65);
+  --sp-badge-teal-bg: oklch(0.90 0.030 185);
+  --sp-diff-removed-bg: oklch(0.90 0.030 25 / 0.35);
+  --sp-diff-added-bg: oklch(0.90 0.045 150 / 0.40);
+  --sp-proposal-accepted-bg: oklch(0.96 0.020 150);
+
+  --sp-hover-halo: oklch(0.90 0.012 85);
+  --sp-focus-halo: oklch(0.86 0.045 185 / 0.45);
+
+  --sp-toast-bg: oklch(0.26 0.015 60);
+  --sp-toast-text: oklch(1 0 0);
+}

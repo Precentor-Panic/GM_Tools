@@ -1,0 +1,33 @@
+Fonts in this directory (Phase 29 task 29.0, Session Planner design system)
+============================================================================
+
+- Spectral (spectral-500-normal.woff2, spectral-500-italic.woff2)
+  Designed by Production Type. SIL Open Font License 1.1.
+  https://fonts.google.com/specimen/Spectral
+
+- IBM Plex Sans (ibm-plex-sans-var.woff2)
+  Designed by IBM / Bold Monday. SIL Open Font License 1.1.
+  https://fonts.google.com/specimen/IBM+Plex+Sans
+  Served here as a single variable-weight woff2 (Google Fonts' own
+  distribution for this family covers 400/500/600 with one physical file)
+  — style.css declares THREE @font-face blocks (weight 400/500/600) that
+  all point at this one file, exactly matching how fonts.googleapis.com
+  itself serves it to modern browsers; a browser resolves the requested
+  static weight from the file's own weight axis. Not a shortcut or a
+  mistake — confirmed by diffing the per-weight URLs Google's own css2 API
+  returns to a modern-Chrome user agent.
+
+- IBM Plex Mono (ibm-plex-mono-400.woff2, ibm-plex-mono-500.woff2)
+  Designed by IBM / Bold Monday. SIL Open Font License 1.1.
+  https://fonts.google.com/specimen/IBM+Plex+Mono
+  Distinct physical files per weight (this family is not distributed as
+  one shared variable file for these two static weights).
+
+Downloaded directly from fonts.gstatic.com (Google's own font CDN, the
+same bytes any Google Fonts CSS `<link>` would eventually serve) rather
+than a Google Fonts CDN `<link>`, so review-ui stays self-contained/works
+offline. Full OFL 1.1 license text: https://openfontlicense.org/
+
+Subset: Latin only (unicode-range matching the "latin" @font-face block
+each family's Google Fonts css2 response emits) — sufficient for this
+app's English-only UI copy.

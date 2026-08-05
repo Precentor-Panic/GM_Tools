@@ -329,7 +329,12 @@ const CONTENT_TYPES = {
   // too, which is what surfaced it.
   ".mjs": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8"
+  ".json": "application/json; charset=utf-8",
+  // Phase 29 task 29.0: self-hosted design-system fonts
+  // (review-ui/public/fonts/*.woff2) -- without this they fall back to
+  // application/octet-stream (the extname()-miss default below), which most
+  // browsers tolerate for @font-face but isn't the correct MIME type.
+  ".woff2": "font/woff2"
 };
 
 function serveStatic(res, filePath) {
