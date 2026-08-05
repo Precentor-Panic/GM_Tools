@@ -117,3 +117,6 @@ node_modules/
 .env.*
 !.env.example
 *.key
+
+# Design-handoff source zip (extracted into design/ — the zip itself is redundant)
+/TTRPG Session Planning Tool.zip

@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+<link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: oklch(0.955 0.008 85); }
+  * { box-sizing: border-box; }
+  body { font-family: "IBM Plex Sans", system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: oklch(0.27 0.015 60); }
+  a { color: oklch(0.50 0.075 185); text-decoration: none; }
+  a:hover { color: oklch(0.42 0.075 185); text-decoration: underline; }
+  ::selection { background: oklch(0.75 0.09 185 / 0.32); }
+  [contenteditable] { outline: none; border-radius: 3px; }
+  [contenteditable]:hover { box-shadow: 0 0 0 4px oklch(0.90 0.012 85); background: oklch(0.90 0.012 85); }
+  [contenteditable]:focus { box-shadow: 0 0 0 4px oklch(0.86 0.045 185 / 0.45); background: oklch(0.86 0.045 185 / 0.28); }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: oklch(0.83 0.010 80); border-radius: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</helmet>
+
+<div style="display: flex; flex-direction: column; height: 100vh; background: oklch(0.955 0.008 85); font-size: 14px;">
+
+  <div style="display: flex; align-items: center; gap: 14px; padding: 0 16px; height: 52px; flex: none; border-bottom: 1px solid oklch(0.87 0.010 80); background: oklch(0.925 0.009 85);">
+    <div style="display: flex; align-items: center; gap: 9px;">
+      <div style="width: 8px; height: 8px; transform: rotate(45deg); background: oklch(0.55 0.075 185);"></div>
+      <div style="font-family: Spectral, serif; font-size: 15.5px; font-weight: 600;">The Verdigris Compact</div>
+    </div>
+    <div style="width: 1px; height: 20px; background: oklch(0.85 0.010 80);"></div>
+    <div style="display: flex; align-items: center; gap: 4px; padding: 3px; border: 1px solid oklch(0.86 0.010 80); border-radius: 7px; background: oklch(0.955 0.008 85);">
+      <a href="Session Planner.dc.html" style="padding: 4px 11px; border-radius: 5px; font-size: 12px; color: oklch(0.48 0.014 65);" style-hover="background: oklch(0.90 0.010 80); text-decoration: none;">Session planner</a>
+      <div style="padding: 4px 11px; border-radius: 5px; font-size: 12px; background: oklch(0.55 0.075 185); color: oklch(0.99 0.005 185);">World</div>
+    </div>
+    <div style="flex: 1;"></div>
+    <input value="{{ query }}" onChange="{{ setQuery }}" placeholder="Search the world…" style="width: 260px; padding: 6px 11px; border: 1px solid oklch(0.84 0.010 80); border-radius: 6px; font-family: inherit; font-size: 13px; background: oklch(1 0 0); color: inherit;" />
+    <div style="display: flex; gap: 4px;">
+      <sc-for list="{{ typeChips }}" as="t" hint-placeholder-count="6">
+        <div onClick="{{ t.toggle }}" title="{{ t.title }}" style="display: flex; align-items: center; gap: 6px; padding: 4px 9px; border: 1px solid {{ t.border }}; border-radius: 20px; cursor: pointer; font-size: 11.5px; background: {{ t.bg }}; color: {{ t.fg }};" style-hover="border-color: oklch(0.65 0.045 185);">
+          <span style="font-family: 'IBM Plex Mono', monospace;">{{ t.glyph }}</span><span>{{ t.label }}</span>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="display: flex; flex: 1; min-height: 0;">
+
+    <div style="width: 318px; flex: none; border-right: 1px solid oklch(0.87 0.010 80); background: oklch(0.938 0.009 85); display: flex; flex-direction: column; min-height: 0;">
+      <div style="padding: 13px 14px 8px; display: flex; align-items: center; gap: 8px;">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: oklch(0.53 0.012 70);">Where things are</div>
+        <div style="flex: 1;"></div>
+        <div onClick="{{ expandAll }}" style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.55 0.012 70); cursor: pointer;" style-hover="color: oklch(0.45 0.075 185);">{{ expandLabel }}</div>
+      </div>
+      <div style="flex: 1; overflow-y: auto; padding: 0 8px 14px;">
+        <sc-for list="{{ treeRows }}" as="r" hint-placeholder-count="10">
+          <div draggable="true" onDragStart="{{ r.dragStart }}" onDragOver="{{ r.dragOver }}" onDragLeave="{{ r.dragLeave }}" onDrop="{{ r.drop }}" onClick="{{ r.select }}" style="display: flex; align-items: center; gap: 7px; padding: 5px 8px; padding-left: {{ r.indent }}; border-radius: 5px; cursor: pointer; background: {{ r.bg }}; border: 1px solid {{ r.dropBorder }};" style-hover="background: oklch(0.905 0.010 85);">
+            <span onClick="{{ r.toggle }}" style="width: 12px; flex: none; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.60 0.012 70);">{{ r.chevron }}</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: {{ r.glyphColor }};">{{ r.glyph }}</span>
+            <span style="flex: 1; min-width: 0; font-size: 12.5px; color: {{ r.nameColor }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ r.name }}</span>
+            <sc-if value="{{ r.unreviewed }}" hint-placeholder-val="{{ false }}">
+              <span title="Unreviewed since last session" style="width: 6px; height: 6px; border-radius: 50%; background: oklch(0.68 0.12 65); flex: none;"></span>
+            </sc-if>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.64 0.012 70); flex: none;">{{ r.count }}</span>
+          </div>
+        </sc-for>
+        <div style="margin-top: 10px; padding: 8px 10px; font-size: 11.5px; color: oklch(0.56 0.012 70); line-height: 1.45; border-top: 1px solid oklch(0.89 0.010 80);">Drag any node onto a place to put it inside. That single edge is all the detail you owe it.</div>
+      </div>
+    </div>
+
+    <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;">
+      <div style="flex: 1; overflow-y: auto; padding: 26px 30px 40px;">
+        <div style="max-width: 820px;">
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.09em; color: oklch(0.55 0.012 70); margin-bottom: 8px;">{{ breadcrumb }}</div>
+          <div style="display: flex; align-items: baseline; gap: 11px; margin-bottom: 6px;">
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; color: {{ selGlyphColor }};">{{ selGlyph }}</span>
+            <span contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ saveSelName }}" style="font-family: Spectral, serif; font-size: 30px; font-weight: 500; line-height: 1.15;">{{ selName }}</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase; color: oklch(0.58 0.012 70);">{{ selType }}</span>
+          </div>
+          <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ saveSelDesc }}" style="font-size: 13.5px; line-height: 1.55; color: oklch(0.45 0.014 65); max-width: 64ch; margin-bottom: 22px; min-height: 20px;">{{ selDesc }}</div>
+
+          <div style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: oklch(0.50 0.012 70);">Inside {{ selShort }}</div>
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.63 0.012 70);">{{ contentsMeta }}</div>
+          </div>
+
+          <sc-if value="{{ hasContents }}" hint-placeholder-val="{{ true }}">
+            <div style="display: flex; flex-direction: column; gap: 16px;">
+              <sc-for list="{{ contentGroups }}" as="g" hint-placeholder-count="3">
+                <div>
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.60 0.012 70); margin-bottom: 6px;">{{ g.label }}</div>
+                  <div style="display: flex; flex-wrap: wrap; gap: 7px;">
+                    <sc-for list="{{ g.items }}" as="it" hint-placeholder-count="4">
+                      <div draggable="true" onDragStart="{{ it.dragStart }}" onClick="{{ it.select }}" title="Drag onto a scene at right, or onto another place to move it" style="display: flex; align-items: center; gap: 8px; padding: 6px 11px; border: 1px solid {{ it.border }}; border-left: 2px solid {{ it.accent }}; border-radius: 4px; background: oklch(0.985 0.005 85); cursor: grab; font-size: 12.5px;" style-hover="border-color: oklch(0.62 0.060 185);">
+                        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: {{ it.accent }};">{{ it.glyph }}</span>
+                        <span style="color: oklch(0.28 0.015 60);">{{ it.name }}</span>
+                        <sc-if value="{{ it.unreviewed }}" hint-placeholder-val="{{ false }}">
+                          <span title="Unreviewed" style="width: 5px; height: 5px; border-radius: 50%; background: oklch(0.68 0.12 65);"></span>
+                        </sc-if>
+                        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.66 0.012 70);">{{ it.sub }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+          <sc-if value="{{ contentsEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="padding: 14px 15px; border: 1px dashed oklch(0.84 0.010 80); border-radius: 4px; font-size: 12.5px; color: oklch(0.55 0.012 70); line-height: 1.5;">Nothing is recorded inside {{ selShort }} yet. Drag something here from Loose threads below, or add it directly.</div>
+          </sc-if>
+
+          <div style="display: flex; gap: 8px; margin-top: 14px;">
+            <div onClick="{{ toggleAdd }}" style="display: flex; align-items: center; gap: 7px; padding: 7px 12px; border: 1px dashed oklch(0.80 0.010 80); border-radius: 5px; cursor: pointer; color: oklch(0.50 0.012 70); font-size: 12.5px;" style-hover="border-color: oklch(0.60 0.060 185); color: oklch(0.45 0.075 185);"><span>+</span><span>Add something here</span></div>
+            <div onClick="{{ openRelPicker }}" style="display: flex; align-items: center; gap: 7px; padding: 7px 12px; border: 1px dashed oklch(0.80 0.010 80); border-radius: 5px; cursor: pointer; color: oklch(0.50 0.012 70); font-size: 12.5px;" style-hover="border-color: oklch(0.60 0.060 185); color: oklch(0.45 0.075 185);"><span style="font-family: 'IBM Plex Mono', monospace;">⌁</span><span>Mark something related</span></div>
+            <sc-if value="{{ isPlace }}" hint-placeholder-val="{{ true }}">
+              <div onClick="{{ createSceneHere }}" style="display: flex; align-items: center; gap: 7px; padding: 7px 12px; border: 1px solid oklch(0.72 0.055 185); border-radius: 5px; cursor: pointer; color: oklch(0.40 0.075 185); background: oklch(0.94 0.020 185); font-size: 12.5px;" style-hover="background: oklch(0.90 0.030 185);"><span style="font-family: 'IBM Plex Mono', monospace;">▸</span><span>Create a scene here</span></div>
+            </sc-if>
+          </div>
+
+          <sc-if value="{{ addOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-top: 12px; border: 1px solid oklch(0.84 0.010 80); border-radius: 5px; background: oklch(0.985 0.005 85); padding: 13px 14px;">
+              <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px;">
+                <input value="{{ addName }}" onChange="{{ setAddName }}" placeholder="Name it — detail can come later…" style="flex: 1; padding: 7px 10px; border: 1px solid oklch(0.82 0.010 80); border-radius: 4px; font-family: inherit; font-size: 13px; background: oklch(1 0 0); color: inherit;" />
+                <div onClick="{{ commitAdd }}" style="padding: 7px 14px; border-radius: 4px; cursor: pointer; background: {{ addBg }}; color: {{ addFg }}; font-size: 12.5px;">Add inside {{ selShort }}</div>
+              </div>
+              <div style="display: flex; gap: 5px; flex-wrap: wrap;">
+                <sc-for list="{{ addTypes }}" as="at" hint-placeholder-count="6">
+                  <div onClick="{{ at.pick }}" style="display: flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid {{ at.border }}; border-radius: 20px; cursor: pointer; font-size: 11.5px; background: {{ at.bg }}; color: {{ at.fg }};">
+                    <span style="font-family: 'IBM Plex Mono', monospace;">{{ at.glyph }}</span><span>{{ at.label }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ relPickerOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-top: 12px; border: 1px solid oklch(0.84 0.010 80); border-radius: 5px; background: oklch(0.985 0.005 85); padding: 13px 14px;">
+              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 9px;">
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.53 0.012 70);">{{ selShort }} is related to…</div>
+                <div style="flex: 1;"></div>
+                <div onClick="{{ openRelPicker }}" style="cursor: pointer; color: oklch(0.58 0.012 70); font-size: 12px;">✕</div>
+              </div>
+              <input value="{{ relQuery }}" onChange="{{ setRelQuery }}" placeholder="Search…" style="width: 100%; padding: 7px 10px; border: 1px solid oklch(0.82 0.010 80); border-radius: 4px; font-family: inherit; font-size: 13px; background: oklch(1 0 0); color: inherit; margin-bottom: 9px;" />
+              <div style="display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto;">
+                <sc-for list="{{ relCandidates }}" as="c" hint-placeholder-count="5">
+                  <div onClick="{{ c.pick }}" style="display: flex; align-items: baseline; gap: 9px; padding: 6px 9px; border-radius: 4px; cursor: pointer;" style-hover="background: oklch(0.925 0.014 185);">
+                    <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: {{ c.accent }};">{{ c.glyph }}</span>
+                    <span style="font-size: 12.5px; color: oklch(0.28 0.015 60);">{{ c.name }}</span>
+                    <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.62 0.012 70);">{{ c.type }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="margin-top: 9px; font-size: 11.5px; color: oklch(0.56 0.012 70); line-height: 1.45;">Creates an untyped <span style="font-family: 'IBM Plex Mono', monospace;">related</span> edge. Wrap-up reads your session notes and proposes what it actually is — you approve it then.</div>
+            </div>
+          </sc-if>
+
+          <div style="margin-top: 34px; border-top: 1px solid oklch(0.88 0.010 80); padding-top: 14px;">
+            <div onClick="{{ toggleLoose }}" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: oklch(0.50 0.012 70);">{{ looseLabel }}</span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; padding: 1px 7px; border-radius: 10px; background: oklch(0.90 0.045 65); color: oklch(0.42 0.09 65);">{{ looseCount }}</span>
+              <span style="font-size: 12px; color: oklch(0.58 0.012 70);">introduced, never placed or paid off</span>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;">
+              <sc-for list="{{ looseFilters }}" as="lf" hint-placeholder-count="4">
+                <div onClick="{{ lf.toggle }}" style="display: flex; align-items: center; gap: 7px; padding: 4px 10px; border: 1px solid {{ lf.border }}; border-radius: 20px; cursor: pointer; font-size: 11.5px; background: {{ lf.bg }}; color: {{ lf.fg }};" style-hover="border-color: oklch(0.65 0.10 65);">
+                  <span>{{ lf.label }}</span>
+                  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; opacity: 0.75;">{{ lf.count }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <sc-if value="{{ looseOpen }}" hint-placeholder-val="{{ true }}">
+              <div style="display: flex; flex-direction: column; gap: 5px; margin-top: 12px;">
+                <sc-for list="{{ looseThreads }}" as="l" hint-placeholder-count="4">
+                  <div draggable="true" onDragStart="{{ l.dragStart }}" onClick="{{ l.select }}" style="display: flex; align-items: center; gap: 10px; padding: 8px 11px; border: 1px solid oklch(0.89 0.010 80); border-left: 2px solid oklch(0.70 0.10 65); border-radius: 4px; background: oklch(0.985 0.005 85); cursor: grab;" style-hover="border-color: oklch(0.70 0.060 185);">
+                    <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: {{ l.accent }};">{{ l.glyph }}</span>
+                    <span style="font-size: 13px; color: oklch(0.27 0.015 60);">{{ l.name }}</span>
+                    <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.62 0.012 70);">{{ l.type }}</span>
+                    <span style="flex: 1;"></span>
+                    <sc-for list="{{ l.reasons }}" as="rs" hint-placeholder-count="2">
+                      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 7px; border-radius: 3px; background: oklch(0.93 0.030 65); color: oklch(0.45 0.09 65);">{{ rs.label }}</span>
+                    </sc-for>
+                    <span onClick="{{ l.placeHere }}" title="Put it inside the selected place" style="font-size: 11.5px; color: oklch(0.48 0.075 185); padding: 2px 4px;" style-hover="color: oklch(0.36 0.075 185);">place in {{ selShort }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="width: 320px; flex: none; border-left: 1px solid oklch(0.87 0.010 80); background: oklch(0.938 0.009 85); display: flex; flex-direction: column; min-height: 0;">
+      <div style="padding: 12px 14px; border-bottom: 1px solid oklch(0.88 0.010 80); display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 13px; font-weight: 500;">{{ selName }}</span>
+        <span style="flex: 1;"></span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.075 185); cursor: pointer;" style-hover="text-decoration: underline;">Open full page →</span>
+      </div>
+
+      <div style="flex: 1; overflow-y: auto; padding: 12px 14px;">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.56 0.012 70); margin-bottom: 7px;">Contained in</div>
+        <sc-if value="{{ hasParent }}" hint-placeholder-val="{{ true }}">
+          <div onClick="{{ selectParent }}" style="font-size: 12.5px; color: oklch(0.30 0.015 60); cursor: pointer; padding: 5px 8px; border-radius: 4px; background: oklch(0.965 0.006 85); border: 1px solid oklch(0.90 0.010 80);" style-hover="border-color: oklch(0.65 0.045 185);">{{ parentName }}</div>
+        </sc-if>
+        <sc-if value="{{ noParent }}" hint-placeholder-val="{{ false }}">
+          <div style="font-size: 12.5px; color: oklch(0.50 0.09 55); padding: 5px 8px; border-radius: 4px; background: oklch(0.96 0.030 65); border: 1px solid oklch(0.86 0.045 65);">Nowhere in particular — drag it onto a place to fix that.</div>
+        </sc-if>
+
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.56 0.012 70); margin: 16px 0 7px;">Tied to</div>
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <sc-for list="{{ selRelations }}" as="rl" hint-placeholder-count="3">
+            <div style="display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border-radius: 4px; background: oklch(0.965 0.006 85); border: 1px dashed oklch(0.86 0.010 80);">
+              <span onClick="{{ rl.select }}" style="font-size: 12.5px; color: oklch(0.29 0.015 60); cursor: pointer;" style-hover="color: oklch(0.42 0.075 185);">{{ rl.name }}</span>
+              <span style="flex: 1;"></span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.05em; color: {{ rl.kindColor }};">{{ rl.kind }}</span>
+              <span onClick="{{ rl.remove }}" style="font-size: 10px; color: oklch(0.66 0.012 70); cursor: pointer;" style-hover="color: oklch(0.50 0.13 25);">✕</span>
+            </div>
+          </sc-for>
+          <sc-if value="{{ noRelations }}" hint-placeholder-val="{{ false }}">
+            <div style="font-size: 12px; color: oklch(0.58 0.012 70); line-height: 1.45;">No links yet. That's fine — say it's related and let Wrap-up sharpen it later.</div>
+          </sc-if>
+        </div>
+
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.56 0.012 70); margin: 16px 0 7px;">Appears in</div>
+        <div style="font-size: 12.5px; color: oklch(0.45 0.014 65); line-height: 1.5;">{{ selAppears }}</div>
+      </div>
+
+      <div style="border-top: 1px solid oklch(0.88 0.010 80); background: oklch(0.925 0.009 85); padding: 11px 14px 14px;">
+        <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 9px;">
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.53 0.012 70);">Drop into a scene</div>
+          <div style="flex: 1;"></div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70);">most recent first</div>
+        </div>
+        <input value="{{ sceneQuery }}" onChange="{{ setSceneQuery }}" placeholder="Find a scene…" style="width: 100%; padding: 5px 9px; border: 1px solid oklch(0.85 0.010 80); border-radius: 4px; font-family: inherit; font-size: 12px; background: oklch(1 0 0); color: inherit; margin-bottom: 8px;" />
+        <div style="display: flex; flex-direction: column; gap: 5px;">
+          <sc-for list="{{ sceneTargets }}" as="sc" hint-placeholder-count="3">
+            <div onDragOver="{{ sc.dragOver }}" onDragLeave="{{ sc.dragLeave }}" onDrop="{{ sc.drop }}" style="padding: 8px 10px; border: 1px dashed {{ sc.border }}; border-radius: 4px; background: {{ sc.bg }};">
+              <div style="font-size: 12.5px; color: oklch(0.28 0.015 60);">{{ sc.name }}</div>
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70); margin-top: 2px;">{{ sc.meta }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <sc-if value="{{ hasToast }}" hint-placeholder-val="{{ false }}">
+    <div style="position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-radius: 6px; background: oklch(0.26 0.015 60); color: oklch(0.96 0.008 85); font-size: 12.5px; box-shadow: 0 8px 26px oklch(0.26 0.015 60 / 0.28); z-index: 40;">
+      <span>{{ toastText }}</span>
+      <span onClick="{{ undoToast }}" style="cursor: pointer; color: oklch(0.80 0.075 185); font-weight: 500;">Undo</span>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+const TYPES = [
+  { id: "place", label: "Place", glyph: "▢", accent: "oklch(0.55 0.075 185)" },
+  { id: "person", label: "Person", glyph: "◉", accent: "oklch(0.60 0.10 65)" },
+  { id: "object", label: "Object", glyph: "◆", accent: "oklch(0.52 0.08 300)" },
+  { id: "faction", label: "Faction", glyph: "⬗", accent: "oklch(0.50 0.09 145)" },
+  { id: "event", label: "Event", glyph: "✧", accent: "oklch(0.55 0.11 40)" },
+  { id: "concept", label: "Concept", glyph: "◌", accent: "oklch(0.55 0.03 260)" }
+];
+const T = (id) => TYPES.find((t) => t.id === id) || TYPES[5];
+function uid(p) { return p + "_" + Math.random().toString(36).slice(2, 8); }
+
+const SEED = [
+  { id: "n_marches", name: "The Ashfen Marches", type: "place", parentId: null, description: "Salt marsh and causeway between the coast and Threadbare City. Nothing here is more than a foot above the tide." },
+  { id: "n_causeway", name: "Ashfen Causeway", type: "place", parentId: "n_marches", description: "" },
+  { id: "n_waystation", name: "Ashfen Waystation", type: "place", parentId: "n_causeway", description: "A stone-and-timber roadhouse. One common room, one hearth, a landlord who has learned not to ask names." },
+  { id: "n_hearth", name: "Common-room hearth", type: "object", parentId: "n_waystation", description: "" },
+  { id: "n_mira", name: "Mira Vell", type: "person", parentId: "n_waystation", description: "Harbourmaster. Reliable. Owes the Compact nothing." },
+
+  { id: "n_city", name: "Threadbare City", type: "place", parentId: "n_marches", description: "Built on the bones of the last city. Nobody agrees on how many levels down that goes." },
+  { id: "n_market", name: "Threadbare Market", type: "place", parentId: "n_city", description: "" },
+  { id: "n_forge", name: "Gorrim's Forge", type: "place", parentId: "n_market", description: "One bellows, one anvil, a roof patched with the sheet metal Gorrim sells. Half of it is still fire-blacked." },
+  { id: "n_gorrim", name: "Gorrim the Smith", type: "person", parentId: "n_forge", description: "Wants to know who set the fire. Suspects the party, hopes he is wrong." },
+  { id: "n_anvil", name: "Scorched anvil", type: "object", parentId: "n_forge", description: "" },
+  { id: "n_rack", name: "Rack of unclaimed work", type: "object", parentId: "n_forge", description: "", unreviewed: true },
+  { id: "n_bell", name: "Bell Tower of Saint Une", type: "place", parentId: "n_city", description: "" },
+
+  { id: "n_vault", name: "The Drowned Vault", type: "place", parentId: "n_city", description: "A Compact reliquary that flooded during the Sundering and was never drained." },
+  { id: "n_ante", name: "Antechamber", type: "place", parentId: "n_vault", description: "Ankle-deep, mosaic floor, rotted pews, a brass grate the water does not go through." },
+  { id: "n_cells", name: "Lower Cells", type: "place", parentId: "n_vault", description: "" },
+  { id: "n_grate", name: "The brass grate", type: "object", parentId: "n_ante", description: "" },
+  { id: "n_seal", name: "Tidewarden's Seal", type: "object", parentId: "n_ante", description: "Verdigris-crusted brass disc. The Compact's own sigil, deliberately defaced." },
+  { id: "n_warden", name: "Drowned Warden", type: "person", parentId: "n_ante", description: "" },
+  { id: "n_ledger", name: "Waterlogged ledger", type: "object", parentId: "n_ante", description: "", unreviewed: true },
+
+  { id: "n_compact", name: "The Verdigris Compact", type: "faction", parentId: null, description: "The order that built the vault. Currently four people and a lot of paperwork." },
+  { id: "n_deepwatch", name: "The Deepwatch", type: "faction", parentId: null, description: "", unreviewed: true },
+  { id: "n_sundering", name: "The Sundering", type: "event", parentId: null, description: "" },
+  { id: "n_ring", name: "Sella's brother's ring", type: "object", parentId: null, description: "Named by a player at session 9. Never resolved.", unreviewed: true },
+  { id: "n_oathcant", name: "The oath-cant", type: "concept", parentId: null, description: "" }
+];
+
+const RELS = [
+  { id: "r1", a: "n_seal", b: "n_compact", kind: "bears sigil of" },
+  { id: "r2", a: "n_mira", b: "n_vault", kind: "related" },
+  { id: "r3", a: "n_warden", b: "n_oathcant", kind: "speaks" },
+  { id: "r4", a: "n_vault", b: "n_sundering", kind: "site of" },
+  { id: "r5", a: "n_gorrim", b: "n_compact", kind: "related" }
+];
+
+const DAY = 86400000;
+const SCENES = [
+  { id: "s_vault", name: "The Antechamber", placeId: "n_ante", count: 6, visited: Date.now() - DAY * 0.2 },
+  { id: "s_forge", name: "Cold Iron, Warm Words", placeId: "n_forge", count: 2, visited: Date.now() - DAY * 2 },
+  { id: "s_regroup", name: "Writ and Warning", placeId: "n_waystation", count: 4, visited: Date.now() - DAY * 9 }
+];
+function ago(ts) {
+  const d = (Date.now() - ts) / DAY;
+  if (d < 0.04) return "just now";
+  if (d < 1) return Math.max(1, Math.round(d * 24)) + "h ago";
+  if (d < 14) return Math.round(d) + "d ago";
+  return Math.round(d / 7) + "w ago";
+}
+
+const SCENE_REFS = { n_mira: ["Writ and Warning"], n_seal: ["The Antechamber"], n_warden: ["The Antechamber"], n_gorrim: ["Cold Iron, Warm Words"], n_compact: ["Writ and Warning"], n_anvil: ["Cold Iron, Warm Words"], n_hearth: ["Writ and Warning"], n_grate: ["The Antechamber"] };
+
+class Component extends DCLogic {
+  state = {
+    nodes: SEED.map((n) => ({ ...n })),
+    rels: RELS.map((r) => ({ ...r })),
+    scenes: SCENES.map((s) => ({ ...s })),
+    sceneRefs: { ...SCENE_REFS },
+    expanded: { n_marches: true, n_city: true, n_vault: true, n_causeway: true },
+    selectedId: "n_ante",
+    query: "", types: [], dragId: null, dropTarget: null,
+    addOpen: false, addName: "", addType: "object",
+    relPickerOpen: false, relQuery: "", sceneQuery: "",
+    looseOpen: true, looseFilter: null, toast: null
+  };
+
+  node(id) { return this.state.nodes.find((n) => n.id === id); }
+  children(id) { return this.state.nodes.filter((n) => n.parentId === id); }
+
+  showToast(text, undo) {
+    if (this._t) clearTimeout(this._t);
+    this.setState({ toast: { text, undo } });
+    this._t = setTimeout(() => this.setState({ toast: null }), 6000);
+  }
+
+  setParent(id, parentId) {
+    const node = this.node(id);
+    if (!node || id === parentId) return;
+    let p = parentId;
+    while (p) { if (p === id) return; p = (this.node(p) || {}).parentId; }
+    const prev = node.parentId;
+    this.setState((s) => ({
+      nodes: s.nodes.map((n) => (n.id === id ? { ...n, parentId } : n)),
+      expanded: { ...s.expanded, [parentId]: true }, dragId: null, dropTarget: null
+    }));
+    this.showToast("“" + node.name + "” is now inside “" + this.node(parentId).name + "”", () =>
+      this.setState((s) => ({ nodes: s.nodes.map((n) => (n.id === id ? { ...n, parentId: prev } : n)) })));
+  }
+
+  looseReasons(n) {
+    const out = [];
+    if (!n.parentId) out.push("not placed");
+    if (!n.description) out.push("no detail");
+    if (!this.state.sceneRefs[n.id]) out.push("never used in a scene");
+    if (!this.state.rels.some((r) => r.a === n.id || r.b === n.id)) out.push("no links");
+    return out;
+  }
+
+  matches(n) {
+    const q = this.state.query.trim().toLowerCase();
+    const okQ = !q || n.name.toLowerCase().includes(q) || (n.description || "").toLowerCase().includes(q);
+    const okT = !this.state.types.length || this.state.types.includes(n.type);
+    return okQ && okT;
+  }
+
+  visibleTree() {
+    const st = this.state;
+    const filtering = !!st.query.trim() || st.types.length > 0;
+    const keep = new Set();
+    if (filtering) {
+      st.nodes.filter((n) => this.matches(n)).forEach((n) => {
+        keep.add(n.id);
+        let p = n.parentId;
+        while (p) { keep.add(p); p = (this.node(p) || {}).parentId; }
+      });
+    }
+    const rows = [];
+    const walk = (parentId, depth) => {
+      this.state.nodes
+        .filter((n) => n.parentId === parentId)
+        .filter((n) => !filtering || keep.has(n.id))
+        .sort((a, b) => (a.type === "place" ? -1 : 1) - (b.type === "place" ? -1 : 1) || a.name.localeCompare(b.name))
+        .forEach((n) => {
+          const kids = this.children(n.id).filter((k) => !filtering || keep.has(k.id));
+          const open = filtering ? true : !!st.expanded[n.id];
+          rows.push({ node: n, depth, kids: kids.length, open });
+          if (open && kids.length) walk(n.id, depth + 1);
+        });
+    };
+    walk(null, 0);
+    return rows;
+  }
+
+  renderVals() {
+    const st = this.state;
+    const sel = this.node(st.selectedId) || st.nodes[0];
+    const selT = T(sel.type);
+    const selShort = sel.name.length > 22 ? sel.name.slice(0, 20) + "…" : sel.name;
+
+    const treeRows = this.visibleTree().map((r) => {
+      const t = T(r.node.type);
+      const isSel = r.node.id === sel.id;
+      return {
+        name: r.node.name, glyph: t.glyph, glyphColor: t.accent,
+        nameColor: r.node.type === "place" ? "oklch(0.26 0.015 60)" : "oklch(0.42 0.014 65)",
+        indent: (8 + r.depth * 15) + "px",
+        chevron: r.kids ? (r.open ? "▾" : "▸") : "",
+        count: r.kids ? String(r.kids) : "",
+        unreviewed: !!r.node.unreviewed,
+        bg: isSel ? "oklch(0.90 0.020 185)" : "transparent",
+        dropBorder: st.dropTarget === r.node.id ? "oklch(0.55 0.075 185)" : "transparent",
+        select: () => this.setState({ selectedId: r.node.id, addOpen: false, relPickerOpen: false }),
+        toggle: (e) => { e.stopPropagation(); this.setState((s) => ({ expanded: { ...s.expanded, [r.node.id]: !s.expanded[r.node.id] } })); },
+        dragStart: (e) => { e.stopPropagation(); this.setState({ dragId: r.node.id }); },
+        dragOver: (e) => { e.preventDefault(); if (st.dropTarget !== r.node.id) this.setState({ dropTarget: r.node.id }); },
+        dragLeave: () => { if (st.dropTarget === r.node.id) this.setState({ dropTarget: null }); },
+        drop: (e) => { e.preventDefault(); if (st.dragId) this.setParent(st.dragId, r.node.id); }
+      };
+    });
+
+    const kids = this.children(sel.id);
+    const groups = TYPES.map((t) => ({
+      label: t.label + "s",
+      items: kids.filter((k) => k.type === t.id).map((k) => {
+        const kt = T(k.type);
+        const kidCount = this.children(k.id).length;
+        return {
+          name: k.name, glyph: kt.glyph, accent: kt.accent, unreviewed: !!k.unreviewed,
+          border: "oklch(0.89 0.010 80)",
+          sub: kidCount ? kidCount + " inside" : (k.description ? "" : "no detail"),
+          select: () => this.setState({ selectedId: k.id }),
+          dragStart: () => this.setState({ dragId: k.id })
+        };
+      })
+    })).filter((g) => g.items.length);
+
+    const scored = st.nodes.map((n) => ({ n, reasons: this.looseReasons(n) })).filter((x) => x.reasons.length);
+    const loose = scored
+      .filter((x) => (st.looseFilter ? x.reasons.includes(st.looseFilter) : x.reasons.length >= 2))
+      .filter((x) => x.n.id !== sel.id)
+      .sort((a, b) => b.reasons.length - a.reasons.length)
+      .slice(0, st.looseFilter ? 24 : 8)
+      .map(({ n, reasons }) => {
+        const t = T(n.type);
+        return {
+          name: n.name, type: n.type, glyph: t.glyph, accent: t.accent,
+          reasons: reasons.slice(0, 3).map((label) => ({ label })),
+          select: () => this.setState({ selectedId: n.id }),
+          dragStart: () => this.setState({ dragId: n.id }),
+          placeHere: (e) => { e.stopPropagation(); this.setParent(n.id, sel.id); }
+        };
+      });
+
+    const crumbs = [];
+    let p = sel.parentId;
+    while (p) { const pn = this.node(p); if (!pn) break; crumbs.unshift(pn.name); p = pn.parentId; }
+
+    const selRelations = st.rels.filter((r) => r.a === sel.id || r.b === sel.id).map((r) => {
+      const otherId = r.a === sel.id ? r.b : r.a;
+      const other = this.node(otherId) || { name: "—" };
+      return {
+        name: other.name, kind: r.kind,
+        kindColor: r.kind === "related" ? "oklch(0.62 0.10 65)" : "oklch(0.58 0.012 70)",
+        select: () => this.setState({ selectedId: otherId }),
+        remove: () => {
+          const snap = st.rels;
+          this.setState((s) => ({ rels: s.rels.filter((x) => x.id !== r.id) }));
+          this.showToast("Link removed", () => this.setState({ rels: snap }));
+        }
+      };
+    });
+
+    const relQ = st.relQuery.trim().toLowerCase();
+    const linkedIds = st.rels.filter((r) => r.a === sel.id || r.b === sel.id).map((r) => (r.a === sel.id ? r.b : r.a));
+    const relCandidates = st.nodes
+      .filter((n) => n.id !== sel.id && !linkedIds.includes(n.id))
+      .filter((n) => !relQ || n.name.toLowerCase().includes(relQ))
+      .slice(0, 40)
+      .map((n) => {
+        const t = T(n.type);
+        return {
+          name: n.name, type: n.type, glyph: t.glyph, accent: t.accent,
+          pick: () => {
+            this.setState((s) => ({ rels: [...s.rels, { id: uid("r"), a: sel.id, b: n.id, kind: "related" }], relPickerOpen: false, relQuery: "" }));
+            this.showToast("Marked related — Wrap-up will propose what it really is", null);
+          }
+        };
+      });
+
+    const anchored = st.scenes.filter((s) => s.placeId === sel.id).map((s) => s.name + " (anchor place)");
+    const refs = [...anchored, ...(st.sceneRefs[sel.id] || [])];
+
+    return {
+      query: st.query, setQuery: (e) => this.setState({ query: e.currentTarget.value }),
+      typeChips: TYPES.map((t) => {
+        const on = st.types.includes(t.id);
+        return {
+          label: t.label, glyph: t.glyph, title: "Filter to " + t.label.toLowerCase() + "s",
+          border: on ? t.accent : "oklch(0.86 0.010 80)",
+          bg: on ? "oklch(0.94 0.020 185)" : "transparent",
+          fg: on ? "oklch(0.30 0.015 60)" : "oklch(0.52 0.012 70)",
+          toggle: () => this.setState((s) => ({ types: on ? s.types.filter((x) => x !== t.id) : [...s.types, t.id] }))
+        };
+      }),
+
+      treeRows,
+      expandLabel: Object.keys(st.expanded).length > 6 ? "collapse all" : "expand all",
+      expandAll: () => {
+        if (Object.keys(st.expanded).length > 6) this.setState({ expanded: {} });
+        else {
+          const all = {};
+          st.nodes.filter((n) => this.children(n.id).length).forEach((n) => { all[n.id] = true; });
+          this.setState({ expanded: all });
+        }
+      },
+
+      breadcrumb: crumbs.length ? crumbs.join("  ›  ") : "nowhere in particular",
+      selName: sel.name, selType: sel.type, selShort,
+      selGlyph: selT.glyph, selGlyphColor: selT.accent,
+      selDesc: sel.description || "",
+      saveSelName: (e) => { const v = e.currentTarget.textContent.trim(); this.setState((s) => ({ nodes: s.nodes.map((n) => (n.id === sel.id ? { ...n, name: v } : n)) })); },
+      saveSelDesc: (e) => { const v = e.currentTarget.textContent.trim(); this.setState((s) => ({ nodes: s.nodes.map((n) => (n.id === sel.id ? { ...n, description: v, unreviewed: false } : n)) })); },
+
+      contentGroups: groups, hasContents: groups.length > 0, contentsEmpty: groups.length === 0,
+      contentsMeta: kids.length + (kids.length === 1 ? " thing" : " things"),
+
+      addOpen: st.addOpen, addName: st.addName,
+      toggleAdd: () => this.setState({ addOpen: !st.addOpen, addName: "", relPickerOpen: false }),
+      setAddName: (e) => this.setState({ addName: e.currentTarget.value }),
+      addTypes: TYPES.map((t) => ({
+        label: t.label, glyph: t.glyph,
+        border: st.addType === t.id ? t.accent : "oklch(0.86 0.010 80)",
+        bg: st.addType === t.id ? "oklch(0.94 0.020 185)" : "transparent",
+        fg: st.addType === t.id ? "oklch(0.30 0.015 60)" : "oklch(0.52 0.012 70)",
+        pick: () => this.setState({ addType: t.id })
+      })),
+      addBg: st.addName.trim() ? "oklch(0.55 0.075 185)" : "oklch(0.88 0.010 80)",
+      addFg: st.addName.trim() ? "oklch(0.99 0.005 185)" : "oklch(0.62 0.012 70)",
+      commitAdd: () => {
+        const name = st.addName.trim();
+        if (!name) return;
+        const id = uid("n");
+        this.setState((s) => ({
+          nodes: [...s.nodes, { id, name, type: st.addType, parentId: sel.id, description: "" }],
+          expanded: { ...s.expanded, [sel.id]: true }, addOpen: false, addName: "", selectedId: id
+        }));
+      },
+
+      relPickerOpen: st.relPickerOpen, relQuery: st.relQuery, relCandidates,
+      openRelPicker: () => this.setState({ relPickerOpen: !st.relPickerOpen, relQuery: "", addOpen: false }),
+      setRelQuery: (e) => this.setState({ relQuery: e.currentTarget.value }),
+
+      looseFilters: ["not placed", "no detail", "never used in a scene", "no links"].map((r) => {
+        const on = st.looseFilter === r;
+        const count = scored.filter((x) => x.reasons.includes(r)).length;
+        return {
+          label: r, count: String(count),
+          border: on ? "oklch(0.65 0.10 65)" : "oklch(0.86 0.010 80)",
+          bg: on ? "oklch(0.93 0.045 65)" : "transparent",
+          fg: on ? "oklch(0.40 0.09 65)" : "oklch(0.52 0.012 70)",
+          toggle: (e) => { e.stopPropagation(); this.setState({ looseFilter: on ? null : r, looseOpen: true }); }
+        };
+      }),
+      looseOpen: st.looseOpen, looseThreads: loose, looseCount: loose.length,
+      looseLabel: (st.looseOpen ? "▾" : "▸") + "  Loose threads",
+      toggleLoose: () => this.setState({ looseOpen: !st.looseOpen }),
+
+      hasParent: !!sel.parentId, noParent: !sel.parentId,
+      parentName: sel.parentId ? (this.node(sel.parentId) || {}).name : "",
+      selectParent: () => this.setState({ selectedId: sel.parentId }),
+      selRelations, noRelations: selRelations.length === 0,
+      selAppears: refs.length ? refs.join(", ") : "No scene has used this yet.",
+
+      isPlace: sel.type === "place",
+      createSceneHere: () => {
+        const id = uid("s");
+        this.setState((s) => ({ scenes: [...s.scenes, { id, name: sel.name, placeId: sel.id, count: 0, visited: Date.now() }] }));
+        this.showToast("Scene created at “" + sel.name + "” — open it in the session planner", () =>
+          this.setState((s) => ({ scenes: s.scenes.filter((x) => x.id !== id) })));
+      },
+      sceneQuery: st.sceneQuery,
+      setSceneQuery: (e) => this.setState({ sceneQuery: e.currentTarget.value }),
+      sceneTargets: st.scenes
+        .slice()
+        .sort((a, b) => b.visited - a.visited)
+        .filter((s) => {
+          const q = st.sceneQuery.trim().toLowerCase();
+          if (!q) return true;
+          const pn = (this.node(s.placeId) || {}).name || "";
+          return s.name.toLowerCase().includes(q) || pn.toLowerCase().includes(q);
+        })
+        .map((s) => ({
+        name: s.name,
+        meta: (this.node(s.placeId) || {}).name + " · " + s.count + " elements · " + ago(s.visited),
+        border: st.dropTarget === s.id ? "oklch(0.55 0.075 185)" : "oklch(0.84 0.010 80)",
+        bg: st.dropTarget === s.id ? "oklch(0.92 0.030 185)" : "oklch(0.965 0.006 85)",
+        dragOver: (e) => { e.preventDefault(); if (st.dropTarget !== s.id) this.setState({ dropTarget: s.id }); },
+        dragLeave: () => { if (st.dropTarget === s.id) this.setState({ dropTarget: null }); },
+        drop: (e) => {
+          e.preventDefault();
+          const n = this.node(st.dragId);
+          if (!n) return;
+          const prevRefs = st.sceneRefs;
+          this.setState((p2) => ({
+            scenes: p2.scenes.map((x) => (x.id === s.id ? { ...x, count: x.count + 1, visited: Date.now() } : x)),
+            sceneRefs: { ...p2.sceneRefs, [n.id]: [...(p2.sceneRefs[n.id] || []), s.name] },
+            dragId: null, dropTarget: null
+          }));
+          this.showToast("Added “" + n.name + "” to " + s.name + " as a key element", () =>
+            this.setState((p2) => ({ scenes: p2.scenes.map((x) => (x.id === s.id ? { ...x, count: x.count - 1 } : x)), sceneRefs: prevRefs })));
+        }
+      })),
+
+      hasToast: !!st.toast, toastText: st.toast ? st.toast.text : "",
+      undoToast: () => { if (st.toast && st.toast.undo) st.toast.undo(); this.setState({ toast: null }); }
+    };
+  }
+}
+
+</script>
+</body>
+</html>

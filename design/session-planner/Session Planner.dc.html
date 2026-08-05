@@ -1,0 +1,1110 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+<link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: oklch(0.955 0.008 85); }
+  * { box-sizing: border-box; }
+  body { font-family: "IBM Plex Sans", system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: oklch(0.27 0.015 60); }
+  a { color: oklch(0.50 0.075 185); text-decoration: none; }
+  a:hover { color: oklch(0.42 0.075 185); text-decoration: underline; }
+  ::selection { background: oklch(0.75 0.09 185 / 0.32); }
+  [contenteditable] { outline: none; border-radius: 3px; }
+  [contenteditable]:hover { box-shadow: 0 0 0 4px oklch(0.90 0.012 85); background: oklch(0.90 0.012 85); }
+  [contenteditable]:focus { box-shadow: 0 0 0 4px oklch(0.86 0.045 185 / 0.45); background: oklch(0.86 0.045 185 / 0.28); }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: oklch(0.83 0.010 80); border-radius: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</helmet>
+
+<div style="display: flex; flex-direction: column; height: 100vh; background: oklch(0.955 0.008 85); font-size: 14px;">
+
+  <div style="display: flex; align-items: center; gap: 16px; padding: 0 16px; height: 52px; flex: none; border-bottom: 1px solid oklch(0.87 0.010 80); background: oklch(0.925 0.009 85);">
+    <div style="display: flex; align-items: center; gap: 9px;">
+      <div style="width: 8px; height: 8px; transform: rotate(45deg); background: oklch(0.55 0.075 185);"></div>
+      <div style="font-family: Spectral, serif; font-size: 15.5px; font-weight: 600;">The Verdigris Compact</div>
+    </div>
+    <div style="width: 1px; height: 20px; background: oklch(0.85 0.010 80);"></div>
+    <div style="display: flex; align-items: center; gap: 4px; padding: 3px; border: 1px solid oklch(0.86 0.010 80); border-radius: 7px; background: oklch(0.955 0.008 85);">
+      <div style="padding: 4px 11px; border-radius: 5px; font-size: 12px; background: oklch(0.55 0.075 185); color: oklch(0.99 0.005 185);">Session planner</div>
+      <a href="World Graph.dc.html" style="padding: 4px 11px; border-radius: 5px; font-size: 12px; color: oklch(0.48 0.014 65);" style-hover="background: oklch(0.90 0.010 80); text-decoration: none;">World</a>
+    </div>
+    <div style="width: 1px; height: 20px; background: oklch(0.85 0.010 80);"></div>
+    <div style="display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: oklch(0.52 0.012 70);">
+      <span onClick="{{ goPlans }}" style="cursor: pointer;" style-hover="color: oklch(0.30 0.015 60);">Plans</span>
+      <sc-if value="{{ hasCrumbPlan }}" hint-placeholder-val="{{ true }}">
+        <span style="display: flex; align-items: center; gap: 8px;">
+          <span style="color: oklch(0.72 0.010 80);">/</span>
+          <span onClick="{{ goPlan }}" style="cursor: pointer;" style-hover="color: oklch(0.30 0.015 60);">{{ crumbPlan }}</span>
+        </span>
+      </sc-if>
+      <sc-if value="{{ hasCrumbScene }}" hint-placeholder-val="{{ true }}">
+        <span style="display: flex; align-items: center; gap: 8px;">
+          <span style="color: oklch(0.72 0.010 80);">/</span>
+          <span style="color: oklch(0.27 0.015 60);">{{ crumbScene }}</span>
+        </span>
+      </sc-if>
+    </div>
+    <div style="flex: 1;"></div>
+
+    <div style="display: flex; align-items: center; gap: 3px; padding: 3px; border: 1px solid oklch(0.86 0.010 80); border-radius: 7px; background: oklch(0.955 0.008 85);">
+      <div onClick="{{ setPrep }}" style="padding: 4px 11px; border-radius: 5px; font-size: 12px; cursor: pointer; background: {{ prepBg }}; color: {{ prepFg }};">Prep</div>
+      <div onClick="{{ setRun }}" style="padding: 4px 11px; border-radius: 5px; font-size: 12px; cursor: pointer; background: {{ runBg }}; color: {{ runFg }};">Run mode</div>
+    </div>
+
+    <div onClick="{{ toggleRail }}" title="Knowledge graph" style="display: flex; align-items: center; gap: 7px; padding: 6px 11px; border-radius: 6px; cursor: pointer; border: 1px solid oklch(0.86 0.010 80); font-size: 12.5px; color: oklch(0.40 0.015 60); background: {{ railBtnBg }};" style-hover="border-color: oklch(0.72 0.010 80);">
+      <span style="font-family: 'IBM Plex Mono', monospace; color: oklch(0.55 0.075 185);">◇</span>
+      <span>In scene</span>
+    </div>
+  </div>
+
+  <div style="display: flex; flex: 1; min-height: 0;">
+
+    <div style="width: 232px; flex: none; border-right: 1px solid oklch(0.87 0.010 80); background: oklch(0.938 0.009 85); display: flex; flex-direction: column; min-height: 0; overflow-y: auto;">
+      <div style="padding: 15px 13px 7px; display: flex; align-items: center; justify-content: space-between;">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: oklch(0.53 0.012 70);">Session plans</div>
+        <div onClick="{{ newPlan }}" title="New plan" style="width: 19px; height: 19px; display: grid; place-items: center; border-radius: 4px; cursor: pointer; color: oklch(0.45 0.015 60);" style-hover="background: oklch(0.88 0.010 80);">+</div>
+      </div>
+      <div style="padding: 0 7px; display: flex; flex-direction: column; gap: 1px;">
+        <sc-for list="{{ planList }}" as="p" hint-placeholder-count="3">
+          <div onClick="{{ p.open }}" style="padding: 7px 9px; border-radius: 5px; cursor: pointer; background: {{ p.bg }}; border-left: 2px solid {{ p.mark }};" style-hover="background: oklch(0.905 0.010 85);">
+            <div style="font-size: 12.5px; color: oklch(0.27 0.015 60); margin-bottom: 2px;">{{ p.name }}</div>
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.55 0.012 70);">{{ p.meta }}</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="padding: 18px 13px 7px; display: flex; align-items: center; justify-content: space-between;">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: oklch(0.53 0.012 70);">Scene library</div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.58 0.012 70);">{{ libCount }}</div>
+      </div>
+      <div style="padding: 0 7px 14px; display: flex; flex-direction: column; gap: 1px;">
+        <sc-for list="{{ libraryList }}" as="s" hint-placeholder-count="5">
+          <div style="padding: 6px 9px; border-radius: 5px; cursor: pointer; display: flex; align-items: center; gap: 8px; background: {{ s.bg }};" style-hover="background: oklch(0.905 0.010 85);">
+            <div onClick="{{ s.open }}" style="flex: 1; min-width: 0;">
+              <div style="font-size: 12.5px; color: oklch(0.29 0.015 60); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ s.name }}</div>
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.56 0.012 70);">{{ s.place }}</div>
+            </div>
+            <div onClick="{{ s.addToPlan }}" title="Add to the open plan" style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: oklch(0.62 0.012 70); padding: 0 2px;" style-hover="color: oklch(0.50 0.075 185);">+</div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: oklch(0.955 0.008 85);">
+
+      <sc-if value="{{ isPlansView }}" hint-placeholder-val="{{ false }}">
+        <div style="flex: 1; overflow-y: auto; padding: 34px 40px 60px;">
+          <div style="max-width: 900px;">
+            <div style="font-family: Spectral, serif; font-size: 30px; font-weight: 500; margin-bottom: 6px;">Session plans</div>
+            <div style="color: oklch(0.50 0.012 70); font-size: 13.5px; margin-bottom: 26px;">Every plan is an ordered run of scenes. Scenes are shared by reference — reusing one here doesn't fork it.</div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px;">
+              <sc-for list="{{ planList }}" as="p" hint-placeholder-count="3">
+                <div onClick="{{ p.open }}" style="border: 1px solid oklch(0.87 0.010 80); border-top: 3px solid {{ p.mark }}; border-radius: 4px; background: oklch(0.985 0.005 85); padding: 16px 16px 14px; cursor: pointer;" style-hover="border-color: oklch(0.70 0.030 185);">
+                  <div style="font-family: Spectral, serif; font-size: 18px; font-weight: 500; margin-bottom: 5px;">{{ p.name }}</div>
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.55 0.012 70); margin-bottom: 12px;">{{ p.meta }}</div>
+                  <div style="display: flex; flex-direction: column; gap: 4px;">
+                    <sc-for list="{{ p.sceneNames }}" as="n" hint-placeholder-count="3">
+                      <div style="font-size: 12.5px; color: oklch(0.45 0.015 60); display: flex; gap: 8px;">
+                        <span style="font-family: 'IBM Plex Mono', monospace; color: oklch(0.68 0.012 70);">{{ n.num }}</span>
+                        <span>{{ n.name }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-for>
+              <div onClick="{{ newPlan }}" style="border: 1px dashed oklch(0.80 0.010 80); border-radius: 4px; padding: 16px; cursor: pointer; display: grid; place-items: center; min-height: 130px; color: oklch(0.55 0.012 70); font-size: 13px;" style-hover="border-color: oklch(0.60 0.060 185); color: oklch(0.45 0.075 185);">+ New plan</div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isPlanView }}" hint-placeholder-val="{{ false }}">
+        <div style="flex: 1; overflow-y: auto; padding: 32px 40px 80px;">
+          <div style="max-width: 860px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: oklch(0.55 0.012 70); margin-bottom: 8px;">Run sheet</div>
+            <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ savePlanName }}" style="font-family: Spectral, serif; font-size: 32px; font-weight: 500; line-height: 1.15; margin-bottom: 7px; max-width: 20ch;">{{ planName }}</div>
+            <div style="display: flex; align-items: center; gap: 12px; color: oklch(0.52 0.012 70); font-size: 12.5px; margin-bottom: 26px;">
+              <span>{{ planMeta }}</span>
+              <span style="color: oklch(0.78 0.010 80);">·</span>
+              <span onClick="{{ deletePlan }}" style="cursor: pointer;" style-hover="color: oklch(0.50 0.13 25);">Delete plan</span>
+            </div>
+
+            <div style="display: flex; flex-direction: column;">
+              <sc-for list="{{ planScenes }}" as="s" hint-placeholder-count="3">
+                <div style="display: flex; gap: 16px; align-items: flex-start; padding: 15px 12px 15px 6px; border-top: 1px solid oklch(0.88 0.010 80); background: {{ s.rowBg }};" style-hover="background: oklch(0.925 0.009 85);">
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.65 0.012 70); width: 20px; padding-top: 3px; flex: none;">{{ s.num }}</div>
+                  <div onClick="{{ s.open }}" style="flex: 1; min-width: 0; cursor: pointer;">
+                    <div style="font-family: Spectral, serif; font-size: 17.5px; margin-bottom: 3px;">{{ s.name }}</div>
+                    <div style="display: flex; align-items: center; gap: 9px; margin-bottom: 5px;">
+                      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.50 0.075 185);">{{ s.place }}</span>
+                      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.62 0.012 70);">{{ s.elemMeta }}</span>
+                    </div>
+                    <div style="font-size: 13px; color: oklch(0.48 0.014 65); max-width: 60ch;">{{ s.objective }}</div>
+                  </div>
+                  <div style="display: {{ chromeFlex }}; align-items: center; gap: 3px; flex: none; padding-top: 2px;">
+                    <div onClick="{{ s.moveUp }}" title="Move up" style="width: 22px; height: 22px; display: grid; place-items: center; border-radius: 4px; cursor: pointer; color: oklch(0.60 0.012 70); font-size: 12px;" style-hover="background: oklch(0.88 0.010 80); color: oklch(0.30 0.015 60);">↑</div>
+                    <div onClick="{{ s.moveDown }}" title="Move down" style="width: 22px; height: 22px; display: grid; place-items: center; border-radius: 4px; cursor: pointer; color: oklch(0.60 0.012 70); font-size: 12px;" style-hover="background: oklch(0.88 0.010 80); color: oklch(0.30 0.015 60);">↓</div>
+                    <div onClick="{{ s.remove }}" title="Remove from plan (the scene itself survives)" style="width: 22px; height: 22px; display: grid; place-items: center; border-radius: 4px; cursor: pointer; color: oklch(0.62 0.012 70); font-size: 12px;" style-hover="background: oklch(0.88 0.010 80); color: oklch(0.50 0.13 25);">✕</div>
+                  </div>
+                </div>
+              </sc-for>
+              <div style="border-top: 1px solid oklch(0.88 0.010 80);"></div>
+            </div>
+
+            <div style="display: {{ chromeFlex }}; margin-top: 14px;">
+              <div onClick="{{ toggleAddScene }}" style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px dashed oklch(0.80 0.010 80); border-radius: 5px; cursor: pointer; color: oklch(0.50 0.012 70); font-size: 13px;" style-hover="border-color: oklch(0.60 0.060 185); color: oklch(0.45 0.075 185);">
+                <span>+</span><span>Add scene</span>
+              </div>
+            </div>
+
+            <sc-if value="{{ addSceneOpen }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top: 12px; border: 1px solid oklch(0.84 0.010 80); border-radius: 5px; background: oklch(0.985 0.005 85); padding: 14px 15px;">
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.53 0.012 70); margin-bottom: 10px;">New scene — anchor it to a place</div>
+                <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px;">
+                  <sc-for list="{{ placeOptions }}" as="pl" hint-placeholder-count="5">
+                    <div onClick="{{ pl.pick }}" style="padding: 5px 11px; border: 1px solid {{ pl.border }}; border-radius: 20px; cursor: pointer; font-size: 12.5px; background: {{ pl.bg }}; color: {{ pl.fg }};" style-hover="border-color: oklch(0.60 0.060 185);">{{ pl.name }}</div>
+                  </sc-for>
+                  <div onClick="{{ startNewPlace }}" style="padding: 5px 11px; border: 1px dashed oklch(0.75 0.010 80); border-radius: 20px; cursor: pointer; font-size: 12.5px; color: oklch(0.48 0.075 185);" style-hover="border-color: oklch(0.55 0.075 185);">＋ New place…</div>
+                </div>
+                <sc-if value="{{ newPlaceOpen }}" hint-placeholder-val="{{ false }}">
+                  <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 12px;">
+                    <input value="{{ newPlaceName }}" onChange="{{ setNewPlaceName }}" placeholder="Name of the new place…" style="flex: 1; padding: 7px 10px; border: 1px solid oklch(0.80 0.010 80); border-radius: 4px; font-family: inherit; font-size: 13px; background: oklch(1 0 0); color: inherit;" />
+                    <div onClick="{{ commitNewPlace }}" style="padding: 7px 13px; border-radius: 4px; cursor: pointer; background: oklch(0.55 0.075 185); color: oklch(0.99 0.005 185); font-size: 12.5px;">Create place</div>
+                  </div>
+                  <div style="font-size: 11.5px; color: oklch(0.55 0.012 70); margin-bottom: 12px;">Creates a <span style="font-family: 'IBM Plex Mono', monospace;">place</span> node in the graph and anchors the new scene to it.</div>
+                </sc-if>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <div onClick="{{ commitScene }}" style="padding: 7px 14px; border-radius: 4px; cursor: pointer; background: {{ commitSceneBg }}; color: {{ commitSceneFg }}; font-size: 12.5px;">Create scene</div>
+                  <div onClick="{{ toggleAddScene }}" style="padding: 7px 12px; border-radius: 4px; cursor: pointer; color: oklch(0.52 0.012 70); font-size: 12.5px;" style-hover="background: oklch(0.91 0.010 85);">Cancel</div>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isSceneView }}" hint-placeholder-val="{{ true }}">
+        <div style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
+
+          <div style="display: flex; align-items: center; gap: 10px; padding: 9px 22px; border-bottom: 1px solid oklch(0.88 0.010 80); background: oklch(0.945 0.009 85); flex: none;">
+            <div onClick="{{ prevScene }}" title="Previous scene  [" style="padding: 4px 9px; border-radius: 4px; cursor: pointer; font-size: 12px; color: oklch(0.50 0.012 70);" style-hover="background: oklch(0.89 0.010 80);">← {{ prevLabel }}</div>
+            <div onClick="{{ nextScene }}" title="Next scene  ]" style="padding: 4px 9px; border-radius: 4px; cursor: pointer; font-size: 12px; color: oklch(0.50 0.012 70);" style-hover="background: oklch(0.89 0.010 80);">{{ nextLabel }} →</div>
+            <div style="flex: 1;"></div>
+            <div style="display: {{ chromeFlex }}; align-items: center; gap: 3px; padding: 2px; border: 1px solid oklch(0.86 0.010 80); border-radius: 6px;">
+              <div onClick="{{ setPage }}" style="padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 11.5px; background: {{ pageBg }}; color: {{ pageFg }};">Page</div>
+              <div onClick="{{ setCards }}" style="padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 11.5px; background: {{ cardsBg }}; color: {{ cardsFg }};">Cards</div>
+            </div>
+            <div onClick="{{ toggleWrap }}" style="display: flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 6px; cursor: pointer; border: 1px solid oklch(0.68 0.09 65); background: {{ wrapBtnBg }}; color: oklch(0.42 0.09 65); font-size: 12.5px;" style-hover="background: oklch(0.88 0.055 65);">
+              <span style="font-family: 'IBM Plex Mono', monospace;">✦</span><span>Wrap ▸</span>
+            </div>
+          </div>
+
+          <div style="flex: 1; overflow-y: auto;">
+            <div style="max-width: 780px; margin: 0 auto; padding: 34px 30px 90px;">
+
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.11em; text-transform: uppercase; color: oklch(0.50 0.075 185); margin-bottom: 9px;">{{ scenePlaceLabel }}</div>
+              <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ saveSceneName }}" style="font-family: Spectral, serif; font-size: 34px; font-weight: 500; line-height: 1.14; margin-bottom: 10px;">{{ sceneName }}</div>
+              <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ saveObjective }}" style="font-size: 14px; color: oklch(0.47 0.014 65); margin-bottom: 18px; max-width: 62ch;">{{ sceneObjective }}</div>
+
+              <sc-if value="{{ hasPlaceDesc }}" hint-placeholder-val="{{ true }}">
+                <div style="display: grid; grid-template-columns: 76px 1fr; gap: 12px; align-items: baseline; margin-bottom: 24px; padding: 8px 0; border-top: 1px solid oklch(0.90 0.010 80); border-bottom: 1px solid oklch(0.90 0.010 80);">
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.07em; text-transform: uppercase; color: oklch(0.55 0.075 185); text-align: right;">The place</div>
+                  <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ savePlaceDesc }}" style="font-size: 13px; line-height: 1.55; color: oklch(0.42 0.014 65); max-width: 62ch; min-height: 20px;">{{ placeDesc }}</div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ placeDescMissing }}" hint-placeholder-val="{{ false }}">
+                <div onClick="{{ writePlaceDesc }}" style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 24px; padding: 9px 12px; border: 1px solid oklch(0.80 0.070 65); border-radius: 4px; background: oklch(0.96 0.030 65); cursor: pointer; max-width: 62ch;" style-hover="border-color: oklch(0.65 0.10 65);">
+                  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: oklch(0.55 0.12 55);">!</span>
+                  <span style="font-size: 12.5px; color: oklch(0.40 0.045 60); line-height: 1.45;">This place has no description in the graph. Read-aloud and dressing suggestions have nothing to draw on — <span style="color: oklch(0.45 0.075 185);">write one now</span>.</span>
+                </div>
+              </sc-if>
+
+              <div style="border-left: 2px solid oklch(0.72 0.055 185); padding: 4px 0 4px 18px; margin-bottom: 30px;">
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: oklch(0.55 0.012 70); margin-bottom: 7px;">Read aloud</div>
+                <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ saveNarration }}" style="font-family: Spectral, serif; font-size: {{ narrationSize }}; line-height: 1.55; font-style: italic; color: oklch(0.32 0.018 60); min-height: 24px;">{{ sceneNarration }}</div>
+                <sc-if value="{{ narrationEmpty }}" hint-placeholder-val="{{ false }}">
+                  <div onClick="{{ draftNarration }}" style="display: inline-flex; align-items: center; gap: 7px; margin-top: 6px; font-size: 12px; color: oklch(0.48 0.075 185); cursor: pointer;" style-hover="color: oklch(0.38 0.075 185);">
+                    <span style="font-family: 'IBM Plex Mono', monospace;">✦</span>
+                    <span>Draft this from the place description and the objective</span>
+                  </div>
+                </sc-if>
+              </div>
+
+              <div style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px;">
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.11em; text-transform: uppercase; color: oklch(0.50 0.012 70);">Elements</div>
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.62 0.012 70);">{{ elemMeta }}</div>
+              </div>
+
+              <sc-if value="{{ isPageLayout }}" hint-placeholder-val="{{ true }}">
+                <div style="display: flex; flex-direction: column;">
+                  <sc-for list="{{ elements }}" as="el" hint-placeholder-count="4">
+                    <div style="border-top: 1px solid oklch(0.88 0.010 80); padding: 13px 8px 13px 0; border-left: 2px solid {{ el.accent }}; padding-left: 12px; background: {{ el.rowBg }};" style-hover="background: oklch(0.935 0.009 85);">
+                      <div style="display: flex; align-items: baseline; gap: 9px;">
+                        <span style="font-size: 11px; color: {{ el.glyphColor }};">{{ el.glyph }}</span>
+                        <span contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ el.saveName }}" style="font-family: Spectral, serif; font-size: {{ el.nameSize }}; font-weight: {{ el.nameWeight }}; color: oklch(0.24 0.015 60);">{{ el.name }}</span>
+                        <sc-if value="{{ el.isGraph }}" hint-placeholder-val="{{ false }}">
+                          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; background: oklch(0.88 0.050 65); color: oklch(0.40 0.09 65);">{{ el.typeLabel }}</span>
+                        </sc-if>
+                        <span style="flex: 1;"></span>
+                        <span style="display: {{ chromeFlex }}; gap: 2px;">
+                          <span onClick="{{ el.togglePromote }}" title="{{ el.promoteTitle }}" style="width: 22px; height: 22px; display: grid; place-items: center; border-radius: 4px; cursor: pointer; font-size: 12px; color: {{ el.starColor }};" style-hover="background: oklch(0.88 0.010 80);">⭑</span>
+                          <span onClick="{{ el.remove }}" title="Remove element" style="width: 22px; height: 22px; display: grid; place-items: center; border-radius: 4px; cursor: pointer; font-size: 11px; color: oklch(0.66 0.012 70);" style-hover="background: oklch(0.88 0.010 80); color: oklch(0.50 0.13 25);">✕</span>
+                        </span>
+                      </div>
+                      <div style="display: flex; flex-direction: column; gap: 2px; margin-top: 6px;">
+                        <sc-for list="{{ el.lines }}" as="ln" hint-placeholder-count="2">
+                          <div style="display: grid; grid-template-columns: 76px 1fr; gap: 12px; align-items: baseline;">
+                            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.07em; text-transform: uppercase; color: oklch(0.60 0.012 70); text-align: right;">{{ ln.label }}</div>
+                            <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ ln.save }}" style="font-size: {{ ln.size }}; line-height: 1.5; color: {{ ln.color }}; min-height: 20px;">{{ ln.text }}</div>
+                          </div>
+                        </sc-for>
+                      </div>
+                      <div style="display: {{ chromeFlex }}; flex-wrap: wrap; gap: 5px; margin-top: 7px; margin-left: 88px;">
+                        <sc-for list="{{ el.addable }}" as="af" hint-placeholder-count="3">
+                          <div onClick="{{ af.add }}" title="Add this field line" style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.07em; text-transform: uppercase; padding: 2px 7px; border: 1px dashed oklch(0.83 0.010 80); border-radius: 12px; cursor: pointer; color: oklch(0.60 0.012 70);" style-hover="border-color: oklch(0.60 0.060 185); color: oklch(0.45 0.075 185);">+ {{ af.label }}</div>
+                        </sc-for>
+                      </div>
+                      <sc-if value="{{ el.hasStat }}" hint-placeholder-val="{{ false }}">
+                        <div style="margin-top: 8px; margin-left: 88px;">
+                          <div onClick="{{ el.toggleStat }}" style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.50 0.075 185); cursor: pointer; display: inline-block;">{{ el.statToggleLabel }}</div>
+                          <sc-if value="{{ el.statOpen }}" hint-placeholder-val="{{ false }}">
+                            <div style="margin-top: 8px; border: 1px solid oklch(0.85 0.010 80); border-top: 3px solid oklch(0.55 0.11 40); border-radius: 3px; background: oklch(0.985 0.008 75); padding: 12px 14px;">
+                              <div style="display: flex; align-items: center; gap: 9px; margin-bottom: 10px;">
+                                <div style="font-family: Spectral, serif; font-size: 15px; font-weight: 600; color: oklch(0.38 0.11 40);">{{ el.name }}</div>
+                                <div style="display: {{ chromeFlex }}; align-items: center; gap: 4px; margin-left: auto;">
+                                  <div onClick="{{ el.countDown }}" style="width: 20px; height: 20px; display: grid; place-items: center; border: 1px solid oklch(0.85 0.010 80); border-radius: 4px; cursor: pointer; font-size: 12px; color: oklch(0.45 0.015 60);" style-hover="background: oklch(0.92 0.010 80);">−</div>
+                                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; min-width: 26px; text-align: center; color: oklch(0.35 0.015 60);">{{ el.statCount }}</div>
+                                  <div onClick="{{ el.countUp }}" style="width: 20px; height: 20px; display: grid; place-items: center; border: 1px solid oklch(0.85 0.010 80); border-radius: 4px; cursor: pointer; font-size: 12px; color: oklch(0.45 0.015 60);" style-hover="background: oklch(0.92 0.010 80);">+</div>
+                                </div>
+                              </div>
+                              <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px;">
+                                <sc-for list="{{ el.statBoxes }}" as="sb" hint-placeholder-count="4">
+                                  <div style="border: 1px solid oklch(0.89 0.010 80); border-radius: 3px; background: oklch(1 0 0); padding: 5px 8px;">
+                                    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.012 70);">{{ sb.label }}</div>
+                                    <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ sb.save }}" style="font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: oklch(0.28 0.015 60); min-height: 18px;">{{ sb.value }}</div>
+                                  </div>
+                                </sc-for>
+                              </div>
+                              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.012 70); margin-bottom: 4px;">Paste the rest — abilities, traits, actions</div>
+                              <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ el.saveStatRaw }}" style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; color: oklch(0.32 0.015 60); border: 1px solid oklch(0.89 0.010 80); border-radius: 3px; background: oklch(1 0 0); padding: 9px 11px; min-height: 56px;">{{ el.statRaw }}</div>
+                              <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 9px;">
+                                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.012 70);">Foundry</span>
+                                <span contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ el.saveFoundry }}" title="Actor id — the push-to-Foundry step uses this" style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: {{ el.foundryColor }}; min-width: 140px; min-height: 16px;">{{ el.foundryActor }}</span>
+                              </div>
+                            </div>
+                          </sc-if>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                  <div style="border-top: 1px solid oklch(0.88 0.010 80);"></div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ isCardLayout }}" hint-placeholder-val="{{ false }}">
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; margin-top: 12px;">
+                  <sc-for list="{{ elements }}" as="el" hint-placeholder-count="4">
+                    <div style="border: 1px solid oklch(0.87 0.010 80); border-top: 3px solid {{ el.cardTop }}; border-radius: 3px; background: {{ el.cardBg }}; padding: 13px 14px 12px;" style-hover="border-color: oklch(0.72 0.030 185);">
+                      <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px;">
+                        <span style="font-size: 10px; color: {{ el.glyphColor }};">{{ el.glyph }}</span>
+                        <span contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ el.saveName }}" style="font-family: Spectral, serif; font-size: 16px; font-weight: 600; color: oklch(0.24 0.015 60);">{{ el.name }}</span>
+                        <span style="flex: 1;"></span>
+                        <span style="display: {{ chromeFlex }}; gap: 2px;">
+                          <span onClick="{{ el.togglePromote }}" title="{{ el.promoteTitle }}" style="width: 20px; height: 20px; display: grid; place-items: center; border-radius: 4px; cursor: pointer; font-size: 11px; color: {{ el.starColor }};" style-hover="background: oklch(0.90 0.010 80);">⭑</span>
+                          <span onClick="{{ el.remove }}" title="Remove element" style="width: 20px; height: 20px; display: grid; place-items: center; border-radius: 4px; cursor: pointer; font-size: 10px; color: oklch(0.66 0.012 70);" style-hover="background: oklch(0.90 0.010 80); color: oklch(0.50 0.13 25);">✕</span>
+                        </span>
+                      </div>
+                      <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <sc-for list="{{ el.lines }}" as="ln" hint-placeholder-count="2">
+                          <div>
+                            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.012 70); margin-bottom: 1px;">{{ ln.label }}</div>
+                            <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ ln.save }}" style="font-size: 12.5px; line-height: 1.45; color: {{ ln.color }}; min-height: 18px;">{{ ln.text }}</div>
+                          </div>
+                        </sc-for>
+                      </div>
+                      <div style="display: {{ chromeFlex }}; flex-wrap: wrap; gap: 5px; margin-top: 9px;">
+                        <sc-for list="{{ el.addable }}" as="af" hint-placeholder-count="3">
+                          <div onClick="{{ af.add }}" title="Add this field line" style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; padding: 2px 7px; border: 1px dashed oklch(0.83 0.010 80); border-radius: 12px; cursor: pointer; color: oklch(0.60 0.012 70);" style-hover="border-color: oklch(0.60 0.060 185); color: oklch(0.45 0.075 185);">+ {{ af.label }}</div>
+                        </sc-for>
+                      </div>
+                      <sc-if value="{{ el.hasStat }}" hint-placeholder-val="{{ false }}">
+                        <div onClick="{{ el.toggleStat }}" style="margin-top: 9px; font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.075 185); cursor: pointer;">{{ el.statToggleLabel }}</div>
+                      </sc-if>
+                      <sc-if value="{{ el.statOpenCard }}" hint-placeholder-val="{{ false }}">
+                        <div style="margin-top: 8px; border-top: 1px solid oklch(0.88 0.010 80); padding-top: 9px;">
+                          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px;">
+                            <sc-for list="{{ el.statBoxes }}" as="sb" hint-placeholder-count="4">
+                              <div style="border: 1px solid oklch(0.90 0.010 80); border-radius: 3px; background: oklch(1 0 0); padding: 4px 7px;">
+                                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.60 0.012 70);">{{ sb.label }}</div>
+                                <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ sb.save }}" style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: oklch(0.28 0.015 60); min-height: 16px;">{{ sb.value }}</div>
+                              </div>
+                            </sc-for>
+                          </div>
+                          <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ el.saveStatRaw }}" style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap; color: oklch(0.33 0.015 60); border: 1px solid oklch(0.90 0.010 80); border-radius: 3px; background: oklch(1 0 0); padding: 8px 10px; min-height: 48px;">{{ el.statRaw }}</div>
+                          <div style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
+                            <span contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ el.saveFoundry }}" style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: {{ el.foundryColor }}; min-width: 130px; min-height: 15px;">{{ el.foundryActor }}</span>
+                            <span style="flex: 1;"></span>
+                            <span style="display: {{ chromeFlex }}; align-items: center; gap: 4px;">
+                              <span onClick="{{ el.countDown }}" style="width: 19px; height: 19px; display: grid; place-items: center; border: 1px solid oklch(0.88 0.010 80); border-radius: 4px; cursor: pointer; font-size: 11px; color: oklch(0.45 0.015 60);" style-hover="background: oklch(0.93 0.010 80);">−</span>
+                              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; min-width: 24px; text-align: center; color: oklch(0.35 0.015 60);">{{ el.statCount }}</span>
+                              <span onClick="{{ el.countUp }}" style="width: 19px; height: 19px; display: grid; place-items: center; border: 1px solid oklch(0.88 0.010 80); border-radius: 4px; cursor: pointer; font-size: 11px; color: oklch(0.45 0.015 60);" style-hover="background: oklch(0.93 0.010 80);">+</span>
+                            </span>
+                          </div>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-if>
+
+              <div style="display: {{ chromeFlex }}; gap: 8px; margin-top: 14px;">
+                <div onClick="{{ addElement }}" style="display: flex; align-items: center; gap: 7px; padding: 7px 12px; border: 1px dashed oklch(0.80 0.010 80); border-radius: 5px; cursor: pointer; color: oklch(0.50 0.012 70); font-size: 12.5px;" style-hover="border-color: oklch(0.60 0.060 185); color: oklch(0.45 0.075 185);"><span>+</span><span>Add element</span></div>
+                <div onClick="{{ addCreature }}" style="display: flex; align-items: center; gap: 7px; padding: 7px 12px; border: 1px dashed oklch(0.80 0.010 80); border-radius: 5px; cursor: pointer; color: oklch(0.46 0.09 40); font-size: 12.5px;" style-hover="border-color: oklch(0.62 0.11 40);"><span style="font-family: 'IBM Plex Mono', monospace;">▣</span><span>NPC or creature</span></div>
+                <div onClick="{{ toggleGraphPicker }}" style="display: flex; align-items: center; gap: 7px; padding: 7px 12px; border: 1px dashed oklch(0.80 0.010 80); border-radius: 5px; cursor: pointer; color: oklch(0.50 0.012 70); font-size: 12.5px;" style-hover="border-color: oklch(0.60 0.060 185); color: oklch(0.45 0.075 185);"><span style="font-family: 'IBM Plex Mono', monospace; color: oklch(0.55 0.075 185);">◇</span><span>From graph</span></div>
+                <div onClick="{{ suggestDressing }}" style="display: flex; align-items: center; gap: 7px; padding: 7px 12px; border: 1px dashed oklch(0.80 0.010 80); border-radius: 5px; cursor: pointer; color: oklch(0.48 0.075 185); font-size: 12.5px;" style-hover="border-color: oklch(0.60 0.060 185);"><span style="font-family: 'IBM Plex Mono', monospace;">✦</span><span>Suggest dressing</span></div>
+              </div>
+
+              <sc-if value="{{ graphPickerOpen }}" hint-placeholder-val="{{ false }}">
+                <div style="margin-top: 12px; border: 1px solid oklch(0.84 0.010 80); border-radius: 5px; background: oklch(0.985 0.005 85); padding: 13px 14px;">
+                  <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.53 0.012 70);">Pull in an existing node</div>
+                    <div style="flex: 1;"></div>
+                    <div onClick="{{ toggleGraphPicker }}" style="cursor: pointer; color: oklch(0.58 0.012 70); font-size: 12px;">✕</div>
+                  </div>
+                  <input value="{{ graphQuery }}" onChange="{{ setGraphQuery }}" placeholder="Search the graph by name…" style="width: 100%; padding: 7px 10px; border: 1px solid oklch(0.82 0.010 80); border-radius: 4px; font-family: inherit; font-size: 13px; background: oklch(1 0 0); color: inherit; margin-bottom: 10px;" />
+                  <div style="display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto;">
+                    <sc-for list="{{ graphCandidates }}" as="g" hint-placeholder-count="5">
+                      <div onClick="{{ g.add }}" style="display: flex; align-items: baseline; gap: 10px; padding: 7px 9px; border-radius: 4px; cursor: pointer; border-left: 2px solid {{ g.accent }};" style-hover="background: oklch(0.925 0.014 185);">
+                        <span style="font-size: 13px; color: oklch(0.27 0.015 60);">{{ g.name }}</span>
+                        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.58 0.012 70);">{{ g.type }}</span>
+                        <span style="flex: 1;"></span>
+                        <span style="font-size: 11.5px; color: oklch(0.58 0.012 70);">{{ g.hint }}</span>
+                      </div>
+                    </sc-for>
+                    <sc-if value="{{ graphNoResults }}" hint-placeholder-val="{{ false }}">
+                      <div style="padding: 10px 9px; font-size: 12.5px; color: oklch(0.55 0.012 70);">Nothing in the graph matches. Add it as a new element instead — you can promote it later.</div>
+                    </sc-if>
+                  </div>
+                  <div style="margin-top: 10px; font-size: 11.5px; color: oklch(0.56 0.012 70);">Adding from the graph links the existing node into this scene as a KEY element. It never duplicates the node.</div>
+                </div>
+              </sc-if>
+
+              <div style="margin-top: 40px; border-top: 1px solid oklch(0.88 0.010 80); padding-top: 18px;">
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.11em; text-transform: uppercase; color: oklch(0.50 0.012 70); margin-bottom: 9px;">Table notes — what actually happened</div>
+                <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ saveNotes }}" style="font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; line-height: 1.7; color: oklch(0.34 0.015 60); min-height: 96px; white-space: pre-wrap; border: 1px solid oklch(0.90 0.010 80); border-radius: 4px; padding: 12px 14px; background: oklch(0.975 0.006 85);">{{ sceneNotes }}</div>
+                <div style="margin-top: 7px; font-size: 11.5px; color: oklch(0.57 0.012 70);">Wrap reads these notes and proposes graph edits — nothing is written without your say-so.</div>
+              </div>
+
+              <div style="margin-top: 34px; border-top: 1px solid oklch(0.88 0.010 80); padding-top: 14px;">
+                <div onClick="{{ toggleDrawer }}" style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.52 0.012 70); cursor: pointer;">{{ drawerLabel }}</div>
+                <sc-if value="{{ drawerOpen }}" hint-placeholder-val="{{ false }}">
+                  <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;">
+                    <sc-for list="{{ neighbors }}" as="nb" hint-placeholder-count="3">
+                      <div style="display: flex; align-items: baseline; gap: 10px; font-size: 12.5px;">
+                        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.07em; color: oklch(0.60 0.012 70); width: 74px; text-align: right;">{{ nb.rel }}</span>
+                        <span style="color: oklch(0.30 0.015 60);">{{ nb.name }}</span>
+                        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.62 0.012 70);">{{ nb.type }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+
+    <sc-if value="{{ wrapOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="width: 400px; flex: none; border-left: 1px solid oklch(0.87 0.010 80); background: oklch(0.945 0.009 85); display: flex; flex-direction: column; min-height: 0;">
+        <div style="padding: 14px 16px; border-bottom: 1px solid oklch(0.88 0.010 80); display: flex; align-items: center; gap: 9px;">
+          <span style="font-family: 'IBM Plex Mono', monospace; color: oklch(0.55 0.09 65);">✦</span>
+          <span style="font-family: Spectral, serif; font-size: 16px; font-weight: 600;">Wrap up scene</span>
+          <span style="flex: 1;"></span>
+          <span onClick="{{ toggleWrap }}" style="cursor: pointer; color: oklch(0.55 0.012 70); font-size: 13px;" style-hover="color: oklch(0.30 0.015 60);">✕</span>
+        </div>
+        <div style="padding: 13px 16px; border-bottom: 1px solid oklch(0.88 0.010 80); font-size: 12.5px; color: oklch(0.47 0.014 65); line-height: 1.5;">{{ wrapBlurb }}</div>
+        <div style="flex: 1; overflow-y: auto; padding: 6px 12px 16px;">
+          <sc-for list="{{ proposals }}" as="pr" hint-placeholder-count="4">
+            <div style="border: 1px solid {{ pr.border }}; border-radius: 4px; background: {{ pr.bg }}; padding: 11px 12px; margin-top: 8px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 7px;">
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; background: {{ pr.kindBg }}; color: {{ pr.kindFg }};">{{ pr.kind }}</span>
+                <span style="font-size: 13px; font-weight: 500; color: oklch(0.26 0.015 60);">{{ pr.target }}</span>
+                <span style="flex: 1;"></span>
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: {{ pr.statusFg }};">{{ pr.statusLabel }}</span>
+              </div>
+              <sc-if value="{{ pr.hasBefore }}" hint-placeholder-val="{{ false }}">
+                <div style="display: flex; gap: 8px; font-size: 12px; line-height: 1.45; padding: 3px 8px; border-radius: 3px; background: oklch(0.90 0.030 25 / 0.35); color: oklch(0.40 0.030 25); margin-bottom: 3px;">
+                  <span style="font-family: 'IBM Plex Mono', monospace; opacity: 0.7;">−</span><span>{{ pr.before }}</span>
+                </div>
+              </sc-if>
+              <div style="display: flex; gap: 8px; font-size: 12px; line-height: 1.45; padding: 3px 8px; border-radius: 3px; background: oklch(0.90 0.045 150 / 0.40); color: oklch(0.35 0.045 150);">
+                <span style="font-family: 'IBM Plex Mono', monospace; opacity: 0.7;">+</span><span>{{ pr.after }}</span>
+              </div>
+              <div style="font-size: 11.5px; color: oklch(0.55 0.012 70); margin-top: 7px; line-height: 1.45;">{{ pr.why }}</div>
+              <div style="display: flex; gap: 6px; margin-top: 9px;">
+                <div onClick="{{ pr.accept }}" style="padding: 4px 11px; border-radius: 4px; cursor: pointer; font-size: 11.5px; border: 1px solid {{ pr.acceptBorder }}; background: {{ pr.acceptBg }}; color: {{ pr.acceptFg }};">Accept</div>
+                <div onClick="{{ pr.reject }}" style="padding: 4px 11px; border-radius: 4px; cursor: pointer; font-size: 11.5px; border: 1px solid {{ pr.rejectBorder }}; background: {{ pr.rejectBg }}; color: {{ pr.rejectFg }};">Reject</div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="padding: 12px 16px; border-top: 1px solid oklch(0.88 0.010 80); display: flex; align-items: center; gap: 9px;">
+          <div onClick="{{ acceptAll }}" style="padding: 7px 12px; border-radius: 5px; cursor: pointer; font-size: 12.5px; border: 1px solid oklch(0.84 0.010 80); color: oklch(0.40 0.015 60);" style-hover="background: oklch(0.91 0.010 85);">Accept all</div>
+          <div style="flex: 1;"></div>
+          <div onClick="{{ applyWrap }}" style="padding: 7px 15px; border-radius: 5px; cursor: pointer; font-size: 12.5px; background: {{ applyBg }}; color: {{ applyFg }};">{{ applyLabel }}</div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ railOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="width: 268px; flex: none; border-left: 1px solid oklch(0.87 0.010 80); background: oklch(0.938 0.009 85); display: flex; flex-direction: column; min-height: 0;">
+        <div style="padding: 13px 14px; border-bottom: 1px solid oklch(0.88 0.010 80); display: flex; align-items: center; gap: 8px;">
+          <span style="font-family: 'IBM Plex Mono', monospace; color: oklch(0.55 0.075 185);">◇</span>
+          <span style="font-size: 13px; font-weight: 500;">In this scene</span>
+          <span style="flex: 1;"></span>
+          <span onClick="{{ toggleRail }}" style="cursor: pointer; color: oklch(0.55 0.012 70); font-size: 12px;">✕</span>
+        </div>
+        <div style="flex: 1; overflow-y: auto; padding: 10px 12px;">
+          <sc-for list="{{ railNodes }}" as="n" hint-placeholder-count="5">
+            <div style="padding: 8px 10px; border-radius: 4px; margin-bottom: 4px; background: oklch(0.975 0.006 85); border: 1px solid oklch(0.90 0.010 80); border-left: 2px solid {{ n.accent }};">
+              <div style="display: flex; align-items: baseline; gap: 7px;">
+                <span style="font-size: 12.5px; color: oklch(0.27 0.015 60);">{{ n.name }}</span>
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.58 0.012 70);">{{ n.type }}</span>
+              </div>
+              <div style="font-size: 11.5px; color: oklch(0.53 0.012 70); margin-top: 3px; line-height: 1.4;">{{ n.edges }}</div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="padding: 11px 14px; border-top: 1px solid oklch(0.88 0.010 80); font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.56 0.012 70);">{{ graphCount }}</div>
+      </div>
+    </sc-if>
+  </div>
+
+  <sc-if value="{{ hasToast }}" hint-placeholder-val="{{ false }}">
+    <div style="position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-radius: 6px; background: oklch(0.26 0.015 60); color: oklch(0.96 0.008 85); font-size: 12.5px; box-shadow: 0 8px 26px oklch(0.26 0.015 60 / 0.28); z-index: 40;">
+      <span>{{ toastText }}</span>
+      <span onClick="{{ undoToast }}" style="cursor: pointer; color: oklch(0.80 0.075 185); font-weight: 500;">Undo</span>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+const ACCENT_KEY = "oklch(0.62 0.10 65)";
+const ACCENT_MUNDANE = "oklch(0.86 0.010 80)";
+
+const FIELD_ORDER = [
+  ["trigger", "Trigger"], ["gives", "Gives"], ["looks", "Looks"], ["means", "Means"],
+  ["checks", "Checks"], ["function", "Function"], ["wants", "Wants"], ["secret", "Secret"]
+];
+
+function uid(p) { return p + "_" + Math.random().toString(36).slice(2, 8); }
+
+const DRESSING = [
+  { match: /forge|smith|foundry|anvil/, items: [
+    ["Quench barrel", "Cloudy water, and a film of scale on top. Loud if something goes in."],
+    ["Rack of unclaimed work", "Six pieces, each with a name-tag. Two of the names are dead people."],
+    ["Coal heap and shovel", "Improvised weapon, or a place to hide something small."],
+    ["Wall of tongs", "Every size but one — the largest pair is missing."]] },
+  { match: /vault|crypt|tomb|temple|shrine|chapel/, items: [
+    ["Collection box, forced", "Empty, and the hinge is bent outward."],
+    ["Chalk tallies on a pillar", "Someone counted something. It stops at eleven."],
+    ["Votive niches", "Cover, and forty years of dust that shows a recent handprint."]] },
+  { match: /waystation|inn|tavern|common|hall/, items: [
+    ["Board of nailed notices", "Three bounties, one of them for someone at this table."],
+    ["Long trestle table", "Cover, and it takes two people to overturn."],
+    ["Stabled horses through the wall", "They go quiet a full round before anything arrives."]] },
+  { match: /tower|bell|spire/, items: [
+    ["Frayed bell rope", "Holds one person's weight. Probably."],
+    ["Nesting birds in the louvres", "They break for the windows at any loud noise."],
+    ["Stair landing with a missing rail", "A twenty-foot fall to the floor below."]] },
+  { match: /market|dock|harbour|harbor|street|square/, items: [
+    ["Awning of stitched sailcloth", "Full concealment, and it comes down if cut."],
+    ["Crate stack, badly balanced", "One good shove blocks the alley."],
+    ["Fishmonger's ice trough", "Cold storage — and something already in it."]] }
+];
+const DRESSING_FALLBACK = [
+  ["Something to hide behind", "Half cover for one creature."],
+  ["Something that makes noise", "Anyone touching it is heard two rooms away."],
+  ["Something recently disturbed", "Whoever was here left in a hurry."]
+];
+
+const ENTITIES = [
+  { id: "e_waystation", name: "Ashfen Waystation", type: "place",
+    description: "A stone-and-timber roadhouse on the Ashfen causeway. One common room, one hearth, and a landlord who has learned not to ask names. Everything smells faintly of the marsh." },
+  { id: "e_vault", name: "The Drowned Vault — Antechamber", type: "place",
+    description: "The flooded outer chamber of a Compact reliquary, ankle-deep and never drained. Mosaic floor, rotted pews, and a brass grate in the far wall that the water does not go through." },
+  { id: "e_forge", name: "Gorrim's Forge", type: "place",
+    description: "A working smithy at the low end of the Threadbare Market — one bellows, one anvil, and a roof patched with the same sheet metal Gorrim sells. Half of it is still fire-blacked from last month." },
+  { id: "e_belltower", name: "Bell Tower of Saint Une", type: "place" },
+  { id: "e_gorrim", name: "Gorrim the Smith", type: "person" },
+  { id: "e_mira", name: "Mira Vell", type: "person" },
+  { id: "e_warden", name: "Drowned Warden", type: "person" },
+  { id: "e_seal", name: "Tidewarden's Seal", type: "object" },
+  { id: "e_compact", name: "The Verdigris Compact", type: "faction" },
+  { id: "e_sundering", name: "The Sundering", type: "event" }
+];
+
+const SCENES = [
+  { id: "s_regroup", name: "Writ and Warning", locationEntityId: "e_waystation",
+    objectiveNote: "Mira delivers the Compact's writ and the party learns the vault has been breached from below.",
+    narration: "Lamp-smoke hangs at knee height in the waystation's common room. Mira Vell is already seated with her back to the wall, a wax-sealed writ face-down under her palm, and she does not look up when you come in.",
+    notes: "" },
+  { id: "s_vault", name: "The Antechamber", locationEntityId: "e_vault",
+    objectiveNote: "Recover the Tidewarden's Seal without fully waking the wardens. Escalates to combat if the grate is forced.",
+    narration: "Brackish water stands ankle-deep across a floor of chipped mosaic. Rows of rotted pews face a brass grate set into the far wall, and every surface wears the same green crust — verdigris, thick as moss, growing only where hands would have touched.",
+    notes: "" },
+  { id: "s_forge", name: "Cold Iron, Warm Words", locationEntityId: "e_forge",
+    objectiveNote: "Fallback scene. Gorrim will repair or reforge, but he wants the truth about the fire first.",
+    narration: "The forge is banked low, coals breathing orange under grey. Gorrim doesn't stop working when you enter — he just moves the hammer to his off hand so the good one is free.",
+    notes: "" }
+];
+
+const PLANS = [
+  { id: "p12", name: "Session 12 — Into the Drowned Vault", sceneIds: ["s_regroup", "s_vault", "s_forge"] },
+  { id: "p13", name: "Session 13 — The Bell That Wasn't Rung", sceneIds: ["s_regroup"] }
+];
+
+const ELEMENTS = [
+  { id: "el_seal", sceneId: "s_vault", kind: "graph", graphEntityId: "e_seal", order: 0, name: "Tidewarden's Seal",
+    fields: { trigger: "Anyone lifts the brass grate, or spends a round in the water near it.",
+      gives: "The seal itself — and the wardens begin to stir. One round of grace before initiative.",
+      looks: "A verdigris-crusted brass disc the size of a dinner plate, chained to a ring below the waterline.",
+      means: "The sigil stamped on it is the Compact's own, deliberately defaced — someone in the order did this.",
+      checks: [{ skill: "Investigation", dc: 14, purpose: "the defacement is recent, weeks not centuries" },
+               { skill: "Athletics", dc: 12, purpose: "lift the grate quietly instead of forcing it" }] } },
+  { id: "el_warden", sceneId: "s_vault", kind: "graph", graphEntityId: "e_warden", order: 1, name: "Drowned Warden",
+    fields: { trigger: "Wakes when the seal moves, or when a light source goes under the water.",
+      gives: "A fight the party can lose gracefully — it drags rather than kills.",
+      wants: "To return every intruder to the water's care. It genuinely believes this is mercy.",
+      secret: "Speaks the Compact's oath-cant. If addressed in it, it hesitates for one full round.",
+      statblockRef: "Drowned Warden (MM p.148 var.)" },
+    stat: { count: 2, ac: "13", hp: "58 (9d8+18)", speed: "20 ft., swim 40", cr: "4 (1,100 XP)",
+      foundryActor: "Actor.7fQ2mXnP",
+      raw: "STR 16 (+3)  DEX 8 (−1)  CON 16 (+3)  INT 6 (−2)  WIS 12 (+1)  CHA 5 (−3)\nDamage Resistances bludgeoning, piercing, slashing from nonmagical attacks\nSenses darkvision 60 ft., passive Perception 11\n\nUndertow. A creature that starts its turn grappled by the warden is pulled 10 ft. toward the water.\n\nMultiattack. Two slam attacks, or one slam and one grapple.\nSlam. +5 to hit, reach 5 ft., 10 (2d6+3) bludgeoning." } },
+  { id: "el_grate", sceneId: "s_vault", kind: "local", graphEntityId: null, order: 2, name: "The brass grate",
+    fields: { trigger: "Examined from the pews.", gives: "A cold draft — there is open air below, not solid water." } },
+  { id: "el_ledger", sceneId: "s_vault", kind: "local", graphEntityId: null, order: 3, name: "Waterlogged ledger",
+    fields: { trigger: "Searching the pews.", gives: "Names of every visitor for the last two centuries. The last entry is dated this month." } },
+  { id: "el_pews", sceneId: "s_vault", kind: "local", graphEntityId: null, order: 4, name: "Rotted pew rows",
+    fields: { gives: "Cover, and a loud crack if anyone stands on one." } },
+  { id: "el_lamp", sceneId: "s_vault", kind: "local", graphEntityId: null, order: 5, name: "Guttering wall lamp",
+    fields: { gives: "Dim light for ten more minutes, then nothing." } },
+
+  { id: "el_writ", sceneId: "s_regroup", kind: "graph", graphEntityId: "e_compact", order: 0, name: "The Compact's writ",
+    fields: { trigger: "Mira slides it across the table.",
+      gives: "Formal authority to enter the vault — and a name at the bottom the party will recognise.",
+      means: "It is countersigned, which the Compact has not done in living memory." } },
+  { id: "el_mira", sceneId: "s_regroup", kind: "graph", graphEntityId: "e_mira", order: 1, name: "Mira Vell",
+    fields: { trigger: "Present from the start.", gives: "Directions, and a warning she won't explain.",
+      wants: "Someone else to be holding the seal when it is found.",
+      secret: "She has already been down there once and came back up alone." } },
+  { id: "el_hearth", sceneId: "s_regroup", kind: "local", graphEntityId: null, order: 2, name: "Common-room hearth",
+    fields: { gives: "Warmth, and the only bright light in the room." } },
+  { id: "el_gorrim", sceneId: "s_forge", kind: "graph", graphEntityId: "e_gorrim", order: 0, name: "Gorrim the Smith",
+    fields: { trigger: "Present from the start.", gives: "Repairs at cost — if he gets a straight answer.",
+      wants: "To know who set the fire. He suspects the party and hopes he is wrong." } },
+  { id: "el_anvil", sceneId: "s_forge", kind: "local", graphEntityId: null, order: 1, name: "Scorched anvil",
+    fields: { gives: "Evidence: the burn pattern runs the wrong way for an accident." } }
+];
+
+const STAT = {
+  el_warden: {
+    name: "Drowned Warden", sub: "Medium undead, lawful neutral",
+    abilities: [["STR", "16 (+3)"], ["DEX", "8 (−1)"], ["CON", "16 (+3)"], ["INT", "6 (−2)"], ["WIS", "12 (+1)"], ["CHA", "5 (−3)"]],
+    lines: [["Armour Class", "13 (verdigris plate)"], ["Hit Points", "58 (9d8 + 18)"], ["Speed", "20 ft., swim 40 ft."],
+      ["Undertow.", "A creature that starts its turn grappled by the warden is pulled 10 ft. toward the water."],
+      ["Multiattack.", "Two slam attacks, or one slam and one grapple."]],
+    source: "pasted from Monster Manual p.148 — edited"
+  }
+};
+
+const PROPOSALS = [
+  { id: "pr1", kind: "promote", target: "Waterlogged ledger",
+    after: "New object node “Waterlogged ledger”, contained in The Drowned Vault — Antechamber",
+    why: "Your notes reference it three times after the party took it with them. Currently scene-local only." },
+  { id: "pr2", kind: "field edit", target: "Mira Vell", before: "Harbourmaster. Reliable. Owes the Compact nothing.",
+    after: "Harbourmaster. Reliable. Owes the Compact nothing. Admitted at the table she has been inside the vault before.",
+    why: "From the notes: “Mira cracked when Sella pushed — she's been down there.”" },
+  { id: "pr3", kind: "new edge", target: "Mira Vell → Tidewarden's Seal",
+    after: "knows-about (strength: tight)", why: "She named the seal before anyone described it." },
+  { id: "pr4", kind: "new node", target: "The Deepwatch",
+    after: "New faction node “The Deepwatch” — mentioned but not yet in the graph",
+    why: "Spoken aloud twice in the notes and never defined. Likely a real thing you invented at the table." },
+  { id: "pr5", kind: "field edit", target: "Tidewarden's Seal", before: "playerKnown: false", after: "playerKnown: true",
+    why: "The party is holding it." }
+];
+
+class Component extends DCLogic {
+  state = {
+    view: "scene", planId: "p12", sceneId: "s_vault",
+    scenes: SCENES.map((s) => ({ ...s })),
+    plans: PLANS.map((p) => ({ ...p, sceneIds: [...p.sceneIds] })),
+    elements: ELEMENTS.map((e) => ({ ...e, fields: { ...e.fields } })),
+    entities: [...ENTITIES],
+    mode: "prep", layout: "page", wrapOpen: false, railOpen: false,
+    statOpen: {}, drawerOpen: false, addSceneOpen: false, newPlaceOpen: false,
+    newPlaceName: "", pickedPlaceId: null,
+    decisions: {}, applied: false, toast: null, openFields: {},
+    graphPickerOpen: false, graphQuery: ""
+  };
+
+  componentDidMount() {
+    this._key = (e) => {
+      if (e.target && e.target.isContentEditable) return;
+      if (e.key === "[") this.step(-1);
+      if (e.key === "]") this.step(1);
+      if (e.key === "Escape") this.setState({ wrapOpen: false, addSceneOpen: false });
+    };
+    window.addEventListener("keydown", this._key);
+  }
+  componentWillUnmount() { window.removeEventListener("keydown", this._key); }
+
+  entity(id) { return this.state.entities.find((e) => e.id === id); }
+  scene(id) { return this.state.scenes.find((s) => s.id === id); }
+  plan(id) { return this.state.plans.find((p) => p.id === id); }
+
+  patchScene(id, patch) {
+    this.setState((s) => ({ scenes: s.scenes.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+  }
+  patchElement(id, patch) {
+    this.setState((s) => ({ elements: s.elements.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+  }
+  showToast(text, undo) {
+    if (this._t) clearTimeout(this._t);
+    this.setState({ toast: { text, undo } });
+    this._t = setTimeout(() => this.setState({ toast: null }), 6000);
+  }
+  step(dir) {
+    const plan = this.plan(this.state.planId);
+    if (!plan) return;
+    const i = plan.sceneIds.indexOf(this.state.sceneId);
+    const next = plan.sceneIds[i + dir];
+    if (next) this.setState({ sceneId: next, view: "scene", statOpen: {} });
+  }
+
+  sceneElements(sceneId) {
+    return this.state.elements.filter((e) => e.sceneId === sceneId).sort((a, b) => a.order - b.order);
+  }
+
+  lineText(el, key) {
+    const v = el.fields[key];
+    if (v === undefined || v === null || v === "") return null;
+    if (key === "checks") return v.map((c) => c.skill + " DC " + c.dc + (c.purpose ? " — " + c.purpose : "")).join("  ·  ");
+    return v;
+  }
+
+  saveLine(elId, key, text) {
+    if (key === "checks") {
+      const checks = text.split("·").map((raw) => {
+        const m = raw.trim().match(/^(.+?)\s+DC\s+(\d+)(?:\s*[—-]\s*(.*))?$/i);
+        return m ? { skill: m[1].trim(), dc: Number(m[2]), purpose: (m[3] || "").trim() || undefined } : null;
+      }).filter(Boolean);
+      if (checks.length) this.patchElement(elId, { fields: { ...this.state.elements.find((e) => e.id === elId).fields, checks } });
+      return;
+    }
+    const el = this.state.elements.find((e) => e.id === elId);
+    this.patchElement(elId, { fields: { ...el.fields, [key]: text } });
+  }
+
+  renderVals() {
+    const st = this.state;
+    const run = st.mode === "run";
+    const plan = this.plan(st.planId);
+    const scene = this.scene(st.sceneId);
+    const place = scene ? this.entity(scene.locationEntityId) : null;
+    const chromeFlex = run ? "none" : "flex";
+    const chip = (on) => (on
+      ? { bg: "oklch(0.55 0.075 185)", fg: "oklch(0.99 0.005 185)" }
+      : { bg: "transparent", fg: "oklch(0.48 0.014 65)" });
+    const prep = chip(!run), rn = chip(run);
+    const pg = chip(st.layout === "page"), cd = chip(st.layout === "cards");
+
+    const planList = st.plans.map((p) => ({
+      name: p.name,
+      meta: p.sceneIds.length + (p.sceneIds.length === 1 ? " scene" : " scenes"),
+      bg: p.id === st.planId ? "oklch(0.90 0.020 185)" : "transparent",
+      mark: p.id === st.planId ? "oklch(0.55 0.075 185)" : "transparent",
+      sceneNames: p.sceneIds.map((id, i) => ({ num: String(i + 1).padStart(2, "0"), name: this.scene(id) ? this.scene(id).name : "—" })),
+      open: () => this.setState({ planId: p.id, view: "plan", addSceneOpen: false })
+    }));
+
+    const libraryList = st.scenes.map((s) => ({
+      name: s.name,
+      place: this.entity(s.locationEntityId) ? this.entity(s.locationEntityId).name : "no place",
+      bg: s.id === st.sceneId && st.view === "scene" ? "oklch(0.90 0.020 185)" : "transparent",
+      open: () => this.setState({ sceneId: s.id, view: "scene", statOpen: {} }),
+      addToPlan: (e) => {
+        e.stopPropagation();
+        const p = this.plan(st.planId);
+        if (!p || p.sceneIds.includes(s.id)) { this.showToast("Already in " + (p ? p.name : "plan"), null); return; }
+        this.setState((prev) => ({
+          plans: prev.plans.map((x) => (x.id === st.planId ? { ...x, sceneIds: [...x.sceneIds, s.id] } : x)),
+          view: "plan"
+        }));
+        this.showToast("Added “" + s.name + "” to " + p.name, () =>
+          this.setState((prev) => ({ plans: prev.plans.map((x) => (x.id === st.planId ? { ...x, sceneIds: x.sceneIds.filter((i) => i !== s.id) } : x)) })));
+      }
+    }));
+
+    const planScenes = plan ? plan.sceneIds.map((id, i) => {
+      const s = this.scene(id);
+      const els = this.sceneElements(id);
+      const keyCount = els.filter((e) => e.kind === "graph").length;
+      return {
+        num: String(i + 1).padStart(2, "0"),
+        name: s ? s.name : "—",
+        place: s && this.entity(s.locationEntityId) ? this.entity(s.locationEntityId).name : "unanchored",
+        objective: s ? s.objectiveNote : "",
+        elemMeta: els.length + " elements · " + keyCount + " key",
+        rowBg: id === st.sceneId ? "oklch(0.935 0.014 185)" : "transparent",
+        open: () => this.setState({ sceneId: id, view: "scene", statOpen: {} }),
+        moveUp: (e) => { e.stopPropagation(); this.reorder(i, -1); },
+        moveDown: (e) => { e.stopPropagation(); this.reorder(i, 1); },
+        remove: (e) => {
+          e.stopPropagation();
+          const before = [...plan.sceneIds];
+          this.setState((prev) => ({ plans: prev.plans.map((x) => (x.id === plan.id ? { ...x, sceneIds: x.sceneIds.filter((z) => z !== id) } : x)) }));
+          this.showToast("Removed from plan — the scene itself is untouched", () =>
+            this.setState((prev) => ({ plans: prev.plans.map((x) => (x.id === plan.id ? { ...x, sceneIds: before } : x)) })));
+        }
+      };
+    }) : [];
+
+    const els = scene ? this.sceneElements(scene.id) : [];
+    const elements = els.map((el) => {
+      const isGraph = el.kind === "graph";
+      const ent = el.graphEntityId ? this.entity(el.graphEntityId) : null;
+      const keys = run && !isGraph ? ["gives"] : FIELD_ORDER.map((f) => f[0]);
+      const opened = st.openFields[el.id] || [];
+      const lines = FIELD_ORDER.filter((f) => keys.includes(f[0])).map(([key, label]) => {
+        const text = this.lineText(el, key);
+        if (text === null && !opened.includes(key)) return null;
+        return {
+          label, text: text === null ? "" : text,
+          size: isGraph ? "13.5px" : "12.5px",
+          color: isGraph ? "oklch(0.31 0.015 60)" : "oklch(0.46 0.014 65)",
+          save: (e) => this.saveLine(el.id, key, e.currentTarget.textContent.trim())
+        };
+      }).filter(Boolean);
+      const stat = el.stat;
+      const open = !!st.statOpen[el.id];
+      const statField = (key, label, wide) => ({
+        label, wide: wide ? "1 / -1" : "auto",
+        value: stat ? (stat[key] || "") : "",
+        save: (e) => this.patchElement(el.id, { stat: { ...el.stat, [key]: e.currentTarget.textContent.trim() } })
+      });
+      return {
+        name: el.name, isGraph, glyph: isGraph ? "◆" : "○",
+        glyphColor: isGraph ? ACCENT_KEY : "oklch(0.70 0.012 70)",
+        accent: isGraph ? ACCENT_KEY : "transparent",
+        cardTop: isGraph ? ACCENT_KEY : "oklch(0.88 0.010 80)",
+        cardBg: isGraph ? "oklch(0.985 0.008 78)" : "oklch(0.975 0.005 85)",
+        rowBg: "transparent",
+        nameSize: isGraph ? "18px" : "15px",
+        nameWeight: isGraph ? "600" : "400",
+        typeLabel: ent ? ent.type : "graph",
+        starColor: isGraph ? ACCENT_KEY : "oklch(0.72 0.012 70)",
+        promoteTitle: isGraph ? "Demote to scene-local (the node survives)" : "Promote to a graph node",
+        lines,
+        addable: FIELD_ORDER.filter(([key]) => this.lineText(el, key) === null && !opened.includes(key))
+          .map(([key, label]) => ({
+            label,
+            add: () => this.setState((p) => ({ openFields: { ...p.openFields, [el.id]: [...(p.openFields[el.id] || []), key] } }))
+          }))
+          .concat(stat ? [] : [{ label: "Stat block", add: () => {
+            this.patchElement(el.id, {
+              stat: { count: 1, ac: "", hp: "", speed: "", cr: "", raw: "", foundryActor: "" },
+              fields: { ...el.fields, statblockRef: "Stat block" }
+            });
+            this.setState((p) => ({ statOpen: { ...p.statOpen, [el.id]: true } }));
+          } }]),
+        hasStat: !!stat,
+        statOpen: open, statOpenCard: open,
+        statToggleLabel: (open ? "▾ " : "▸ ") + (el.fields.statblockRef || "Stat block") + (stat && stat.count > 1 ? "  ×" + stat.count : ""),
+        statBoxes: stat ? [statField("ac", "AC"), statField("hp", "HP"), statField("speed", "Speed"), statField("cr", "CR")] : [],
+        statRaw: stat ? stat.raw : "",
+        saveStatRaw: (e) => this.patchElement(el.id, { stat: { ...el.stat, raw: e.currentTarget.innerText } }),
+        statCount: stat ? "×" + stat.count : "",
+        countUp: () => this.patchElement(el.id, { stat: { ...el.stat, count: el.stat.count + 1 } }),
+        countDown: () => this.patchElement(el.id, { stat: { ...el.stat, count: Math.max(1, el.stat.count - 1) } }),
+        foundryActor: stat && stat.foundryActor ? stat.foundryActor : "",
+        foundryLabel: stat && stat.foundryActor ? "Foundry actor " + stat.foundryActor : "Not linked to a Foundry actor",
+        foundryColor: stat && stat.foundryActor ? "oklch(0.45 0.075 185)" : "oklch(0.62 0.012 70)",
+        saveFoundry: (e) => this.patchElement(el.id, { stat: { ...el.stat, foundryActor: e.currentTarget.textContent.trim() } }),
+        toggleStat: () => this.setState((p) => ({ statOpen: { ...p.statOpen, [el.id]: !p.statOpen[el.id] } })),
+        saveName: (e) => this.patchElement(el.id, { name: e.currentTarget.textContent.trim() }),
+        togglePromote: () => {
+          if (isGraph) { this.patchElement(el.id, { kind: "local", graphEntityId: null }); this.showToast("“" + el.name + "” is scene-local again — the node was left in the graph", null); }
+          else {
+            const id = uid("e");
+            this.setState((p) => ({ entities: [...p.entities, { id, name: el.name, type: "object" }] }));
+            this.patchElement(el.id, { kind: "graph", graphEntityId: id });
+            this.showToast("Promoted “" + el.name + "” — node created, contained in this place", () => {
+              this.patchElement(el.id, { kind: "local", graphEntityId: null });
+              this.setState((p) => ({ entities: p.entities.filter((x) => x.id !== id) }));
+            });
+          }
+        },
+        remove: () => {
+          const snapshot = st.elements;
+          this.setState((p) => ({ elements: p.elements.filter((x) => x.id !== el.id) }));
+          this.showToast("Removed “" + el.name + "”", () => this.setState({ elements: snapshot }));
+        }
+      };
+    });
+
+    const decided = PROPOSALS.filter((p) => st.decisions[p.id] === "accepted").length;
+    const proposals = PROPOSALS.map((p) => {
+      const d = st.decisions[p.id];
+      const acc = d === "accepted", rej = d === "rejected";
+      return {
+        kind: p.kind, target: p.target, after: p.after, before: p.before || "", hasBefore: !!p.before, why: p.why,
+        border: acc ? "oklch(0.72 0.055 150)" : rej ? "oklch(0.90 0.010 80)" : "oklch(0.86 0.010 80)",
+        bg: acc ? "oklch(0.96 0.020 150)" : rej ? "oklch(0.955 0.005 85)" : "oklch(0.985 0.005 85)",
+        kindBg: p.kind === "promote" ? "oklch(0.90 0.045 65)" : "oklch(0.90 0.030 185)",
+        kindFg: p.kind === "promote" ? "oklch(0.40 0.09 65)" : "oklch(0.38 0.070 185)",
+        statusLabel: acc ? "accepted" : rej ? "rejected" : "",
+        statusFg: acc ? "oklch(0.45 0.070 150)" : "oklch(0.60 0.012 70)",
+        acceptBg: acc ? "oklch(0.55 0.070 150)" : "transparent",
+        acceptFg: acc ? "oklch(0.99 0.005 150)" : "oklch(0.40 0.015 60)",
+        acceptBorder: acc ? "oklch(0.55 0.070 150)" : "oklch(0.84 0.010 80)",
+        rejectBg: rej ? "oklch(0.55 0.10 25)" : "transparent",
+        rejectFg: rej ? "oklch(0.99 0.005 25)" : "oklch(0.40 0.015 60)",
+        rejectBorder: rej ? "oklch(0.55 0.10 25)" : "oklch(0.84 0.010 80)",
+        accept: () => this.setState((s) => ({ decisions: { ...s.decisions, [p.id]: "accepted" } })),
+        reject: () => this.setState((s) => ({ decisions: { ...s.decisions, [p.id]: "rejected" } }))
+      };
+    });
+
+    const sceneEnts = els.filter((e) => e.graphEntityId).map((e) => this.entity(e.graphEntityId)).filter(Boolean);
+    const railNodes = sceneEnts.map((e) => ({
+      name: e.name, type: e.type, accent: e.type === "person" ? ACCENT_KEY : "oklch(0.60 0.060 185)",
+      edges: "contained-in " + (this.entity(scene.locationEntityId) || {}).name
+    }));
+
+    const usedIds = els.map((e) => e.graphEntityId).filter(Boolean);
+    const gq = st.graphQuery.trim().toLowerCase();
+    const graphCandidates = st.entities
+      .filter((e) => !usedIds.includes(e.id))
+      .filter((e) => !gq || e.name.toLowerCase().includes(gq) || e.type.includes(gq));
+
+    const placeEnts = st.entities.filter((e) => e.type === "place");
+    const placeOptions = placeEnts.map((p) => ({
+      name: p.name,
+      border: st.pickedPlaceId === p.id ? "oklch(0.55 0.075 185)" : "oklch(0.84 0.010 80)",
+      bg: st.pickedPlaceId === p.id ? "oklch(0.92 0.030 185)" : "transparent",
+      fg: st.pickedPlaceId === p.id ? "oklch(0.30 0.060 185)" : "oklch(0.40 0.015 60)",
+      pick: () => this.setState({ pickedPlaceId: p.id, newPlaceOpen: false })
+    }));
+
+    const i = plan ? plan.sceneIds.indexOf(st.sceneId) : -1;
+    const prevS = plan && i > 0 ? this.scene(plan.sceneIds[i - 1]) : null;
+    const nextS = plan && i >= 0 && i < plan.sceneIds.length - 1 ? this.scene(plan.sceneIds[i + 1]) : null;
+
+    return {
+      chromeFlex,
+      isPlansView: st.view === "plans", isPlanView: st.view === "plan", isSceneView: st.view === "scene",
+      hasCrumbPlan: !!plan, crumbPlan: plan ? plan.name : "",
+      hasCrumbScene: st.view === "scene" && !!scene, crumbScene: scene ? scene.name : "",
+      goPlans: () => this.setState({ view: "plans" }),
+      goPlan: () => this.setState({ view: "plan" }),
+      prepBg: prep.bg, prepFg: prep.fg, runBg: rn.bg, runFg: rn.fg,
+      setPrep: () => this.setState({ mode: "prep" }), setRun: () => this.setState({ mode: "run", wrapOpen: false }),
+      pageBg: pg.bg, pageFg: pg.fg, cardsBg: cd.bg, cardsFg: cd.fg,
+      setPage: () => this.setState({ layout: "page" }), setCards: () => this.setState({ layout: "cards" }),
+      isPageLayout: st.layout === "page", isCardLayout: st.layout === "cards",
+      railOpen: st.railOpen, railBtnBg: st.railOpen ? "oklch(0.90 0.020 185)" : "transparent",
+      toggleRail: () => this.setState({ railOpen: !st.railOpen }),
+      railNodes, graphCount: st.entities.length + " nodes in this world",
+
+      planList, libraryList, libCount: st.scenes.length,
+      newPlan: () => {
+        const id = uid("p");
+        this.setState((p) => ({ plans: [...p.plans, { id, name: "Untitled plan", sceneIds: [] }], planId: id, view: "plan" }));
+      },
+      planName: plan ? plan.name : "",
+      planMeta: plan ? plan.sceneIds.length + " scenes · est. " + (plan.sceneIds.length * 45) + " min" : "",
+      savePlanName: (e) => {
+        const v = e.currentTarget.textContent.trim();
+        this.setState((p) => ({ plans: p.plans.map((x) => (x.id === st.planId ? { ...x, name: v } : x)) }));
+      },
+      deletePlan: () => {
+        const snapshot = st.plans;
+        this.setState((p) => ({ plans: p.plans.filter((x) => x.id !== st.planId), view: "plans" }));
+        this.showToast("Plan deleted — its scenes are all still in the library", () => this.setState({ plans: snapshot, view: "plan" }));
+      },
+      planScenes,
+
+      addSceneOpen: st.addSceneOpen,
+      toggleAddScene: () => this.setState({ addSceneOpen: !st.addSceneOpen, newPlaceOpen: false, pickedPlaceId: null, newPlaceName: "" }),
+      placeOptions,
+      newPlaceOpen: st.newPlaceOpen, newPlaceName: st.newPlaceName,
+      startNewPlace: () => this.setState({ newPlaceOpen: true, pickedPlaceId: null }),
+      setNewPlaceName: (e) => this.setState({ newPlaceName: e.currentTarget.value }),
+      commitNewPlace: () => {
+        const name = st.newPlaceName.trim();
+        if (!name) return;
+        const id = uid("e");
+        this.setState((p) => ({ entities: [...p.entities, { id, name, type: "place" }], pickedPlaceId: id, newPlaceOpen: false, newPlaceName: "" }));
+        this.showToast("Created place node “" + name + "”", null);
+      },
+      commitSceneBg: st.pickedPlaceId ? "oklch(0.55 0.075 185)" : "oklch(0.88 0.010 80)",
+      commitSceneFg: st.pickedPlaceId ? "oklch(0.99 0.005 185)" : "oklch(0.62 0.012 70)",
+      commitScene: () => {
+        if (!st.pickedPlaceId) return;
+        const place = this.entity(st.pickedPlaceId);
+        const id = uid("s");
+        const newScene = { id, name: place.name, locationEntityId: place.id, objectiveNote: "What has to happen here?", narration: "", notes: "" };
+        this.setState((p) => ({
+          scenes: [...p.scenes, newScene],
+          plans: p.plans.map((x) => (x.id === st.planId ? { ...x, sceneIds: [...x.sceneIds, id] } : x)),
+          addSceneOpen: false, pickedPlaceId: null, sceneId: id, view: "scene"
+        }));
+      },
+
+      scenePlaceLabel: place ? place.name : "unanchored",
+      hasPlaceDesc: !!(place && place.description),
+      placeDescMissing: !!place && !place.description && !run,
+      placeDesc: place && place.description ? place.description : "",
+      savePlaceDesc: (e) => {
+        const v = e.currentTarget.textContent.trim();
+        this.setState((p) => ({ entities: p.entities.map((x) => (x.id === place.id ? { ...x, description: v } : x)) }));
+      },
+      writePlaceDesc: () => {
+        this.setState((p) => ({ entities: p.entities.map((x) => (x.id === place.id ? { ...x, description: "" } : x)) }));
+        this.showToast("Description added to the place node — click it to write", null);
+      },
+      narrationEmpty: !!scene && !scene.narration && !run && !!(place && place.description),
+      draftNarration: () => {
+        if (!place) return;
+        const base = place.description
+          ? place.description + " " + (scene.objectiveNote && scene.objectiveNote !== "What has to happen here?" ? scene.objectiveNote : "")
+          : "";
+        if (!base.trim()) { this.showToast("Nothing to draw on yet — give the place a description first", null); return; }
+        this.patchScene(st.sceneId, { narration: base.trim() });
+        this.showToast("Drafted from the place description — edit it into your own voice", () => this.patchScene(st.sceneId, { narration: "" }));
+      },
+      sceneName: scene ? scene.name : "",
+      sceneObjective: scene ? scene.objectiveNote : "",
+      sceneNarration: scene ? scene.narration : "",
+      sceneNotes: scene ? scene.notes : "",
+      narrationSize: run ? "20px" : "16px",
+      saveSceneName: (e) => this.patchScene(st.sceneId, { name: e.currentTarget.textContent.trim() }),
+      saveObjective: (e) => this.patchScene(st.sceneId, { objectiveNote: e.currentTarget.textContent.trim() }),
+      saveNarration: (e) => this.patchScene(st.sceneId, { narration: e.currentTarget.textContent.trim() }),
+      saveNotes: (e) => this.patchScene(st.sceneId, { notes: e.currentTarget.textContent }),
+      elemMeta: els.length + " · " + els.filter((e) => e.kind === "graph").length + " key",
+      elements,
+      addElement: () => {
+        const order = els.length ? Math.max(...els.map((e) => e.order)) + 1 : 0;
+        this.setState((p) => ({ elements: [...p.elements, { id: uid("el"), sceneId: st.sceneId, kind: "local", graphEntityId: null, name: "New element", fields: { gives: "" }, order }] }));
+      },
+      graphPickerOpen: st.graphPickerOpen && !run,
+      graphQuery: st.graphQuery,
+      toggleGraphPicker: () => this.setState({ graphPickerOpen: !st.graphPickerOpen, graphQuery: "" }),
+      setGraphQuery: (e) => this.setState({ graphQuery: e.currentTarget.value }),
+      graphCandidates: graphCandidates.map((g) => ({
+        name: g.name, type: g.type,
+        accent: g.type === "person" ? ACCENT_KEY : "oklch(0.60 0.060 185)",
+        hint: g.id === (scene && scene.locationEntityId) ? "this scene's place" : "add as key element",
+        add: () => {
+          const order = els.length ? Math.max(...els.map((e) => e.order)) + 1 : 0;
+          this.setState((p) => ({
+            elements: [...p.elements, { id: uid("el"), sceneId: st.sceneId, kind: "graph", graphEntityId: g.id, name: g.name, fields: {}, order }],
+            graphPickerOpen: false, graphQuery: ""
+          }));
+          this.showToast("Linked “" + g.name + "” into this scene", null);
+        }
+      })),
+      graphNoResults: graphCandidates.length === 0,
+      addCreature: () => {
+        const order = els.length ? Math.max(...els.map((e) => e.order)) + 1 : 0;
+        const id = uid("el");
+        this.setState((p) => ({
+          elements: [...p.elements, { id, sceneId: st.sceneId, kind: "local", graphEntityId: null,
+            name: "New NPC or creature", order,
+            fields: { trigger: "", statblockRef: "Stat block" },
+            stat: { count: 1, ac: "", hp: "", speed: "", cr: "", raw: "", foundryActor: "" } }],
+          statOpen: { ...p.statOpen, [id]: true }
+        }));
+      },
+      suggestDressing: () => {
+        const order = els.length ? Math.max(...els.map((e) => e.order)) + 1 : 0;
+        const haystack = ((place ? place.name : "") + " " + (place && place.description ? place.description : "")).toLowerCase();
+        const set = DRESSING.find((d) => d.match.test(haystack));
+        const taken = els.map((e) => e.name);
+        const ideas = (set ? set.items : DRESSING_FALLBACK).filter((it) => !taken.includes(it[0])).slice(0, 3);
+        if (!ideas.length) { this.showToast("No new dressing left for this place — write your own", null); return; }
+        this.setState((p) => ({ elements: [...p.elements, ...ideas.map((it, k) => ({ id: uid("el"), sceneId: st.sceneId, kind: "local", graphEntityId: null, name: it[0], fields: { gives: it[1] }, order: order + k }))] }));
+        const hasDesc = !!(place && place.description);
+        this.showToast(
+          hasDesc && set ? "Added " + ideas.length + " dressing suggestions drawn from this place's description"
+            : set ? "Added " + ideas.length + " suggestions from this place's name — add a description for sharper ones"
+            : "No place description to draw on — added generic dressing",
+          null);
+      },
+
+      prevLabel: prevS ? prevS.name : "Start of plan", nextLabel: nextS ? nextS.name : "End of plan",
+      prevScene: () => this.step(-1), nextScene: () => this.step(1),
+
+      drawerOpen: st.drawerOpen,
+      drawerLabel: (st.drawerOpen ? "▾" : "▸") + "  Beyond this room — what the graph knows",
+      toggleDrawer: () => this.setState({ drawerOpen: !st.drawerOpen }),
+      neighbors: [
+        { rel: "leads to", name: "The Drowned Vault — Lower Cells", type: "place" },
+        { rel: "claims", name: "The Verdigris Compact", type: "faction" },
+        { rel: "site of", name: "The Sundering", type: "event" },
+        { rel: "last seen", name: "Mira Vell", type: "person" }
+      ],
+
+      wrapOpen: st.wrapOpen && !run,
+      toggleWrap: () => this.setState({ wrapOpen: !st.wrapOpen }),
+      wrapBtnBg: st.wrapOpen ? "oklch(0.90 0.050 65)" : "transparent",
+      wrapBlurb: "Read your table notes for this scene and proposed " + PROPOSALS.length + " graph edits. Nothing is written until you apply.",
+      proposals,
+      acceptAll: () => {
+        const d = {};
+        PROPOSALS.forEach((p) => { d[p.id] = "accepted"; });
+        this.setState({ decisions: d });
+      },
+      applyBg: decided ? "oklch(0.55 0.075 185)" : "oklch(0.88 0.010 80)",
+      applyFg: decided ? "oklch(0.99 0.005 185)" : "oklch(0.62 0.012 70)",
+      applyLabel: decided ? "Apply " + decided + " to graph" : "Nothing accepted yet",
+      applyWrap: () => {
+        if (!decided) return;
+        this.setState({ wrapOpen: false, decisions: {} });
+        this.showToast("Applied " + decided + " edits to the graph", null);
+      },
+
+      hasToast: !!st.toast, toastText: st.toast ? st.toast.text : "",
+      undoToast: () => { if (st.toast && st.toast.undo) st.toast.undo(); this.setState({ toast: null }); }
+    };
+  }
+
+  reorder(index, dir) {
+    const plan = this.plan(this.state.planId);
+    const j = index + dir;
+    if (!plan || j < 0 || j >= plan.sceneIds.length) return;
+    const ids = [...plan.sceneIds];
+    const t = ids[index]; ids[index] = ids[j]; ids[j] = t;
+    this.setState((p) => ({ plans: p.plans.map((x) => (x.id === plan.id ? { ...x, sceneIds: ids } : x)) }));
+  }
+}
+
+</script>
+</body>
+</html>
