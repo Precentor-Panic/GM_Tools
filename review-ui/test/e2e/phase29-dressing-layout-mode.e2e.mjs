@@ -13,6 +13,7 @@ import {
   cleanupScratchEnv,
   createSceneViaRoute,
   createSceneElementViaRoute,
+  listSceneElementsViaRoute,
   primeWorldSelection,
   DESKTOP_VIEWPORT
 } from "./phase29-fixture.mjs";
@@ -51,7 +52,7 @@ after(async () => {
   cleanupScratchEnv(scratchDir);
 });
 
-test("UI (RED): '✦ Suggest dressing' button does not exist yet", async () => {
+test("UI: '✦ Suggest dressing' appends up to 3 MUNDANE elements matched from the place, shows a toast, and a second click adds new (non-duplicate) items", async () => {
   const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "dress-place-forge" });
 
   page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
@@ -60,11 +61,43 @@ test("UI (RED): '✦ Suggest dressing' button does not exist yet", async () => {
   const root = page.locator(`[data-testid="scene-page"][data-scene-id="${scene.id}"]`);
   await root.waitFor({ state: "visible", timeout: 15000 });
 
-  await assert.rejects(
-    async () => root.locator('[data-testid="suggest-dressing-btn"]').waitFor({ state: "visible", timeout: 3000 }),
-    /Timeout/,
-    "29.3: `suggest-dressing-btn` must render below the elements list -- RED today, absent from the DOM"
-  );
+  const btn = root.locator(`[data-testid="suggest-dressing-btn"][data-scene-id="${scene.id}"]`);
+  await btn.waitFor({ state: "visible", timeout: 5000 });
+
+  // First click: the "forge/smith" group matches on the place NAME alone
+  // ("The Ironwood Forge", no description) -> its first three items appear.
+  await btn.click();
+  await page.locator('[data-testid="suggest-dressing-toast"]').waitFor({ state: "visible", timeout: 5000 });
+
+  const localRows = root.locator('[data-testid="scene-element-row"][data-kind="local"]');
+  let count = 0;
+  for (let i = 0; i < 40 && count < 3; i++) {
+    count = await localRows.count();
+    if (count < 3) await new Promise((r) => setTimeout(r, 150));
+  }
+  assert.equal(count, 3, "the first Suggest-dressing click appends exactly 3 MUNDANE elements");
+
+  let elements = (await listSceneElementsViaRoute(base, WORLD, scene.id)).body.elements;
+  const names1 = elements.map((e) => e.name);
+  // Verbatim item names from the forge/smith DRESSING group.
+  assert.ok(names1.includes("Quench barrel"), "forge/smith group item 'Quench barrel' was appended (verbatim from the prototype DRESSING map)");
+  assert.ok(names1.includes("Rack of unclaimed work"), "forge/smith group item 'Rack of unclaimed work' was appended");
+  assert.ok(names1.includes("Coal heap and shovel"), "forge/smith group item 'Coal heap and shovel' was appended");
+  // Each dressing item carries its `gives` text.
+  const quench = elements.find((e) => e.name === "Quench barrel");
+  assert.ok(quench.fields && typeof quench.fields.gives === "string" && quench.fields.gives.length > 0, "each dressing element carries its own gives text");
+
+  // Second click: the already-added items are skipped; the group's remaining
+  // 4th item ("Wall of tongs") is added -- new, not a duplicate.
+  await btn.click();
+  let count2 = count;
+  for (let i = 0; i < 40 && count2 < 4; i++) {
+    count2 = await localRows.count();
+    if (count2 < 4) await new Promise((r) => setTimeout(r, 150));
+  }
+  assert.equal(count2, 4, "a second Suggest-dressing click adds a new (non-duplicate) item");
+  elements = (await listSceneElementsViaRoute(base, WORLD, scene.id)).body.elements;
+  assert.ok(elements.map((e) => e.name).includes("Wall of tongs"), "the second click adds the group's remaining item 'Wall of tongs'");
   await page.close();
 });
 

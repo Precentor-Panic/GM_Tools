@@ -1618,6 +1618,409 @@ function buildDraftFieldsGhostLink(scene, element, refreshList) {
   return link;
 }
 
+// ===========================================================================
+// Phase 29 task 29.3 -- place-description grid + missing-description banner +
+// draft-read-aloud ghost link; objective inline edit; Suggest-dressing;
+// From-graph inline picker. Contract: review-ui/test/e2e/phase29-fixture.mjs
+// §2/§4/§5/§6 -- every data-testid / route below is pinned there and matched
+// verbatim. All new DOM is styled with the scoped --sp-* tokens (29.2 look).
+// ===========================================================================
+
+// The DRESSING keyword map, reproduced VERBATIM from
+// design/session-planner/Session Planner.dc.html (~lines 516-543) -- five
+// keyword groups + a generic fallback, each item `[name, gives]`. The exact
+// item names are pinned by the e2e suite; do NOT re-derive different wording.
+const DRESSING = [
+  { match: /forge|smith|foundry|anvil/, items: [
+    ["Quench barrel", "Cloudy water, and a film of scale on top. Loud if something goes in."],
+    ["Rack of unclaimed work", "Six pieces, each with a name-tag. Two of the names are dead people."],
+    ["Coal heap and shovel", "Improvised weapon, or a place to hide something small."],
+    ["Wall of tongs", "Every size but one — the largest pair is missing."]] },
+  { match: /vault|crypt|tomb|temple|shrine|chapel/, items: [
+    ["Collection box, forced", "Empty, and the hinge is bent outward."],
+    ["Chalk tallies on a pillar", "Someone counted something. It stops at eleven."],
+    ["Votive niches", "Cover, and forty years of dust that shows a recent handprint."]] },
+  { match: /waystation|inn|tavern|common|hall/, items: [
+    ["Board of nailed notices", "Three bounties, one of them for someone at this table."],
+    ["Long trestle table", "Cover, and it takes two people to overturn."],
+    ["Stabled horses through the wall", "They go quiet a full round before anything arrives."]] },
+  { match: /tower|bell|spire/, items: [
+    ["Frayed bell rope", "Holds one person's weight. Probably."],
+    ["Nesting birds in the louvres", "They break for the windows at any loud noise."],
+    ["Stair landing with a missing rail", "A twenty-foot fall to the floor below."]] },
+  { match: /market|dock|harbour|harbor|street|square/, items: [
+    ["Awning of stitched sailcloth", "Full concealment, and it comes down if cut."],
+    ["Crate stack, badly balanced", "One good shove blocks the alley."],
+    ["Fishmonger's ice trough", "Cold storage — and something already in it."]] }
+];
+const DRESSING_FALLBACK = [
+  ["Something to hide behind", "Half cover for one creature."],
+  ["Something that makes noise", "Anyone touching it is heard two rooms away."],
+  ["Something recently disturbed", "Whoever was here left in a hurry."]
+];
+
+/** §5 -- PATCH the anchor place's `description` through the EXISTING editNodeOp route (clears the node's unreviewed flag as a side effect, unchanged). */
+function savePlaceDescription(placeId, v) {
+  return spApi(`/api/graph/nodes/${encodeURIComponent(placeId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: currentWorld(), data: { description: v } })
+  });
+}
+
+/**
+ * §C.4/§C.5 -- "The place" grid OR the missing-description banner, in one host.
+ * A place with a non-empty description shows the 76px-label/value grid
+ * (click-to-edit -> editNodeOp). A place with an empty/absent description shows
+ * the amber banner instead; clicking the banner seeds an empty-but-present
+ * description and swaps the host to the grid with its editor focused -- all
+ * in-session, no full re-render (so the swapped-in input keeps focus).
+ */
+function buildPlaceDescriptionBlock(scene, place) {
+  const host = document.createElement("div");
+  host.className = "scene-place-desc-host";
+
+  function renderGrid(autoEdit) {
+    host.innerHTML = "";
+    const grid = document.createElement("div");
+    grid.className = "scene-place-grid";
+    const label = document.createElement("span");
+    label.className = "scene-place-grid-label";
+    label.textContent = "The place";
+    const valueField = makeClickToEditField({
+      tag: "div",
+      className: "scene-place-desc-value",
+      testid: "scene-place-description",
+      dataAttrs: { "data-entity-id": place.id },
+      inputTestid: "scene-place-description-input",
+      inputDataAttrs: { "data-entity-id": place.id },
+      value: place.description ?? "",
+      placeholder: "Describe this place…",
+      emptyText: "Click to describe this place…",
+      save: (v) => { place.description = v; return savePlaceDescription(place.id, v); }
+    });
+    grid.append(label, valueField.el);
+    host.appendChild(grid);
+    if (autoEdit) valueField.enterEdit();
+  }
+
+  function renderBanner() {
+    host.innerHTML = "";
+    const banner = document.createElement("div");
+    banner.className = "scene-missing-desc-banner";
+    banner.setAttribute("data-testid", "missing-description-banner");
+    banner.setAttribute("data-entity-id", place.id);
+
+    const glyph = document.createElement("span");
+    glyph.className = "scene-missing-desc-glyph";
+    glyph.textContent = "!";
+    banner.appendChild(glyph);
+
+    const copy = document.createElement("span");
+    copy.className = "scene-missing-desc-copy";
+    copy.append("This place has no description in the graph. Read-aloud and dressing suggestions have nothing to draw on — ");
+    const cta = document.createElement("span");
+    cta.className = "scene-missing-desc-cta";
+    cta.textContent = "write one now";
+    copy.append(cta, ".");
+    banner.appendChild(copy);
+
+    banner.addEventListener("click", async () => {
+      // Seed an empty-but-present description, then swap to the grid with its
+      // editor already focused -- README: "Clicking seeds an empty description
+      // and focuses it."
+      place.description = "";
+      try { await savePlaceDescription(place.id, ""); } catch { /* still seed the UI */ }
+      renderGrid(true);
+    });
+    host.appendChild(banner);
+  }
+
+  const hasDesc = !!(place && typeof place.description === "string" && place.description.trim() !== "");
+  if (hasDesc) renderGrid(false); else renderBanner();
+  return host;
+}
+
+/**
+ * §C.6 -- draft-read-aloud ghost link. Rendered ONLY when the scene narration
+ * is empty AND the place has a non-empty description. Composes
+ * `description + objectiveNote` into a narration string, saves it via the
+ * EXISTING narration route, updates the narration field in place (no reload),
+ * and is undoable via showUndoToast.
+ */
+function buildDraftReadAloudLink(scene, place, narrationField) {
+  const link = document.createElement("button");
+  link.type = "button";
+  link.className = "link-btn draft-read-aloud-link";
+  link.setAttribute("data-testid", "draft-read-aloud-link");
+  link.setAttribute("data-scene-id", scene.id);
+  const glyph = document.createElement("span");
+  glyph.className = "draft-read-aloud-glyph";
+  glyph.textContent = "✦";
+  link.append(glyph, " Draft this from the place description and the objective");
+
+  const saveNarration = (text) => spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/narration`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: currentWorld(), text })
+  });
+
+  link.addEventListener("click", async () => {
+    const desc = (place && place.description ? String(place.description) : "").trim();
+    if (!desc) return;
+    const objective = (scene.objectiveNote || "").trim();
+    const composed = objective ? `${desc} ${objective}` : desc;
+    link.disabled = true;
+    try {
+      await saveNarration(composed);
+    } catch {
+      link.disabled = false;
+      return;
+    }
+    narrationField.setValue(composed);
+    link.style.display = "none";
+    showUndoToast("Drafted read-aloud from the place description — edit it into your own voice.", async () => {
+      await saveNarration("").catch(() => {});
+      narrationField.setValue("");
+      link.style.display = "";
+      link.disabled = false;
+    });
+  });
+  return link;
+}
+
+/**
+ * §2 -- the "◇ From graph" inline picker (no modal). Lists every graph node
+ * NOT already an element in this scene (name + mono type + a right-aligned
+ * hint). Picking one calls the from-graph route (attachExistingNodeAsElement)
+ * -> a kind:'graph' element referencing the EXISTING node; it never creates a
+ * new node. Modeled on buildEntityPicker, but pinned to the fixture's own
+ * from-graph-* testids.
+ */
+function buildFromGraphPicker(scene, refreshElements, close) {
+  const picker = document.createElement("div");
+  picker.className = "from-graph-picker";
+  picker.setAttribute("data-testid", "from-graph-picker");
+  picker.setAttribute("data-scene-id", scene.id);
+
+  const bar = document.createElement("div");
+  bar.className = "from-graph-picker-bar";
+  const kicker = document.createElement("span");
+  kicker.className = "from-graph-picker-kicker";
+  kicker.textContent = "Pull in an existing node";
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "icon-btn from-graph-picker-close-btn";
+  closeBtn.textContent = "✕";
+  closeBtn.title = "Close";
+  closeBtn.addEventListener("click", () => close());
+  bar.append(kicker, closeBtn);
+  picker.appendChild(bar);
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "from-graph-search-input";
+  input.setAttribute("data-testid", "from-graph-search-input");
+  input.placeholder = "Search the graph by name…";
+  picker.appendChild(input);
+
+  const results = document.createElement("div");
+  results.className = "from-graph-results";
+  results.setAttribute("data-testid", "from-graph-results");
+  picker.appendChild(results);
+
+  const footer = document.createElement("div");
+  footer.className = "from-graph-picker-footer hint";
+  footer.textContent = "Adding from the graph links the existing node into this scene as a KEY element. It never duplicates the node.";
+  picker.appendChild(footer);
+
+  let candidates = [];
+
+  function renderResults() {
+    const q = input.value.trim().toLowerCase();
+    const matches = candidates
+      .filter((n) => !q || n.name.toLowerCase().includes(q) || n.type.toLowerCase().includes(q))
+      .slice(0, 25);
+    results.innerHTML = "";
+    if (!matches.length) {
+      const empty = document.createElement("div");
+      empty.className = "from-graph-no-results hint";
+      empty.textContent = "Nothing in the graph matches. Add it as a new element instead — you can promote it later.";
+      results.appendChild(empty);
+      return;
+    }
+    for (const n of matches) {
+      const opt = document.createElement("button");
+      opt.type = "button";
+      opt.className = "from-graph-option";
+      opt.setAttribute("data-testid", "from-graph-option");
+      opt.setAttribute("data-entity-id", n.id);
+
+      const name = document.createElement("span");
+      name.className = "from-graph-option-name";
+      name.textContent = n.name;
+      const type = document.createElement("span");
+      type.className = "from-graph-option-type";
+      type.textContent = n.type;
+      const hint = document.createElement("span");
+      hint.className = "from-graph-option-hint";
+      hint.textContent = n.id === scene.locationEntityId ? "this scene's place" : "add as key element";
+      opt.append(name, type, hint);
+
+      opt.addEventListener("click", async () => {
+        opt.disabled = true;
+        try {
+          await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/from-graph`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ world: currentWorld(), entityId: n.id })
+          });
+        } catch {
+          opt.disabled = false;
+          return;
+        }
+        close();
+        await refreshElements();
+      });
+      results.appendChild(opt);
+    }
+  }
+
+  async function load() {
+    results.innerHTML = "";
+    const loading = document.createElement("div");
+    loading.className = "hint";
+    loading.textContent = "Loading graph nodes…";
+    results.appendChild(loading);
+    try {
+      const [graph, elementsRes] = await Promise.all([
+        spApi(`/api/graph${spWithWorld({ filter: "all" })}`),
+        spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements${spWithWorld()}`)
+      ]);
+      const used = new Set((elementsRes.elements || []).map((e) => e.graphEntityId).filter(Boolean));
+      candidates = (graph.nodes || []).filter((n) => !used.has(n.id));
+      renderResults();
+    } catch (err) {
+      results.innerHTML = "";
+      const errEl = document.createElement("div");
+      errEl.className = "hint";
+      errEl.textContent = `Could not load graph: ${err.message}`;
+      results.appendChild(errEl);
+    }
+  }
+
+  input.addEventListener("input", renderResults);
+  load();
+  setTimeout(() => input.focus(), 0);
+  return picker;
+}
+
+/**
+ * §6 -- Suggest dressing. Matches `(place.name + " " + place.description)`
+ * against the reproduced DRESSING map, appends up to 3 MUNDANE (kind:'local')
+ * elements (skipping names already present) via the EXISTING element-create
+ * route, each with `fields:{gives}`; falls back to the generic set on no
+ * match. The batch is undoable (showUndoToast, testid `suggest-dressing-toast`
+ * per the fixture). Toast copy distinguishes the three prototype cases.
+ */
+async function suggestDressing(scene, place, refreshElements, btn) {
+  btn.disabled = true;
+  let taken = [];
+  try {
+    const { elements } = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements${spWithWorld()}`);
+    taken = (elements || []).map((e) => e.name);
+  } catch { /* treat as none present */ }
+
+  const placeName = place && place.name ? place.name : "";
+  const placeDesc = place && place.description ? place.description : "";
+  const haystack = `${placeName} ${placeDesc}`.toLowerCase();
+  const set = DRESSING.find((d) => d.match.test(haystack));
+  const ideas = (set ? set.items : DRESSING_FALLBACK).filter((it) => !taken.includes(it[0])).slice(0, 3);
+
+  if (!ideas.length) {
+    btn.disabled = false;
+    showUndoToast("No new dressing left for this place — write your own.", () => {}, { testid: "suggest-dressing-toast" });
+    return;
+  }
+
+  const createdIds = [];
+  for (const [name, gives] of ideas) {
+    try {
+      const res = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), name, fields: { gives } })
+      });
+      if (res && res.element && res.element.id) createdIds.push(res.element.id);
+    } catch { /* skip a failed create, keep the rest */ }
+  }
+  await refreshElements();
+  btn.disabled = false;
+
+  const hasDesc = !!(place && place.description && String(place.description).trim());
+  const message = hasDesc && set
+    ? `Added ${ideas.length} dressing suggestions drawn from this place's description.`
+    : set
+      ? `Added ${ideas.length} suggestions from this place's name — add a description for sharper ones.`
+      : `No place description to draw on — added ${ideas.length} generic dressing.`;
+  showUndoToast(message, async () => {
+    for (const id of createdIds) {
+      await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      }).catch(() => {});
+    }
+    await refreshElements();
+  }, { testid: "suggest-dressing-toast" });
+}
+
+/**
+ * The action row below the elements list -- `◇ From graph` (with its inline
+ * picker) and `✦ Suggest dressing`. `+ Add element` already lives as the
+ * ghost row inside the list; `▣ NPC or creature` (29.4) slots in here later.
+ */
+function buildSceneActionsRow(scene, refreshElements, place) {
+  const wrap = document.createElement("div");
+  wrap.className = "scene-actions";
+
+  const row = document.createElement("div");
+  row.className = "scene-actions-row";
+
+  const pickerHost = document.createElement("div");
+  pickerHost.className = "scene-actions-picker-host";
+
+  const fromGraphBtn = document.createElement("button");
+  fromGraphBtn.type = "button";
+  fromGraphBtn.className = "btn scene-action-dashed-btn from-graph-btn";
+  fromGraphBtn.setAttribute("data-testid", "from-graph-btn");
+  fromGraphBtn.setAttribute("data-scene-id", scene.id);
+  fromGraphBtn.innerHTML = "";
+  const fgGlyph = document.createElement("span");
+  fgGlyph.className = "scene-action-glyph scene-action-glyph--teal";
+  fgGlyph.textContent = "◇";
+  fromGraphBtn.append(fgGlyph, " From graph");
+  fromGraphBtn.addEventListener("click", () => {
+    if (pickerHost.firstChild) { pickerHost.innerHTML = ""; return; }
+    pickerHost.appendChild(buildFromGraphPicker(scene, refreshElements, () => { pickerHost.innerHTML = ""; }));
+  });
+
+  const dressBtn = document.createElement("button");
+  dressBtn.type = "button";
+  dressBtn.className = "btn scene-action-dashed-btn suggest-dressing-btn";
+  dressBtn.setAttribute("data-testid", "suggest-dressing-btn");
+  dressBtn.setAttribute("data-scene-id", scene.id);
+  const dsGlyph = document.createElement("span");
+  dsGlyph.className = "scene-action-glyph scene-action-glyph--teal";
+  dsGlyph.textContent = "✦";
+  dressBtn.append(dsGlyph, " Suggest dressing");
+  dressBtn.addEventListener("click", () => suggestDressing(scene, place, refreshElements, dressBtn));
+
+  row.append(fromGraphBtn, dressBtn);
+  wrap.append(row, pickerHost);
+  return wrap;
+}
+
 // ---------------------------------------------------------------------------
 // The full scene page assembly.
 // ---------------------------------------------------------------------------
@@ -1680,8 +2083,9 @@ async function renderScenePage(container, sceneId, token) {
   // Place header (the room).
   const header = document.createElement("div");
   header.className = "scene-place-header";
+  const place = scene.locationEntityId ? nodeMap.get(scene.locationEntityId) : null;
   if (scene.locationEntityId) {
-    const placeName = nodeMap.get(scene.locationEntityId)?.name ?? scene.locationEntityId;
+    const placeName = place?.name ?? scene.locationEntityId;
     const nameField = makeClickToEditField({
       tag: "h2",
       className: "scene-place-name",
@@ -1704,6 +2108,33 @@ async function renderScenePage(container, sceneId, token) {
     header.appendChild(noPlace);
   }
 
+  // §C.3 -- objective: the scene page's third body line, click-to-edit,
+  // always rendered (even empty). Autosaves via the 29.1 updateScene route.
+  const objectiveField = makeClickToEditField({
+    tag: "div",
+    className: "scene-objective",
+    testid: "scene-objective",
+    dataAttrs: { "data-scene-id": scene.id },
+    inputTestid: "scene-objective-input",
+    inputDataAttrs: { "data-scene-id": scene.id },
+    value: scene.objectiveNote ?? "",
+    placeholder: "What has to happen here?",
+    emptyText: "Click to set this scene's objective…",
+    save: (v) => {
+      scene.objectiveNote = v;
+      return spApi(`/api/session-planner/scenes/${encodeURIComponent(scene.id)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), objectiveNote: v })
+      });
+    }
+  });
+  header.appendChild(objectiveField.el);
+
+  // §C.4/§C.5 -- "The place" description grid OR the missing-description
+  // banner. Editing writes back to the graph NODE, not the scene.
+  if (place) header.appendChild(buildPlaceDescriptionBlock(scene, place));
+
   // This-scene narration (serif read-aloud box). Always rendered, even empty.
   const narrationField = makeClickToEditField({
     tag: "div",
@@ -1721,6 +2152,15 @@ async function renderScenePage(container, sceneId, token) {
     })
   });
   header.appendChild(narrationField.el);
+
+  // §C.6 -- draft-read-aloud ghost link: only when narration is empty AND the
+  // place has a real (non-empty) description. When the place has no
+  // description the banner above covers that case, so the link stays hidden.
+  const narrationEmpty = !(narration && narration.text && String(narration.text).trim());
+  const placeHasDesc = !!(place && typeof place.description === "string" && place.description.trim() !== "");
+  if (narrationEmpty && placeHasDesc) {
+    header.appendChild(buildDraftReadAloudLink(scene, place, narrationField));
+  }
   root.appendChild(header);
 
   // Elements list.
@@ -1736,6 +2176,9 @@ async function renderScenePage(container, sceneId, token) {
   // (additive/interruptible; the room is fully runnable without it).
   elementsSection.appendChild(buildProposeElementsGhostLink(scene, refreshElements));
   elementsSection.appendChild(listHost);
+  // §C (below the elements): `◇ From graph` inline picker + `✦ Suggest
+  // dressing` (task 29.4 adds `▣ NPC or creature` to this same row later).
+  elementsSection.appendChild(buildSceneActionsRow(scene, refreshElements, place));
   root.appendChild(elementsSection);
   if (stale()) return;
   await refreshElements();

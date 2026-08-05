@@ -154,7 +154,7 @@ function buildEntityPicker({ testidPrefix, placeholder = "Search entities…", e
 // ---------------------------------------------------------------------------
 let currentUndoToastEl = null;
 
-export function showUndoToast(message, undoFn) {
+export function showUndoToast(message, undoFn, { testid = "undo-toast" } = {}) {
   const container = document.getElementById("toast-container");
   if (!container) return;
 
@@ -165,7 +165,7 @@ export function showUndoToast(message, undoFn) {
 
   const el = document.createElement("div");
   el.className = "toast";
-  el.setAttribute("data-testid", "undo-toast");
+  el.setAttribute("data-testid", testid);
 
   const msg = document.createElement("span");
   msg.textContent = message;

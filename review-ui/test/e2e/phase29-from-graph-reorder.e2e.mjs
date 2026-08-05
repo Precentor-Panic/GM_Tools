@@ -1,13 +1,12 @@
-// Phase 29 task 29.0 -- From-graph picker (§2) + element reorder (§3). Read
-// phase29-fixture.mjs's header FIRST. EXPECTED TO FAIL right now: both
-// routes return a real 400 (confirmed by actually running this suite -- the
-// literal path segments "from-graph"/"reorder" are swallowed by the EXISTING
-// generic PATCH-by-elementId route, which throws "No scene element found"
-// for either string, mapped to 400 -- not a clean, unmatched 404, but just
-// as genuinely "this route doesn't exist yet," see phase29-fixture.mjs §2/§3
-// for the exact mechanism), and the From-graph picker UI doesn't exist in
-// session-planner-view.js. Both failure shapes are the deliverable of this
-// task, not a bug in this file.
+// Phase 29 -- From-graph picker (§2) + element reorder (§3). Read
+// phase29-fixture.mjs's header FIRST. The two ROUTE-LEVEL tests assert the
+// real 29.1 routes (POST .../elements/from-graph and .../elements/reorder,
+// ordered ahead of the generic PATCH-by-elementId handler). The UI test was
+// RED-asserting-absence at task 29.0; task 29.3 built the From-graph inline
+// picker, so it is now INVERTED into a real behavioural assertion (the picker
+// opens, lists eligible nodes with name+type, picking attaches a kind:'graph'
+// element referencing the existing node without duplicating it, and the
+// attached node is then excluded).
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import { chromium } from "playwright";
@@ -83,8 +82,10 @@ test("ROUTE LEVEL (RED): POST .../elements/reorder persists the new order", asyn
   assert.deepEqual(orderedIds, [id3, id1, id2], "29.1: a fresh GET .../elements must reflect the new order exactly");
 });
 
-test("UI (RED): '◇ From graph' picker does not exist on the scene page yet", async () => {
+test("UI: '◇ From graph' opens an inline picker of eligible nodes; picking one attaches it as kind:'graph' without duplicating the node, and it is then excluded", async () => {
   const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "fg-place-a" });
+  const before = await fetchGraphViaRoute(base, WORLD);
+  const nodeCountBefore = before.nodes.length;
 
   page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
   await primeWorldSelection(page, base, WORLD);
@@ -92,10 +93,50 @@ test("UI (RED): '◇ From graph' picker does not exist on the scene page yet", a
   const root = page.locator(`[data-testid="scene-page"][data-scene-id="${scene.id}"]`);
   await root.waitFor({ state: "visible", timeout: 15000 });
 
-  await assert.rejects(
-    async () => root.locator('[data-testid="from-graph-btn"]').waitFor({ state: "visible", timeout: 3000 }),
-    /Timeout/,
-    "29.3: `from-graph-btn` must render below the elements list -- RED today, absent from the DOM"
+  const btn = root.locator(`[data-testid="from-graph-btn"][data-scene-id="${scene.id}"]`);
+  await btn.waitFor({ state: "visible", timeout: 5000 });
+  await btn.click();
+
+  const picker = root.locator(`[data-testid="from-graph-picker"][data-scene-id="${scene.id}"]`);
+  await picker.waitFor({ state: "visible", timeout: 5000 });
+  await picker.locator('[data-testid="from-graph-search-input"]').waitFor({ state: "visible", timeout: 5000 });
+
+  // The eligible person node is listed with its name and mono type.
+  const npcOpt = picker.locator('[data-testid="from-graph-option"][data-entity-id="fg-npc-a"]');
+  await npcOpt.waitFor({ state: "visible", timeout: 5000 });
+  const npcText = await npcOpt.textContent();
+  assert.ok(npcText.includes("Ashen Warden Cael"), "each option shows the entity's name");
+  assert.ok(npcText.toLowerCase().includes("person"), "each option shows the entity's type");
+
+  await npcOpt.click();
+
+  // A new kind:'graph' element row appears, referencing the EXISTING node.
+  const graphRow = root.locator('[data-testid="scene-element-row"][data-kind="graph"]');
+  await graphRow.waitFor({ state: "visible", timeout: 5000 });
+
+  // The graph itself gained no node -- from-graph references, never duplicates.
+  let unchanged = false;
+  for (let i = 0; i < 40 && !unchanged; i++) {
+    const after = await fetchGraphViaRoute(base, WORLD);
+    unchanged = after.nodes.length === nodeCountBefore;
+    if (!unchanged) await new Promise((r) => setTimeout(r, 200));
+  }
+  assert.ok(unchanged, "from-graph must never create/duplicate a graph node -- it only references the existing one");
+
+  // Confirm via the store: the created element is kind:'graph' with the right ref.
+  const elements = await listSceneElementsViaRoute(base, WORLD, scene.id);
+  const attached = elements.body.elements.find((e) => e.graphEntityId === "fg-npc-a");
+  assert.ok(attached && attached.kind === "graph", "the store shows a kind:'graph' element referencing fg-npc-a");
+
+  // Reopen the picker: the now-attached node is excluded; the scene's own
+  // place (still not an element) remains eligible.
+  await btn.click();
+  await picker.waitFor({ state: "visible", timeout: 5000 });
+  await picker.locator('[data-testid="from-graph-option"][data-entity-id="fg-place-a"]').waitFor({ state: "visible", timeout: 5000 });
+  assert.equal(
+    await picker.locator('[data-testid="from-graph-option"][data-entity-id="fg-npc-a"]').count(),
+    0,
+    "a node already attached as an element must be excluded from the picker"
   );
   await page.close();
 });

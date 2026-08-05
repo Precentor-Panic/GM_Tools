@@ -1877,6 +1877,8 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 #view-session-planner .scene-place-name,
 #view-session-planner .scene-narration.read-aloud,
 #view-session-planner .scene-element-name,
+#view-session-planner .scene-objective,
+#view-session-planner .scene-place-desc-value,
 #view-session-planner .pf-value {
   border-radius: var(--sp-radius-sm);
   transition: box-shadow 0.1s ease, background-color 0.1s ease;
@@ -1884,10 +1886,132 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 #view-session-planner .scene-place-name:hover,
 #view-session-planner .scene-narration.read-aloud:hover,
 #view-session-planner .scene-element-name:hover,
+#view-session-planner .scene-objective:hover,
+#view-session-planner .scene-place-desc-value:hover,
 #view-session-planner .pf-value:hover {
   background: var(--sp-hover-halo);
   box-shadow: 0 0 0 4px var(--sp-hover-halo);
 }
+
+/* =========================================================================
+   §C (29.3) — objective, "The place" grid + missing-description banner,
+   draft-read-aloud ghost link, and the From-graph / Suggest-dressing actions.
+   ========================================================================= */
+
+/* Objective — the third body line, under the scene title. */
+#view-session-planner .scene-objective {
+  font-family: var(--sp-font-ui); font-size: 14px; line-height: 1.5;
+  color: var(--sp-ink-secondary); max-width: 62ch; margin: 0 0 18px;
+  cursor: text; min-height: 20px;
+}
+#view-session-planner .scene-objective.scene-field--empty {
+  color: var(--sp-ink-muted); font-style: italic;
+}
+
+/* "The place" — a 76px mono-label / editable-value grid, bounded top+bottom
+   by 1px hairlines. Editing writes to the graph NODE, not the scene. */
+#view-session-planner .scene-place-desc-host { margin: 0 0 24px; }
+#view-session-planner .scene-place-grid {
+  display: grid; grid-template-columns: 76px 1fr; gap: 12px; align-items: baseline;
+  padding: 8px 0;
+  border-top: 1px solid var(--sp-border-hairline);
+  border-bottom: 1px solid var(--sp-border-hairline);
+}
+#view-session-planner .scene-place-grid-label {
+  font-family: var(--sp-font-mono); font-size: 9.5px; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--sp-place-label); text-align: right;
+}
+#view-session-planner .scene-place-desc-value {
+  font-size: 13px; line-height: 1.55; color: var(--sp-ink-secondary);
+  max-width: 62ch; min-height: 20px; cursor: text; white-space: pre-wrap;
+}
+#view-session-planner .scene-place-desc-value.scene-field--empty {
+  color: var(--sp-ink-muted); font-style: italic;
+}
+
+/* Missing-description banner — amber, click-to-seed. */
+#view-session-planner .scene-missing-desc-banner {
+  display: flex; align-items: baseline; gap: 10px; max-width: 62ch;
+  padding: 9px 12px; border: 1px solid var(--sp-banner-border);
+  border-radius: var(--sp-radius-md); background: var(--sp-banner-bg); cursor: pointer;
+  transition: border-color 0.12s ease;
+}
+#view-session-planner .scene-missing-desc-banner:hover { border-color: var(--sp-accent-amber); }
+#view-session-planner .scene-missing-desc-glyph {
+  font-family: var(--sp-font-mono); font-size: 13px; color: var(--sp-accent-amber); flex: none;
+}
+#view-session-planner .scene-missing-desc-copy {
+  font-size: 12.5px; line-height: 1.45; color: var(--sp-ink-secondary);
+}
+#view-session-planner .scene-missing-desc-cta { color: var(--sp-accent-teal); }
+
+/* Draft-read-aloud ghost link. */
+#view-session-planner .draft-read-aloud-link {
+  display: inline-flex; align-items: center; gap: 7px; margin: 6px 0 30px;
+  font-family: var(--sp-font-ui); font-size: 12px; color: var(--sp-accent-teal); opacity: 1;
+}
+#view-session-planner .draft-read-aloud-link:hover { color: var(--sp-accent-teal); text-decoration: underline; }
+#view-session-planner .draft-read-aloud-glyph { font-family: var(--sp-font-mono); }
+
+/* Actions row: dashed action buttons below the elements list. */
+#view-session-planner .scene-actions { margin-top: 14px; }
+#view-session-planner .scene-actions-row { display: flex; flex-wrap: wrap; gap: 8px; }
+#view-session-planner .scene-action-dashed-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-lg);
+  background: transparent; color: var(--sp-ink-muted);
+  font-family: var(--sp-font-ui); font-size: 12.5px; padding: 7px 12px;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+#view-session-planner .scene-action-dashed-btn:hover {
+  border-color: var(--sp-accent-teal); color: var(--sp-accent-teal);
+}
+#view-session-planner .scene-action-glyph { font-family: var(--sp-font-mono); }
+#view-session-planner .scene-action-glyph--teal { color: var(--sp-accent-teal); }
+
+/* From-graph inline picker. */
+#view-session-planner .scene-actions-picker-host:empty { display: none; }
+#view-session-planner .from-graph-picker {
+  margin-top: 12px; border: 1px solid var(--sp-border-control);
+  border-radius: var(--sp-radius-lg); background: var(--sp-surface-card); padding: 13px 14px;
+}
+#view-session-planner .from-graph-picker-bar {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+#view-session-planner .from-graph-picker-kicker {
+  font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--sp-ink-muted); flex: 1;
+}
+#view-session-planner .from-graph-picker-close-btn { color: var(--sp-ink-muted); }
+#view-session-planner .from-graph-search-input {
+  width: 100%; box-sizing: border-box; padding: 7px 10px;
+  border: 1px solid var(--sp-border-control); border-radius: var(--sp-radius-md);
+  background: var(--sp-surface-input); color: var(--sp-ink-primary);
+  font-family: var(--sp-font-ui); font-size: 13px; margin-bottom: 10px;
+}
+#view-session-planner .from-graph-search-input:focus {
+  outline: none; border-color: var(--sp-accent-teal);
+  box-shadow: 0 0 0 3px var(--sp-focus-halo);
+}
+#view-session-planner .from-graph-results {
+  display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto;
+}
+#view-session-planner .from-graph-option {
+  display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
+  padding: 7px 9px; border: none; border-left: 2px solid var(--sp-accent-teal-selected);
+  border-radius: var(--sp-radius-md); background: transparent; cursor: pointer;
+}
+#view-session-planner .from-graph-option:hover { background: var(--sp-row-active-bg); }
+#view-session-planner .from-graph-option-name { font-size: 13px; color: var(--sp-ink-heading); }
+#view-session-planner .from-graph-option-type {
+  font-family: var(--sp-font-mono); font-size: 9.5px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--sp-ink-muted);
+}
+#view-session-planner .from-graph-option-hint {
+  margin-left: auto; font-size: 11.5px; color: var(--sp-ink-muted);
+}
+#view-session-planner .from-graph-picker-footer { margin-top: 10px; font-size: 11.5px; }
+#view-session-planner .from-graph-no-results { padding: 10px 9px; font-size: 12.5px; }
 
 /* Narrow phones: keep the column readable (29.7 owns the full responsive/dark
    pass; this is just a floor so nothing clips). */
