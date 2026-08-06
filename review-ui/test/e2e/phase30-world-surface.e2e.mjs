@@ -119,6 +119,11 @@ test('"Create a scene here" appears only for a place node and calls the real sce
       return (body.scenes || []).some((s) => s.locationEntityId === "world-place-root");
     }, { timeout: 10000 });
   }, "Create a scene here must create a REAL scene anchored to the selected place");
+
+  // Phase 30.5 cross-surface seam: the button doesn't just toast a hint, it
+  // JUMPS into the Session planner with the brand-new scene open.
+  await page.waitForFunction(() => /^#planner\/scene\//.test(location.hash), null, { timeout: 10000 });
+  await page.locator('[data-testid="planner-scene-view"]').waitFor({ state: "visible", timeout: 10000 });
   await page.close();
 });
 

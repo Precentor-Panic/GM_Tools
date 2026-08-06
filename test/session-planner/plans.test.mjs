@@ -47,7 +47,7 @@ const before = existsSync(REPO_DEFAULT_ROOT) ? new Set(readdirSync(REPO_DEFAULT_
 
 const WORLD = "plans-test-world";
 
-const { createPlan, getPlan, listPlansForWorld, addSceneToPlan, removeSceneFromPlan, reorderPlanScenes, deletePlan, plansContainingScene, plansRoot } =
+const { createPlan, getPlan, listPlansForWorld, addSceneToPlan, removeSceneFromPlan, reorderPlanScenes, deletePlan, plansContainingScene, renamePlan, plansRoot } =
   await import("../../session-planner/plans.mjs");
 
 test("directory isolation: plansRoot() honors GM_TOOLS_PLANS_DIR, never the repo's real default", () => {
@@ -181,6 +181,25 @@ test("plansContainingScene: a plan containing a scene, then having it removed, n
 
   removeSceneFromPlan(world, plan.id, "scene-removed-later");
   assert.deepEqual(plansContainingScene(world, "scene-removed-later"), []);
+});
+
+test("Phase 30 task 30.5: renamePlan persists a new name, and clears it when passed null; sceneIds untouched", () => {
+  const world = "plans-rename-world";
+  const plan = createPlan(world, { name: "First Draft" }, { makeId: () => "plan-rename-1" });
+  addSceneToPlan(world, plan.id, "scene-keep");
+
+  const renamed = renamePlan(world, "plan-rename-1", "The Real Session One");
+  assert.equal(renamed.name, "The Real Session One");
+  assert.deepEqual(renamed.sceneIds, ["scene-keep"], "renaming must not touch sceneIds");
+  assert.equal(getPlan(world, "plan-rename-1").name, "The Real Session One", "persisted, not just returned");
+
+  const cleared = renamePlan(world, "plan-rename-1", null);
+  assert.equal(cleared.name, null);
+  assert.equal(getPlan(world, "plan-rename-1").name, null);
+});
+
+test("Phase 30 task 30.5: renamePlan throws a clear error for an unknown planId", () => {
+  assert.throws(() => renamePlan("plans-rename-world", "does-not-exist-rename", "X"), /does-not-exist-rename/);
 });
 
 test("no write in this file leaked into the repo's real default session-plans/ directory", () => {

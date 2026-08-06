@@ -54,7 +54,22 @@ test("#planner/plans renders a plan-shelf list (real plan names, not raw ids)", 
 
   await page.goto(`${base}/#planner/plans`);
   const view = page.locator('[data-testid="planner-plans-view"]');
-  await view.waitFor({ state: "visible", timeout: 15000 });
+  await view.waitFor({ state: "visible", timeout: 30000 });
+  // Harden (Phase 30.5): the shelf's plan name lands only after several
+  // chained async fetches (plans + scenes + entity graph), so a bare
+  // visible-then-snapshot could race the fill and intermittently time out
+  // under parallel load. Poll until the real plan name is actually in the DOM,
+  // with a generous timeout (project convention) -- this asserts EXACTLY what
+  // the snapshot below asserts (the real plan name, never a raw id), it just
+  // waits for it to arrive instead of sampling once.
+  await page.waitForFunction(
+    (name) => {
+      const v = document.querySelector('[data-testid="planner-plans-view"]');
+      return !!v && v.textContent.includes(name);
+    },
+    "Shelf Card Check Plan",
+    { timeout: 30000, polling: 200 }
+  );
   assert.match(await view.textContent(), /Shelf Card Check Plan/);
   await page.close();
 });

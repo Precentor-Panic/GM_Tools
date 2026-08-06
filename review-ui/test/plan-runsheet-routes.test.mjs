@@ -130,6 +130,25 @@ test("plan CRUD + membership: create -> addScene -> reorder -> removeScene -> pl
   assert.ok(!afterDelete.body.plans.some((p) => p.id === planId));
 });
 
+test("Phase 30 task 30.5: POST /api/scene-planning/plans/:planId/rename renames the plan (real HTTP round trip); membership untouched; null clears it", async () => {
+  const s1 = await makeScene("pr-place-a");
+  const created = await postJson("/api/scene-planning/plans", { world: WORLD, name: "Before Rename" });
+  const planId = created.body.plan.id;
+  await postJson(`/api/scene-planning/plans/${planId}/scenes`, { world: WORLD, sceneId: s1.id });
+
+  const renamed = await postJson(`/api/scene-planning/plans/${planId}/rename`, { world: WORLD, name: "After Rename" });
+  assert.equal(renamed.status, 200);
+  assert.equal(renamed.body.plan.name, "After Rename");
+  assert.deepEqual(renamed.body.plan.sceneIds, [s1.id], "rename must not disturb membership");
+
+  const got = await getJson(`/api/scene-planning/plans/${planId}?world=${WORLD}`);
+  assert.equal(got.body.plan.name, "After Rename", "persisted across a fresh GET");
+
+  const cleared = await postJson(`/api/scene-planning/plans/${planId}/rename`, { world: WORLD, name: null });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.body.plan.name, null);
+});
+
 test("scene-elements CRUD: create -> list -> patch -> promote -> demote -> remove (real HTTP round trip)", async () => {
   const scene = await makeScene("pr-place-a");
 

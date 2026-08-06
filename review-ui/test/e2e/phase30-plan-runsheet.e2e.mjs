@@ -177,6 +177,34 @@ test("Delete plan (confirm) removes the plan and returns to the shelf; the plan'
   await page.close();
 });
 
+test("Phase 30.5: the runsheet plan title is editable — renames the plan on blur via the real rename route", async () => {
+  const plan = await createPlanViaRoute(base, WORLD, "Rename Me Plan");
+
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+  await page.goto(`${base}/#planner/plan/${plan.id}`);
+  const view = page.locator(`[data-testid="planner-plan-view"][data-plan-id="${plan.id}"]`);
+  await view.waitFor({ state: "visible", timeout: 15000 });
+
+  const title = view.locator('[data-testid="planner-plan-title"]');
+  await title.waitFor({ state: "visible" });
+  assert.match(await title.textContent(), /Rename Me Plan/, "starts at the plan's real name");
+
+  await title.click();
+  await page.keyboard.press("Control+A");
+  await page.keyboard.type("The Renamed Session");
+  await page.keyboard.press("Enter"); // Enter commits (blurs) per the title's keydown handler
+
+  // Poll the real route until the blur's rename has persisted server-side.
+  let name = null;
+  for (let i = 0; i < 40 && name !== "The Renamed Session"; i++) {
+    await page.waitForTimeout(100);
+    name = (await (await fetch(`${base}/api/scene-planning/plans/${plan.id}?world=${WORLD}`)).json()).plan.name;
+  }
+  assert.equal(name, "The Renamed Session", "blur must persist the rename via POST .../plans/:id/rename");
+  await page.close();
+});
+
 test("runsheet + Add scene panel creates a new scene anchored to an existing place and appends it to the plan", async () => {
   const plan = await createPlanViaRoute(base, WORLD, "Add-Scene Plan");
 

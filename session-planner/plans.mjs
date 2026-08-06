@@ -78,6 +78,30 @@ export function createPlan(world, { name } = {}, opts = {}) {
   return plan;
 }
 
+/**
+ * Phase 30 task 30.5: set (or clear, with `name: null`) a Plan's own display
+ * name -- the backing store op for the runsheet's editable plan title. Mirrors
+ * scenes.mjs's `renameScene` exactly (patch the `name`, return the plan);
+ * throws the same clear "No plan found" error as getPlan for an unknown planId.
+ * Plans carry no `updatedAt` field (unlike scenes) so there is nothing to
+ * stamp here -- a pure name patch.
+ *
+ * @param {string} world
+ * @param {string} planId
+ * @param {string|null} name
+ * @returns {object}   the updated Plan
+ */
+export function renamePlan(world, planId, name) {
+  const plans = readPlans(world);
+  const plan = plans.find((p) => p.id === planId);
+  if (!plan) {
+    throw new Error(`No plan found: world="${world}" planId="${planId}"`);
+  }
+  plan.name = name ?? null;
+  writePlans(world, plans);
+  return plan;
+}
+
 /** @returns {object}   the Plan. Throws a clear Error if not found. */
 export function getPlan(world, planId) {
   const plan = readPlans(world).find((p) => p.id === planId);

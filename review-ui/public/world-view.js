@@ -657,15 +657,21 @@ async function createSceneHere(sel) {
       body: JSON.stringify({ world: currentWorld(), locationEntityId: sel.id })
     });
     await refreshScenes();
-    renderInspector();
-    showUndoToast(`Scene created at “${sel.name}” — open it in the session planner`, async () => {
+    // Cross-surface jump (Phase 30.5): this seam's design intent is to land the
+    // GM in the Session planner with the brand-new scene open, not merely toast
+    // a hint. Navigate to #planner/scene/<id> (switches surface + opens the
+    // scene). The undo toast lives in the document-level #toast-container, so it
+    // survives the surface switch; Undo deletes the just-created scene and
+    // returns to the World surface at the place we created it from.
+    goto(`planner/scene/${scene.id}`);
+    showUndoToast(`Scene created at “${sel.name}” — opened in the planner`, async () => {
       try {
         await wApi(`/api/session-planner/scenes/${encodeURIComponent(scene.id)}`, {
           method: "DELETE", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ world: currentWorld() })
         });
-        await refreshScenes();
-        renderInspector();
+        cache.scenes = null;
+        goto(`world/${sel.id}`);
       } catch { /* best effort */ }
     });
   } catch (err) {

@@ -191,7 +191,7 @@ import {
 // every other route in this file: resolveWorld() with NO client-supplied
 // dataDir override anywhere below (the store never touches the graph
 // snapshot at all).
-import { createPlan, getPlan, listPlansForWorld, addSceneToPlan, removeSceneFromPlan, reorderPlanScenes, deletePlan, plansContainingScene } from "../session-planner/plans.mjs";
+import { createPlan, getPlan, listPlansForWorld, addSceneToPlan, removeSceneFromPlan, reorderPlanScenes, deletePlan, plansContainingScene, renamePlan } from "../session-planner/plans.mjs";
 
 // Phase 26 task 26.9, §26.E / Phase 28 task 28.1 -- post-session graph
 // update. Thin composition only: proposeUpdatesForPlan/proposeUpdatesForScene
@@ -2039,6 +2039,14 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const w = resolveWorld(body.world ?? q.get("world"));
     const plan = removeSceneFromPlan(w, parts[3], parts[5]);
+    return sendJson(res, 200, { plan });
+  }
+
+  // Phase 30 task 30.5 -- POST /api/scene-planning/plans/:planId/rename   { world, name }   -> {plan}   thin wrapper over renamePlan (mirrors the sibling POST /api/session-planner/scenes/:id/rename route one entity type over). Backs the runsheet's editable plan title. Length-5 path, parts[4]==="rename" -- does not collide with the length-5 /scenes or /reorder routes (different parts[4]).
+  if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "plans" && parts[4] === "rename") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const plan = renamePlan(w, parts[3], body.name ?? null);
     return sendJson(res, 200, { plan });
   }
 

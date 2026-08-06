@@ -2510,7 +2510,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 #app-shell .shell-crumb--link { cursor: pointer; }
 #app-shell .shell-crumb--link:hover { color: var(--sp-ink-heading); }
 #app-shell .shell-crumb--leaf { color: var(--sp-ink-primary); }
-#app-shell .shell-crumb-sep { color: var(--sp-border-control); }
+#app-shell .shell-crumb-sep { color: oklch(0.72 0.010 80); }
 
 #app-shell .shell-topbar-spacer { flex: 1; }
 #app-shell .shell-world-select {
@@ -2587,6 +2587,10 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   border-left: 2px solid transparent;
 }
 #app-shell .shell-plan-item:hover { background: var(--sp-row-hover-bg); }
+#app-shell .shell-plan-item--active {
+  background: var(--sp-row-hover-bg);
+  border-left-color: var(--sp-accent-teal);
+}
 #app-shell .shell-plan-item-name { font-size: 12.5px; color: var(--sp-ink-primary); margin-bottom: 2px; }
 #app-shell .shell-plan-item-meta { font-family: var(--sp-font-mono); font-size: 10px; color: var(--sp-ink-muted); }
 
@@ -2685,6 +2689,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   font-family: var(--sp-font-serif); font-size: 32px; font-weight: 500; line-height: 1.15;
   margin-bottom: 7px; max-width: 20ch; color: var(--sp-ink-heading);
 }
+#app-shell .planner-runsheet-title--empty { color: var(--sp-ink-muted); }
 #app-shell .planner-runsheet-meta {
   display: flex; align-items: center; gap: 12px; color: oklch(0.52 0.012 70); font-size: 12.5px; margin-bottom: var(--sp-space-7);
 }

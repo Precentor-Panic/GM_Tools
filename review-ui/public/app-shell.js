@@ -292,7 +292,8 @@ async function fillRailPlans(listEl) {
   try { ({ plans } = await shApi(`/api/scene-planning/plans${shWithWorld()}`)); } catch { /* leave empty */ }
   for (const p of plans) {
     planNameCache.set(p.id, p.name);
-    const item = el("div", { class: "shell-plan-item", "data-testid": "shell-plan-item", "data-plan-id": p.id });
+    const activeCls = p.id === railOpenPlanId ? " shell-plan-item--active" : "";
+    const item = el("div", { class: "shell-plan-item" + activeCls, "data-testid": "shell-plan-item", "data-plan-id": p.id });
     const name = el("div", { class: "shell-plan-item-name", "data-testid": "shell-plan-item-name" });
     name.textContent = p.name || "(untitled plan)";
     const meta = el("div", { class: "shell-plan-item-meta", "data-testid": "shell-plan-item-meta" });
@@ -536,14 +537,32 @@ async function renderPlanSurface(planId) {
   kicker.textContent = "Run sheet";
   col.appendChild(kicker);
 
-  // Plan title. NOTE (fidelity): the designer §B shows this as contenteditable
-  // (rename on blur), but no plan-rename route exists in server.mjs (Phase 28's
-  // plan title was likewise a plain heading) and this task must not add backend
-  // routes -- so it renders read-only until a rename route lands.
+  // Plan title -- editable (designer §B: contenteditable, rename on blur via
+  // the Phase 30.5 POST .../plans/:planId/rename route). Empty shows a muted
+  // placeholder; focusing an empty title clears the placeholder so the caret
+  // sits on a blank line, mirroring makeClickToEditField's empty-field
+  // convention one surface over.
   const title = el("div", {
-    class: "planner-runsheet-title", "data-testid": "planner-plan-title", "data-plan-id": plan.id
+    class: "planner-runsheet-title", "data-testid": "planner-plan-title", "data-plan-id": plan.id,
+    contenteditable: "true", spellcheck: "false"
   });
-  title.textContent = plan.name || "(untitled plan)";
+  const PLAN_PLACEHOLDER = "Untitled plan";
+  const paintTitle = () => {
+    const nm = planNameCache.get(plan.id) || "";
+    title.textContent = nm || PLAN_PLACEHOLDER;
+    title.classList.toggle("planner-runsheet-title--empty", !nm);
+  };
+  paintTitle();
+  title.addEventListener("focus", () => {
+    if (!(planNameCache.get(plan.id) || "")) {
+      title.textContent = "";
+      title.classList.remove("planner-runsheet-title--empty");
+    }
+  });
+  title.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); title.blur(); }
+  });
+  title.addEventListener("blur", () => savePlanName(plan.id, title.textContent.trim(), paintTitle));
   col.appendChild(title);
 
   const metaRow = el("div", { class: "planner-runsheet-meta" });
@@ -607,6 +626,30 @@ async function confirmDeletePlan(plan, wrapper) {
   });
   panel.append(warn, yes, no);
   wrapper.querySelector(".planner-plan-col").appendChild(panel);
+}
+
+// Rename-on-blur for the runsheet plan title (designer §B). Reflects the new
+// name back into the planNameCache + the rail's plan list + the breadcrumb so
+// every surface that shows this plan's name updates in one blur.
+async function savePlanName(planId, name, repaint) {
+  const prev = planNameCache.get(planId) || "";
+  if (name === prev) { if (repaint) repaint(); return; }
+  try {
+    const { plan } = await shApi(`/api/scene-planning/plans/${encodeURIComponent(planId)}/rename`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), name: name || null })
+    });
+    planNameCache.set(planId, plan.name || "");
+    if (repaint) repaint();
+    const railList = document.querySelector('[data-testid="shell-plans-list"]');
+    if (railList) fillRailPlans(railList);
+    const { view, arg } = currentShellRoute();
+    if (view === "planner") renderBreadcrumb(parsePlannerArg(arg));
+  } catch (err) {
+    if (repaint) repaint();
+    showUndoToast(`Could not rename plan: ${err.message}`, () => {});
+  }
 }
 
 async function fillRunsheetRows(rowsHost, planId) {
