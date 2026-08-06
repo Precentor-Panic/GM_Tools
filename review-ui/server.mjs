@@ -349,7 +349,17 @@ function serveStatic(res, filePath) {
   }
   const type = CONTENT_TYPES[extname(filePath)] ?? "application/octet-stream";
   const body = readFileSync(filePath);
-  res.writeHead(200, { "Content-Type": type, "Content-Length": body.length });
+  // No-cache for static assets: this is a single-user LOCAL dev tool served
+  // straight from disk, and the frontend is iterated on constantly (the
+  // Designer -> port/wire -> reload loop). Aggressive browser caching meant a
+  // plain reload kept showing a stale app.js/style.css bundle -- every change
+  // needed a manual hard-refresh. `no-store` guarantees a fresh fetch each
+  // load; the refetch cost is negligible over localhost.
+  res.writeHead(200, {
+    "Content-Type": type,
+    "Content-Length": body.length,
+    "Cache-Control": "no-store, must-revalidate"
+  });
   res.end(body);
 }
 
