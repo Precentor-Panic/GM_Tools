@@ -411,7 +411,7 @@ export function mountEditableList(opts) {
 // scene-create + attach-to-plan, not that file's own scene-to-scene link
 // mechanism.
 // ---------------------------------------------------------------------------
-function buildAddScenePanel(planId, { onSceneAdded }) {
+export function buildAddScenePanel(planId, { onSceneAdded }) {
   const panel = document.createElement("div");
   panel.className = "place-required-flow";
   panel.setAttribute("data-testid", "plan-add-scene-panel");

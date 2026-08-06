@@ -17,8 +17,8 @@
 // are (own currentWorld()/api helpers reading the shared localStorage key),
 // reusing showUndoToast from plans-view.js rather than a second toast host.
 "use strict";
-import { renderPlansView, showUndoToast } from "./plans-view.js";
-import { renderSessionPlanner } from "./session-planner-view.js";
+import { showUndoToast, buildAddScenePanel } from "./plans-view.js";
+import { renderPlannerScenePage } from "./session-planner-view.js";
 
 // ---------------------------------------------------------------------------
 // local api/world helpers (same standalone convention as plans-view.js)
@@ -111,35 +111,12 @@ async function getSceneName(sceneId) {
 }
 
 // ---------------------------------------------------------------------------
-// Borrowed legacy body nodes. renderPlansView/renderSessionPlanner are
-// hardcoded to render into #plans-body / #session-planner-body (getElementById),
-// which live inside the shelved legacy <main>. To DELEGATE to them inside the
-// shell's #shell-main without duplicate ids, we RELOCATE the single real node
-// into a shell wrapper and restore it to its legacy home on the next shell
-// render or on leaving the shell (app.js calls restoreShellBorrowedNodes()
-// when navigating to any legacy hash). This is the §5 seam, replaced by the
-// real port in 30.3.
+// Main-column mount. Phase 30 task 30.3 replaced the 30.2 borrow/restore
+// delegation (which relocated the legacy #plans-body/#session-planner-body
+// nodes into #shell-main) with REAL designer-faithful renders built directly
+// here -- so setMain is now a plain innerHTML swap with no node relocation.
 // ---------------------------------------------------------------------------
-const borrowed = [];
-
-function borrowInto(host, id) {
-  const node = document.getElementById(id);
-  if (!node) return;
-  borrowed.push({ node, home: node.parentNode });
-  host.appendChild(node);
-}
-
-export function restoreShellBorrowedNodes() {
-  while (borrowed.length) {
-    const { node, home } = borrowed.pop();
-    if (home && node.parentNode !== home) home.appendChild(node);
-  }
-}
-
 function setMain(node) {
-  // restoreShellBorrowedNodes() has already run at the top of renderShell, so
-  // any node still in #shell-main here is throwaway DOM -- the newly-borrowed
-  // node (if any) lives in `node`, which is still detached at this point.
   const main = document.getElementById("shell-main");
   main.innerHTML = "";
   main.appendChild(node);
@@ -458,29 +435,87 @@ function parsePlannerArg(arg) {
   return { kind: "plans" };
 }
 
-// view=plans -> DELEGATE to renderPlansView()'s shelf, mounted inside the
-// planner-plans-view root (§5 seam). Reuses plans-view.js's shelf logic.
+// view=plans -> the REAL designer plan shelf (README §A): a card grid, each
+// card showing the plan's name, a mono meta line (N scenes · est. min), and
+// its first few scene names, plus a dashed "+ New plan" card.
 async function renderPlansSurface() {
-  const wrapper = el("div", { class: "planner-surface planner-plans-surface", "data-testid": "planner-plans-view" });
-  borrowInto(wrapper, "plans-body");
+  const wrapper = el("div", { class: "planner-surface planner-plans-view", "data-testid": "planner-plans-view" });
   setMain(wrapper);
-  try { await renderPlansView(undefined); } catch { /* renderPlansView surfaces its own error state */ }
+
+  if (!currentWorld()) {
+    const p = el("p", { class: "hint" });
+    p.textContent = "Select a world first.";
+    wrapper.appendChild(p);
+    return;
+  }
+
+  const col = el("div", { class: "planner-plans-col" });
+  const h1 = el("h1", { class: "planner-plans-title" });
+  h1.textContent = "Session plans";
+  const sub = el("div", { class: "planner-plans-sub" });
+  sub.textContent = "Every plan is an ordered run of scenes. Scenes are shared by reference — reusing one here doesn't fork it.";
+  const grid = el("div", { class: "planner-plans-grid" });
+  col.append(h1, sub, grid);
+  wrapper.appendChild(col);
+
+  let plans = [];
+  try { ({ plans } = await shApi(`/api/scene-planning/plans${shWithWorld()}`)); } catch { /* leave empty */ }
+  // One scenes fetch + entity map for scene display names on the cards.
+  let scenes = [];
+  try { ({ scenes } = await shApi(`/api/scene-planning/scenes${shWithWorld()}`)); } catch { /* empty */ }
+  const infoMap = await fetchEntityInfoMap();
+  const sceneById = new Map();
+  for (const s of scenes) sceneById.set(s.id, s);
+
+  for (const p of plans) {
+    planNameCache.set(p.id, p.name);
+    const card = el("div", { class: "planner-plan-card", "data-testid": "planner-plan-card", "data-plan-id": p.id });
+    const name = el("div", { class: "planner-plan-card-name" });
+    name.textContent = p.name || "(untitled plan)";
+    const ids = p.sceneIds || [];
+    const meta = el("div", { class: "planner-plan-card-meta" });
+    meta.textContent = `${ids.length} scene${ids.length === 1 ? "" : "s"} · est. ${ids.length * 45} min`;
+    card.append(name, meta);
+    const list = el("div", { class: "planner-plan-card-scenes" });
+    ids.forEach((sid, i) => {
+      const s = sceneById.get(sid);
+      const row = el("div", { class: "planner-plan-card-scene" });
+      const num = el("span", { class: "planner-plan-card-scene-num" });
+      num.textContent = String(i + 1).padStart(2, "0");
+      const nm = el("span");
+      nm.textContent = s ? resolveSceneDisplayName(s, infoMap) : sid;
+      row.append(num, nm);
+      list.appendChild(row);
+    });
+    card.appendChild(list);
+    card.addEventListener("click", () => goto(`planner/plan/${p.id}`));
+    grid.appendChild(card);
+  }
+
+  const newCard = el("div", { class: "planner-plan-card planner-plan-card--new", "data-testid": "planner-new-plan-card" });
+  newCard.textContent = "+ New plan";
+  newCard.addEventListener("click", createNewPlanAndOpen);
+  grid.appendChild(newCard);
 }
 
-// view=plan -> a thin runsheet whose scene rows navigate to the SHELL scene
-// hash (#planner/scene/<id>). Deliberately NOT a delegation to
-// renderPlansView's plan-detail: that render's scene-open hardcodes the legacy
-// `#session-planner/<id>` hash, which would break the shell navigation
-// contract (the planner-surface e2e asserts `#planner/scene/<id>`). The full
-// designer runsheet is 30.3's port; this is enough to satisfy the shell root +
-// scene-open navigation this wave targets.
+// view=plan -> the REAL designer runsheet (README §B): mono kicker, editable
+// plan title, meta row with Delete plan, ordered scene rows (index / name /
+// place / element meta / objective + ↑↓✕ controls), and the inline add-scene
+// panel. Scene rows navigate to the SHELL scene hash (#planner/scene/<id>).
 async function renderPlanSurface(planId) {
   const wrapper = el("div", {
-    class: "planner-surface planner-plan-surface",
+    class: "planner-surface planner-plan-view",
     "data-testid": "planner-plan-view",
     "data-plan-id": planId
   });
   setMain(wrapper);
+
+  if (!currentWorld()) {
+    const p = el("p", { class: "hint" });
+    p.textContent = "Select a world first.";
+    wrapper.appendChild(p);
+    return;
+  }
 
   let plan;
   try {
@@ -493,64 +528,190 @@ async function renderPlanSurface(planId) {
   }
   planNameCache.set(plan.id, plan.name);
 
-  const title = el("h2", { class: "planner-plan-title" });
+  const col = el("div", { class: "planner-plan-col" });
+  wrapper.appendChild(col);
+
+  const kicker = el("div", { class: "planner-runsheet-kicker" });
+  kicker.textContent = "Run sheet";
+  col.appendChild(kicker);
+
+  // Plan title. NOTE (fidelity): the designer §B shows this as contenteditable
+  // (rename on blur), but no plan-rename route exists in server.mjs (Phase 28's
+  // plan title was likewise a plain heading) and this task must not add backend
+  // routes -- so it renders read-only until a rename route lands.
+  const title = el("div", {
+    class: "planner-runsheet-title", "data-testid": "planner-plan-title", "data-plan-id": plan.id
+  });
   title.textContent = plan.name || "(untitled plan)";
-  wrapper.appendChild(title);
+  col.appendChild(title);
 
-  const runsheet = el("div", { class: "planner-plan-runsheet" });
-  wrapper.appendChild(runsheet);
+  const metaRow = el("div", { class: "planner-runsheet-meta" });
+  const metaText = el("span");
+  const nScenes = (plan.sceneIds || []).length;
+  metaText.textContent = `${nScenes} scene${nScenes === 1 ? "" : "s"} · est. ${nScenes * 45} min`;
+  const metaSep = el("span", { class: "planner-runsheet-meta-sep" });
+  metaSep.textContent = "·";
+  const deleteBtn = el("span", { class: "planner-runsheet-delete", "data-testid": "planner-plan-delete-btn", "data-plan-id": plan.id });
+  deleteBtn.textContent = "Delete plan";
+  deleteBtn.addEventListener("click", () => confirmDeletePlan(plan, wrapper));
+  metaRow.append(metaText, metaSep, deleteBtn);
+  col.appendChild(metaRow);
 
+  const rowsHost = el("div", { class: "planner-runsheet-rows", "data-testid": "planner-runsheet-rows" });
+  col.appendChild(rowsHost);
+  await fillRunsheetRows(rowsHost, plan.id);
+
+  // + Add scene -> inline place-chip panel (reuses plans-view.js's real
+  // create-place -> create-scene -> attach-to-plan flow), refreshing the
+  // runsheet rows on success.
+  const addWrap = el("div", { class: "planner-runsheet-add" });
+  const addBtn = el("div", { class: "planner-runsheet-add-btn", "data-testid": "planner-add-scene-btn" });
+  addBtn.textContent = "+ Add scene";
+  const panelHost = el("div");
+  let addOpen = false;
+  addBtn.addEventListener("click", () => {
+    if (addOpen) { panelHost.innerHTML = ""; addOpen = false; return; }
+    addOpen = true;
+    panelHost.appendChild(buildAddScenePanel(plan.id, {
+      onSceneAdded: async () => {
+        panelHost.innerHTML = ""; addOpen = false;
+        await renderPlanSurface(plan.id);
+      }
+    }));
+  });
+  addWrap.append(addBtn, panelHost);
+  col.appendChild(addWrap);
+}
+
+async function confirmDeletePlan(plan, wrapper) {
+  if (wrapper.querySelector('[data-testid="planner-plan-delete-confirm"]')) return;
+  const panel = el("div", { class: "planner-runsheet-delete-confirm", "data-testid": "planner-plan-delete-confirm", "data-plan-id": plan.id });
+  const warn = el("p", { class: "hint" });
+  warn.textContent = "Delete this plan? Its scenes are untouched and stay in the Scene library.";
+  const yes = el("button", { class: "btn btn--danger", type: "button", "data-testid": "planner-plan-delete-confirm-btn" });
+  yes.textContent = "Yes, delete";
+  const no = el("button", { class: "btn", type: "button" });
+  no.textContent = "Cancel";
+  no.addEventListener("click", () => panel.remove());
+  yes.addEventListener("click", async () => {
+    yes.disabled = true;
+    try {
+      await shApi(`/api/scene-planning/plans/${encodeURIComponent(plan.id)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      });
+      goto("planner/plans");
+    } catch { yes.disabled = false; warn.textContent = "Could not delete."; }
+  });
+  panel.append(warn, yes, no);
+  wrapper.querySelector(".planner-plan-col").appendChild(panel);
+}
+
+async function fillRunsheetRows(rowsHost, planId) {
+  rowsHost.innerHTML = "";
+  let plan;
+  try {
+    ({ plan } = await shApi(`/api/scene-planning/plans/${encodeURIComponent(planId)}${shWithWorld()}`));
+  } catch { return; }
   const sceneIds = plan.sceneIds || [];
   if (!sceneIds.length) {
     const empty = el("p", { class: "hint" });
-    empty.textContent = "No scenes in this plan yet — add one from the Scene library.";
-    runsheet.appendChild(empty);
+    empty.textContent = "No scenes in this plan yet — add one below.";
+    rowsHost.appendChild(empty);
     return;
   }
-
   const infoMap = await fetchEntityInfoMap();
   for (let i = 0; i < sceneIds.length; i++) {
     const sceneId = sceneIds[i];
     let scene;
     try {
       ({ scene } = await shApi(`/api/session-planner/scenes/${encodeURIComponent(sceneId)}${shWithWorld()}`));
-    } catch {
-      continue;
-    }
+    } catch { continue; }
     sceneNameCache.set(sceneId, resolveSceneDisplayName(scene, infoMap));
-    const row = el("div", { class: "planner-runsheet-row", "data-scene-id": sceneId });
-    const num = el("span", { class: "planner-runsheet-num" });
-    num.textContent = String(i + 1);
-    const name = el("span", { class: "planner-runsheet-name" });
+
+    // Element meta ("N elements · K key") -- K key = graph-backed elements.
+    let elemMeta = "";
+    try {
+      const { elements } = await shApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/elements${shWithWorld()}`);
+      const keyCount = (elements || []).filter((e) => e.kind === "graph").length;
+      elemMeta = `${(elements || []).length} elements · ${keyCount} key`;
+    } catch { /* leave blank */ }
+
+    const row = el("div", { class: "planner-runsheet-row", "data-testid": "planner-runsheet-row", "data-scene-id": sceneId });
+    const num = el("div", { class: "planner-runsheet-num" });
+    num.textContent = String(i + 1).padStart(2, "0");
+
+    const bodyCol = el("div", { class: "planner-runsheet-body" });
+    const name = el("div", { class: "planner-runsheet-name" });
     name.textContent = resolveSceneDisplayName(scene, infoMap);
-    row.append(num, name);
-    row.addEventListener("click", () => goto(`planner/scene/${sceneId}`));
-    runsheet.appendChild(row);
+    const metaLine = el("div", { class: "planner-runsheet-row-meta" });
+    const placeSpan = el("span", { class: "planner-runsheet-place" });
+    placeSpan.textContent = (scene.locationEntityId ? (infoMap.get(scene.locationEntityId)?.name ?? "") : "").toUpperCase();
+    const elemSpan = el("span", { class: "planner-runsheet-elem-meta" });
+    elemSpan.textContent = elemMeta;
+    metaLine.append(placeSpan, elemSpan);
+    const obj = el("div", { class: "planner-runsheet-objective" });
+    obj.textContent = scene.objectiveNote || "";
+    bodyCol.append(name, metaLine, obj);
+    bodyCol.addEventListener("click", () => goto(`planner/scene/${sceneId}`));
+
+    const controls = el("div", { class: "planner-runsheet-controls" });
+    if (i > 0) controls.appendChild(makeRunsheetCtl("↑", "Move up", "planner-runsheet-up-btn", sceneId, () => reorderRunsheet(planId, sceneIds, i, i - 1, rowsHost)));
+    if (i < sceneIds.length - 1) controls.appendChild(makeRunsheetCtl("↓", "Move down", "planner-runsheet-down-btn", sceneId, () => reorderRunsheet(planId, sceneIds, i, i + 1, rowsHost)));
+    controls.appendChild(makeRunsheetCtl("✕", "Remove from plan (the scene survives)", "planner-runsheet-remove-btn", sceneId, () => removeSceneFromPlan(planId, sceneId, rowsHost)));
+
+    row.append(num, bodyCol, controls);
+    rowsHost.appendChild(row);
   }
 }
 
-// view=scene -> DELEGATE to renderSessionPlanner (the legacy scene page DOM),
-// mounted inside the planner-scene-view root, plus the three light stub
-// sub-roots the shell-integration contract pins (planner-scene-place-header /
-// -read-aloud / -elements). The delegated legacy DOM under the new frame is
-// the expected §5 seam; the real designer scene page is 30.3's port.
-async function renderSceneSurface(sceneId) {
-  const wrapper = el("div", {
-    class: "planner-surface planner-scene-surface",
-    "data-testid": "planner-scene-view",
-    "data-scene-id": sceneId
+function makeRunsheetCtl(glyph, title, testid, sceneId, onClick) {
+  const b = el("button", { class: "planner-runsheet-ctl", type: "button", title, "data-testid": testid, "data-scene-id": sceneId });
+  b.textContent = glyph;
+  b.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    b.disabled = true;
+    try { await onClick(); } catch { b.disabled = false; }
   });
+  return b;
+}
 
-  for (const testid of ["planner-scene-place-header", "planner-scene-read-aloud", "planner-scene-elements"]) {
-    wrapper.appendChild(el("div", { class: "shell-scene-stub", "data-testid": testid }));
-  }
+async function reorderRunsheet(planId, sceneIds, from, to, rowsHost) {
+  const newIds = sceneIds.slice();
+  [newIds[from], newIds[to]] = [newIds[to], newIds[from]];
+  await shApi(`/api/scene-planning/plans/${encodeURIComponent(planId)}/reorder`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: currentWorld(), sceneIds: newIds })
+  });
+  await fillRunsheetRows(rowsHost, planId);
+}
 
-  const delegated = el("div", { class: "planner-scene-delegated" });
-  wrapper.appendChild(delegated);
-  borrowInto(delegated, "session-planner-body");
+async function removeSceneFromPlan(planId, sceneId, rowsHost) {
+  await shApi(`/api/scene-planning/plans/${encodeURIComponent(planId)}/scenes/${encodeURIComponent(sceneId)}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: currentWorld() })
+  });
+  await fillRunsheetRows(rowsHost, planId);
+  showUndoToast("Removed scene from plan.", async () => {
+    await shApi(`/api/scene-planning/plans/${encodeURIComponent(planId)}/scenes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), sceneId })
+    });
+    await fillRunsheetRows(rowsHost, planId);
+  });
+}
+
+// view=scene -> the REAL designer scene page, ported into #shell-main directly
+// (no borrow). renderPlannerScenePage reuses ALL the Phase 28/29 scene wiring
+// under the designer sub-roots + shell nav hashes.
+async function renderSceneSurface(sceneId) {
+  const wrapper = el("div", { class: "planner-surface planner-scene-surface" });
   setMain(wrapper);
-
-  try { await renderSessionPlanner(sceneId); } catch { /* renderSessionPlanner surfaces its own error state */ }
+  await renderPlannerScenePage(wrapper, sceneId);
 }
 
 // view=world -> a minimal placeholder root (the real World surface is 30.4).
@@ -569,7 +730,6 @@ function renderWorldSurface(/* entityId */) {
 // ---------------------------------------------------------------------------
 export function renderShell(view, arg) {
   wireStaticControls();
-  restoreShellBorrowedNodes(); // before we wipe #shell-main below
 
   const shell = document.getElementById("app-shell");
   const titleEl = document.getElementById("shell-world-title");

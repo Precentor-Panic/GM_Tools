@@ -1393,21 +1393,32 @@ async function renderSceneElementsList(scene, listHost, nodeMap) {
 // context; prev/next step within THAT plan's own sceneIds order and are
 // absent (real DOM absence) at the ends / for an orphaned scene.
 // ---------------------------------------------------------------------------
-function buildSceneBreadcrumb(scene, plans) {
+// Phase 30 task 30.3: `nav` parametrizes the hash targets so the SAME scene
+// page renders under the legacy `#session-planner/<id>` chrome (default) and
+// the new shell's `#planner/scene/<id>` route. In the shell, the persistent
+// breadcrumb chrome (app-shell.js) owns the "‹ Plan / Plans" back link, so the
+// in-page back button is suppressed (`showBack:false`) -- only the designer
+// sub-bar's ← prev / next → survive here.
+function buildSceneBreadcrumb(scene, plans, nav = {}) {
+  const sceneHash = nav.sceneHash || ((id) => `session-planner/${id}`);
+  const plansHash = nav.plansHash || ((plan) => (plan ? `plans/${plan.id}` : "plans"));
+  const showBack = nav.showBack !== false;
   const firstPlan = plans && plans.length ? plans[0] : null;
   const bc = document.createElement("div");
   bc.className = "scene-breadcrumb";
   bc.setAttribute("data-testid", "scene-breadcrumb");
 
-  const backBtn = document.createElement("button");
-  backBtn.type = "button";
-  backBtn.className = "link-btn scene-breadcrumb-back-btn";
-  backBtn.setAttribute("data-testid", "scene-breadcrumb-back-btn");
-  backBtn.textContent = `‹ ${firstPlan ? (firstPlan.name || "Plan") : "Plans"}`;
-  backBtn.addEventListener("click", () => {
-    location.hash = firstPlan ? `plans/${firstPlan.id}` : "plans";
-  });
-  bc.appendChild(backBtn);
+  if (showBack) {
+    const backBtn = document.createElement("button");
+    backBtn.type = "button";
+    backBtn.className = "link-btn scene-breadcrumb-back-btn";
+    backBtn.setAttribute("data-testid", "scene-breadcrumb-back-btn");
+    backBtn.textContent = `‹ ${firstPlan ? (firstPlan.name || "Plan") : "Plans"}`;
+    backBtn.addEventListener("click", () => {
+      location.hash = plansHash(firstPlan);
+    });
+    bc.appendChild(backBtn);
+  }
 
   let prevId = null;
   let nextId = null;
@@ -1424,7 +1435,7 @@ function buildSceneBreadcrumb(scene, plans) {
     prevBtn.className = "link-btn scene-breadcrumb-prev-btn";
     prevBtn.setAttribute("data-testid", "scene-breadcrumb-prev-btn");
     prevBtn.textContent = "‹ Prev";
-    prevBtn.addEventListener("click", () => { location.hash = `session-planner/${prevId}`; });
+    prevBtn.addEventListener("click", () => { location.hash = sceneHash(prevId); });
     bc.appendChild(prevBtn);
   }
   if (nextId) {
@@ -1433,7 +1444,7 @@ function buildSceneBreadcrumb(scene, plans) {
     nextBtn.className = "link-btn scene-breadcrumb-next-btn";
     nextBtn.setAttribute("data-testid", "scene-breadcrumb-next-btn");
     nextBtn.textContent = "Next ›";
-    nextBtn.addEventListener("click", () => { location.hash = `session-planner/${nextId}`; });
+    nextBtn.addEventListener("click", () => { location.hash = sceneHash(nextId); });
     bc.appendChild(nextBtn);
   }
 
@@ -2631,7 +2642,18 @@ function buildSegmentedControl(sceneId, options) {
   return { group, buttons, setActive };
 }
 
-async function renderScenePage(container, sceneId, token) {
+async function renderScenePage(container, sceneId, token, opts = {}) {
+  // Phase 30 task 30.3: `opts` lets the SAME scene-page render serve both the
+  // legacy `#session-planner/<id>` chrome (default) and the new designer shell
+  // (`opts.designer` -> the `planner-scene-view` root + its three named
+  // sub-roots, `opts.nav` -> shell hash targets for prev/next/esc). All the
+  // Phase 28/29 element/stat-block/wrap/dressing/from-graph behavior below is
+  // reused verbatim -- only the outer testids and nav hashes differ.
+  const designer = !!opts.designer;
+  const rootTestid = opts.rootTestid || "scene-page";
+  const nav = opts.nav || {};
+  const sceneHash = nav.sceneHash || ((id) => `session-planner/${id}`);
+  const plansHash = nav.plansHash || ((plan) => (plan ? `plans/${plan.id}` : "plans"));
   const stale = () => token !== sceneRenderToken;
   const loading = document.createElement("p");
   loading.className = "hint";
@@ -2672,7 +2694,7 @@ async function renderScenePage(container, sceneId, token) {
   scenePageMode = "prep";
   const root = document.createElement("div");
   root.className = "scene-page";
-  root.setAttribute("data-testid", "scene-page");
+  root.setAttribute("data-testid", rootTestid);
   root.setAttribute("data-scene-id", scene.id);
   root.setAttribute("data-mode", scenePageMode); // "prep" by default; "run" hides edit chrome via CSS
 
@@ -2680,7 +2702,11 @@ async function renderScenePage(container, sceneId, token) {
   // Wrap toggle (right, filled by 28.4).
   const topBar = document.createElement("div");
   topBar.className = "scene-top-bar";
-  const { bc, firstPlan, prevId, nextId } = buildSceneBreadcrumb(scene, plans);
+  // In the shell, the persistent breadcrumb chrome owns the "‹ Plan/Plans" back
+  // link -- suppress the in-page one there and route prev/next to shell hashes.
+  const { bc, firstPlan, prevId, nextId } = buildSceneBreadcrumb(scene, plans, {
+    sceneHash, plansHash, showBack: !designer
+  });
   topBar.appendChild(bc);
 
   // Right-hand cluster: the two segmented controls, then the Wrap button. Wrap
@@ -2721,10 +2747,20 @@ async function renderScenePage(container, sceneId, token) {
   layoutControl.buttons.page.addEventListener("click", () => applyLayout("page"));
   layoutControl.buttons.cards.addEventListener("click", () => applyLayout("cards"));
 
-  // Place header (the room).
+  // Place header (the room). In the designer shell this is one of the three
+  // named sub-roots the phase30 contract pins (planner-scene-place-header).
   const header = document.createElement("div");
   header.className = "scene-place-header";
   const place = scene.locationEntityId ? nodeMap.get(scene.locationEntityId) : null;
+  if (designer) {
+    header.setAttribute("data-testid", "planner-scene-place-header");
+    // Designer §C.1: mono uppercase teal place label above the scene name.
+    const placeLabel = document.createElement("div");
+    placeLabel.className = "scene-place-label";
+    placeLabel.setAttribute("data-testid", "scene-place-label");
+    placeLabel.textContent = (place?.name ?? scene.locationEntityId ?? "Unplaced").toUpperCase();
+    header.appendChild(placeLabel);
+  }
   if (scene.locationEntityId) {
     const placeName = place?.name ?? scene.locationEntityId;
     const nameField = makeClickToEditField({
@@ -2775,7 +2811,17 @@ async function renderScenePage(container, sceneId, token) {
   // §C.4/§C.5 -- "The place" description grid OR the missing-description
   // banner. Editing writes back to the graph NODE, not the scene.
   if (place) header.appendChild(buildPlaceDescriptionBlock(scene, place));
+  root.appendChild(header);
 
+  // §C.6 -- Read-aloud (the serif narration box). In the designer shell this is
+  // its own named sub-root (planner-scene-read-aloud) with a mono "READ ALOUD"
+  // label + 2px left rule; in the legacy chrome it just sits inline.
+  // NB the narration field's own `.scene-narration.read-aloud` CSS already
+  // paints the designer's 2px left rule + "READ ALOUD" mono label (::before),
+  // so this sub-root is a plain wrapper carrying only the contract testid.
+  const readAloudSection = document.createElement("div");
+  readAloudSection.className = "scene-read-aloud-section";
+  if (designer) readAloudSection.setAttribute("data-testid", "planner-scene-read-aloud");
   // This-scene narration (serif read-aloud box). Always rendered, even empty.
   const narrationField = makeClickToEditField({
     tag: "div",
@@ -2792,7 +2838,7 @@ async function renderScenePage(container, sceneId, token) {
       body: JSON.stringify({ world: currentWorld(), text: v })
     })
   });
-  header.appendChild(narrationField.el);
+  readAloudSection.appendChild(narrationField.el);
 
   // §C.6 -- draft-read-aloud ghost link: only when narration is empty AND the
   // place has a real (non-empty) description. When the place has no
@@ -2800,13 +2846,15 @@ async function renderScenePage(container, sceneId, token) {
   const narrationEmpty = !(narration && narration.text && String(narration.text).trim());
   const placeHasDesc = !!(place && typeof place.description === "string" && place.description.trim() !== "");
   if (narrationEmpty && placeHasDesc) {
-    header.appendChild(buildDraftReadAloudLink(scene, place, narrationField));
+    readAloudSection.appendChild(buildDraftReadAloudLink(scene, place, narrationField));
   }
-  root.appendChild(header);
+  root.appendChild(readAloudSection);
 
-  // Elements list.
+  // Elements list. In the designer shell this is the third named sub-root
+  // (planner-scene-elements).
   const elementsSection = document.createElement("div");
   elementsSection.className = "scene-elements-section";
+  if (designer) elementsSection.setAttribute("data-testid", "planner-scene-elements");
   const elementsHeading = document.createElement("h3");
   elementsHeading.className = "scene-section-heading";
   elementsHeading.textContent = "Elements";
@@ -2887,9 +2935,9 @@ async function renderScenePage(container, sceneId, token) {
   const handler = (e) => {
     const t = e.target;
     if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) return;
-    if (e.key === "[") { if (prevId) location.hash = `session-planner/${prevId}`; }
-    else if (e.key === "]") { if (nextId) location.hash = `session-planner/${nextId}`; }
-    else if (e.key === "Escape") { location.hash = firstPlan ? `plans/${firstPlan.id}` : "plans"; }
+    if (e.key === "[") { if (prevId) location.hash = sceneHash(prevId); }
+    else if (e.key === "]") { if (nextId) location.hash = sceneHash(nextId); }
+    else if (e.key === "Escape") { location.hash = plansHash(firstPlan); }
   };
   document.addEventListener("keydown", handler);
   activeSceneKeydownHandler = handler;
@@ -2938,4 +2986,49 @@ export async function renderSessionPlanner(sceneIdArg) {
   // strip it; there are no modes any more.
   const sceneId = String(sceneIdArg).split("?")[0];
   await renderScenePage(container, sceneId, myToken);
+}
+
+/**
+ * Phase 30 task 30.3: the DESIGNER scene page, mounted directly into the
+ * shell's `#shell-main` (`container`) -- the real port that replaces 30.2's
+ * borrow-the-legacy-node delegation. Reuses `renderScenePage` verbatim (all the
+ * Phase 28/29 element/stat-block/wrap/dressing/from-graph wiring) with the
+ * designer sub-roots switched on and prev/next/esc routed to the shell's own
+ * `#planner/scene/<id>` / `#planner/plan/<id>` hashes so navigation never
+ * escapes the shell. Returns the resolved scene (or null) so app-shell.js can
+ * set the breadcrumb's plan context.
+ */
+export async function renderPlannerScenePage(container, sceneId) {
+  if (!container) return;
+  const myToken = ++sceneRenderToken;
+  detachSceneKeydownHandler();
+  openNotePanels.clear();
+  sceneEditDebounces.clear();
+  container.innerHTML = "";
+
+  if (!currentWorld()) {
+    const p = document.createElement("p");
+    p.className = "hint";
+    p.textContent = "Select a world first.";
+    container.appendChild(p);
+    return;
+  }
+
+  const cleanId = String(sceneId).split("?")[0];
+  // The `planner-scene-view` root the contract pins is an OUTER wrapper so the
+  // Phase 29 scene-page CSS (scoped `.planner-scene-view .scene-page`, a
+  // descendant of it) applies to the inner `.scene-page` renderScenePage builds.
+  const wrapper = document.createElement("div");
+  wrapper.className = "planner-scene-view";
+  wrapper.setAttribute("data-testid", "planner-scene-view");
+  wrapper.setAttribute("data-scene-id", cleanId);
+  container.appendChild(wrapper);
+
+  await renderScenePage(wrapper, cleanId, myToken, {
+    designer: true,
+    nav: {
+      sceneHash: (id) => `planner/scene/${id}`,
+      plansHash: (plan) => (plan ? `planner/plan/${plan.id}` : "planner/plans")
+    }
+  });
 }

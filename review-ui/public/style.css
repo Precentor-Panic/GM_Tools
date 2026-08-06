@@ -1670,12 +1670,12 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
    actions row directly above them (README has no spec for this Phase-23
    feature; matching the sibling dashed-action-button treatment reads as one
    system rather than a foreign control). */
-#view-session-planner .scene-action-btn {
+:is(#view-session-planner, #app-shell) .scene-action-btn {
   border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-lg);
   background: transparent; color: var(--sp-ink-muted);
   font-family: var(--sp-font-ui); font-size: 12.5px; padding: 7px 12px;
 }
-#view-session-planner .scene-action-btn:hover {
+:is(#view-session-planner, #app-shell) .scene-action-btn:hover {
   border-color: var(--sp-accent-teal); color: var(--sp-accent-teal); background: transparent;
 }
 
@@ -1772,7 +1772,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
    §C — Scene page (#session-planner/<sceneId>): a centred 780px column that
    reads like a printed module page.
    ========================================================================= */
-#view-session-planner .scene-page {
+:is(#view-session-planner, #app-shell) .scene-page {
   max-width: 780px; margin: 0 auto;
   background: transparent; border: none; box-shadow: none; border-radius: 0;
   padding: 0 30px 90px; color: var(--sp-ink-primary);
@@ -1780,61 +1780,61 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 
 /* The sub-bar: prev/next (left) + Wrap button (right), with the middle left
    deliberately open for 29.5's Page|Cards + Prep|Run segmented controls. */
-#view-session-planner .scene-top-bar {
+:is(#view-session-planner, #app-shell) .scene-top-bar {
   background: var(--sp-surface-subbar);
   border: none; border-bottom: 1px solid var(--sp-border-hairline);
   border-radius: 0; position: static;
   min-height: 40px; box-sizing: border-box;
   padding: 8px 30px; margin: 0 -30px 26px;
 }
-#view-session-planner .scene-breadcrumb {
+:is(#view-session-planner, #app-shell) .scene-breadcrumb {
   font-family: var(--sp-font-mono); font-size: 10.5px; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--sp-ink-muted); gap: 10px;
 }
-#view-session-planner .scene-breadcrumb-back-btn {
+:is(#view-session-planner, #app-shell) .scene-breadcrumb-back-btn {
   color: var(--sp-ink-secondary); font-weight: 500; letter-spacing: 0.06em;
 }
-#view-session-planner .scene-breadcrumb-prev-btn,
-#view-session-planner .scene-breadcrumb-next-btn { color: var(--sp-ink-muted); }
-#view-session-planner .scene-breadcrumb-back-btn:hover,
-#view-session-planner .scene-breadcrumb-prev-btn:hover,
-#view-session-planner .scene-breadcrumb-next-btn:hover { color: var(--sp-accent-teal); }
-#view-session-planner .scene-breadcrumb-prev-btn::before,
-#view-session-planner .scene-breadcrumb-next-btn::before { color: var(--sp-border-control); }
-#view-session-planner .scene-wrap-toggle-btn {
+:is(#view-session-planner, #app-shell) .scene-breadcrumb-prev-btn,
+:is(#view-session-planner, #app-shell) .scene-breadcrumb-next-btn { color: var(--sp-ink-muted); }
+:is(#view-session-planner, #app-shell) .scene-breadcrumb-back-btn:hover,
+:is(#view-session-planner, #app-shell) .scene-breadcrumb-prev-btn:hover,
+:is(#view-session-planner, #app-shell) .scene-breadcrumb-next-btn:hover { color: var(--sp-accent-teal); }
+:is(#view-session-planner, #app-shell) .scene-breadcrumb-prev-btn::before,
+:is(#view-session-planner, #app-shell) .scene-breadcrumb-next-btn::before { color: var(--sp-border-control); }
+:is(#view-session-planner, #app-shell) .scene-wrap-toggle-btn {
   flex-shrink: 0;
   border: 1px solid var(--sp-wrap-btn-border); background: transparent;
   color: var(--sp-wrap-btn-text); border-radius: var(--sp-radius-lg);
   font-family: var(--sp-font-ui); font-size: 12.5px; padding: 5px 12px;
 }
-#view-session-planner .scene-wrap-toggle-btn:hover { background: var(--sp-badge-promote-bg); }
+:is(#view-session-planner, #app-shell) .scene-wrap-toggle-btn:hover { background: var(--sp-badge-promote-bg); }
 
 /* Place name — the page title (Spectral 34px). */
-#view-session-planner .scene-place-header { margin-bottom: 20px; }
-#view-session-planner .scene-place-name {
+:is(#view-session-planner, #app-shell) .scene-place-header { margin-bottom: 20px; }
+:is(#view-session-planner, #app-shell) .scene-place-name {
   font-family: var(--sp-font-serif); font-weight: 500; font-size: 34px;
   letter-spacing: -0.01em; line-height: 1.12; color: var(--sp-ink-heading);
   border-bottom: none; padding: 0; margin: 0 0 14px; cursor: text;
 }
 
 /* Read aloud — a 2px teal left rule, Spectral italic body, mono kicker. */
-#view-session-planner .scene-narration.read-aloud {
+:is(#view-session-planner, #app-shell) .scene-narration.read-aloud {
   font-family: var(--sp-font-serif); font-style: italic; font-size: 16px;
   line-height: 1.55; color: var(--sp-ink-primary);
   background: transparent; border-left: 2px solid var(--sp-readaloud-rule);
   border-radius: 0; padding: 2px 0 2px 18px; margin: 0; white-space: pre-wrap;
 }
-#view-session-planner .scene-narration.read-aloud::before {
+:is(#view-session-planner, #app-shell) .scene-narration.read-aloud::before {
   content: "Read Aloud"; display: block; text-transform: uppercase;
   font-family: var(--sp-font-mono); font-size: 9.5px; font-weight: 400;
   font-style: normal; letter-spacing: 0.11em; color: var(--sp-accent-teal);
   opacity: 1; margin-bottom: 6px;
 }
-#view-session-planner .scene-field--empty { color: var(--sp-ink-muted); font-style: italic; }
+:is(#view-session-planner, #app-shell) .scene-field--empty { color: var(--sp-ink-muted); font-style: italic; }
 
 /* The swapped-in edit textarea (click-to-edit): inherits the typeset font of
    the value it replaced, and paints the design's focus halo. */
-#view-session-planner .scene-edit-textarea {
+:is(#view-session-planner, #app-shell) .scene-edit-textarea {
   width: 100%; box-sizing: border-box; font: inherit; color: inherit;
   background: var(--sp-surface-input); border: 1px solid var(--sp-accent-teal);
   border-radius: var(--sp-radius-md); box-shadow: 0 0 0 3px var(--sp-focus-halo);
@@ -1842,112 +1842,112 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 }
 
 /* Section labels ("Elements", "Events, encounters & notes"). */
-#view-session-planner .scene-section-heading {
+:is(#view-session-planner, #app-shell) .scene-section-heading {
   font-family: var(--sp-font-mono); font-size: 10px; font-weight: 400;
   text-transform: uppercase; letter-spacing: 0.09em; color: var(--sp-ink-muted);
   border-top: none; padding-top: 0; margin: 30px 0 12px;
 }
 
 /* --- Elements: KEY vs MUNDANE, separated by 1px top rules --- */
-#view-session-planner .scene-elements-list { gap: 0; }
-#view-session-planner .scene-element-row { border-radius: 0; }
-#view-session-planner .scene-element-row--key {
+:is(#view-session-planner, #app-shell) .scene-elements-list { gap: 0; }
+:is(#view-session-planner, #app-shell) .scene-element-row { border-radius: 0; }
+:is(#view-session-planner, #app-shell) .scene-element-row--key {
   border: none; border-top: 1px solid var(--sp-border-hairline);
   border-left: 2px solid var(--element-type-color, var(--sp-accent-amber));
   background: transparent; padding: 12px 0 12px 12px;
 }
-#view-session-planner .scene-element-row--mundane {
+:is(#view-session-planner, #app-shell) .scene-element-row--mundane {
   border: none; border-top: 1px solid var(--sp-border-hairline);
   border-left: 2px solid transparent; padding: 10px 0 10px 12px;
 }
-#view-session-planner .scene-element-row--mundane:hover {
+:is(#view-session-planner, #app-shell) .scene-element-row--mundane:hover {
   background: transparent; border-top-color: var(--sp-border-hairline);
 }
-#view-session-planner .scene-element-glyph { line-height: 1; }
-#view-session-planner .scene-element-row--key .scene-element-glyph {
+:is(#view-session-planner, #app-shell) .scene-element-glyph { line-height: 1; }
+:is(#view-session-planner, #app-shell) .scene-element-row--key .scene-element-glyph {
   color: var(--element-type-color, var(--sp-accent-amber)); font-size: 1em;
 }
-#view-session-planner .scene-element-row--mundane .scene-element-glyph {
+:is(#view-session-planner, #app-shell) .scene-element-row--mundane .scene-element-glyph {
   color: var(--sp-ink-muted); font-size: 0.9em;
 }
-#view-session-planner .scene-element-name { cursor: text; }
-#view-session-planner .scene-element-row--key .scene-element-name {
+:is(#view-session-planner, #app-shell) .scene-element-name { cursor: text; }
+:is(#view-session-planner, #app-shell) .scene-element-row--key .scene-element-name {
   font-family: var(--sp-font-serif); font-weight: 600; font-size: 18px;
   color: var(--sp-ink-heading);
 }
-#view-session-planner .scene-element-row--mundane .scene-element-name {
+:is(#view-session-planner, #app-shell) .scene-element-row--mundane .scene-element-name {
   font-family: var(--sp-font-serif); font-weight: 400; font-size: 15px;
   color: var(--sp-ink-primary);
 }
-#view-session-planner .scene-element-graph-badge {
+:is(#view-session-planner, #app-shell) .scene-element-graph-badge {
   font-family: var(--sp-font-mono); font-size: 9px; font-weight: 400;
   text-transform: uppercase; letter-spacing: 0.06em;
   background: var(--sp-entity-badge-bg); color: var(--sp-ink-heading);
   border-radius: var(--sp-radius-sm); padding: 2px 6px;
 }
-#view-session-planner .scene-element-key-toggle,
-#view-session-planner .scene-element-remove-btn { color: var(--sp-ink-muted); }
-#view-session-planner .scene-element-key-toggle[data-kind="graph"] {
+:is(#view-session-planner, #app-shell) .scene-element-key-toggle,
+:is(#view-session-planner, #app-shell) .scene-element-remove-btn { color: var(--sp-ink-muted); }
+:is(#view-session-planner, #app-shell) .scene-element-key-toggle[data-kind="graph"] {
   color: var(--element-type-color, var(--sp-accent-amber)); opacity: 1;
 }
-#view-session-planner .scene-element-key-toggle:hover { color: var(--sp-accent-amber); }
-#view-session-planner .scene-element-remove-btn:hover { color: var(--sp-accent-danger); }
+:is(#view-session-planner, #app-shell) .scene-element-key-toggle:hover { color: var(--sp-accent-amber); }
+:is(#view-session-planner, #app-shell) .scene-element-remove-btn:hover { color: var(--sp-accent-danger); }
 
 /* Field-lines: a 76px mono label column + value. */
-#view-session-planner .scene-element-fields {
+:is(#view-session-planner, #app-shell) .scene-element-fields {
   display: flex; flex-direction: column; gap: 3px; margin-top: 8px; padding-left: 0;
 }
-#view-session-planner .pf-line {
+:is(#view-session-planner, #app-shell) .pf-line {
   display: grid; grid-template-columns: 76px 1fr; gap: 12px;
   align-items: baseline; padding: 1px 0; margin: 0;
 }
-#view-session-planner .scene-element-row--mundane .pf-line::before { content: none; }
-#view-session-planner .pf-label {
+:is(#view-session-planner, #app-shell) .scene-element-row--mundane .pf-line::before { content: none; }
+:is(#view-session-planner, #app-shell) .pf-label {
   flex: none; font-family: var(--sp-font-mono); font-size: 9.5px;
   text-transform: uppercase; letter-spacing: 0.06em; text-align: right;
   color: var(--sp-ink-muted);
 }
-#view-session-planner .pf-value {
+:is(#view-session-planner, #app-shell) .pf-value {
   min-width: 0; min-height: 20px; white-space: pre-wrap; line-height: 1.5; cursor: text;
 }
-#view-session-planner .scene-element-row--key .pf-value {
+:is(#view-session-planner, #app-shell) .scene-element-row--key .pf-value {
   font-size: 13.5px; color: var(--sp-key-field-ink);
 }
-#view-session-planner .scene-element-row--mundane .pf-value {
+:is(#view-session-planner, #app-shell) .scene-element-row--mundane .pf-value {
   font-size: 12.5px; color: var(--sp-mundane-field-ink);
 }
 /* Core lines (Trigger / Gives) read a touch heavier. */
-#view-session-planner .pf-line:has(.pf-value[data-field="trigger"]) .pf-value,
-#view-session-planner .pf-line:has(.pf-value[data-field="gives"]) .pf-value {
+:is(#view-session-planner, #app-shell) .pf-line:has(.pf-value[data-field="trigger"]) .pf-value,
+:is(#view-session-planner, #app-shell) .pf-line:has(.pf-value[data-field="gives"]) .pf-value {
   font-weight: 500; color: var(--sp-ink-primary);
 }
 
 /* Add-field: dashed pill chips ("+ TRIGGER" …). */
-#view-session-planner .scene-add-field { padding-left: 0; margin-top: 6px; }
-#view-session-planner .scene-add-field-btn,
-#view-session-planner .scene-add-field-option {
+:is(#view-session-planner, #app-shell) .scene-add-field { padding-left: 0; margin-top: 6px; }
+:is(#view-session-planner, #app-shell) .scene-add-field-btn,
+:is(#view-session-planner, #app-shell) .scene-add-field-option {
   font-family: var(--sp-font-mono); font-size: 9.5px; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--sp-ink-muted); opacity: 1;
   border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-pill);
   padding: 3px 10px;
 }
-#view-session-planner .scene-add-field-option::before { content: "+ "; }
-#view-session-planner .scene-add-field-btn:hover,
-#view-session-planner .scene-add-field-option:hover {
+:is(#view-session-planner, #app-shell) .scene-add-field-option::before { content: "+ "; }
+:is(#view-session-planner, #app-shell) .scene-add-field-btn:hover,
+:is(#view-session-planner, #app-shell) .scene-add-field-option:hover {
   border-color: var(--sp-accent-teal); color: var(--sp-accent-teal);
 }
-#view-session-planner .scene-add-field-menu { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+:is(#view-session-planner, #app-shell) .scene-add-field-menu { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 
 /* Add-element ghost row + quiet ✦ assist links. */
-#view-session-planner .scene-add-element-row.editable-list-ghost-row {
+:is(#view-session-planner, #app-shell) .scene-add-element-row.editable-list-ghost-row {
   border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-md);
   color: var(--sp-ink-muted); padding: 10px 14px; margin-top: 14px;
 }
-#view-session-planner .scene-add-element-row.editable-list-ghost-row:hover {
+:is(#view-session-planner, #app-shell) .scene-add-element-row.editable-list-ghost-row:hover {
   border-color: var(--sp-accent-teal); color: var(--sp-accent-teal);
 }
-#view-session-planner .scene-assist-propose-link,
-#view-session-planner .scene-assist-draft-link {
+:is(#view-session-planner, #app-shell) .scene-assist-propose-link,
+:is(#view-session-planner, #app-shell) .scene-assist-draft-link {
   font-family: var(--sp-font-ui); font-size: 12px; color: var(--sp-accent-teal); opacity: 1;
 }
 
@@ -1961,38 +1961,38 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
    amber `promote` / teal other kind badges, red/green diff rows, accept-green
    accepted card) with the scoped --sp-* tokens.
    ========================================================================= */
-#view-session-planner .wrap-panel {
+:is(#view-session-planner, #app-shell) .wrap-panel {
   border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-md);
   background: var(--sp-wrap-rail-bg); padding: 14px 16px; margin: 0 0 26px;
   max-width: 400px;
 }
-#view-session-planner .wrap-section + .wrap-section {
+:is(#view-session-planner, #app-shell) .wrap-section + .wrap-section {
   border-top: 1px solid var(--sp-border-hairline); margin-top: 12px; padding-top: 12px;
 }
-#view-session-planner .wrap-section-heading {
+:is(#view-session-planner, #app-shell) .wrap-section-heading {
   font-family: var(--sp-font-ui); font-size: 13px; font-weight: 600; color: var(--sp-ink-heading);
 }
 
 /* README §D blurb above the cards. */
-#view-session-planner .wrap-rail-blurb {
+:is(#view-session-planner, #app-shell) .wrap-rail-blurb {
   font-family: var(--sp-font-ui); font-size: 12.5px; line-height: 1.5;
   color: var(--sp-ink-secondary); margin: 8px 0 4px;
 }
 
-#view-session-planner .wrap-proposal-cards {
+:is(#view-session-planner, #app-shell) .wrap-proposal-cards {
   display: flex; flex-direction: column; gap: 8px; margin-top: 6px;
 }
 
 /* Proposal card: 1px border, radius 4px; accepted -> green border + tint,
    rejected -> flat grey (README §D). */
-#view-session-planner .wrap-proposal-card {
+:is(#view-session-planner, #app-shell) .wrap-proposal-card {
   border: 1px solid var(--sp-border-control); border-radius: var(--sp-radius-md);
   background: var(--sp-surface-card); padding: 11px 12px;
 }
-#view-session-planner .wrap-proposal-card--accepted {
+:is(#view-session-planner, #app-shell) .wrap-proposal-card--accepted {
   border-color: oklch(0.72 0.055 150); background: var(--sp-proposal-accepted-bg);
 }
-#view-session-planner .wrap-proposal-card--rejected {
+:is(#view-session-planner, #app-shell) .wrap-proposal-card--rejected {
   /* 29.7: was a hardcoded near-white bg -- rendered as a jarring bright card
      in dark mode. var(--sp-surface-page) is the same "flat, muted" neutral
      tone in light mode (near-identical to the original literal) and the
@@ -2001,80 +2001,80 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   opacity: 0.85;
 }
 
-#view-session-planner .wrap-proposal-header {
+:is(#view-session-planner, #app-shell) .wrap-proposal-header {
   display: flex; align-items: center; gap: 8px; margin-bottom: 7px;
 }
-#view-session-planner .wrap-proposal-kind-badge {
+:is(#view-session-planner, #app-shell) .wrap-proposal-kind-badge {
   font-family: var(--sp-font-mono); font-size: 9px; letter-spacing: 0.08em;
   text-transform: uppercase; padding: 2px 6px; border-radius: var(--sp-radius-sm);
   background: var(--sp-badge-teal-bg); color: var(--sp-badge-teal-ink); flex-shrink: 0;
 }
-#view-session-planner .wrap-proposal-kind-badge[data-kind="promote"] {
+:is(#view-session-planner, #app-shell) .wrap-proposal-kind-badge[data-kind="promote"] {
   background: var(--sp-badge-promote-bg); color: var(--sp-badge-promote-ink);
 }
-#view-session-planner .wrap-proposal-target {
+:is(#view-session-planner, #app-shell) .wrap-proposal-target {
   font-family: var(--sp-font-ui); font-size: 13px; font-weight: 500; color: var(--sp-ink-heading);
 }
-#view-session-planner .wrap-proposal-spacer { flex: 1; }
-#view-session-planner .wrap-proposal-status {
+:is(#view-session-planner, #app-shell) .wrap-proposal-spacer { flex: 1; }
+:is(#view-session-planner, #app-shell) .wrap-proposal-status {
   font-family: var(--sp-font-mono); font-size: 9.5px; color: var(--sp-ink-muted); flex-shrink: 0;
 }
-#view-session-planner .wrap-proposal-card--accepted .wrap-proposal-status { color: var(--sp-accepted-status-ink); }
+:is(#view-session-planner, #app-shell) .wrap-proposal-card--accepted .wrap-proposal-status { color: var(--sp-accepted-status-ink); }
 
 /* Diff rows: removed on red-ish, added on green-ish (README §D). Ink comes
    from a theme-aware token (29.7) -- dark mode needs a genuinely lighter
    ink here, not the light-mode value, or the text is unreadable against its
    own dark-tinted row background. */
-#view-session-planner .wrap-proposal-diff {
+:is(#view-session-planner, #app-shell) .wrap-proposal-diff {
   display: flex; gap: 8px; font-family: var(--sp-font-ui); font-size: 12px;
   line-height: 1.45; padding: 3px 8px; border-radius: var(--sp-radius-sm); margin-bottom: 3px;
 }
-#view-session-planner .wrap-proposal-diff--removed {
+:is(#view-session-planner, #app-shell) .wrap-proposal-diff--removed {
   background: var(--sp-diff-removed-bg); color: var(--sp-diff-removed-ink);
 }
-#view-session-planner .wrap-proposal-diff--added {
+:is(#view-session-planner, #app-shell) .wrap-proposal-diff--added {
   background: var(--sp-diff-added-bg); color: var(--sp-diff-added-ink);
 }
-#view-session-planner .wrap-proposal-diff-sign {
+:is(#view-session-planner, #app-shell) .wrap-proposal-diff-sign {
   font-family: var(--sp-font-mono); opacity: 0.7; flex-shrink: 0;
 }
-#view-session-planner .wrap-proposal-diff-text { word-break: break-word; }
+:is(#view-session-planner, #app-shell) .wrap-proposal-diff-text { word-break: break-word; }
 
-#view-session-planner .wrap-proposal-why {
+:is(#view-session-planner, #app-shell) .wrap-proposal-why {
   font-family: var(--sp-font-ui); font-size: 11.5px; line-height: 1.45;
   color: var(--sp-ink-muted); margin-top: 7px;
 }
 
-#view-session-planner .wrap-proposal-actions { display: flex; gap: 6px; margin-top: 9px; }
-#view-session-planner .wrap-proposal-accept-btn,
-#view-session-planner .wrap-proposal-reject-btn {
+:is(#view-session-planner, #app-shell) .wrap-proposal-actions { display: flex; gap: 6px; margin-top: 9px; }
+:is(#view-session-planner, #app-shell) .wrap-proposal-accept-btn,
+:is(#view-session-planner, #app-shell) .wrap-proposal-reject-btn {
   padding: 4px 11px; border-radius: var(--sp-radius-md); font-size: 11.5px;
   border: 1px solid var(--sp-border-control); background: transparent;
   color: var(--sp-ink-primary); cursor: pointer;
 }
-#view-session-planner .wrap-proposal-accept-btn--on {
+:is(#view-session-planner, #app-shell) .wrap-proposal-accept-btn--on {
   border-color: var(--sp-accent-accept); background: var(--sp-accent-accept); color: oklch(0.99 0.005 150);
 }
-#view-session-planner .wrap-proposal-reject-btn--on {
+:is(#view-session-planner, #app-shell) .wrap-proposal-reject-btn--on {
   border-color: oklch(0.55 0.10 25); background: oklch(0.55 0.10 25); color: oklch(0.99 0.005 25);
 }
 
 /* Footer: ghost "Accept all" + primary "Apply N to graph" (disabled-looking
    until >=1 accepted). */
-#view-session-planner .wrap-proposal-footer {
+:is(#view-session-planner, #app-shell) .wrap-proposal-footer {
   display: flex; align-items: center; gap: 9px; margin-top: 12px;
   padding-top: 12px; border-top: 1px solid var(--sp-border-hairline);
 }
-#view-session-planner .wrap-accept-all-btn {
+:is(#view-session-planner, #app-shell) .wrap-accept-all-btn {
   padding: 7px 12px; border-radius: var(--sp-radius-lg); font-size: 12.5px;
   border: 1px solid var(--sp-border-control); background: transparent; color: var(--sp-ink-primary);
   cursor: pointer;
 }
-#view-session-planner .wrap-apply-btn {
+:is(#view-session-planner, #app-shell) .wrap-apply-btn {
   margin-left: auto; padding: 7px 15px; border-radius: var(--sp-radius-lg); font-size: 12.5px;
   border: none; background: var(--sp-border-control); color: var(--sp-ink-muted); cursor: default;
 }
-#view-session-planner .wrap-apply-btn--ready {
+:is(#view-session-planner, #app-shell) .wrap-apply-btn--ready {
   background: var(--sp-accent-accept); color: oklch(0.99 0.005 150); cursor: pointer;
 }
 
@@ -2088,112 +2088,112 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
    ========================================================================= */
 
 /* Sub-bar right cluster: the two segmented controls + the Wrap button. */
-#view-session-planner .scene-subbar-controls {
+:is(#view-session-planner, #app-shell) .scene-subbar-controls {
   display: flex; align-items: center; gap: 10px; flex-shrink: 0; flex-wrap: wrap;
 }
-#view-session-planner .sp-segmented {
+:is(#view-session-planner, #app-shell) .sp-segmented {
   display: inline-flex; align-items: stretch;
   border: 1px solid var(--sp-border-control); border-radius: var(--sp-radius-md);
   overflow: hidden; background: var(--sp-surface-input);
 }
-#view-session-planner .sp-segmented-btn {
+:is(#view-session-planner, #app-shell) .sp-segmented-btn {
   font-family: var(--sp-font-ui); font-size: 12px; line-height: 1.1;
   padding: 4px 12px; border: none; background: transparent;
   color: var(--sp-ink-muted); cursor: pointer; transition: background-color 0.12s ease, color 0.12s ease;
 }
-#view-session-planner .sp-segmented-btn + .sp-segmented-btn {
+:is(#view-session-planner, #app-shell) .sp-segmented-btn + .sp-segmented-btn {
   border-left: 1px solid var(--sp-border-control);
 }
-#view-session-planner .sp-segmented-btn:hover { color: var(--sp-accent-teal); }
-#view-session-planner .sp-segmented-btn--active {
+:is(#view-session-planner, #app-shell) .sp-segmented-btn:hover { color: var(--sp-accent-teal); }
+:is(#view-session-planner, #app-shell) .sp-segmented-btn--active {
   background: var(--sp-accent-teal-selected); color: var(--sp-ink-heading); font-weight: 600;
 }
 
 /* ---- Cards layout: a responsive grid, card chrome, label-above-value. ---- */
-#view-session-planner .scene-elements-list[data-layout="cards"] {
+:is(#view-session-planner, #app-shell) .scene-elements-list[data-layout="cards"] {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 12px;
 }
-#view-session-planner .scene-elements-list[data-layout="cards"] .scene-element-row {
+:is(#view-session-planner, #app-shell) .scene-elements-list[data-layout="cards"] .scene-element-row {
   border: 1px solid var(--sp-border-hairline);
   border-radius: var(--sp-radius-sm); padding: 13px 14px 12px;
 }
-#view-session-planner .scene-elements-list[data-layout="cards"] .scene-element-row--key {
+:is(#view-session-planner, #app-shell) .scene-elements-list[data-layout="cards"] .scene-element-row--key {
   border-top: 3px solid var(--element-type-color, var(--sp-accent-amber));
   border-left: 1px solid var(--sp-border-hairline);
   background: var(--sp-card-key-bg);
 }
-#view-session-planner .scene-elements-list[data-layout="cards"] .scene-element-row--mundane {
+:is(#view-session-planner, #app-shell) .scene-elements-list[data-layout="cards"] .scene-element-row--mundane {
   border-top: 3px solid var(--sp-border-control);
   border-left: 1px solid var(--sp-border-hairline);
   background: var(--sp-surface-card);
 }
 /* Label above its value (rather than the 76px beside-column of Page layout). */
-#view-session-planner .scene-elements-list[data-layout="cards"] .pf-line {
+:is(#view-session-planner, #app-shell) .scene-elements-list[data-layout="cards"] .pf-line {
   display: block; padding: 3px 0;
 }
-#view-session-planner .scene-elements-list[data-layout="cards"] .pf-label {
+:is(#view-session-planner, #app-shell) .scene-elements-list[data-layout="cards"] .pf-label {
   display: block; text-align: left; margin-bottom: 2px;
 }
 /* The add-element ghost row spans the full grid width, not a single cell. */
-#view-session-planner .scene-elements-list[data-layout="cards"] .scene-add-element-row {
+:is(#view-session-planner, #app-shell) .scene-elements-list[data-layout="cards"] .scene-add-element-row {
   grid-column: 1 / -1;
 }
 
 /* ---- Run mode: hide edit chrome, enlarge read-aloud, collapse MUNDANE. ---- */
 /* All edit chrome hides (README §E) — hidden, not removed, so a switch back to
    Prep restores it instantly with no re-render. */
-#view-session-planner .scene-page[data-mode="run"] .scene-element-remove-btn,
-#view-session-planner .scene-page[data-mode="run"] .scene-element-key-toggle,
-#view-session-planner .scene-page[data-mode="run"] .scene-add-field,
-#view-session-planner .scene-page[data-mode="run"] .scene-add-element-row,
-#view-session-planner .scene-page[data-mode="run"] .npc-creature-btn,
-#view-session-planner .scene-page[data-mode="run"] .from-graph-btn,
-#view-session-planner .scene-page[data-mode="run"] .suggest-dressing-btn,
-#view-session-planner .scene-page[data-mode="run"] .add-element-btn,
-#view-session-planner .scene-page[data-mode="run"] .scene-wrap-toggle-btn,
-#view-session-planner .scene-page[data-mode="run"] .scene-assist-propose-link,
-#view-session-planner .scene-page[data-mode="run"] .scene-assist-draft-link,
-#view-session-planner .scene-page[data-mode="run"] .draft-read-aloud-link,
-#view-session-planner .scene-page[data-mode="run"] .scene-extras-section {
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-element-remove-btn,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-element-key-toggle,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-add-field,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-add-element-row,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .npc-creature-btn,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .from-graph-btn,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .suggest-dressing-btn,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .add-element-btn,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-wrap-toggle-btn,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-assist-propose-link,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-assist-draft-link,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .draft-read-aloud-link,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-extras-section {
   display: none !important;
 }
 /* Read-aloud jumps to 20px. */
-#view-session-planner .scene-page[data-mode="run"] .scene-narration.read-aloud {
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-narration.read-aloud {
   font-size: 20px;
 }
 /* MUNDANE (local, no stat block) rows collapse to their Gives line only; KEY
    rows (data-kind="graph") and stat-bearing NPC rows stay full. */
-#view-session-planner .scene-page[data-mode="run"] .scene-element-row[data-kind="local"][data-has-stat="false"] .scene-element-fields .pf-line:not([data-field="gives"]) {
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-element-row[data-kind="local"][data-has-stat="false"] .scene-element-fields .pf-line:not([data-field="gives"]) {
   display: none;
 }
 
 /* Extras + Beyond-this-room drawer. */
-#view-session-planner .scene-extras-bar { gap: 8px; }
-#view-session-planner .beyond-room-drawer {
+:is(#view-session-planner, #app-shell) .scene-extras-bar { gap: 8px; }
+:is(#view-session-planner, #app-shell) .beyond-room-drawer {
   margin-top: 26px; border-top: 1px solid var(--sp-border-hairline); padding-top: 12px;
 }
-#view-session-planner .beyond-room-drawer-toggle {
+:is(#view-session-planner, #app-shell) .beyond-room-drawer-toggle {
   font-family: var(--sp-font-mono); font-size: 10px; text-transform: uppercase;
   letter-spacing: 0.08em; color: var(--sp-ink-muted);
 }
 
 /* --- Click-to-edit halos: at rest typeset, hover paints a 4px halo. --- */
-#view-session-planner .scene-place-name,
-#view-session-planner .scene-narration.read-aloud,
-#view-session-planner .scene-element-name,
-#view-session-planner .scene-objective,
-#view-session-planner .scene-place-desc-value,
-#view-session-planner .pf-value {
+:is(#view-session-planner, #app-shell) .scene-place-name,
+:is(#view-session-planner, #app-shell) .scene-narration.read-aloud,
+:is(#view-session-planner, #app-shell) .scene-element-name,
+:is(#view-session-planner, #app-shell) .scene-objective,
+:is(#view-session-planner, #app-shell) .scene-place-desc-value,
+:is(#view-session-planner, #app-shell) .pf-value {
   border-radius: var(--sp-radius-sm);
   transition: box-shadow 0.1s ease, background-color 0.1s ease;
 }
-#view-session-planner .scene-place-name:hover,
-#view-session-planner .scene-narration.read-aloud:hover,
-#view-session-planner .scene-element-name:hover,
-#view-session-planner .scene-objective:hover,
-#view-session-planner .scene-place-desc-value:hover,
-#view-session-planner .pf-value:hover {
+:is(#view-session-planner, #app-shell) .scene-place-name:hover,
+:is(#view-session-planner, #app-shell) .scene-narration.read-aloud:hover,
+:is(#view-session-planner, #app-shell) .scene-element-name:hover,
+:is(#view-session-planner, #app-shell) .scene-objective:hover,
+:is(#view-session-planner, #app-shell) .scene-place-desc-value:hover,
+:is(#view-session-planner, #app-shell) .pf-value:hover {
   background: var(--sp-hover-halo);
   box-shadow: 0 0 0 4px var(--sp-hover-halo);
 }
@@ -2204,119 +2204,119 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
    ========================================================================= */
 
 /* Objective — the third body line, under the scene title. */
-#view-session-planner .scene-objective {
+:is(#view-session-planner, #app-shell) .scene-objective {
   font-family: var(--sp-font-ui); font-size: 14px; line-height: 1.5;
   color: var(--sp-ink-secondary); max-width: 62ch; margin: 0 0 18px;
   cursor: text; min-height: 20px;
 }
-#view-session-planner .scene-objective.scene-field--empty {
+:is(#view-session-planner, #app-shell) .scene-objective.scene-field--empty {
   color: var(--sp-ink-muted); font-style: italic;
 }
 
 /* "The place" — a 76px mono-label / editable-value grid, bounded top+bottom
    by 1px hairlines. Editing writes to the graph NODE, not the scene. */
-#view-session-planner .scene-place-desc-host { margin: 0 0 24px; }
-#view-session-planner .scene-place-grid {
+:is(#view-session-planner, #app-shell) .scene-place-desc-host { margin: 0 0 24px; }
+:is(#view-session-planner, #app-shell) .scene-place-grid {
   display: grid; grid-template-columns: 76px 1fr; gap: 12px; align-items: baseline;
   padding: 8px 0;
   border-top: 1px solid var(--sp-border-hairline);
   border-bottom: 1px solid var(--sp-border-hairline);
 }
-#view-session-planner .scene-place-grid-label {
+:is(#view-session-planner, #app-shell) .scene-place-grid-label {
   font-family: var(--sp-font-mono); font-size: 9.5px; letter-spacing: 0.07em;
   text-transform: uppercase; color: var(--sp-place-label); text-align: right;
 }
-#view-session-planner .scene-place-desc-value {
+:is(#view-session-planner, #app-shell) .scene-place-desc-value {
   font-size: 13px; line-height: 1.55; color: var(--sp-ink-secondary);
   max-width: 62ch; min-height: 20px; cursor: text; white-space: pre-wrap;
 }
-#view-session-planner .scene-place-desc-value.scene-field--empty {
+:is(#view-session-planner, #app-shell) .scene-place-desc-value.scene-field--empty {
   color: var(--sp-ink-muted); font-style: italic;
 }
 
 /* Missing-description banner — amber, click-to-seed. */
-#view-session-planner .scene-missing-desc-banner {
+:is(#view-session-planner, #app-shell) .scene-missing-desc-banner {
   display: flex; align-items: baseline; gap: 10px; max-width: 62ch;
   padding: 9px 12px; border: 1px solid var(--sp-banner-border);
   border-radius: var(--sp-radius-md); background: var(--sp-banner-bg); cursor: pointer;
   transition: border-color 0.12s ease;
 }
-#view-session-planner .scene-missing-desc-banner:hover { border-color: var(--sp-accent-amber); }
-#view-session-planner .scene-missing-desc-glyph {
+:is(#view-session-planner, #app-shell) .scene-missing-desc-banner:hover { border-color: var(--sp-accent-amber); }
+:is(#view-session-planner, #app-shell) .scene-missing-desc-glyph {
   font-family: var(--sp-font-mono); font-size: 13px; color: var(--sp-accent-amber); flex: none;
 }
-#view-session-planner .scene-missing-desc-copy {
+:is(#view-session-planner, #app-shell) .scene-missing-desc-copy {
   font-size: 12.5px; line-height: 1.45; color: var(--sp-ink-secondary);
 }
-#view-session-planner .scene-missing-desc-cta { color: var(--sp-accent-teal); }
+:is(#view-session-planner, #app-shell) .scene-missing-desc-cta { color: var(--sp-accent-teal); }
 
 /* Draft-read-aloud ghost link. */
-#view-session-planner .draft-read-aloud-link {
+:is(#view-session-planner, #app-shell) .draft-read-aloud-link {
   display: inline-flex; align-items: center; gap: 7px; margin: 6px 0 30px;
   font-family: var(--sp-font-ui); font-size: 12px; color: var(--sp-accent-teal); opacity: 1;
 }
-#view-session-planner .draft-read-aloud-link:hover { color: var(--sp-accent-teal); text-decoration: underline; }
-#view-session-planner .draft-read-aloud-glyph { font-family: var(--sp-font-mono); }
+:is(#view-session-planner, #app-shell) .draft-read-aloud-link:hover { color: var(--sp-accent-teal); text-decoration: underline; }
+:is(#view-session-planner, #app-shell) .draft-read-aloud-glyph { font-family: var(--sp-font-mono); }
 
 /* Actions row: dashed action buttons below the elements list. */
-#view-session-planner .scene-actions { margin-top: 14px; }
-#view-session-planner .scene-actions-row { display: flex; flex-wrap: wrap; gap: 8px; }
-#view-session-planner .scene-action-dashed-btn {
+:is(#view-session-planner, #app-shell) .scene-actions { margin-top: 14px; }
+:is(#view-session-planner, #app-shell) .scene-actions-row { display: flex; flex-wrap: wrap; gap: 8px; }
+:is(#view-session-planner, #app-shell) .scene-action-dashed-btn {
   display: inline-flex; align-items: center; gap: 7px;
   border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-lg);
   background: transparent; color: var(--sp-ink-muted);
   font-family: var(--sp-font-ui); font-size: 12.5px; padding: 7px 12px;
   transition: color 0.12s ease, border-color 0.12s ease;
 }
-#view-session-planner .scene-action-dashed-btn:hover {
+:is(#view-session-planner, #app-shell) .scene-action-dashed-btn:hover {
   border-color: var(--sp-accent-teal); color: var(--sp-accent-teal);
 }
-#view-session-planner .scene-action-glyph { font-family: var(--sp-font-mono); }
-#view-session-planner .scene-action-glyph--teal { color: var(--sp-accent-teal); }
+:is(#view-session-planner, #app-shell) .scene-action-glyph { font-family: var(--sp-font-mono); }
+:is(#view-session-planner, #app-shell) .scene-action-glyph--teal { color: var(--sp-accent-teal); }
 
 /* From-graph inline picker. */
-#view-session-planner .scene-actions-picker-host:empty { display: none; }
-#view-session-planner .from-graph-picker {
+:is(#view-session-planner, #app-shell) .scene-actions-picker-host:empty { display: none; }
+:is(#view-session-planner, #app-shell) .from-graph-picker {
   margin-top: 12px; border: 1px solid var(--sp-border-control);
   border-radius: var(--sp-radius-lg); background: var(--sp-surface-card); padding: 13px 14px;
 }
-#view-session-planner .from-graph-picker-bar {
+:is(#view-session-planner, #app-shell) .from-graph-picker-bar {
   display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
 }
-#view-session-planner .from-graph-picker-kicker {
+:is(#view-session-planner, #app-shell) .from-graph-picker-kicker {
   font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: 0.09em;
   text-transform: uppercase; color: var(--sp-ink-muted); flex: 1;
 }
-#view-session-planner .from-graph-picker-close-btn { color: var(--sp-ink-muted); }
-#view-session-planner .from-graph-search-input {
+:is(#view-session-planner, #app-shell) .from-graph-picker-close-btn { color: var(--sp-ink-muted); }
+:is(#view-session-planner, #app-shell) .from-graph-search-input {
   width: 100%; box-sizing: border-box; padding: 7px 10px;
   border: 1px solid var(--sp-border-control); border-radius: var(--sp-radius-md);
   background: var(--sp-surface-input); color: var(--sp-ink-primary);
   font-family: var(--sp-font-ui); font-size: 13px; margin-bottom: 10px;
 }
-#view-session-planner .from-graph-search-input:focus {
+:is(#view-session-planner, #app-shell) .from-graph-search-input:focus {
   outline: none; border-color: var(--sp-accent-teal);
   box-shadow: 0 0 0 3px var(--sp-focus-halo);
 }
-#view-session-planner .from-graph-results {
+:is(#view-session-planner, #app-shell) .from-graph-results {
   display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto;
 }
-#view-session-planner .from-graph-option {
+:is(#view-session-planner, #app-shell) .from-graph-option {
   display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
   padding: 7px 9px; border: none; border-left: 2px solid var(--sp-accent-teal-selected);
   border-radius: var(--sp-radius-md); background: transparent; cursor: pointer;
 }
-#view-session-planner .from-graph-option:hover { background: var(--sp-row-active-bg); }
-#view-session-planner .from-graph-option-name { font-size: 13px; color: var(--sp-ink-heading); }
-#view-session-planner .from-graph-option-type {
+:is(#view-session-planner, #app-shell) .from-graph-option:hover { background: var(--sp-row-active-bg); }
+:is(#view-session-planner, #app-shell) .from-graph-option-name { font-size: 13px; color: var(--sp-ink-heading); }
+:is(#view-session-planner, #app-shell) .from-graph-option-type {
   font-family: var(--sp-font-mono); font-size: 9.5px; letter-spacing: 0.06em;
   text-transform: uppercase; color: var(--sp-ink-muted);
 }
-#view-session-planner .from-graph-option-hint {
+:is(#view-session-planner, #app-shell) .from-graph-option-hint {
   margin-left: auto; font-size: 11.5px; color: var(--sp-ink-muted);
 }
-#view-session-planner .from-graph-picker-footer { margin-top: 10px; font-size: 11.5px; }
-#view-session-planner .from-graph-no-results { padding: 10px 9px; font-size: 12.5px; }
+:is(#view-session-planner, #app-shell) .from-graph-picker-footer { margin-top: 10px; font-size: 11.5px; }
+:is(#view-session-planner, #app-shell) .from-graph-no-results { padding: 10px 9px; font-size: 12.5px; }
 
 /* =========================================================================
    §C (29.4) — stat blocks: the "+ STAT BLOCK" chip, the disclosure line, the
@@ -2326,75 +2326,75 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 
 /* "+ STAT BLOCK" chip — the same dashed-pill shape as the add-field chips,
    tinted toward the rust stat-block accent. */
-#view-session-planner .add-statblock-chip {
+:is(#view-session-planner, #app-shell) .add-statblock-chip {
   font-family: var(--sp-font-mono); font-size: 9.5px; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--sp-statblock-header-ink); opacity: 1;
   border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-pill);
   padding: 3px 10px;
 }
-#view-session-planner .add-statblock-chip:hover {
+:is(#view-session-planner, #app-shell) .add-statblock-chip:hover {
   border-color: var(--sp-accent-rust); color: var(--sp-accent-rust);
 }
 
 /* Disclosure line — mono, teal, `▸ <ref>  ×N`. */
-#view-session-planner .sp-statblock { margin-top: 10px; }
-#view-session-planner .sp-statblock-toggle {
+:is(#view-session-planner, #app-shell) .sp-statblock { margin-top: 10px; }
+:is(#view-session-planner, #app-shell) .sp-statblock-toggle {
   display: inline-block; cursor: pointer;
   font-family: var(--sp-font-mono); font-size: 10.5px; color: var(--sp-accent-teal);
 }
 
 /* Open panel — 1px border, 3px rust top rule, rust-tinted paper background. */
-#view-session-planner .sp-statblock-panel {
+:is(#view-session-planner, #app-shell) .sp-statblock-panel {
   margin-top: 8px; border: 1px solid var(--sp-border-control);
   border-top: 3px solid var(--sp-statblock-border-top);
   border-radius: var(--sp-radius-sm); background: var(--sp-statblock-bg);
   padding: 12px 14px;
 }
-#view-session-planner .sp-statblock-header {
+:is(#view-session-planner, #app-shell) .sp-statblock-header {
   display: flex; align-items: center; gap: 9px; margin-bottom: 10px;
 }
-#view-session-planner .sp-statblock-name {
+:is(#view-session-planner, #app-shell) .sp-statblock-name {
   font-family: var(--sp-font-serif); font-size: 15px; font-weight: 600;
   color: var(--sp-statblock-header-ink);
 }
-#view-session-planner .sp-statblock-count-stepper {
+:is(#view-session-planner, #app-shell) .sp-statblock-count-stepper {
   display: flex; align-items: center; gap: 4px; margin-left: auto;
 }
-#view-session-planner .sp-statblock-count-btn {
+:is(#view-session-planner, #app-shell) .sp-statblock-count-btn {
   width: 20px; height: 20px; display: grid; place-items: center;
   border: 1px solid var(--sp-border-control); border-radius: var(--sp-radius-md);
   background: transparent; cursor: pointer; font-size: 12px; color: var(--sp-ink-secondary);
   transition: border-color 0.12s ease;
 }
-#view-session-planner .sp-statblock-count-btn:hover { border-color: var(--sp-accent-rust); }
-#view-session-planner .sp-statblock-count {
+:is(#view-session-planner, #app-shell) .sp-statblock-count-btn:hover { border-color: var(--sp-accent-rust); }
+:is(#view-session-planner, #app-shell) .sp-statblock-count {
   font-family: var(--sp-font-mono); font-size: 12px; min-width: 26px;
   text-align: center; color: var(--sp-ink-heading);
 }
 
 /* AC / HP / Speed / CR — a repeat(4,1fr) grid of white editable boxes. */
-#view-session-planner .sp-statblock-grid {
+:is(#view-session-planner, #app-shell) .sp-statblock-grid {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px;
 }
-#view-session-planner .sp-statblock-box {
+:is(#view-session-planner, #app-shell) .sp-statblock-box {
   border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-sm);
   background: var(--sp-surface-input); padding: 5px 8px;
 }
-#view-session-planner .sp-statblock-box-label {
+:is(#view-session-planner, #app-shell) .sp-statblock-box-label {
   font-family: var(--sp-font-mono); font-size: 8.5px; letter-spacing: 0.08em;
   text-transform: uppercase; color: var(--sp-ink-muted);
 }
-#view-session-planner .sp-statblock-box-value {
+:is(#view-session-planner, #app-shell) .sp-statblock-box-value {
   font-family: var(--sp-font-mono); font-size: 12.5px; color: var(--sp-ink-primary);
   min-height: 18px; cursor: text;
 }
 
 /* Raw paste block — free-text, pre-wrap, always a visible white box. */
-#view-session-planner .sp-statblock-raw-label {
+:is(#view-session-planner, #app-shell) .sp-statblock-raw-label {
   font-family: var(--sp-font-mono); font-size: 8.5px; letter-spacing: 0.08em;
   text-transform: uppercase; color: var(--sp-ink-muted); margin-bottom: 4px;
 }
-#view-session-planner .sp-statblock-raw {
+:is(#view-session-planner, #app-shell) .sp-statblock-raw {
   font-family: var(--sp-font-mono); font-size: 11.5px; line-height: 1.55;
   white-space: pre-wrap; color: var(--sp-ink-primary);
   border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-sm);
@@ -2402,30 +2402,30 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 }
 
 /* Foundry actor-id line — teal when set, grey placeholder when empty. */
-#view-session-planner .sp-statblock-foundry-row {
+:is(#view-session-planner, #app-shell) .sp-statblock-foundry-row {
   display: flex; align-items: baseline; gap: 8px; margin-top: 9px;
 }
-#view-session-planner .sp-statblock-foundry-label {
+:is(#view-session-planner, #app-shell) .sp-statblock-foundry-label {
   font-family: var(--sp-font-mono); font-size: 9px; letter-spacing: 0.08em;
   text-transform: uppercase; color: var(--sp-ink-muted);
 }
-#view-session-planner .sp-statblock-foundry {
+:is(#view-session-planner, #app-shell) .sp-statblock-foundry {
   font-family: var(--sp-font-mono); font-size: 11px; color: var(--sp-accent-teal);
   min-width: 140px; min-height: 16px; cursor: text;
 }
-#view-session-planner .sp-statblock-foundry.scene-field--empty {
+:is(#view-session-planner, #app-shell) .sp-statblock-foundry.scene-field--empty {
   color: var(--sp-ink-muted); font-style: normal;
 }
 
 /* The "▣ NPC or creature" glyph reads in the rust stat-block accent. */
-#view-session-planner .scene-action-glyph--rust { color: var(--sp-accent-rust); }
+:is(#view-session-planner, #app-shell) .scene-action-glyph--rust { color: var(--sp-accent-rust); }
 
 /* Narrow phones: keep the column readable (29.7 owns the full responsive/dark
    pass; this is just a floor so nothing clips). */
 @media (max-width: 480px) {
-  #view-session-planner .scene-page { padding: 0 16px 60px; }
-  #view-session-planner .scene-top-bar { padding: 8px 16px; margin: 0 -16px 20px; }
-  #view-session-planner .sp-statblock-grid { grid-template-columns: repeat(2, 1fr); }
+  :is(#view-session-planner, #app-shell) .scene-page { padding: 0 16px 60px; }
+  :is(#view-session-planner, #app-shell) .scene-top-bar { padding: 8px 16px; margin: 0 -16px 20px; }
+  :is(#view-session-planner, #app-shell) .sp-statblock-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
 /* ===========================================================================
@@ -2634,32 +2634,109 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   overflow-y: auto;
   padding: 30px 40px 60px;
 }
-#app-shell .planner-plan-title {
-  font-family: var(--sp-font-serif);
-  font-weight: 500;
-  font-size: 26px;
-  margin: 0 0 18px;
-  color: var(--sp-ink-heading);
+/* Phase 30 task 30.3: the scene surface scrolls as a whole; its sub-bar sticks
+   to the top. The shelf/runsheet padding is dropped (the scene page owns its
+   own 30px gutter + centering). */
+#app-shell .planner-scene-surface { padding: 0; overflow-y: auto; }
+#app-shell .planner-scene-view { min-height: 100%; }
+#app-shell .scene-top-bar { position: sticky; top: 0; z-index: 3; }
+
+/* --- plan shelf (README §A) --- */
+#app-shell .planner-plans-col { max-width: 900px; }
+#app-shell .planner-plans-title {
+  font-family: var(--sp-font-serif); font-weight: 500; font-size: 30px;
+  margin: 0 0 6px; color: var(--sp-ink-heading);
 }
-#app-shell .planner-runsheet-row {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
-  padding: 9px 12px;
-  margin-bottom: 6px;
-  border: 1px solid var(--sp-border-hairline);
+#app-shell .planner-plans-sub { color: oklch(0.50 0.012 70); font-size: 13.5px; margin-bottom: var(--sp-space-7); }
+#app-shell .planner-plans-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px;
+}
+#app-shell .planner-plan-card {
+  border: 1px solid var(--sp-plan-card-border);
+  border-top: 3px solid var(--sp-accent-teal);
   border-radius: var(--sp-radius-md);
   background: var(--sp-surface-card);
-  cursor: pointer;
+  padding: 16px 16px 14px; cursor: pointer;
 }
-#app-shell .planner-runsheet-row:hover { border-color: var(--sp-plan-card-hover-border); }
-#app-shell .planner-runsheet-num { font-family: var(--sp-font-mono); font-size: 11px; color: var(--sp-row-index-ink); }
-#app-shell .planner-runsheet-name { font-size: 13.5px; color: var(--sp-ink-primary); }
+#app-shell .planner-plan-card:hover { border-color: var(--sp-plan-card-hover-border); }
+#app-shell .planner-plan-card-name {
+  font-family: var(--sp-font-serif); font-size: 18px; font-weight: 500; margin-bottom: 5px; color: var(--sp-ink-heading);
+}
+#app-shell .planner-plan-card-meta {
+  font-family: var(--sp-font-mono); font-size: 10.5px; color: var(--sp-ink-muted); margin-bottom: var(--sp-space-4);
+}
+#app-shell .planner-plan-card-scenes { display: flex; flex-direction: column; gap: 4px; }
+#app-shell .planner-plan-card-scene { font-size: 12.5px; color: oklch(0.45 0.015 60); display: flex; gap: 8px; }
+#app-shell .planner-plan-card-scene-num { font-family: var(--sp-font-mono); color: var(--sp-row-index-ink); }
+#app-shell .planner-plan-card--new {
+  border: 1px dashed var(--sp-border-dashed);
+  display: grid; place-items: center; min-height: 130px;
+  color: var(--sp-ink-muted); font-size: 13px; background: none;
+}
+#app-shell .planner-plan-card--new:hover { border-color: oklch(0.60 0.060 185); color: oklch(0.45 0.075 185); }
 
-/* Light stub sub-roots for the delegated scene view (30.3 replaces these with
-   the real designer scene DOM). min-height keeps them a non-empty box so the
-   shell-integration e2e's visibility waits resolve. */
-#app-shell .shell-scene-stub { min-height: 2px; }
+/* --- plan runsheet (README §B) --- */
+#app-shell .planner-plan-col { max-width: 860px; }
+#app-shell .planner-runsheet-kicker {
+  font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--sp-ink-muted); margin-bottom: var(--sp-space-3);
+}
+#app-shell .planner-runsheet-title {
+  font-family: var(--sp-font-serif); font-size: 32px; font-weight: 500; line-height: 1.15;
+  margin-bottom: 7px; max-width: 20ch; color: var(--sp-ink-heading);
+}
+#app-shell .planner-runsheet-meta {
+  display: flex; align-items: center; gap: 12px; color: oklch(0.52 0.012 70); font-size: 12.5px; margin-bottom: var(--sp-space-7);
+}
+#app-shell .planner-runsheet-meta-sep { color: oklch(0.78 0.010 80); }
+#app-shell .planner-runsheet-delete { cursor: pointer; }
+#app-shell .planner-runsheet-delete:hover { color: var(--sp-accent-danger); }
+#app-shell .planner-runsheet-rows { display: flex; flex-direction: column; }
+#app-shell .planner-runsheet-row {
+  display: flex; gap: 16px; align-items: flex-start;
+  padding: 15px 12px 15px 6px;
+  border-top: 1px solid var(--sp-border-hairline);
+}
+#app-shell .planner-runsheet-rows .planner-runsheet-row:last-child { border-bottom: 1px solid var(--sp-border-hairline); }
+#app-shell .planner-runsheet-row:hover { background: oklch(0.925 0.009 85); }
+#app-shell .planner-runsheet-num {
+  font-family: var(--sp-font-mono); font-size: 12px; color: var(--sp-row-index-ink);
+  width: 20px; padding-top: 3px; flex: none;
+}
+#app-shell .planner-runsheet-body { flex: 1; min-width: 0; cursor: pointer; }
+#app-shell .planner-runsheet-name { font-family: var(--sp-font-serif); font-size: 17.5px; margin-bottom: 3px; color: var(--sp-ink-heading); }
+#app-shell .planner-runsheet-row-meta { display: flex; align-items: center; gap: 9px; margin-bottom: 5px; }
+#app-shell .planner-runsheet-place {
+  font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: oklch(0.50 0.075 185);
+}
+#app-shell .planner-runsheet-elem-meta { font-family: var(--sp-font-mono); font-size: 10px; color: var(--sp-ink-muted); }
+#app-shell .planner-runsheet-objective { font-size: 13px; color: oklch(0.48 0.014 65); max-width: 60ch; }
+#app-shell .planner-runsheet-controls { display: flex; align-items: center; gap: 3px; flex: none; padding-top: 2px; }
+#app-shell .planner-runsheet-ctl {
+  width: 22px; height: 22px; display: grid; place-items: center; border-radius: var(--sp-radius-md);
+  cursor: pointer; color: var(--sp-ink-muted); font-size: 12px; border: none; background: none;
+}
+#app-shell .planner-runsheet-ctl:hover { background: var(--sp-border-hairline); color: oklch(0.30 0.015 60); }
+#app-shell .planner-runsheet-add { margin-top: 14px; }
+#app-shell .planner-runsheet-add-btn {
+  display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-lg);
+  cursor: pointer; color: var(--sp-ink-secondary); font-size: 13px;
+}
+#app-shell .planner-runsheet-add-btn:hover { border-color: oklch(0.60 0.060 185); color: oklch(0.45 0.075 185); }
+#app-shell .planner-runsheet-delete-confirm {
+  margin-top: 12px; padding: 12px 14px; border: 1px solid var(--sp-accent-danger);
+  border-radius: var(--sp-radius-md); background: oklch(0.97 0.02 25);
+}
+#app-shell .planner-runsheet-delete-confirm .btn { margin-right: 8px; }
+
+/* --- designer scene-page sub-root labels (README §C.1 / §C.6) --- */
+.scene-place-label {
+  font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: 0.11em; text-transform: uppercase;
+  color: oklch(0.50 0.075 185); margin-bottom: 9px;
+}
+.scene-read-aloud-section { margin-bottom: 30px; }
 
 #app-shell .world-surface-placeholder { color: var(--sp-ink-muted); font-size: 14px; }
 

@@ -9,7 +9,7 @@ import { renderSessionPlanner, flushActiveNoteSave, cancelActiveAssist } from ".
 import { renderCombatPlanning, renderCombatPlanningIngest, cancelActiveCombatPlanningRequest } from "./combat-planning-view.js";
 import { renderScenesTab } from "./scenes-view.js";
 import { renderPlansView } from "./plans-view.js";
-import { renderShell, restoreShellBorrowedNodes } from "./app-shell.js";
+import { renderShell } from "./app-shell.js";
 
 // ---------------------------------------------------------------------------
 // world selection
@@ -141,9 +141,6 @@ function renderCurrentView() {
   document.getElementById("app-shell").hidden = !inShell;
   document.querySelector("header.topbar").hidden = inShell;
   document.querySelector("main").hidden = inShell;
-  // Leaving the shell for a legacy hash: return any legacy body node the shell
-  // borrowed (renderPlansView/renderSessionPlanner delegation, §5) to its home.
-  if (!inShell) restoreShellBorrowedNodes();
 
   for (const section of document.querySelectorAll(".view")) {
     section.classList.toggle("active", section.id === `view-${view}`);
