@@ -1505,6 +1505,19 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { scene });
   }
 
+  // GET /api/session-planner/scenes?world=[&sort=recency]  -> { scenes }
+  // Phase 30 task 30.4: a thin, read-only mirror of the existing
+  // `GET /api/scene-planning/scenes` list (same underlying scenes.mjs store),
+  // exposed under the `session-planner` prefix so the World surface's
+  // "Create a scene here" flow can verify its just-created scene from the
+  // same prefix it POSTed to. No new business logic -- wraps
+  // listScenesByRecency/listScenesForWorld exactly like the sibling route.
+  if (method === "GET" && parts.length === 3 && parts[1] === "session-planner" && parts[2] === "scenes") {
+    const w = resolveWorld(q.get("world"));
+    const scenes = q.get("sort") === "recency" ? listScenesByRecency(w) : listScenesForWorld(w);
+    return sendJson(res, 200, { scenes });
+  }
+
   // POST /api/session-planner/scenes/:id/fork  { world, locationEntityId?, objectiveNote?, name? }
   if (method === "POST" && parts.length === 5 && parts[1] === "session-planner" && parts[2] === "scenes" && parts[4] === "fork") {
     const body = await readBody(req);

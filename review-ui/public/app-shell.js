@@ -19,6 +19,7 @@
 "use strict";
 import { showUndoToast, buildAddScenePanel } from "./plans-view.js";
 import { renderPlannerScenePage } from "./session-planner-view.js";
+import { renderWorldSurface as renderWorldSurfaceView, clearWorldTopbar } from "./world-view.js";
 
 // ---------------------------------------------------------------------------
 // local api/world helpers (same standalone convention as plans-view.js)
@@ -714,15 +715,11 @@ async function renderSceneSurface(sceneId) {
   await renderPlannerScenePage(wrapper, sceneId);
 }
 
-// view=world -> a minimal placeholder root (the real World surface is 30.4).
-// Enough that the surface-toggle test sees the root swap in; the deep World
-// tests stay red for 30.4.
-function renderWorldSurface(/* entityId */) {
-  const wrapper = el("div", { class: "world-surface", "data-testid": "world-surface-root" });
-  const placeholder = el("div", { class: "world-surface-placeholder" });
-  placeholder.textContent = "World surface — arriving in task 30.4.";
-  wrapper.appendChild(placeholder);
-  setMain(wrapper);
+// view=world -> the real World containment-tree surface (task 30.4). The
+// world-view module owns #shell-main + the topbar world slot itself, so it can
+// do incremental (non-teardown) updates across selection hash changes.
+function renderWorldSurface(entityId) {
+  renderWorldSurfaceView(entityId);
 }
 
 // ---------------------------------------------------------------------------
@@ -746,6 +743,7 @@ export function renderShell(view, arg) {
   }
 
   shell.setAttribute("data-surface", "planner");
+  clearWorldTopbar();
   const sub = parsePlannerArg(arg);
   if (sub.kind === "plans") railOpenPlanId = null;
   else if (sub.kind === "plan") railOpenPlanId = sub.id;
