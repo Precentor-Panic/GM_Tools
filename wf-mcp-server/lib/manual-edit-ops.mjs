@@ -331,6 +331,123 @@ export async function editEdgeOp(dir, w, { edgeId, data } = {}) {
   return { edgeId, updated: patch };
 }
 
+// --- reparent (Phase 30 task 30.1) ------------------------------------------
+
+/**
+ * Atomic drag-drop reparent for the World containment tree: removes every
+ * existing `containment` edge where `entityId` is the CHILD (`sourceId`),
+ * and -- unless unparenting -- adds exactly one new `containment` edge
+ * `sourceId: entityId -> targetId: newParentId`. Both halves land in ONE
+ * `applyManualMutations` call (the same atomic-batch mechanism every write
+ * in this module already uses for a multi-mutation write, e.g.
+ * deleteNodeOp's cascade) and ONE undo slot -- the single-slot undo
+ * mechanism has no way to cover a separate delete-then-add as two
+ * independent actions, so they MUST be grouped, per this task's own
+ * requirement.
+ *
+ * `newParentId: null` (or omitted) means UNPARENT: every existing
+ * containment edge is removed, no new one is added.
+ *
+ * CYCLE GUARD: a node can never become its own descendant. Walks the
+ * containment chain upward from `newParentId` (child -> parent, i.e.
+ * `sourceId -> targetId`, this project's own established containment
+ * direction -- see addEdgeOp's callers / scene-elements.mjs's promoteElement);
+ * if that walk ever reaches `entityId` itself, `newParentId` is currently a
+ * DESCENDANT of `entityId`, so making `newParentId` the new parent would
+ * create a cycle -- rejected before any write happens. A defensive
+ * already-cyclic-data guard (a `seen` set) stops the walk from looping
+ * forever even if the live graph somehow already contains a cycle from some
+ * other source.
+ *
+ * @param {string} dir
+ * @param {string} w
+ * @param {string} entityId
+ * @param {string|null} newParentId
+ * @returns {Promise<{entityId:string, parentId:string|null, removedEdgeCount:number, edgeId:string|null}>}
+ */
+export async function reparentNode(dir, w, entityId, newParentId) {
+  requireNonEmptyString(entityId, "entityId");
+  const normalizedParentId = newParentId === undefined ? null : newParentId;
+  const { entities, edges } = loadSnapshot(dir, w).snapshot;
+  if (!entities.some((e) => e.id === entityId)) {
+    throw new Error(`No entity "${entityId}" found in the live graph.`);
+  }
+
+  if (normalizedParentId !== null) {
+    requireNonEmptyString(normalizedParentId, "newParentId");
+    if (normalizedParentId === entityId) {
+      throw new Error("Cannot reparent a node under itself.");
+    }
+    if (!entities.some((e) => e.id === normalizedParentId)) {
+      throw new Error(`No entity "${normalizedParentId}" found in the live graph.`);
+    }
+    // Cycle guard: climb the containment chain from the PROPOSED parent
+    // upward. If entityId turns up, normalizedParentId is currently one of
+    // entityId's own descendants -- reparenting entityId under it would
+    // make entityId its own ancestor.
+    let cursor = normalizedParentId;
+    const seen = new Set();
+    while (cursor) {
+      if (cursor === entityId) {
+        throw new Error(
+          `Cannot reparent "${entityId}" under "${normalizedParentId}" -- "${normalizedParentId}" is currently a descendant of "${entityId}" (this would create a cycle).`
+        );
+      }
+      if (seen.has(cursor)) break; // defensive: pre-existing cycle in the data, never loop forever
+      seen.add(cursor);
+      const parentEdge = edges.find((e) => e.sourceId === cursor && e.relationshipType === "containment");
+      cursor = parentEdge ? parentEdge.targetId : null;
+    }
+  }
+
+  const existingEdges = edges.filter((e) => e.sourceId === entityId && e.relationshipType === "containment");
+
+  const mutationCores = existingEdges.map((e) => ({
+    op: "delete_edge",
+    id: e.id,
+    rationale: `Manual edit: reparent -- removed containment edge to "${e.targetId}".`
+  }));
+
+  let newEdgeId = null;
+  if (normalizedParentId !== null) {
+    newEdgeId = makeManualId();
+    mutationCores.push({
+      op: "upsert_edge",
+      id: newEdgeId,
+      data: { id: newEdgeId, sourceId: entityId, targetId: normalizedParentId, relationshipType: "containment" },
+      rationale: `Manual edit: reparent -- containment edge to "${normalizedParentId}" created.`
+    });
+  }
+
+  if (!mutationCores.length) {
+    // Already unparented, and the caller asked to unparent again -- a
+    // genuine no-op, not an error.
+    return { entityId, parentId: null, removedEdgeCount: 0, edgeId: null };
+  }
+
+  applyManualMutations(dir, w, mutationCores);
+  markHumanReviewed(w, normalizedParentId ? [entityId, normalizedParentId] : [entityId]);
+
+  // Undo inverse, grouped as ONE action: re-create every removed edge with
+  // its exact original data, and delete the new edge if one was created --
+  // mirrors deleteNodeOp's own "capture pre-delete state for every cascaded
+  // edge, restore all of them together" pattern, one level down (a
+  // delete+add pair instead of a node-plus-cascade).
+  const inverseMutations = [
+    ...existingEdges.map((e) => ({ op: "upsert_edge", id: e.id, data: e })),
+    ...(newEdgeId ? [{ op: "delete_edge", id: newEdgeId }] : [])
+  ];
+  setUndoSlot(w, {
+    kind: "reparent_node",
+    description: normalizedParentId
+      ? `"${entityId}" reparented under "${normalizedParentId}".`
+      : `"${entityId}" unparented.`,
+    graphMutations: inverseMutations
+  });
+
+  return { entityId, parentId: normalizedParentId, removedEdgeCount: existingEdges.length, edgeId: newEdgeId };
+}
+
 // --- delete ----------------------------------------------------------------
 
 /**

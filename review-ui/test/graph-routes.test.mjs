@@ -57,6 +57,13 @@ applyHeadless(snapPath, [
   { op: "upsert_edge", data: { sourceId: "gerdur", targetId: "riverwood-guard", relationshipType: "membership" } }
 ]);
 
+// Phase 30 task 30.1 -- a small containment fixture for the reparent route tests below.
+applyHeadless(snapPath, [
+  { op: "upsert_entity", data: { id: "reparent-root", name: "Reparent Root", type: "place", importance: 0.5 } },
+  { op: "upsert_entity", data: { id: "reparent-child", name: "Reparent Child", type: "place", importance: 0.5 } },
+  { op: "upsert_edge", data: { id: "reparent-fixture-edge", sourceId: "reparent-child", targetId: "reparent-root", relationshipType: "containment" } }
+]);
+
 // alvor is flagged unreviewed (accumulated unreviewed-accept history --
 // human-review.mjs's findUnreviewedEntities only flags entities with SOME
 // tracked history, so a plain "never touched at all" entity doesn't count;
@@ -89,6 +96,14 @@ after(async () => {
 
 async function getJson(path) {
   const res = await fetch(`${base}${path}`);
+  return { status: res.status, body: await res.json() };
+}
+async function postJson(path, body) {
+  const res = await fetch(`${base}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
   return { status: res.status, body: await res.json() };
 }
 
@@ -250,4 +265,48 @@ test("Phase 12: a place entity gets a place-appropriate default status (not pers
   // riverwood-guard is type:"faction" in this fixture -- faction defaults to "active".
   assert.equal(guard.status, "active");
   assert.equal(guard.role, null, "role only applies to person entities");
+});
+
+// ---------------------------------------------------------------------------
+// Phase 30 task 30.1 -- POST /api/graph/nodes/:entityId/reparent, real HTTP
+// round trip. Store-level coverage of the atomic edge-move/cycle-guard logic
+// itself lives in wf-mcp-server/test/manual-edit-ops.test.mjs -- this file
+// only proves the route wiring (path params -> reparentNode, response shape,
+// error status mapping).
+// ---------------------------------------------------------------------------
+
+test("POST /api/graph/nodes/:entityId/reparent moves the containment edge and reports removedEdgeCount", async () => {
+  const { status, body } = await postJson("/api/graph/nodes/reparent-child/reparent", { world: WORLD, parentId: "alvor" });
+  assert.equal(status, 200);
+  assert.equal(body.entityId, "reparent-child");
+  assert.equal(body.parentId, "alvor");
+  assert.equal(body.removedEdgeCount, 1);
+  assert.ok(body.edgeId);
+
+  const { body: graph } = await getJson(`/api/graph?world=${WORLD}&filter=all`);
+  const newEdge = graph.edges.find((e) => e.sourceId === "reparent-child" && e.targetId === "alvor");
+  assert.ok(newEdge, "the new containment edge must be visible via the real graph read");
+  assert.equal(graph.edges.some((e) => e.id === "reparent-fixture-edge"), false, "the old edge must be genuinely gone");
+});
+
+test("POST /api/graph/nodes/:entityId/reparent with parentId:null unparents", async () => {
+  const { status, body } = await postJson("/api/graph/nodes/reparent-child/reparent", { world: WORLD, parentId: null });
+  assert.equal(status, 200);
+  assert.equal(body.parentId, null);
+  assert.equal(body.removedEdgeCount, 1);
+});
+
+test("POST /api/graph/nodes/:entityId/reparent rejects a cycle with a non-500 clean error", async () => {
+  // Re-parent reparent-child back under reparent-root first, then try to
+  // move reparent-root under its own child -- a real cycle.
+  await postJson("/api/graph/nodes/reparent-child/reparent", { world: WORLD, parentId: "reparent-root" });
+  const { status, body } = await postJson("/api/graph/nodes/reparent-root/reparent", { world: WORLD, parentId: "reparent-child" });
+  assert.notEqual(status, 500);
+  assert.match(body.error, /cycle/i);
+});
+
+test("SECURITY: POST /api/graph/nodes/:entityId/reparent rejects a path-traversal-shaped world id with 400", async () => {
+  const { status, body } = await postJson("/api/graph/nodes/reparent-child/reparent", { world: "../../../../etc", parentId: "alvor" });
+  assert.equal(status, 400);
+  assert.match(body.error, /Invalid world id/);
 });

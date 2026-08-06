@@ -19,6 +19,20 @@
  * this for isolation). Reuses review-state.mjs's withLock/ConcurrentWriteError
  * rather than a second file-locking implementation, per entity-narration.mjs's
  * own established precedent.
+ *
+ * ADDITIVE CHANGE (Phase 30 task 30.1): the Scene record gained an
+ * `updatedAt` field (ISO timestamp, set = `createdAt` on create/fork,
+ * stamped on every scene-record mutation -- updateScene/renameScene/
+ * forkScene's own child -- plus the new touchScene() escape hatch for
+ * callers that change a scene's CONTENT rather than its own record, e.g. a
+ * scene-element/narration write, so the World scene-tray's "most recently
+ * touched first" ordering reflects that too). This store has no
+ * `SCHEMA_VERSION` constant (a plain, unversioned flat-object store, unlike
+ * scene-elements.mjs) so there is nothing to bump -- the change is purely
+ * additive and back-compat: a scene persisted before this change simply has
+ * no `updatedAt` key, which `listScenesByRecency`'s own fallback (treat a
+ * missing `updatedAt` as that scene's own `createdAt`, or the epoch if even
+ * that's missing) sorts as oldest, exactly as if it had never been touched.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -77,7 +91,8 @@ export function createScene(world, { locationEntityId = null, objectiveNote = nu
     locationEntityId: locationEntityId ?? null,
     objectiveNote: objectiveNote ?? null,
     name: name ?? null,
-    createdAt: now
+    createdAt: now,
+    updatedAt: now
   };
   const scenes = readScenes(world);
   writeScenes(world, [...scenes, scene]);
@@ -114,7 +129,8 @@ export function forkScene(world, parentSceneId, { locationEntityId, objectiveNot
     // identically-named scenes with no way to tell them apart in a list.
     // Pass an explicit `name` to set one anyway.
     name,
-    createdAt: now
+    createdAt: now,
+    updatedAt: now
   };
   const scenes = readScenes(world);
   writeScenes(world, [...scenes, scene]);
@@ -137,18 +153,24 @@ export function getScene(world, sceneId) {
  * Throws the same clear "No scene found" error as getScene for an unknown
  * sceneId.
  *
+ * Phase 30 task 30.1: also stamps `updatedAt` (this is a scene-record
+ * mutation, same as updateScene below).
+ *
  * @param {string} world
  * @param {string} sceneId
  * @param {string|null} name
+ * @param {object} [opts]
+ * @param {string} [opts.now]   injectable ISO timestamp, for deterministic tests
  * @returns {object}   the updated Scene
  */
-export function renameScene(world, sceneId, name) {
+export function renameScene(world, sceneId, name, opts = {}) {
   const scenes = readScenes(world);
   const scene = scenes.find((s) => s.id === sceneId);
   if (!scene) {
     throw new Error(`No scene found: world="${world}" sceneId="${sceneId}"`);
   }
   scene.name = name ?? null;
+  scene.updatedAt = opts.now ?? new Date().toISOString();
   writeScenes(world, scenes);
   return scene;
 }
@@ -164,12 +186,19 @@ export function renameScene(world, sceneId, name) {
  * clear "No scene found" error as getScene/renameScene for an unknown
  * sceneId.
  *
+ * Phase 30 task 30.1: also stamps `updatedAt`, unconditionally -- a patch
+ * call is itself the "this scene was touched" event, even one that happens
+ * to leave both fields' VALUES unchanged (matches touchScene's own
+ * unconditional-bump semantics below).
+ *
  * @param {string} world
  * @param {string} sceneId
  * @param {{name?:string|null, objectiveNote?:string|null}} patch
+ * @param {object} [opts]
+ * @param {string} [opts.now]   injectable ISO timestamp, for deterministic tests
  * @returns {object}   the updated Scene
  */
-export function updateScene(world, sceneId, { name, objectiveNote } = {}) {
+export function updateScene(world, sceneId, { name, objectiveNote } = {}, opts = {}) {
   const scenes = readScenes(world);
   const scene = scenes.find((s) => s.id === sceneId);
   if (!scene) {
@@ -177,6 +206,31 @@ export function updateScene(world, sceneId, { name, objectiveNote } = {}) {
   }
   if (name !== undefined) scene.name = name;
   if (objectiveNote !== undefined) scene.objectiveNote = objectiveNote;
+  scene.updatedAt = opts.now ?? new Date().toISOString();
+  writeScenes(world, scenes);
+  return scene;
+}
+
+/**
+ * Phase 30 task 30.1: bumps ONLY `updatedAt`, for callers that change a
+ * scene's CONTENT (an element, its narration) rather than the Scene record's
+ * own fields -- the "most recently touched" signal the World scene-tray
+ * needs. Throws the same clear "No scene found" error as getScene for an
+ * unknown sceneId.
+ *
+ * @param {string} world
+ * @param {string} sceneId
+ * @param {object} [opts]
+ * @param {string} [opts.now]   injectable ISO timestamp, for deterministic tests
+ * @returns {object}   the updated Scene
+ */
+export function touchScene(world, sceneId, opts = {}) {
+  const scenes = readScenes(world);
+  const scene = scenes.find((s) => s.id === sceneId);
+  if (!scene) {
+    throw new Error(`No scene found: world="${world}" sceneId="${sceneId}"`);
+  }
+  scene.updatedAt = opts.now ?? new Date().toISOString();
   writeScenes(world, scenes);
   return scene;
 }
@@ -184,6 +238,29 @@ export function updateScene(world, sceneId, { name, objectiveNote } = {}) {
 /** @returns {object[]}   every scene for `world`, in creation (append) order. [] if none. */
 export function listScenesForWorld(world) {
   return readScenes(world);
+}
+
+/**
+ * Phase 30 task 30.1: every scene for `world`, sorted by `updatedAt` DESC
+ * (most-recently-touched first) -- the World scene-tray's own required
+ * ordering. A scene with no `updatedAt` at all (persisted before this field
+ * existed) falls back to its own `createdAt`, and only if even THAT is
+ * somehow missing falls back to the epoch -- so a never-touched legacy scene
+ * always sorts as the oldest, never crashes, and never ties every legacy
+ * scene together at the same instant when they in fact have distinct
+ * creation times.
+ *
+ * @param {string} world
+ * @returns {object[]}
+ */
+export function listScenesByRecency(world) {
+  const key = (scene) => scene.updatedAt ?? scene.createdAt ?? "1970-01-01T00:00:00.000Z";
+  return [...readScenes(world)].sort((a, b) => {
+    const ka = key(a);
+    const kb = key(b);
+    if (ka === kb) return 0;
+    return ka < kb ? 1 : -1; // descending -- most recent first
+  });
 }
 
 /**

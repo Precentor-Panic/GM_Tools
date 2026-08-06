@@ -117,6 +117,7 @@ import {
   editEdgeOp,
   deleteNodeOp,
   deleteEdgeOp,
+  reparentNode,
   resetEntityNarrationOp,
   undoLastManualEditOp,
   getManualUndoStatusOp,
@@ -142,7 +143,11 @@ import {
 // Phase 16 -- Session Planner engine (task 16.6). Thin wrappers only, same
 // convention as every other route in this file: resolveWorld/resolveDir()
 // with NO client-supplied dataDir override anywhere below.
-import { createScene, forkScene, getScene, listScenesForWorld, renameScene, updateScene, deleteScene } from "../session-planner/scenes.mjs";
+import { createScene, forkScene, getScene, listScenesForWorld, listScenesByRecency, renameScene, updateScene, deleteScene, touchScene } from "../session-planner/scenes.mjs";
+// Phase 30 task 30.1 -- the World inspector's "appears in" reverse lookup.
+// A separate module from scenes.mjs itself (avoids a circular import --
+// scene-lookup.mjs's own header comment explains why).
+import { scenesForEntity } from "../session-planner/scene-lookup.mjs";
 import { buildSessionBrief } from "../session-planner/brief.mjs";
 import { captureNote, runBatchIntake } from "../session-planner/session-notes.mjs";
 
@@ -349,6 +354,33 @@ function serveStatic(res, filePath) {
 }
 
 // --- domain helpers (thin wiring only, no new business logic) --------------
+
+/**
+ * Phase 30 task 30.1 (the OPTIONAL-but-preferred half): bumps a scene's own
+ * `updatedAt` after a route successfully writes to that scene's CONTENT (an
+ * element create/update/delete/reorder/promote/demote/from-graph, or a
+ * narration save) -- the World scene-tray's "most recently touched" signal
+ * needs to react to content edits, not just direct scene-record patches
+ * (updateScene/renameScene already stamp themselves). Deliberately done
+ * HERE, at the route layer, rather than inside scene-elements.mjs/
+ * scene-narration.mjs themselves -- those stores stay pure and don't import
+ * scenes.mjs's touchScene (cross-store coupling the task's own instructions
+ * called out as worth avoiding if it gets messy; it would here, since
+ * neither store currently imports scenes.mjs except scene-elements.mjs's
+ * existing narrow `getScene` use for promoteElement). Best-effort: a
+ * sceneId these ops were never guaranteed to validate (e.g. createElement
+ * doesn't call getScene) could in principle be stale/unknown, in which case
+ * touchScene's own "No scene found" throw is swallowed here -- the write
+ * that already succeeded must never be reported as failed just because the
+ * recency bump couldn't find a scene to stamp.
+ */
+function touchSceneSafely(w, sceneId) {
+  try {
+    touchScene(w, sceneId);
+  } catch {
+    // Best-effort only -- see this function's own doc comment.
+  }
+}
 
 /**
  * Full batch-detail payload for the Review view: headline + per-region,
@@ -1195,6 +1227,20 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, result);
   }
 
+  // POST /api/graph/nodes/:entityId/reparent  { world, dataDir, parentId }
+  // Phase 30 task 30.1 -- atomic drag-drop reparent for the World
+  // containment tree (manual-edit-ops.mjs's reparentNode): removes the
+  // node's existing containment edge(s) and adds a new one to `parentId` as
+  // ONE atomic undo unit. `parentId: null` unparents. Same immediate,
+  // no-review-gate write surface as every other route in this block.
+  if (method === "POST" && parts.length === 5 && parts[1] === "graph" && parts[2] === "nodes" && parts[4] === "reparent") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const result = await reparentNode(dir, w, parts[3], body.parentId ?? null);
+    return sendJson(res, 200, result);
+  }
+
   // GET /api/manual-edit-sync-status?world=...  -- Phase 13 task 13.1: "N
   // manual edits not yet synced to Foundry" affordance. Syncing reuses the
   // EXISTING /api/batches/:batchId/sync route below (syncOp) unmodified --
@@ -1433,9 +1479,28 @@ async function handleApi(req, res, url, parts) {
   // ---------------------------------------------------------------------
 
   // POST /api/session-planner/scenes  { world, locationEntityId?, objectiveNote?, name? }
+  // Phase 30 task 30.1: place-type guard -- the World "create a scene here"
+  // affordance should only ever anchor a scene to a "place" node. The
+  // lookup lives HERE (the route, which already has resolveDir()/snapshot
+  // access), not in scenes.mjs's own createScene -- that store stays pure,
+  // with zero graph/Foundry-facing access, per this module's own header
+  // comment and scenes.test.mjs's own no-Foundry-import assertion. Only
+  // guards when the referenced entity actually EXISTS and has a type other
+  // than "place" -- an entityId scenes.mjs has never validated as a real FK
+  // elsewhere either, so an unknown id is still allowed through unchanged.
   if (method === "POST" && parts.length === 3 && parts[1] === "session-planner" && parts[2] === "scenes") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
+    if (body.locationEntityId) {
+      const dir = resolveDir();
+      const { entities } = loadSnapshot(dir, w).snapshot;
+      const locationEntity = findEntity(entities, body.locationEntityId);
+      if (locationEntity && locationEntity.type !== "place") {
+        throw new Error(
+          `Scene locationEntityId "${body.locationEntityId}" must reference a "place" entity (found type "${locationEntity.type}").`
+        );
+      }
+    }
     const scene = createScene(w, { locationEntityId: body.locationEntityId, objectiveNote: body.objectiveNote, name: body.name });
     return sendJson(res, 200, { scene });
   }
@@ -1721,16 +1786,20 @@ async function handleApi(req, res, url, parts) {
   // write, or LLM-touching call for that route.
   // ---------------------------------------------------------------------
 
-  // GET /api/scene-planning/scenes?world=
+  // GET /api/scene-planning/scenes?world=&sort=recency
   // Phase 24 task 24.1 -- thin wrapper over listScenesForWorld, the one real
   // gap plans/phase-24-tasks.md's grounding pass found: Phase 22 shipped
   // linkage/transit/membership/undo/develop/quick-gen routes but never
   // exposed scenes.mjs's own listScenesForWorld over HTTP. No new store
   // logic here, same resolveWorld()/resolveDir() convention (no
   // client-supplied dataDir) as every other route in this file.
+  // Phase 30 task 30.1: `sort=recency` switches to listScenesByRecency
+  // (most-recently-touched first) -- the World scene-tray's own ordering
+  // need. Omitted/anything else keeps the original creation-order default,
+  // byte-identical to before this change.
   if (method === "GET" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "scenes") {
     const w = resolveWorld(q.get("world"));
-    const scenes = listScenesForWorld(w);
+    const scenes = q.get("sort") === "recency" ? listScenesByRecency(w) : listScenesForWorld(w);
     return sendJson(res, 200, { scenes });
   }
 
@@ -1982,6 +2051,16 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { plans: plansContainingScene(w, parts[3]) });
   }
 
+  // Phase 30 task 30.1 -- GET /api/scene-planning/entities/:entityId/scenes?world=
+  // -> {appearances:[{scene, roles}]}   the World inspector's "appears in"
+  // reverse lookup (scenesForEntity, session-planner/scene-lookup.mjs).
+  // [] for a node that appears in no scene -- never a 404, same
+  // "absence is a valid state" convention as plansContainingScene above.
+  if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "entities" && parts[4] === "scenes") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, { appearances: scenesForEntity(w, parts[3]) });
+  }
+
   // -----------------------------------------------------------------------
   // Phase 28 task 28.1 -- per-scene ordered elements, prefix
   // `/api/scene-planning/scenes/:sceneId/elements*`. Thin wrappers over
@@ -1994,6 +2073,7 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     const element = createElement(w, parts[3], { name: body.name, kind: body.kind, fields: body.fields, stat: body.stat });
+    touchSceneSafely(w, parts[3]); // Phase 30 task 30.1 -- content write bumps scene recency
     return sendJson(res, 200, { element });
   }
 
@@ -2009,6 +2089,7 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world);
     const dir = resolveDir();
     const element = await promoteElement(dir, w, parts[3], parts[5]);
+    touchSceneSafely(w, parts[3]); // Phase 30 task 30.1 -- content write bumps scene recency
     return sendJson(res, 200, { element });
   }
 
@@ -2017,6 +2098,7 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     const element = demoteElement(w, parts[3], parts[5]);
+    touchSceneSafely(w, parts[3]); // Phase 30 task 30.1 -- content write bumps scene recency
     return sendJson(res, 200, { element });
   }
 
@@ -2033,6 +2115,7 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world);
     const dir = resolveDir();
     const element = await attachExistingNodeAsElement(dir, w, parts[3], body.entityId, { name: body.name });
+    touchSceneSafely(w, parts[3]); // Phase 30 task 30.1 -- content write bumps scene recency
     return sendJson(res, 200, { element });
   }
 
@@ -2041,6 +2124,7 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     const elements = reorderElements(w, parts[3], body.elementIds);
+    touchSceneSafely(w, parts[3]); // Phase 30 task 30.1 -- content write bumps scene recency
     return sendJson(res, 200, { elements });
   }
 
@@ -2049,6 +2133,7 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     const element = updateElement(w, parts[3], parts[5], { name: body.name, fields: body.fields, stat: body.stat });
+    touchSceneSafely(w, parts[3]); // Phase 30 task 30.1 -- content write bumps scene recency
     return sendJson(res, 200, { element });
   }
 
@@ -2057,6 +2142,7 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const w = resolveWorld(body.world ?? q.get("world"));
     const result = removeElement(w, parts[3], parts[5]);
+    touchSceneSafely(w, parts[3]); // Phase 30 task 30.1 -- content write bumps scene recency
     return sendJson(res, 200, result);
   }
 
@@ -2071,6 +2157,7 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     const narration = saveSceneNarration(w, parts[3], { text: body.text });
+    touchSceneSafely(w, parts[3]); // Phase 30 task 30.1 -- content write bumps scene recency
     return sendJson(res, 200, { narration });
   }
 

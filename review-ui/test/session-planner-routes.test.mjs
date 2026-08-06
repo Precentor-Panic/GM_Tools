@@ -183,6 +183,38 @@ test("GET /api/session-planner/brief returns a real brief for the created scene,
   assert.ok(locationIds.includes("route-test-neighbor"), "the one-hop neighbor must be picked up by the corridor traversal");
 });
 
+// ---------------------------------------------------------------------------
+// Phase 30 task 30.1 -- place-type guard on POST /api/session-planner/scenes:
+// the World "create a scene here" affordance should only ever anchor a
+// scene to a "place" node. scenes.mjs's own createScene stays pure (no
+// graph access) -- the type lookup happens at the route layer.
+// ---------------------------------------------------------------------------
+
+test("POST /api/session-planner/scenes: a place locationEntityId is allowed through unchanged", async () => {
+  const { status, body } = await postJson("/api/session-planner/scenes", { world: WORLD, locationEntityId: "route-test-home" });
+  assert.equal(status, 200);
+  assert.equal(body.scene.locationEntityId, "route-test-home");
+});
+
+test("POST /api/session-planner/scenes: no locationEntityId at all is allowed through unchanged (untethered scene)", async () => {
+  const { status, body } = await postJson("/api/session-planner/scenes", { world: WORLD });
+  assert.equal(status, 200);
+  assert.equal(body.scene.locationEntityId, null);
+});
+
+test("POST /api/session-planner/scenes: a non-place locationEntityId is rejected with a clear 4xx error, not silently allowed", async () => {
+  const { status, body } = await postJson("/api/session-planner/scenes", { world: WORLD, locationEntityId: "route-test-neighbor" });
+  assert.ok(status >= 400 && status < 500, `expected a 4xx status, got ${status}`);
+  assert.match(body.error, /place/i);
+  assert.match(body.error, /route-test-neighbor/);
+});
+
+test("POST /api/session-planner/scenes: an UNKNOWN locationEntityId (not in the live snapshot at all) is still allowed through -- the guard only fires when the entity actually exists with a non-place type", async () => {
+  const { status, body } = await postJson("/api/session-planner/scenes", { world: WORLD, locationEntityId: "totally-unknown-entity-id" });
+  assert.equal(status, 200);
+  assert.equal(body.scene.locationEntityId, "totally-unknown-entity-id");
+});
+
 // -------------------------------------------------------------------- SECURITY
 
 test("SECURITY: POST /api/session-planner/scenes rejects a path-traversal-shaped world id with 400", async () => {

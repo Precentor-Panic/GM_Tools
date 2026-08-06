@@ -46,6 +46,7 @@ const {
   editEdgeOp,
   deleteNodeOp,
   deleteEdgeOp,
+  reparentNode,
   resetEntityNarrationOp,
   undoLastManualEditOp,
   getManualUndoStatusOp,
@@ -233,6 +234,121 @@ await test("deleteNodeOp: deletes the node AND cascades its edges; undo restores
     edgesAfterUndo.map((e) => e.id).sort(),
     edgesBeforeDelete.map((e) => e.id).sort(),
     "the exact same edge ids must be restored"
+  );
+});
+
+// ---------------------------------------------------------------- reparentNode (Phase 30 task 30.1)
+
+// A small containment tree: loc-root <- loc-child <- loc-grandchild
+// (child = sourceId -> parent = targetId, this project's established
+// containment direction).
+applyHeadless(snapPath, [
+  { op: "upsert_entity", data: { id: "loc-root", name: "Loc Root", type: "place", importance: 0.5 } },
+  { op: "upsert_entity", data: { id: "loc-child", name: "Loc Child", type: "place", importance: 0.5 } },
+  { op: "upsert_entity", data: { id: "loc-grandchild", name: "Loc Grandchild", type: "place", importance: 0.5 } },
+  { op: "upsert_edge", data: { id: "reparent-edge-child-root", sourceId: "loc-child", targetId: "loc-root", relationshipType: "containment" } },
+  { op: "upsert_edge", data: { id: "reparent-edge-grandchild-child", sourceId: "loc-grandchild", targetId: "loc-child", relationshipType: "containment" } }
+]);
+
+function containmentParentEdgeOf(entityId) {
+  return edges().find((e) => e.sourceId === entityId && e.relationshipType === "containment");
+}
+
+await test("reparentNode: moves the node's containment edge to the new parent, one atomic write", async () => {
+  const before = edges().length;
+  const result = await reparentNode(dataDir, WORLD, "loc-grandchild", "loc-root");
+  assert.equal(result.entityId, "loc-grandchild");
+  assert.equal(result.parentId, "loc-root");
+  assert.equal(result.removedEdgeCount, 1);
+  assert.ok(result.edgeId, "a new edge id must be reported");
+  // Old edge is gone, exactly one new containment edge to loc-root exists, edge count unchanged (1 removed, 1 added).
+  assert.equal(edges().length, before);
+  assert.equal(findEdge("reparent-edge-grandchild-child"), undefined);
+  const newParentEdge = containmentParentEdgeOf("loc-grandchild");
+  assert.ok(newParentEdge);
+  assert.equal(newParentEdge.targetId, "loc-root");
+});
+
+await test("reparentNode: undo restores the ORIGINAL containment edge (delete-new + recreate-old, as ONE undone action)", async () => {
+  const before = edges().length;
+  const undoResult = await undoLastManualEditOp(dataDir, WORLD);
+  assert.equal(undoResult.status, "undone");
+  assert.equal(undoResult.kind, "reparent_node");
+  assert.equal(edges().length, before); // one removed (the new edge), one recreated (the old edge) -- net zero
+  const restoredParentEdge = containmentParentEdgeOf("loc-grandchild");
+  assert.ok(restoredParentEdge);
+  assert.equal(restoredParentEdge.targetId, "loc-child", "back to its original parent");
+  assert.equal(restoredParentEdge.id, "reparent-edge-grandchild-child", "the EXACT original edge id must come back");
+});
+
+await test("reparentNode: newParentId null UNPARENTS -- removes the existing edge, adds none", async () => {
+  const before = edges().length;
+  const result = await reparentNode(dataDir, WORLD, "loc-grandchild", null);
+  assert.equal(result.parentId, null);
+  assert.equal(result.removedEdgeCount, 1);
+  assert.equal(result.edgeId, null);
+  assert.equal(edges().length, before - 1);
+  assert.equal(containmentParentEdgeOf("loc-grandchild"), undefined);
+
+  // Undo brings the original edge back (a single delete_edge inverse -- no
+  // upsert_edge half since nothing was added).
+  const undoResult = await undoLastManualEditOp(dataDir, WORLD);
+  assert.equal(undoResult.status, "undone");
+  assert.equal(undoResult.kind, "reparent_node");
+  assert.ok(containmentParentEdgeOf("loc-grandchild"));
+});
+
+await test("reparentNode: unparenting a node with NO existing containment edge is a clean no-op (removedEdgeCount 0), not an error", async () => {
+  const result = await reparentNode(dataDir, WORLD, "loc-root", null); // loc-root has no parent edge at all
+  assert.deepEqual(result, { entityId: "loc-root", parentId: null, removedEdgeCount: 0, edgeId: null });
+});
+
+await test("reparentNode: CYCLE GUARD -- refuses to reparent a node under its own descendant", async () => {
+  // loc-child is currently loc-root's CHILD (loc-child -> loc-root). Trying
+  // to reparent loc-root UNDER loc-child would make loc-root its own
+  // descendant's descendant -- a cycle -- and must be rejected before any write.
+  const before = edges().length;
+  await assert.rejects(() => reparentNode(dataDir, WORLD, "loc-root", "loc-child"), /cycle/i);
+  assert.equal(edges().length, before, "a rejected reparent must not have written anything");
+});
+
+await test("reparentNode: CYCLE GUARD catches a multi-hop descendant too (loc-root -> loc-grandchild, via loc-child)", async () => {
+  // Re-establish the 3-level chain used by the earlier tests: loc-grandchild -> loc-child -> loc-root.
+  await reparentNode(dataDir, WORLD, "loc-grandchild", "loc-child");
+  await assert.rejects(() => reparentNode(dataDir, WORLD, "loc-root", "loc-grandchild"), /cycle/i);
+});
+
+await test("reparentNode: refuses to reparent a node under itself", async () => {
+  await assert.rejects(() => reparentNode(dataDir, WORLD, "loc-child", "loc-child"), /itself/i);
+});
+
+await test("reparentNode: rejects an unknown entityId or unknown newParentId", async () => {
+  await assert.rejects(() => reparentNode(dataDir, WORLD, "does-not-exist", "loc-root"));
+  await assert.rejects(() => reparentNode(dataDir, WORLD, "loc-child", "does-not-exist-either"));
+});
+
+await test("reparentNode: a node with MULTIPLE existing containment edges (an unusual but legal pre-existing state) has all of them removed atomically", async () => {
+  // Give loc-child a SECOND containment edge (to loc-grandchild, deliberately
+  // an odd/legal-but-unusual pre-existing multi-parent state) so the "find
+  // the node's existing containment edge(s)" plural case has real coverage.
+  const secondEdge = await addEdgeOp(dataDir, WORLD, { sourceId: "loc-child", targetId: "loc-grandchild", relationshipType: "containment" });
+  const beforeEdges = edges().filter((e) => e.sourceId === "loc-child" && e.relationshipType === "containment");
+  assert.equal(beforeEdges.length, 2, "sanity: loc-child now has 2 containment edges");
+
+  const result = await reparentNode(dataDir, WORLD, "loc-child", "loc-root");
+  assert.equal(result.removedEdgeCount, 2, "both pre-existing containment edges must be removed, not just one");
+  const afterEdges = edges().filter((e) => e.sourceId === "loc-child" && e.relationshipType === "containment");
+  assert.equal(afterEdges.length, 1);
+  assert.equal(afterEdges[0].targetId, "loc-root");
+
+  const undoResult = await undoLastManualEditOp(dataDir, WORLD);
+  assert.equal(undoResult.status, "undone");
+  const restoredEdges = edges().filter((e) => e.sourceId === "loc-child" && e.relationshipType === "containment");
+  assert.equal(restoredEdges.length, 2, "BOTH original edges must come back atomically");
+  assert.deepEqual(
+    restoredEdges.map((e) => e.targetId).sort(),
+    [secondEdge.targetId, "loc-root"].sort(),
+    "the exact original targets are restored"
   );
 });
 

@@ -71,7 +71,15 @@ import { withLock, ConcurrentWriteError } from "./review-state.mjs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "manual-undo");
 
-export const SCHEMA_VERSION = 1;
+// SCHEMA_VERSION 2 (Phase 30 task 30.1): additive -- ManualUndoKind gained
+// "reparent_node" (manual-edit-ops.mjs's new atomic drag-drop reparent op:
+// a delete-old-containment-edge + add-new-containment-edge pair grouped as
+// ONE undo action, same `graphMutations`-array shape every other
+// graph-mutation kind here already uses -- no new UndoAction field, no
+// migration needed for a persisted v1 slot, since a stale slot is consumed
+// (or simply overwritten by the next write) rather than read back across a
+// process restart in any load-bearing way).
+export const SCHEMA_VERSION = 2;
 
 export const ManualUndoKind = z.enum([
   "add_node",
@@ -80,6 +88,7 @@ export const ManualUndoKind = z.enum([
   "edit_edge",
   "delete_node",
   "delete_edge",
+  "reparent_node",
   "narration_reset"
 ]);
 

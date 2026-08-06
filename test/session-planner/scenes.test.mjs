@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, existsSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -127,8 +127,10 @@ const before = existsSync(REPO_DEFAULT_ROOT) ? new Set(readdirSync(REPO_DEFAULT_
 const WORLD = "session-planner-scenes-test-world";
 
 (async () => {
-  const { createScene, forkScene, getScene, listScenesForWorld, renameScene, updateScene, deleteScene, sessionScenesRoot } =
-    await import("../../session-planner/scenes.mjs");
+  const {
+    createScene, forkScene, getScene, listScenesForWorld, listScenesByRecency,
+    renameScene, updateScene, touchScene, deleteScene, sessionScenesRoot
+  } = await import("../../session-planner/scenes.mjs");
   const { createPlan, getPlan, addSceneToPlan } = await import("../../session-planner/plans.mjs");
 
   test("directory isolation: sessionScenesRoot() honors GM_TOOLS_SESSION_SCENES_DIR, never the repo's real default", () => {
@@ -331,6 +333,86 @@ const WORLD = "session-planner-scenes-test-world";
   // place entity or graph edge. Confirmed by reading
   // combat-planning/saved-encounter.mjs's sibling convention of the same
   // reasoning, and re-verified directly against this file's imports.
+
+  // ------------------------------------------------- Phase 30 task 30.1: updatedAt / recency
+
+  test("createScene: stamps updatedAt === createdAt at creation time", () => {
+    const scene = createScene(WORLD, { locationEntityId: "place-touch-1" }, { makeId: () => "scene-touch-create-1", now: "2026-08-01T10:00:00.000Z" });
+    assert.equal(scene.updatedAt, "2026-08-01T10:00:00.000Z");
+    assert.equal(scene.updatedAt, scene.createdAt);
+  });
+
+  test("forkScene: the child's updatedAt is its OWN fork-time timestamp (not the parent's)", () => {
+    const parent = createScene(WORLD, { locationEntityId: "place-touch-2" }, { makeId: () => "scene-touch-fork-parent", now: "2026-08-01T10:05:00.000Z" });
+    const child = forkScene(WORLD, parent.id, {}, { makeId: () => "scene-touch-fork-child", now: "2026-08-01T10:10:00.000Z" });
+    assert.equal(child.updatedAt, "2026-08-01T10:10:00.000Z");
+    assert.notEqual(child.updatedAt, parent.updatedAt);
+  });
+
+  test("updateScene: bumps updatedAt on every patch call, even one that only touches one field", () => {
+    const scene = createScene(WORLD, { locationEntityId: "place-touch-3" }, { makeId: () => "scene-touch-update-1", now: "2026-08-01T10:15:00.000Z" });
+    assert.equal(scene.updatedAt, "2026-08-01T10:15:00.000Z");
+    const updated = updateScene(WORLD, "scene-touch-update-1", { objectiveNote: "New objective" }, { now: "2026-08-01T11:00:00.000Z" });
+    assert.equal(updated.updatedAt, "2026-08-01T11:00:00.000Z");
+    const reread = getScene(WORLD, "scene-touch-update-1");
+    assert.equal(reread.updatedAt, "2026-08-01T11:00:00.000Z", "must genuinely persist");
+  });
+
+  test("renameScene: also bumps updatedAt (a scene-record mutation, same as updateScene)", () => {
+    const scene = createScene(WORLD, { locationEntityId: "place-touch-4" }, { makeId: () => "scene-touch-rename-1", now: "2026-08-01T10:20:00.000Z" });
+    assert.equal(scene.updatedAt, "2026-08-01T10:20:00.000Z");
+    const renamed = renameScene(WORLD, "scene-touch-rename-1", "New Name", { now: "2026-08-01T11:30:00.000Z" });
+    assert.equal(renamed.updatedAt, "2026-08-01T11:30:00.000Z");
+  });
+
+  test("touchScene: bumps ONLY updatedAt, leaves every other field untouched", () => {
+    const scene = createScene(WORLD, { locationEntityId: "place-touch-5", objectiveNote: "Original note", name: "Original name" }, {
+      makeId: () => "scene-touch-direct-1",
+      now: "2026-08-01T10:25:00.000Z"
+    });
+    const touched = touchScene(WORLD, "scene-touch-direct-1", { now: "2026-08-01T12:00:00.000Z" });
+    assert.equal(touched.updatedAt, "2026-08-01T12:00:00.000Z");
+    assert.equal(touched.objectiveNote, "Original note");
+    assert.equal(touched.name, "Original name");
+    assert.equal(touched.locationEntityId, "place-touch-5");
+  });
+
+  test("touchScene: throws a clear error for an unknown sceneId (same convention as getScene/updateScene)", () => {
+    assert.throws(() => touchScene(WORLD, "does-not-exist-touch"), /does-not-exist-touch/);
+  });
+
+  test("listScenesByRecency: orders scenes most-recently-touched first", () => {
+    const w = "scenes-recency-test-world";
+    createScene(w, { locationEntityId: "r1" }, { makeId: () => "recency-a", now: "2026-08-01T09:00:00.000Z" });
+    createScene(w, { locationEntityId: "r2" }, { makeId: () => "recency-b", now: "2026-08-01T09:10:00.000Z" });
+    createScene(w, { locationEntityId: "r3" }, { makeId: () => "recency-c", now: "2026-08-01T09:20:00.000Z" });
+    // Touch "a" LAST -- it must now sort FIRST, even though it was created first.
+    touchScene(w, "recency-a", { now: "2026-08-01T12:00:00.000Z" });
+
+    const byRecency = listScenesByRecency(w);
+    assert.deepEqual(byRecency.map((s) => s.id), ["recency-a", "recency-c", "recency-b"]);
+    // listScenesForWorld itself stays in creation-append order, unaffected.
+    assert.deepEqual(listScenesForWorld(w).map((s) => s.id), ["recency-a", "recency-b", "recency-c"]);
+  });
+
+  test("listScenesByRecency: back-compat -- a scene with no updatedAt at all (legacy record) falls back to createdAt and sorts as oldest relative to any touched scene", () => {
+    const w = "scenes-recency-legacy-world";
+    const legacy = createScene(w, { locationEntityId: "legacy-1" }, { makeId: () => "recency-legacy", now: "2026-01-01T00:00:00.000Z" });
+    delete legacy.updatedAt; // simulate a pre-existing scene persisted before this field existed
+    // Write the mutated (no-updatedAt) record straight to disk via a fresh create+overwrite is awkward from
+    // outside the module -- instead, directly rewrite the world's file to strip updatedAt, matching a real
+    // legacy on-disk record exactly (no store API exposes a raw write, so this reaches into the file directly,
+    // scoped to the isolated GM_TOOLS_SESSION_SCENES_DIR test root only).
+    const filePath = join(process.env.GM_TOOLS_SESSION_SCENES_DIR, `${w}.json`);
+    const raw = JSON.parse(readFileSync(filePath, "utf8"));
+    for (const s of raw) delete s.updatedAt;
+    writeFileSync(filePath, JSON.stringify(raw, null, 2), "utf8");
+
+    const fresh = createScene(w, { locationEntityId: "fresh-1" }, { makeId: () => "recency-fresh", now: "2026-08-01T00:00:00.000Z" });
+    void fresh;
+    const byRecency = listScenesByRecency(w);
+    assert.deepEqual(byRecency.map((s) => s.id), ["recency-fresh", "recency-legacy"], "the legacy no-updatedAt scene must sort as oldest");
+  });
 
   test("no Foundry-facing import anywhere in scenes.mjs -- a scene is explicitly NOT a World Fabric graph entity (design record §2.2)", async () => {
     const src = (await import("node:fs")).readFileSync(

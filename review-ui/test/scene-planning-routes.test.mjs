@@ -239,6 +239,58 @@ test("scene-undo session routes: start -> record -> peek -> last -> clear, real 
   assert.equal(clear.status, 200);
 });
 
+// ---------------------------------------------------------------------------
+// Phase 30 task 30.1 -- GET /api/scene-planning/entities/:entityId/scenes
+// (the World inspector's "appears in" reverse lookup) and GET
+// /api/scene-planning/scenes?world=&sort=recency (the World scene-tray's
+// "most recently touched first" ordering).
+// ---------------------------------------------------------------------------
+
+test("GET /api/scene-planning/entities/:entityId/scenes returns [] (never 404) for a node in no scene", async () => {
+  const { status, body } = await getJson(`/api/scene-planning/entities/sp-never-touched/scenes?world=${WORLD}`);
+  assert.equal(status, 200);
+  assert.deepEqual(body.appearances, []);
+});
+
+test("GET /api/scene-planning/entities/:entityId/scenes reports the anchor role for the fixture scene's own location", async () => {
+  const { status, body } = await getJson(`/api/scene-planning/entities/sp-anchor/scenes?world=${WORLD}`);
+  assert.equal(status, 200);
+  const entry = body.appearances.find((a) => a.scene.id === anchoredScene.id);
+  assert.ok(entry, "the fixture scene anchored at sp-anchor must appear");
+  assert.deepEqual(entry.roles, ["anchor"]);
+});
+
+test("GET /api/scene-planning/entities/:entityId/scenes reports the member role after POST .../members", async () => {
+  await postJson(`/api/scene-planning/scenes/${anchoredScene.id}/members`, { world: WORLD, entityId: "sp-appears-member" });
+  const { status, body } = await getJson(`/api/scene-planning/entities/sp-appears-member/scenes?world=${WORLD}`);
+  assert.equal(status, 200);
+  assert.equal(body.appearances.length, 1);
+  assert.equal(body.appearances[0].scene.id, anchoredScene.id);
+  assert.deepEqual(body.appearances[0].roles, ["member"]);
+});
+
+test("SECURITY: GET /api/scene-planning/entities/:entityId/scenes rejects a path-traversal-shaped world id with 400", async () => {
+  const { status, body } = await getJson(`/api/scene-planning/entities/x/scenes?world=${encodeURIComponent("../../../../etc")}`);
+  assert.equal(status, 400);
+  assert.match(body.error, /Invalid world id/);
+});
+
+test("GET /api/scene-planning/scenes?sort=recency orders most-recently-touched first; omitted sort keeps creation order", async () => {
+  const w = "scene-planning-recency-route-world";
+  const first = await postJson("/api/session-planner/scenes", { world: w, name: "First" });
+  const second = await postJson("/api/session-planner/scenes", { world: w, name: "Second" });
+
+  // Touch the FIRST scene after the second was created (a rename bumps updatedAt).
+  await postJson(`/api/session-planner/scenes/${first.body.scene.id}/rename`, { world: w, name: "First (touched)" });
+
+  const byRecency = await getJson(`/api/scene-planning/scenes?world=${w}&sort=recency`);
+  assert.equal(byRecency.status, 200);
+  assert.deepEqual(byRecency.body.scenes.map((s) => s.id), [first.body.scene.id, second.body.scene.id]);
+
+  const creationOrder = await getJson(`/api/scene-planning/scenes?world=${w}`);
+  assert.deepEqual(creationOrder.body.scenes.map((s) => s.id), [first.body.scene.id, second.body.scene.id], "omitted sort keeps the original creation-order default");
+});
+
 // -------------------------------------------------------------------- SECURITY
 
 const MALICIOUS_WORLD = "../../../../etc";

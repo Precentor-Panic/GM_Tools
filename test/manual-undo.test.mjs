@@ -132,8 +132,8 @@ test("UndoAction schema rejects an action carrying NEITHER graphMutations nor na
   });
 });
 
-test("all six manual-write kinds plus narration_reset are valid ManualUndoKind values", () => {
-  for (const kind of ["add_node", "add_edge", "edit_node", "edit_edge", "delete_node", "delete_edge", "narration_reset"]) {
+test("all six manual-write kinds plus reparent_node (Phase 30 task 30.1) and narration_reset are valid ManualUndoKind values", () => {
+  for (const kind of ["add_node", "add_edge", "edit_node", "edit_edge", "delete_node", "delete_edge", "reparent_node", "narration_reset"]) {
     assert.doesNotThrow(() => setUndoSlot(`kind-check-${kind}`, {
       kind,
       description: kind,
