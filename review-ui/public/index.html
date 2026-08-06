@@ -250,8 +250,44 @@
 
 </main>
 
+<!-- ================= PHASE 30 APP SHELL (task 30.2) =================
+     The persistent designer frame (Session planner|World toggle + left rail +
+     hyperlinked breadcrumb). A sibling of the legacy <header>/<main> above,
+     which stay completely untouched -- app.js's renderCurrentView toggles
+     which top-level root is visible based on the hash's leading segment.
+     Only the static chrome lives here; app-shell.js's renderShell fills the
+     breadcrumb slot, the rail slot, and #shell-main per the current view. -->
+<div id="app-shell" data-testid="app-shell" data-surface="planner" hidden>
+  <div class="shell-topbar" data-testid="shell-topbar">
+    <div class="shell-brand">
+      <span class="shell-brand-mark"></span>
+      <span class="shell-brand-title" id="shell-world-title"></span>
+    </div>
+    <div class="shell-divider"></div>
+    <div class="shell-surface-toggle">
+      <button type="button" class="shell-surface-btn" data-testid="shell-surface-toggle-planner">Session planner</button>
+      <button type="button" class="shell-surface-btn" data-testid="shell-surface-toggle-world">World</button>
+    </div>
+    <div class="shell-divider"></div>
+    <!-- filled with [data-testid="shell-breadcrumb"] on the planner surface,
+         emptied on World (so its DOM count is 0 there). -->
+    <div class="shell-breadcrumb-slot" id="shell-breadcrumb-slot"></div>
+    <div class="shell-topbar-spacer"></div>
+    <select class="shell-world-select" data-testid="shell-world-select" aria-label="World"></select>
+  </div>
+  <div class="shell-body">
+    <!-- filled with [data-testid="shell-rail-planner"] on the planner surface,
+         emptied on World. display:contents so the rail is the flex child. -->
+    <div class="shell-rail-slot" id="shell-rail-slot"></div>
+    <div class="shell-main" id="shell-main" data-testid="shell-main"></div>
+  </div>
+</div>
+
 <div id="toast-container" class="toast-container"></div>
 
+<!-- app-shell.js is loaded as an ES module via app.js's static import
+     (import { renderShell } from "./app-shell.js") -- one module graph, no
+     second entry point/build step, per gm-tools-conventions. -->
 <script type="module" src="/app.js"></script>
 </body>
 </html>

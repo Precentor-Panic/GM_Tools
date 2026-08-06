@@ -9,6 +9,7 @@ import { renderSessionPlanner, flushActiveNoteSave, cancelActiveAssist } from ".
 import { renderCombatPlanning, renderCombatPlanningIngest, cancelActiveCombatPlanningRequest } from "./combat-planning-view.js";
 import { renderScenesTab } from "./scenes-view.js";
 import { renderPlansView } from "./plans-view.js";
+import { renderShell, restoreShellBorrowedNodes } from "./app-shell.js";
 
 // ---------------------------------------------------------------------------
 // world selection
@@ -131,6 +132,19 @@ function renderCurrentView() {
   // submit) -- see combat-planning-view.js's own header.
   cancelActiveCombatPlanningRequest();
   const { view, arg } = parseHash();
+  // Phase 30 task 30.2: shell-vs-legacy visibility switch. The #app-shell root
+  // is shown (and the legacy header.topbar/main hidden) iff the hash's leading
+  // segment is `planner` or `world`; the reverse for any legacy hash. Kept as a
+  // branch INSIDE this same renderCurrentView so the 4 nav-cancel hooks above
+  // fire on a shell navigation exactly as for any legacy hash (§2/§4).
+  const inShell = view === "planner" || view === "world";
+  document.getElementById("app-shell").hidden = !inShell;
+  document.querySelector("header.topbar").hidden = inShell;
+  document.querySelector("main").hidden = inShell;
+  // Leaving the shell for a legacy hash: return any legacy body node the shell
+  // borrowed (renderPlansView/renderSessionPlanner delegation, §5) to its home.
+  if (!inShell) restoreShellBorrowedNodes();
+
   for (const section of document.querySelectorAll(".view")) {
     section.classList.toggle("active", section.id === `view-${view}`);
   }
@@ -150,6 +164,7 @@ function renderCurrentView() {
   else if (view === "combat-planning") renderCombatPlanning(arg);
   else if (view === "combat-planning-ingest") renderCombatPlanningIngest(arg);
   else if (view === "scenes") renderScenesTab();
+  else if (view === "planner" || view === "world") renderShell(view, arg);
 }
 
 // Phase 15 task 15.3: closing the mobile drawer belongs on the hashchange
