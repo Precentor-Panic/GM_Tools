@@ -2800,7 +2800,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 #app-shell .wv-tree { display: flex; flex-direction: column; gap: 1px; }
 #app-shell .wv-tree-row {
   display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 5px;
-  cursor: pointer; border: 1px solid transparent;
+  cursor: grab; border: 1px solid transparent;
 }
 #app-shell .wv-tree-row:hover { background: var(--sp-row-hover-bg); }
 #app-shell .wv-tree-row--sel { background: var(--sp-accent-teal-selected); }
@@ -2956,7 +2956,10 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   padding: 12px 14px; border-bottom: 1px solid var(--sp-border-hairline); display: flex; align-items: center; gap: 8px;
 }
 #app-shell .wv-inspector-title { font-size: 13px; font-weight: 500; color: var(--sp-ink-heading); }
-#app-shell .wv-inspector-openfull { font-family: var(--sp-font-mono); font-size: 10px; color: var(--sp-accent-teal); cursor: pointer; }
+/* §3.5: no reskinned entity full-page exists yet, so this is unwired — drop the
+   cursor:pointer so it stops advertising itself as clickable. (Wire to a real
+   entity page later.) */
+#app-shell .wv-inspector-openfull { font-family: var(--sp-font-mono); font-size: 10px; color: var(--sp-accent-teal); }
 #app-shell .wv-inspector-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
 #app-shell .wv-inspector-label { margin: 16px 0 7px; }
 #app-shell .wv-inspector-label:first-child { margin-top: 0; }

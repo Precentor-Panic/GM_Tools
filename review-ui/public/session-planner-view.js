@@ -2934,10 +2934,26 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   detachSceneKeydownHandler();
   const handler = (e) => {
     const t = e.target;
-    if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) return;
+    // §3.4: suppress prev/next while editing ANY rich text — the scene page's
+    // click-to-edit fields swap in a <textarea>, but a contenteditable target
+    // must be guarded too so `[`/`]` never navigate mid-edit.
+    if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable)) return;
     if (e.key === "[") { if (prevId) location.hash = sceneHash(prevId); }
     else if (e.key === "]") { if (nextId) location.hash = sceneHash(nextId); }
-    else if (e.key === "Escape") { location.hash = plansHash(firstPlan); }
+    else if (e.key === "Escape") {
+      // §3.3: Esc CLOSES an open panel — it must not leave the scene. Wrap
+      // panel first, then any open inline add/encounter panel; if nothing is
+      // open, do nothing.
+      if (!wrapPanel.hidden) {
+        wrapPanel.hidden = true;
+        wrapBtn.textContent = "Wrap ▸";
+      } else {
+        // Inline add-event / add-encounter panels toggle via style.display.
+        for (const p of [eventCtl.panel, encounterCtl.panel]) {
+          if (p && p.style.display !== "none") p.style.display = "none";
+        }
+      }
+    }
   };
   document.addEventListener("keydown", handler);
   activeSceneKeydownHandler = handler;

@@ -845,7 +845,9 @@ function buildSceneTray(sel) {
   head.append(
     el("div", { class: "wv-mono-label" }, "Drop into a scene"),
     el("div", { style: "flex:1" }),
-    el("div", { class: "wv-mono wv-scene-tray-hint" }, "most recent first")
+    // §3.2(b): label the gesture so the scene-add tray reads distinctly from a
+    // tree-row reparent drop. Text-only, in the existing hint slot.
+    el("div", { class: "wv-mono wv-scene-tray-hint" }, "drag a node here → in the scene")
   );
   const search = el("input", { class: "wv-scene-tray-search", type: "text", placeholder: "Find a scene…", value: ui.sceneQuery });
   const list = el("div", { class: "wv-scene-tray-list" });
@@ -870,9 +872,17 @@ function buildSceneTray(sel) {
 }
 function srow(s, sel, list) {
   const placeName = (node(s.locationEntityId) || {}).name || "—";
-  const row = el("div", { class: "wv-scene-drop" });
+  const row = el("div", { class: "wv-scene-drop", "data-testid": "world-scene-drop-row", "data-scene-id": s.id });
   row.appendChild(el("div", { class: "wv-scene-drop-name" }, sceneDisplayName(s)));
-  row.appendChild(el("div", { class: "wv-scene-drop-meta" }, `${placeName} · ${agoLabel(s)}`));
+  // Meta reads `place · N elements · ago` (prototype World Graph.dc.html:608).
+  // N is fetched async from the SAME /scenes/:id/elements count app-shell.js:680
+  // uses, PLUS explicit scene members (a tree->tray drop adds a MEMBER, not a
+  // scene-element, so the count only visibly ticks if members are included).
+  const meta = el("div", { class: "wv-scene-drop-meta" }, `${placeName} · ${agoLabel(s)}`);
+  row.appendChild(meta);
+  sceneContentCount(s.id).then((n) => {
+    if (n != null) meta.textContent = `${placeName} · ${n} elements · ${agoLabel(s)}`;
+  });
   row.addEventListener("dragover", (e) => { e.preventDefault(); row.classList.add("wv-drop-target"); });
   row.addEventListener("dragleave", () => row.classList.remove("wv-drop-target"));
   row.addEventListener("drop", (e) => {
@@ -883,6 +893,33 @@ function srow(s, sel, list) {
   });
   list.appendChild(row);
 }
+// Element count for the scene-tray meta. Elements (scene-elements store, the
+// same list app-shell.js:680 counts) PLUS explicit scene members, since a
+// tree->tray drop records a MEMBER — so a successful add visibly ticks +1.
+async function sceneContentCount(sceneId) {
+  try {
+    const [er, mr] = await Promise.all([
+      wApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/elements${withWorld()}`),
+      wApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/members${withWorld()}`)
+    ]);
+    const e = (er.elements || []).length;
+    const m = (mr.membership && Array.isArray(mr.membership.entityIds)) ? mr.membership.entityIds.length : 0;
+    return e + m;
+  } catch { return null; }
+}
+
+// Brief teal confirmation flash on the dropped-on scene row (reuses the
+// existing .wv-drop-target token — no new visual look), so a successful add is
+// anchored to the row, not only the transient toast.
+function flashSceneDropRow(sceneId) {
+  const pane = inspectorPaneEl();
+  if (!pane) return;
+  const row = pane.querySelector(`[data-testid="world-scene-drop-row"][data-scene-id="${sceneId}"]`);
+  if (!row) return;
+  row.classList.add("wv-drop-target");
+  setTimeout(() => row.classList.remove("wv-drop-target"), 600);
+}
+
 function agoLabel(s) {
   const ts = s.lastTouchedAt || s.updatedAt || s.createdAt;
   if (!ts) return "new";
@@ -907,6 +944,7 @@ async function addToScene(entityId, scene) {
     await recomputeUsedInScene();
     renderInspector();
     renderLoose();
+    flashSceneDropRow(scene.id);
     showUndoToast(`Added “${n.name}” to ${sceneDisplayName(scene)}`, async () => {
       try {
         await wApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/members/${encodeURIComponent(entityId)}${withWorld()}`, {

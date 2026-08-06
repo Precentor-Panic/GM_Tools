@@ -76,6 +76,10 @@ const {
   offerInterveningNodes,
   sceneMembershipRoot
 } = await import("../../session-planner/scene-membership.mjs");
+// Phase 31 task 31.2: addNodeToScene now bumps the target Scene's recency via
+// scenes.mjs's touchScene (best-effort, decoupled). These are used to prove
+// that recency bump on a scene that genuinely exists in the scenes store.
+const { createScene, getScene, touchScene } = await import("../../session-planner/scenes.mjs");
 
 let passed = 0;
 function test(name, fn) {
@@ -112,16 +116,38 @@ test("addNodeToScene: adding the same id twice is idempotent, no duplicate", () 
   assert.deepEqual(result.entityIds, ["x"]);
 });
 
-test("addNodeToScene: no side effects beyond the add -- a DIFFERENT scene's membership is untouched, and the session-scenes store directory is never touched by this module", () => {
+test("addNodeToScene: no CROSS-scene leak -- adding to one scene's membership never leaks into a different scene's entry", () => {
   addNodeToScene(WORLD, "scene-other-1", "e1");
   addNodeToScene(WORLD, "scene-other-2", "e2");
   assert.deepEqual(getSceneMembership(WORLD, "scene-other-1").entityIds, ["e1"], "adding to scene-other-2 must not leak into scene-other-1");
+});
 
-  const sessionScenesDir = process.env.GM_TOOLS_SESSION_SCENES_DIR;
-  const before = require_fs_existsSync(sessionScenesDir) ? readdirSync(sessionScenesDir) : [];
-  addNodeToScene(WORLD, "scene-other-3", "e3");
-  const after = require_fs_existsSync(sessionScenesDir) ? readdirSync(sessionScenesDir) : [];
-  assert.deepEqual(after, before, "scene-membership.mjs must never write into session-scenes/ -- it is a wholly separate store");
+// Phase 31 task 31.2 (§3.1): the membership store is still authoritative for
+// membership, but addNodeToScene now ALSO bumps the target Scene's recency via
+// scenes.mjs's touchScene (a fresh drop reads "just now" and sorts to the top
+// in the World scene-tray). NOTE this supersedes the pre-Phase-31 invariant
+// that this module "never writes into session-scenes/" -- it now does, but only
+// the target Scene's own updatedAt, and only when that Scene genuinely exists.
+test("addNodeToScene: bumps the target Scene's recency (touchScene) when the scene exists in the scenes store", () => {
+  const scene = createScene(WORLD, { name: "Gladiator Pit" });
+  // Age the scene so a bump is unambiguous.
+  touchScene(WORLD, scene.id, { now: "2000-01-01T00:00:00.000Z" });
+  assert.equal(getScene(WORLD, scene.id).updatedAt, "2000-01-01T00:00:00.000Z");
+
+  addNodeToScene(WORLD, scene.id, "alvor");
+
+  const after = getScene(WORLD, scene.id).updatedAt;
+  assert.notEqual(after, "2000-01-01T00:00:00.000Z", "addNodeToScene must bump the Scene's updatedAt off its aged value");
+  assert.ok(Date.now() - Date.parse(after) < 60000, "the bumped updatedAt must be a fresh (recent) timestamp");
+  // Membership itself still persisted correctly.
+  assert.deepEqual(getSceneMembership(WORLD, scene.id).entityIds, ["alvor"]);
+});
+
+test("addNodeToScene: a scene with NO record in the scenes store still adds the member (recency bump is best-effort, never throws)", () => {
+  // "phantom-scene" was never createScene'd -- touchScene would throw, but the
+  // membership add must still succeed (the swallow keeps the stores decoupled).
+  assert.doesNotThrow(() => addNodeToScene(WORLD, "phantom-scene", "ghost"));
+  assert.deepEqual(getSceneMembership(WORLD, "phantom-scene").entityIds, ["ghost"]);
 });
 
 test("removeNodeFromScene: removes a present id", () => {

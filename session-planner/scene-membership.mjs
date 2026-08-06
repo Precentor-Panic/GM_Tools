@@ -11,8 +11,10 @@
  * Storage: ONE JSON file PER WORLD — `<sceneMembershipRoot>/<world>.json`, a
  * flat array of `{ sceneId, entityIds }`. Same one-file-per-world flat
  * convention as session-planner/scenes.mjs itself, but a wholly SEPARATE
- * store — scenes.mjs is imported nowhere in this file and stays completely
- * unmodified. Default root is GM_Tools/scene-membership/ (sibling to
+ * store — this store owns membership. (Phase 31 task 31.2: addNodeToScene now
+ * ALSO makes one best-effort call into scenes.mjs's touchScene to bump the
+ * Scene's recency for the World scene-tray; the membership write remains this
+ * store's own authoritative data.) Default root is GM_Tools/scene-membership/ (sibling to
  * session-scenes/); override with GM_TOOLS_SCENE_MEMBERSHIP_DIR (tests use
  * this for isolation). Reuses review-state.mjs's withLock/ConcurrentWriteError
  * rather than a second file-locking implementation.
@@ -22,6 +24,11 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 import { shortestPath } from "./corridor.mjs";
+// Phase 31 task 31.2 (§3.1): a scene-member add bumps the target Scene's
+// recency so the World scene-tray reflects the drop (moves to top, agoLabel ->
+// "just now"). This is the ONLY coupling to scenes.mjs — a best-effort recency
+// signal layered on top of this store's own authoritative membership write.
+import { touchScene } from "./scenes.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "scene-membership");
@@ -73,16 +80,24 @@ export function getSceneMembership(world, sceneId) {
 export function addNodeToScene(world, sceneId, entityId) {
   const entries = readEntries(world);
   const entry = entries.find((e) => e.sceneId === sceneId);
+  let result;
   if (!entry) {
     const created = { sceneId, entityIds: [entityId] };
     writeEntries(world, [...entries, created]);
-    return { sceneId, entityIds: [...created.entityIds] };
+    result = { sceneId, entityIds: [...created.entityIds] };
+  } else {
+    if (!entry.entityIds.includes(entityId)) {
+      entry.entityIds.push(entityId);
+      writeEntries(world, entries);
+    }
+    result = { sceneId, entityIds: [...entry.entityIds] };
   }
-  if (!entry.entityIds.includes(entityId)) {
-    entry.entityIds.push(entityId);
-    writeEntries(world, entries);
-  }
-  return { sceneId, entityIds: [...entry.entityIds] };
+  // Phase 31 task 31.2 (§3.1): bump the Scene's recency. Best-effort and
+  // decoupled — the membership write above is authoritative; a scene that has
+  // no record in the scenes store (this store never validated the FK) must not
+  // fail the add, so a missing-scene throw is swallowed.
+  try { touchScene(world, sceneId); } catch { /* scene not in scenes store — recency bump is best-effort */ }
+  return result;
 }
 
 /**
