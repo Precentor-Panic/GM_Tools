@@ -79,14 +79,18 @@ async function initWorldSelect() {
 // ---------------------------------------------------------------------------
 
 function parseHash() {
-  const raw = (location.hash || "#queue").slice(1);
+  // Phase 30: a bare/empty hash lands on the new designer app (the Session
+  // Planner shelf), not the legacy `#queue` GM-Review view. Every legacy hash
+  // (`#queue`, `#review/<id>`, `#graph`, `#scenes`, ...) still resolves to its
+  // shelved view when navigated to explicitly -- only the DEFAULT changed.
+  const raw = (location.hash || "#planner/plans").slice(1);
   // Split off the leading view segment, but preserve the REST as a single arg
   // (joined on "/") -- Phase 27 introduces the multi-segment
   // `#session-planner/plan/<planId>` route, and every pre-existing arg is a
   // single segment, so `rest.join("/")` is backward-compatible for them all
   // (equal to `rest[0]`).
   const [view, ...rest] = raw.split("/");
-  return { view: view || "queue", arg: rest.length ? rest.join("/") : undefined };
+  return { view: view || "planner", arg: rest.length ? rest.join("/") : undefined };
 }
 
 function navigate(view, arg) {
@@ -2905,5 +2909,8 @@ function renderPrepField(entity, doc, container, fieldName, value) {
 
 (async function boot() {
   await initWorldSelect();
+  // Reflect the new default in the URL bar so a refresh/bookmark stays on the
+  // designer app (parseHash already renders it; this just makes the hash explicit).
+  if (!location.hash) location.hash = "planner/plans";
   renderCurrentView();
 })();
