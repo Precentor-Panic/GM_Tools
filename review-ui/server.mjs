@@ -185,7 +185,6 @@ import { pushSceneToFoundry } from "../wf-mcp-server/lib/foundry-push-ops.mjs";
 // already imported above (Phase 16's session-planner import block) and
 // reused here unmodified.
 import { createTransitEntity } from "../session-planner/transit-entity.mjs";
-import { addNodeToScene, removeNodeFromScene, getSceneMembership, offerInterveningNodes } from "../session-planner/scene-membership.mjs";
 import {
   startSceneUndoSession,
   listSceneUndoActions,
@@ -1915,38 +1914,13 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { entity });
   }
 
-  // GET /api/scene-planning/scenes/:sceneId/members?world=
-  if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "members") {
-    const w = resolveWorld(q.get("world"));
-    const membership = getSceneMembership(w, parts[3]);
-    return sendJson(res, 200, { membership });
-  }
-
-  // POST /api/scene-planning/scenes/:sceneId/members   { world, entityId }
-  if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "members") {
-    const body = await readBody(req);
-    const w = resolveWorld(body.world);
-    const membership = addNodeToScene(w, parts[3], body.entityId);
-    return sendJson(res, 200, { membership });
-  }
-
-  // DELETE /api/scene-planning/scenes/:sceneId/members/:entityId   { world } (query or body)
-  if (method === "DELETE" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "members") {
-    const body = await readBody(req);
-    const w = resolveWorld(body.world ?? q.get("world"));
-    const membership = removeNodeFromScene(w, parts[3], parts[5]);
-    return sendJson(res, 200, { membership });
-  }
-
-  // GET /api/scene-planning/scenes/:sceneId/intervening-offer?world=&targetEntityId=
-  if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "intervening-offer") {
-    const w = resolveWorld(q.get("world"));
-    const dir = resolveDir();
-    const scene = getScene(w, parts[3]);
-    const { entities, edges } = loadSnapshot(dir, w).snapshot;
-    const offer = offerInterveningNodes(entities, edges, scene.locationEntityId, q.get("targetEntityId"));
-    return sendJson(res, 200, { offer });
-  }
+  // Phase 22's scene-membership `.../members` (GET/POST/DELETE) +
+  // `.../intervening-offer` routes were RETIRED in Phase 33 task 33.1 --
+  // scene contents are now unified as scene-elements (see
+  // session-planner/scene-elements.mjs's attachExistingNodeAsElement +
+  // POST .../elements/from-graph below); the membership store itself is
+  // deleted (session-planner/scene-membership.mjs, test/scene-planning/
+  // scene-membership.test.mjs).
 
   // POST /api/scene-planning/scenes/:sceneId/undo/start   { world }
   if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "undo" && parts[5] === "start") {

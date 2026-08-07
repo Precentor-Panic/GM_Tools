@@ -71,9 +71,12 @@ party-roster/*
 scene-undo/*/
 !scene-undo/.gitkeep
 
-# session-planner/scene-membership.mjs is flat per-world-file, same
-# convention as session-scenes/ above -- a scene's explicit "add arbitrary
-# node" extra-membership list.
+# session-planner/scene-membership.mjs (Phase 22) was flat per-world-file,
+# same convention as session-scenes/ above -- a scene's explicit "add
+# arbitrary node" extra-membership list. RETIRED Phase 33 task 33.1 (scene
+# contents unified as scene-elements) -- the module is deleted; this rule
+# stays only to keep any pre-existing local data dir out of git, never
+# written to again.
 scene-membership/*
 !scene-membership/.gitkeep
 

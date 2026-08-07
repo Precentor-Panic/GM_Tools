@@ -94,10 +94,14 @@ async function fetchGraph() {
   return res.json();
 }
 
-async function sceneMembers(sceneId) {
-  const res = await fetch(`${base}/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/members?world=${encodeURIComponent(WORLD)}`);
+// Phase 33 task 33.1: scene-membership is retired -- a tree->tray drop now
+// creates a real kind:'graph' scene-element instead of a membership row.
+// Reads the same GET .../elements route the Planner surface itself renders
+// from.
+async function sceneGraphElementIds(sceneId) {
+  const res = await fetch(`${base}/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/elements?world=${encodeURIComponent(WORLD)}`);
   const body = await res.json();
-  return body.membership.entityIds;
+  return (body.elements || []).filter((e) => e.kind === "graph").map((e) => e.graphEntityId);
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +136,7 @@ test("reparent: dragstart a tree row onto ANOTHER tree row creates a containment
 // ---------------------------------------------------------------------------
 // 2. Add-to-scene FEEDBACK -- the regression that would have caught the bug
 // ---------------------------------------------------------------------------
-test("add-to-scene: dropping a node on the scene-tray row adds the member AND the row visibly ticks its element count +1 and reads \"just now\"", async () => {
+test("add-to-scene: dropping a node on the scene-tray row creates a real graph-element AND the row visibly ticks its element count +1 and reads \"just now\"", async () => {
   const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "p31-b" });
 
   const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
@@ -159,14 +163,14 @@ test("add-to-scene: dropping a node on the scene-tray row adds the member AND th
     '[data-testid="world-tree-row"][data-entity-id="p31-person"]',
     `[data-testid="world-scene-drop-row"][data-scene-id="${scene.id}"]`);
 
-  // Server-side: the member persisted.
-  let members = [];
+  // Server-side: a real kind:'graph' scene-element persisted.
+  let graphIds = [];
   for (let i = 0; i < 40; i++) {
-    members = await sceneMembers(scene.id);
-    if (members.includes("p31-person")) break;
+    graphIds = await sceneGraphElementIds(scene.id);
+    if (graphIds.includes("p31-person")) break;
     await new Promise((r) => setTimeout(r, 150));
   }
-  assert.ok(members.includes("p31-person"), "the dropped node must be persisted as a scene member");
+  assert.ok(graphIds.includes("p31-person"), "the dropped node must be persisted as a real graph-referencing scene-element");
 
   // Visible, PERSISTENT feedback (not just the 6s toast): the tray row's
   // element count ticked +1 and its recency flipped to "just now".

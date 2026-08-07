@@ -264,15 +264,60 @@ await testAsync("attachExistingNodeAsElement: creates a kind:'graph' element ref
 });
 
 test("attachExistingNodeAsElement: an explicit `name` wins over the entity's own real name", () => {
+  // A DIFFERENT scene than the "creates a kind:'graph' element" test above --
+  // that test already attached "npc-fromgraph-1" to anchoredScene, and Phase
+  // 33 task 33.1's dedupe (same scene + same graphEntityId returns the
+  // EXISTING element verbatim) would otherwise make this assertion moot.
+  const world = "scene-elements-fromgraph-name-override-world";
+  const scene = createScene(world, { locationEntityId: "place-anchor-1" }, { makeId: () => "scene-fromgraph-name-override" });
   const element = attachExistingNodeAsElement(
     dataDir,
-    WORLD,
-    anchoredScene.id,
+    world,
+    scene.id,
     "npc-fromgraph-1",
     { name: "The Warden (disguised)" },
     { makeId: () => "elem-fromgraph-2" }
   );
   assert.equal(element.name, "The Warden (disguised)");
+});
+
+test("attachExistingNodeAsElement: dedupe -- attaching the SAME node to the SAME scene twice returns the SAME element, no duplicate (Phase 33 task 33.1)", () => {
+  const world = "scene-elements-fromgraph-dedupe-world";
+  const scene = createScene(world, { locationEntityId: "place-anchor-1" }, { makeId: () => "scene-fromgraph-dedupe" });
+
+  const first = attachExistingNodeAsElement(
+    dataDir,
+    world,
+    scene.id,
+    "npc-fromgraph-1",
+    { name: "Ashen Warden Cael" },
+    { makeId: () => "elem-fromgraph-dedupe-1" }
+  );
+  assert.equal(first.id, "elem-fromgraph-dedupe-1");
+
+  const second = attachExistingNodeAsElement(
+    dataDir,
+    world,
+    scene.id,
+    "npc-fromgraph-1",
+    { name: "Ashen Warden Cael" },
+    { makeId: () => "elem-fromgraph-dedupe-2" } // would be used if a NEW element were (wrongly) created
+  );
+  assert.deepEqual(second, first, "must return the SAME existing element verbatim, not a new one");
+
+  const elements = listElementsForScene(world, scene.id);
+  const graphEls = elements.filter((e) => e.kind === "graph" && e.graphEntityId === "npc-fromgraph-1");
+  assert.equal(graphEls.length, 1, "exactly one kind:'graph' element for this node, no duplicate");
+});
+
+test("attachExistingNodeAsElement: dedupe is scoped PER SCENE -- attaching the same node to a DIFFERENT scene still creates its own element", () => {
+  const world = "scene-elements-fromgraph-dedupe-cross-world";
+  const sceneA = createScene(world, { locationEntityId: "place-anchor-1" }, { makeId: () => "scene-fromgraph-dedupe-a" });
+  const sceneB = createScene(world, { locationEntityId: "place-anchor-1" }, { makeId: () => "scene-fromgraph-dedupe-b" });
+
+  attachExistingNodeAsElement(dataDir, world, sceneA.id, "npc-fromgraph-1", { name: "X" }, { makeId: () => "elem-dedupe-cross-a" });
+  const b = attachExistingNodeAsElement(dataDir, world, sceneB.id, "npc-fromgraph-1", { name: "X" }, { makeId: () => "elem-dedupe-cross-b" });
+  assert.equal(b.id, "elem-dedupe-cross-b", "a different scene must NOT be deduped against sceneA's element");
 });
 
 test("attachExistingNodeAsElement: appended at max(order)+1, same ordering convention as createElement", () => {

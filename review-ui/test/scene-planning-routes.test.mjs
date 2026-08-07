@@ -40,23 +40,16 @@ import { test, before, after } from "node:test";
  *
  * ---------------------------------------------------------------------------
  * POST /api/scene-planning/scenes/:sceneId/members   { world, entityId }
- * ---------------------------------------------------------------------------
- * Thin wrapper over session-planner/scene-membership.mjs's
- * addNodeToScene(w, sceneId, entityId). Response 200: { membership }.
- *
- * ---------------------------------------------------------------------------
- * DELETE /api/scene-planning/scenes/:sceneId/members/:entityId   { world } (query or body, matching /api/graph/nodes/:id's own established convention)
- * ---------------------------------------------------------------------------
- * Thin wrapper over removeNodeFromScene(w, sceneId, entityId). Response
- * 200: { membership }.
- *
- * ---------------------------------------------------------------------------
+ * DELETE /api/scene-planning/scenes/:sceneId/members/:entityId   { world }
  * GET /api/scene-planning/scenes/:sceneId/intervening-offer?world=&targetEntityId=
  * ---------------------------------------------------------------------------
- * Loads the scene (getScene, for its anchor/locationEntityId) and the live
- * snapshot, then wraps scene-membership.mjs's offerInterveningNodes(entities,
- * edges, scene.locationEntityId, targetEntityId). Response 200: { offer:
- * {reachable, interveningEntityIds} }.
+ * REMOVED (Phase 33 task 33.1, along with session-planner/
+ * scene-membership.mjs and its own route tests below): scene contents are
+ * unified as scene-elements -- a node's scene membership is now expressed as
+ * a real `kind:'graph'` scene-element (POST .../elements/from-graph,
+ * attachExistingNodeAsElement), the SAME route/store the scene page's own
+ * "◇ From graph" picker already used. The `/intervening-offer` route had no
+ * live UI caller at the time of removal.
  *
  * ---------------------------------------------------------------------------
  * POST /api/scene-planning/scenes/:sceneId/undo/start   { world }
@@ -112,7 +105,7 @@ process.env.GM_TOOLS_ENTITY_NARRATION_DIR = join(scratchDir, "entity-narration")
 process.env.GM_TOOLS_PREP_CONTENT_DIR = join(scratchDir, "prep-content");
 process.env.GM_TOOLS_MANUAL_UNDO_DIR = join(scratchDir, "manual-undo");
 process.env.GM_TOOLS_SESSION_SCENES_DIR = join(scratchDir, "session-scenes");
-process.env.GM_TOOLS_SCENE_MEMBERSHIP_DIR = join(scratchDir, "scene-membership");
+process.env.GM_TOOLS_SCENE_ELEMENTS_DIR = join(scratchDir, "scene-elements");
 process.env.GM_TOOLS_SCENE_UNDO_DIR = join(scratchDir, "scene-undo");
 process.env.WF_DATA_DIR = dataDir;
 
@@ -191,29 +184,25 @@ test("POST /api/scene-planning/transit-entity creates a real place entity with a
   assert.equal(body.entity.isTransit, true);
 });
 
-test("POST /api/scene-planning/scenes/:id/members adds a node, GET intervening-offer reports the real intervening path", async () => {
-  const add = await postJson(`/api/scene-planning/scenes/${anchoredScene.id}/members`, { world: WORLD, entityId: "sp-target" });
+test("POST /api/scene-planning/scenes/:id/elements/from-graph attaches a real kind:'graph' element, readable back via GET .../elements (Phase 33 task 33.1 -- the retired /members route's replacement)", async () => {
+  const add = await postJson(`/api/scene-planning/scenes/${anchoredScene.id}/elements/from-graph`, { world: WORLD, entityId: "sp-target" });
   assert.equal(add.status, 200);
-  assert.ok(add.body.membership.entityIds.includes("sp-target"));
+  assert.equal(add.body.element.kind, "graph");
+  assert.equal(add.body.element.graphEntityId, "sp-target");
 
-  const offer = await getJson(`/api/scene-planning/scenes/${anchoredScene.id}/intervening-offer?world=${WORLD}&targetEntityId=sp-target`);
-  assert.equal(offer.status, 200);
-  assert.equal(offer.body.offer.reachable, true);
-  assert.deepEqual(offer.body.offer.interveningEntityIds, ["sp-mid"]);
+  const { status, body } = await getJson(`/api/scene-planning/scenes/${anchoredScene.id}/elements?world=${WORLD}`);
+  assert.equal(status, 200);
+  assert.ok(body.elements.some((e) => e.kind === "graph" && e.graphEntityId === "sp-target"), "must genuinely persist, readable back via GET .../elements");
 });
 
-test("DELETE /api/scene-planning/scenes/:id/members/:entityId removes a node", async () => {
-  await postJson(`/api/scene-planning/scenes/${anchoredScene.id}/members`, { world: WORLD, entityId: "sp-to-remove" });
-  const { status, body } = await deleteJson(`/api/scene-planning/scenes/${anchoredScene.id}/members/sp-to-remove`, { world: WORLD });
+test("DELETE /api/scene-planning/scenes/:id/elements/:elementId removes a from-graph element", async () => {
+  const add = await postJson(`/api/scene-planning/scenes/${anchoredScene.id}/elements/from-graph`, { world: WORLD, entityId: "sp-mid" });
+  const { status, body } = await deleteJson(`/api/scene-planning/scenes/${anchoredScene.id}/elements/${add.body.element.id}`, { world: WORLD });
   assert.equal(status, 200);
-  assert.ok(!body.membership.entityIds.includes("sp-to-remove"));
-});
+  assert.equal(body.deleted, true);
 
-test("GET /api/scene-planning/scenes/:id/members reads back real persisted membership (Phase 23 self-review addendum: closes the reload-persistence gap)", async () => {
-  await postJson(`/api/scene-planning/scenes/${anchoredScene.id}/members`, { world: WORLD, entityId: "sp-readback" });
-  const { status, body } = await getJson(`/api/scene-planning/scenes/${anchoredScene.id}/members?world=${WORLD}`);
-  assert.equal(status, 200);
-  assert.ok(body.membership.entityIds.includes("sp-readback"));
+  const reread = await getJson(`/api/scene-planning/scenes/${anchoredScene.id}/elements?world=${WORLD}`);
+  assert.ok(!reread.body.elements.some((e) => e.id === add.body.element.id));
 });
 
 test("scene-undo session routes: start -> record -> peek -> last -> clear, real HTTP round trip", async () => {
@@ -260,13 +249,13 @@ test("GET /api/scene-planning/entities/:entityId/scenes reports the anchor role 
   assert.deepEqual(entry.roles, ["anchor"]);
 });
 
-test("GET /api/scene-planning/entities/:entityId/scenes reports the member role after POST .../members", async () => {
-  await postJson(`/api/scene-planning/scenes/${anchoredScene.id}/members`, { world: WORLD, entityId: "sp-appears-member" });
-  const { status, body } = await getJson(`/api/scene-planning/entities/sp-appears-member/scenes?world=${WORLD}`);
+test("GET /api/scene-planning/entities/:entityId/scenes reports the element role after POST .../elements/from-graph (Phase 33 task 33.1 -- the retired member role's replacement)", async () => {
+  await postJson(`/api/scene-planning/scenes/${anchoredScene.id}/elements/from-graph`, { world: WORLD, entityId: "sp-appears-element" });
+  const { status, body } = await getJson(`/api/scene-planning/entities/sp-appears-element/scenes?world=${WORLD}`);
   assert.equal(status, 200);
   assert.equal(body.appearances.length, 1);
   assert.equal(body.appearances[0].scene.id, anchoredScene.id);
-  assert.deepEqual(body.appearances[0].roles, ["member"]);
+  assert.deepEqual(body.appearances[0].roles, ["element"]);
 });
 
 test("SECURITY: GET /api/scene-planning/entities/:entityId/scenes rejects a path-traversal-shaped world id with 400", async () => {
@@ -301,26 +290,14 @@ test("SECURITY: POST /api/scene-planning/transit-entity rejects a path-traversal
   assert.match(body.error, /Invalid world id/);
 });
 
-test("SECURITY: POST /api/scene-planning/scenes/:id/members rejects a path-traversal-shaped world id with 400", async () => {
-  const { status, body } = await postJson(`/api/scene-planning/scenes/${anchoredScene.id}/members`, { world: MALICIOUS_WORLD, entityId: "x" });
+test("SECURITY: POST /api/scene-planning/scenes/:id/elements/from-graph rejects a path-traversal-shaped world id with 400", async () => {
+  const { status, body } = await postJson(`/api/scene-planning/scenes/${anchoredScene.id}/elements/from-graph`, { world: MALICIOUS_WORLD, entityId: "x" });
   assert.equal(status, 400);
   assert.match(body.error, /Invalid world id/);
 });
 
-test("SECURITY: GET /api/scene-planning/scenes/:id/members rejects a path-traversal-shaped world id with 400", async () => {
-  const { status, body } = await getJson(`/api/scene-planning/scenes/${anchoredScene.id}/members?world=${encodeURIComponent(MALICIOUS_WORLD)}`);
-  assert.equal(status, 400);
-  assert.match(body.error, /Invalid world id/);
-});
-
-test("SECURITY: DELETE /api/scene-planning/scenes/:id/members/:entityId rejects a path-traversal-shaped world id with 400", async () => {
-  const { status, body } = await deleteJson(`/api/scene-planning/scenes/${anchoredScene.id}/members/x`, { world: MALICIOUS_WORLD });
-  assert.equal(status, 400);
-  assert.match(body.error, /Invalid world id/);
-});
-
-test("SECURITY: GET /api/scene-planning/scenes/:id/intervening-offer rejects a path-traversal-shaped world id with 400", async () => {
-  const { status, body } = await getJson(`/api/scene-planning/scenes/${anchoredScene.id}/intervening-offer?world=${encodeURIComponent(MALICIOUS_WORLD)}&targetEntityId=x`);
+test("SECURITY: DELETE /api/scene-planning/scenes/:id/elements/:elementId rejects a path-traversal-shaped world id with 400", async () => {
+  const { status, body } = await deleteJson(`/api/scene-planning/scenes/${anchoredScene.id}/elements/x`, { world: MALICIOUS_WORLD });
   assert.equal(status, 400);
   assert.match(body.error, /Invalid world id/);
 });

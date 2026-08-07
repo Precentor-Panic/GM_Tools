@@ -130,13 +130,14 @@ test('"Create a scene here" appears only for a place node and calls the real sce
 test("inspector's appears-in section renders a real scene appearance (backed by the now-live scenesForEntity route)", async () => {
   const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
   await primeWorldSelection(page, base, WORLD);
-  // Anchor the scene at a DIFFERENT place, then add world-person-a as a
-  // scene MEMBER (the existing /members route, Phase 22) -- keeps the
-  // scene's own resolved display name ("The Sunken Chapel", via
+  // Anchor the scene at a DIFFERENT place, then attach world-person-a as a
+  // real kind:'graph' scene-ELEMENT (Phase 33 task 33.1 retired the old
+  // /members route -- scene contents are unified as scene-elements) -- keeps
+  // the scene's own resolved display name ("The Sunken Chapel", via
   // resolveSceneDisplayName's anchor-place fallback) distinct from the
   // entity under inspection, so this assertion isn't accidentally trivial.
   const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "world-place-root" });
-  await fetch(`${base}/api/scene-planning/scenes/${scene.id}/members`, {
+  await fetch(`${base}/api/scene-planning/scenes/${scene.id}/elements/from-graph`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ world: WORLD, entityId: "world-person-a" })

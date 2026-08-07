@@ -63,7 +63,6 @@ process.env.GM_TOOLS_ENTITY_NARRATION_DIR = join(scratchDir, "entity-narration")
 process.env.GM_TOOLS_PREP_CONTENT_DIR = join(scratchDir, "prep-content");
 process.env.GM_TOOLS_MANUAL_UNDO_DIR = join(scratchDir, "manual-undo");
 process.env.GM_TOOLS_SESSION_SCENES_DIR = join(scratchDir, "session-scenes");
-process.env.GM_TOOLS_SCENE_MEMBERSHIP_DIR = join(scratchDir, "scene-membership");
 process.env.GM_TOOLS_SCENE_UNDO_DIR = join(scratchDir, "scene-undo");
 process.env.GM_TOOLS_SAVED_ENCOUNTERS_DIR = join(scratchDir, "saved-encounters");
 process.env.WF_DATA_DIR = dataDir;

@@ -15,16 +15,19 @@
  *
  * A scene "appears" for `entityId` if ANY of:
  *   - `scene.locationEntityId === entityId`                         role "anchor"
- *   - entityId is in `getSceneMembership(world, scene.id).entityIds` role "member"
  *   - a `kind:'graph'` element of the scene has
  *     `graphEntityId === entityId`                                  role "element"
  * A single scene can carry more than one role at once (e.g. a node that's
  * both the scene's own anchor place AND separately attached as a graph
  * element -- an unusual but not impossible combination) -- `roles` is always
  * an array, never collapsed to a single value.
+ *
+ * Phase 33 task 33.1: the former THIRD role, "member" (backed by the
+ * now-retired session-planner/scene-membership.mjs), is gone -- scene
+ * contents are unified as scene-elements, so anything that used to be a bare
+ * membership entry is now, post-redirect, a real "element" role instead.
  */
 import { listScenesForWorld } from "./scenes.mjs";
-import { getSceneMembership } from "./scene-membership.mjs";
 import { listElementsForScene } from "./scene-elements.mjs";
 
 /**
@@ -41,7 +44,6 @@ export function scenesForEntity(world, entityId) {
   for (const scene of listScenesForWorld(world)) {
     const roles = [];
     if (scene.locationEntityId === entityId) roles.push("anchor");
-    if (getSceneMembership(world, scene.id).entityIds.includes(entityId)) roles.push("member");
     const hasGraphElement = listElementsForScene(world, scene.id).some(
       (el) => el.kind === "graph" && el.graphEntityId === entityId
     );

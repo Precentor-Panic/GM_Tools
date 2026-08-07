@@ -343,7 +343,6 @@ import assert from "node:assert/strict";
  */
 export function setupSceneConstructionEnv(prefix) {
   const { scratchDir, dataDir } = setupScratchEnv(prefix);
-  process.env.GM_TOOLS_SCENE_MEMBERSHIP_DIR = join(scratchDir, "scene-membership");
   process.env.GM_TOOLS_SCENE_UNDO_DIR = join(scratchDir, "scene-undo");
   process.env.GM_TOOLS_SAVED_ENCOUNTERS_DIR = join(scratchDir, "saved-encounters");
   return { scratchDir, dataDir };

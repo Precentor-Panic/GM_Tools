@@ -876,8 +876,8 @@ function srow(s, sel, list) {
   row.appendChild(el("div", { class: "wv-scene-drop-name" }, sceneDisplayName(s)));
   // Meta reads `place · N elements · ago` (prototype World Graph.dc.html:608).
   // N is fetched async from the SAME /scenes/:id/elements count app-shell.js:680
-  // uses, PLUS explicit scene members (a tree->tray drop adds a MEMBER, not a
-  // scene-element, so the count only visibly ticks if members are included).
+  // uses — a tree->tray drop now creates a REAL kind:'graph' scene-element
+  // (Phase 33 task 33.1), so the count ticks correctly with no second term.
   const meta = el("div", { class: "wv-scene-drop-meta" }, `${placeName} · ${agoLabel(s)}`);
   row.appendChild(meta);
   sceneContentCount(s.id).then((n) => {
@@ -893,18 +893,14 @@ function srow(s, sel, list) {
   });
   list.appendChild(row);
 }
-// Element count for the scene-tray meta. Elements (scene-elements store, the
-// same list app-shell.js:680 counts) PLUS explicit scene members, since a
-// tree->tray drop records a MEMBER — so a successful add visibly ticks +1.
+// Element count for the scene-tray meta (Phase 33 task 33.1: a tree->tray
+// drop now creates a REAL scene-ELEMENT, same store app-shell.js:680 counts
+// for the Planner surface — so a successful add visibly ticks +1 with no
+// second, now-retired scene-membership term to add in).
 async function sceneContentCount(sceneId) {
   try {
-    const [er, mr] = await Promise.all([
-      wApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/elements${withWorld()}`),
-      wApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/members${withWorld()}`)
-    ]);
-    const e = (er.elements || []).length;
-    const m = (mr.membership && Array.isArray(mr.membership.entityIds)) ? mr.membership.entityIds.length : 0;
-    return e + m;
+    const er = await wApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/elements${withWorld()}`);
+    return (er.elements || []).length;
   } catch { return null; }
 }
 
@@ -932,11 +928,33 @@ function agoLabel(s) {
   return Math.round(days / 7) + "w ago";
 }
 
+// Phase 33 task 33.1: redirected from the retired scene-membership store to
+// the SAME `POST .../elements/from-graph` route the Planner scene page's own
+// "◇ From graph" picker already calls (attachExistingNodeAsElement) — a
+// World-tray drop and a scene-page From-graph pick are now the literal same
+// action, so the dropped node shows up on the Planner scene page with zero
+// new read-side logic there.
+//
+// "Already in scene" detection: attachExistingNodeAsElement is itself
+// idempotent (dedupe by graphEntityId, scene-elements.mjs), so the POST
+// below is always safe to call and never creates a second element — but we
+// still need to know, client-side, whether THIS call was the one that
+// created the element, so undo never deletes a pre-existing element the
+// user didn't just add. Cleanest available signal: a pre-check read of the
+// scene's own elements immediately before the write (no new route/response
+// shape needed) — a real race against a concurrent second drop is
+// vanishingly unlikely for this single-operator tool and, even if it
+// happened, would at worst mislabel the toast, never mis-delete (the DELETE
+// undo path only ever targets the element id THIS call's own response
+// returned).
 async function addToScene(entityId, scene) {
   const n = node(entityId);
   if (!n) return;
   try {
-    await wApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/members`, {
+    const before = await wApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements${withWorld()}`);
+    const alreadyPresent = (before.elements || []).some((el) => el.kind === "graph" && el.graphEntityId === entityId);
+
+    const { element } = await wApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/from-graph`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ world: currentWorld(), entityId })
     });
@@ -945,9 +963,18 @@ async function addToScene(entityId, scene) {
     renderInspector();
     renderLoose();
     flashSceneDropRow(scene.id);
+
+    if (alreadyPresent) {
+      // No destructive undo offered — this element predates this drop, so
+      // deleting it on "Undo" would destroy something the user didn't just
+      // create here.
+      showUndoToast(`“${n.name}” is already in ${sceneDisplayName(scene)}`, () => {});
+      return;
+    }
+
     showUndoToast(`Added “${n.name}” to ${sceneDisplayName(scene)}`, async () => {
       try {
-        await wApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/members/${encodeURIComponent(entityId)}${withWorld()}`, {
+        await wApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/${encodeURIComponent(element.id)}${withWorld()}`, {
           method: "DELETE", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ world: currentWorld() })
         });
@@ -1067,10 +1094,14 @@ async function refreshScenes() {
     cache.scenes = [];
   }
 }
-// Best-effort "used in a scene" set (anchors + members) for the loose lane.
-// Elements-as-usage is approximated by anchors+members here to bound calls;
-// the selected node's own precise usage still comes from scenesForEntity in
-// the inspector. Flagged as a minor fidelity approximation.
+// "Used in a scene" set (anchors + graph-elements) for the loose lane. Phase
+// 33 task 33.1: previously approximated via anchors+members (scene-membership
+// was a coarser, separate store); now that a World-tray drop creates the
+// SAME kind:'graph' scene-element the Planner surface renders, this is an
+// EXACT match to "appears somewhere in the Planner" rather than an
+// approximation — the selected node's own precise usage still comes from
+// scenesForEntity in the inspector (unchanged, that route already reasons
+// over anchor+element roles the same way).
 async function recomputeUsedInScene() {
   const used = new Set();
   const scenes = cache.scenes || [];
@@ -1079,8 +1110,10 @@ async function recomputeUsedInScene() {
   }
   await Promise.all(scenes.map(async (s) => {
     try {
-      const { membership } = await wApi(`/api/scene-planning/scenes/${encodeURIComponent(s.id)}/members${withWorld()}`);
-      for (const eid of (membership && membership.entityIds) || []) used.add(eid);
+      const { elements } = await wApi(`/api/scene-planning/scenes/${encodeURIComponent(s.id)}/elements${withWorld()}`);
+      for (const el of elements || []) {
+        if (el.kind === "graph" && el.graphEntityId) used.add(el.graphEntityId);
+      }
     } catch { /* ignore */ }
   }));
   cache.usedInScene = used;

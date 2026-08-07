@@ -274,13 +274,25 @@ export function reorderElements(world, sceneId, orderedElementIds) {
  * @param {object} [opts]
  * @param {() => string} [opts.makeId]
  * @param {string} [opts.now]
- * @returns {object}   the created element
+ * @returns {object}   the created element, OR the scene's already-existing
+ *   `kind:'graph'` element for this `entityId` verbatim, unchanged, if one
+ *   already exists (Phase 33 task 33.1 dedupe — see below)
  */
 export function attachExistingNodeAsElement(dir, world, sceneId, entityId, { name } = {}, opts = {}) {
   const makeId = opts.makeId ?? makeElementId;
   const now = opts.now ?? new Date().toISOString();
   const elements = readElements(world);
   const sceneElements = elements.filter((e) => e.sceneId === sceneId);
+
+  // Phase 33 task 33.1 dedupe: a scene may only ever hold ONE kind:'graph'
+  // element per graph node. This makes BOTH callers of this function --
+  // the World surface's scene-tray drop (world-view.js addToScene) and the
+  // scene page's own "◇ From graph" picker -- idempotent: attaching the
+  // same node twice returns the SAME element rather than creating a
+  // duplicate row. Return verbatim, no write.
+  const existing = sceneElements.find((e) => e.kind === "graph" && e.graphEntityId === entityId);
+  if (existing) return existing;
+
   const nextOrder = sceneElements.length ? Math.max(...sceneElements.map((e) => e.order)) + 1 : 0;
 
   let resolvedName = name;
