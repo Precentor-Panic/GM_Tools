@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "worldId": "wf-test",
+  "exportedAt": "2026-08-06T18:05:00.000Z",
+  "actors": [
+    {
+      "uuid": "Actor.sparse001",
+      "name": "Wandering Spirit",
+      "type": "npc",
+      "img": null,
+      "ownership": null,
+      "system": {
+        "hp": { "value": 9, "max": 9 },
+        "ac": null,
+        "cr": null,
+        "level": null,
+        "abilities": null,
+        "saves": null,
+        "skills": null,
+        "biography": null
+      },
+      "items": [],
+      "effects": null
+    }
+  ],
+  "users": [],
+  "scenes": [
+    {
+      "uuid": "Scene.empty001",
+      "name": "Unmapped Room",
+      "background": null,
+      "width": null,
+      "height": null,
+      "grid": null,
+      "tokens": []
+    }
+  ],
+  "tokens": []
+}

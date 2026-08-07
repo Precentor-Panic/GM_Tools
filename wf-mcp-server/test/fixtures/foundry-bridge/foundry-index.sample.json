@@ -1,0 +1,238 @@
+{
+  "version": 1,
+  "worldId": "wf-test",
+  "exportedAt": "2026-08-06T18:00:00.000Z",
+  "actors": [
+    {
+      "uuid": "Actor.gob001boss",
+      "name": "Goblin Boss",
+      "type": "npc",
+      "img": "icons/creatures/humanoid/goblin-boss.webp",
+      "ownership": { "default": 0 },
+      "system": {
+        "hp": { "value": 21, "max": 21, "temp": 0 },
+        "ac": 17,
+        "cr": 1,
+        "level": null,
+        "abilities": {
+          "str": { "value": 10, "mod": 0, "save": 0 },
+          "dex": { "value": 14, "mod": 2, "save": 4 },
+          "con": { "value": 12, "mod": 1, "save": 1 },
+          "int": { "value": 10, "mod": 0, "save": 0 },
+          "wis": { "value": 11, "mod": 0, "save": 1 },
+          "cha": { "value": 10, "mod": 0, "save": 0 }
+        },
+        "saves": { "str": 0, "dex": 4, "con": 1, "int": 0, "wis": 1, "cha": 0 },
+        "skills": {
+          "prc": { "value": 1, "proficient": 1, "passive": 11 }
+        },
+        "biography": "<p>A cunning goblin who leads a warband from the ridge camp above the trade road.</p>"
+      },
+      "items": [
+        {
+          "uuid": "Item.gob001boss-scimitar",
+          "name": "Scimitar",
+          "type": "weapon",
+          "img": "icons/weapons/swords/sword-guard-brown.webp",
+          "system": {
+            "damage": { "parts": [["1d6 + 2", "slashing"]] },
+            "attackBonus": 4,
+            "ability": "dex",
+            "actionType": "mwak"
+          }
+        },
+        {
+          "uuid": "Item.gob001boss-multiattack",
+          "name": "Multiattack",
+          "type": "feat",
+          "img": "icons/skills/melee/strike-slashes-orange.webp",
+          "system": {
+            "activation": { "type": "action", "cost": 1 },
+            "description": { "value": "The goblin boss makes two scimitar attacks." }
+          }
+        },
+        {
+          "uuid": "Item.gob001boss-redcap",
+          "name": "Redcap Fury",
+          "type": "feat",
+          "img": "icons/magic/fire/explosion-embers-evade-silhouette.webp",
+          "system": {
+            "activation": { "type": "special" },
+            "recharge": { "value": 5, "charged": true },
+            "description": { "value": "Once per short rest, the goblin boss can fly into a rage, gaining advantage on all melee attacks until the end of its next turn." }
+          }
+        }
+      ],
+      "effects": [
+        { "name": "Frightful Presence Aura", "changes": [] }
+      ]
+    },
+    {
+      "uuid": "Actor.gob002grunt",
+      "name": "Goblin",
+      "type": "npc",
+      "img": "icons/creatures/humanoid/goblin-orange.webp",
+      "ownership": { "default": 0 },
+      "system": {
+        "hp": { "value": 7, "max": 7, "temp": 0 },
+        "ac": 15,
+        "cr": "1/4",
+        "level": null,
+        "abilities": {
+          "str": { "value": 8, "mod": -1, "save": -1 },
+          "dex": { "value": 14, "mod": 2, "save": 2 },
+          "con": { "value": 10, "mod": 0, "save": 0 },
+          "int": { "value": 10, "mod": 0, "save": 0 },
+          "wis": { "value": 8, "mod": -1, "save": -1 },
+          "cha": { "value": 8, "mod": -1, "save": -1 }
+        },
+        "saves": { "str": -1, "dex": 2, "con": 0, "int": 0, "wis": -1, "cha": -1 },
+        "skills": {
+          "stl": { "value": 1, "proficient": 1, "passive": 13 }
+        },
+        "biography": "<p>A rank-and-file goblin from the boss's warband.</p>"
+      },
+      "items": [
+        {
+          "uuid": "Item.gob002grunt-shortsword",
+          "name": "Shortsword",
+          "type": "weapon",
+          "img": "icons/weapons/swords/sword-simple-white.webp",
+          "system": {
+            "damage": { "parts": [["1d6 + 2", "piercing"]] },
+            "attackBonus": 4,
+            "ability": "dex",
+            "actionType": "mwak"
+          }
+        }
+      ],
+      "effects": []
+    },
+    {
+      "uuid": "Actor.pc001elowen",
+      "name": "Elowen Ashgrove",
+      "type": "character",
+      "img": "icons/creatures/humanoid/human-female-blue.webp",
+      "ownership": { "default": 0, "user-alice": 3 },
+      "system": {
+        "hp": { "value": 27, "max": 27, "temp": 0 },
+        "ac": 15,
+        "cr": null,
+        "level": 4,
+        "abilities": {
+          "str": { "value": 10, "mod": 0, "save": 0 },
+          "dex": { "value": 16, "mod": 3, "save": 3 },
+          "con": { "value": 14, "mod": 2, "save": 2 },
+          "int": { "value": 12, "mod": 1, "save": 1 },
+          "wis": { "value": 14, "mod": 2, "save": 4 },
+          "cha": { "value": 10, "mod": 0, "save": 0 }
+        },
+        "saves": { "str": 0, "dex": 3, "con": 2, "int": 1, "wis": 4, "cha": 0 },
+        "skills": {
+          "prc": { "value": 2, "proficient": 2, "passive": 18 },
+          "sur": { "value": 1, "proficient": 1, "passive": 14 },
+          "ste": { "value": 1, "proficient": 1, "passive": 13 }
+        },
+        "biography": "<p>A ranger raised on the edge of the Ashwood, tracking a warband that raided her home village.</p>"
+      },
+      "items": [
+        {
+          "uuid": "Item.pc001-ranger-class",
+          "name": "Ranger",
+          "type": "class",
+          "img": "icons/skills/trades/beast-cage-thin.webp",
+          "system": {
+            "levels": 4,
+            "identifier": "ranger"
+          }
+        },
+        {
+          "uuid": "Item.pc001-longbow",
+          "name": "Longbow",
+          "type": "weapon",
+          "img": "icons/weapons/bows/bow-recurve-yellow.webp",
+          "system": {
+            "damage": { "parts": [["1d8 + 3", "piercing"]] },
+            "attackBonus": 6,
+            "ability": "dex",
+            "actionType": "rwak"
+          }
+        }
+      ],
+      "effects": []
+    }
+  ],
+  "users": [
+    {
+      "id": "user-alice",
+      "name": "Alice",
+      "role": 1,
+      "characterUuid": "Actor.pc001elowen"
+    },
+    {
+      "id": "user-russell",
+      "name": "Russell",
+      "role": 4,
+      "characterUuid": null
+    }
+  ],
+  "scenes": [
+    {
+      "uuid": "Scene.camp001",
+      "name": "Goblin Ridge Camp",
+      "background": { "src": "scenes/goblin-ridge-camp.webp" },
+      "width": 4000,
+      "height": 3000,
+      "grid": { "size": 100, "distance": 5, "units": "ft" },
+      "tokens": [
+        {
+          "name": "Goblin Boss",
+          "x": 1200,
+          "y": 800,
+          "actorUuid": "Actor.gob001boss",
+          "img": "icons/creatures/humanoid/goblin-boss.webp"
+        },
+        {
+          "name": "Goblin",
+          "x": 1400,
+          "y": 900,
+          "actorUuid": "Actor.gob002grunt",
+          "img": "icons/creatures/humanoid/goblin-orange.webp"
+        },
+        {
+          "name": "Elowen Ashgrove",
+          "x": 600,
+          "y": 2200,
+          "actorUuid": "Actor.pc001elowen",
+          "img": "icons/creatures/humanoid/human-female-blue.webp"
+        }
+      ]
+    }
+  ],
+  "tokens": [
+    {
+      "sceneUuid": "Scene.camp001",
+      "name": "Goblin Boss",
+      "x": 1200,
+      "y": 800,
+      "actorUuid": "Actor.gob001boss",
+      "img": "icons/creatures/humanoid/goblin-boss.webp"
+    },
+    {
+      "sceneUuid": "Scene.camp001",
+      "name": "Goblin",
+      "x": 1400,
+      "y": 900,
+      "actorUuid": "Actor.gob002grunt",
+      "img": "icons/creatures/humanoid/goblin-orange.webp"
+    },
+    {
+      "sceneUuid": "Scene.camp001",
+      "name": "Elowen Ashgrove",
+      "x": 600,
+      "y": 2200,
+      "actorUuid": "Actor.pc001elowen",
+      "img": "icons/creatures/humanoid/human-female-blue.webp"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+[
+  {
+    "opId": "op_20260806180500_ab12cd",
+    "kind": "create_scene",
+    "data": {
+      "name": "Ashwood Ambush Site",
+      "background": { "src": "scenes/ashwood-ambush-site.webp" },
+      "width": 3000,
+      "height": 2000
+    }
+  }
+]
