@@ -32,15 +32,32 @@ Don't just check the process exit code as pass/fail — a piped command's exit c
 
 If a new failure shows up that isn't this file, treat it as real and investigate — don't assume every failure is "the known one."
 
-## `foundry_worldFabric` must stay untouched
+## `foundry_worldFabric` — INTENTIONALLY modified as of Phase 32; check for UNEXPECTED changes only
 
-GM_Tools work should never modify the sibling `foundry_worldFabric` repo. Before and after any dispatched work, diff:
+Prior to Phase 32, GM_Tools work was never supposed to touch the sibling `foundry_worldFabric` repo at all. **Phase
+32 (task 32.1) lifted that rule on purpose** — it built a real Foundry-document bridge
+(`scripts/data/foundry-bridge.mjs` + `module.mjs` wiring + `test/foundry-bridge.test.mjs`, committed at
+`da0f249`) that GM_Tools's pull/push routes depend on. The rule is NOT "never touch it" anymore — it's "GM_Tools
+work still shouldn't touch it UNLESS a phase explicitly extends the bridge" (Phase 32's own deferred pieces,
+`plans/phase-32-deferred.md`, are the expected next place that would happen). Before and after any dispatched
+work, diff:
 
 ```bash
-cd /opt/dev/foundry_worldFabric && git status --short
+cd /opt/dev/foundry_worldFabric && git status --short && git rev-parse --short HEAD
 ```
 
-The current baseline (as of this writing) is: `package.json` and `scripts/apps/cockpit-app.mjs` modified, `setup-test.mjs` and `test/e2e-m13a.mjs` untracked — all pre-existing, unrelated to GM_Tools work. If the diff grows beyond this baseline, something touched the wrong repo — stop and investigate before proceeding.
+**Current baseline (as of Phase 32 task 32.4):**
+- `HEAD` = `da0f249` ("Phase 32 task 32.1: Foundry-module bridge (foundry-index export + doc-ops watcher)") —
+  the committed bridge. If `HEAD` has moved past this without a corresponding GM_Tools phase task that says so,
+  investigate before proceeding.
+- Working tree: `package.json` and `scripts/apps/cockpit-app.mjs` modified, `setup-test.mjs` and
+  `test/e2e-m13a.mjs` untracked — the SAME pre-existing, unrelated-to-GM_Tools state this baseline already
+  carried before Phase 32 (32.1 didn't touch any of these four; they're still just sitting there).
+
+The check going forward is **"no UNEXPECTED changes beyond the committed bridge (`da0f249`) plus this
+pre-existing four-item working-tree state"** — not "zero diff at all." If the diff grows beyond exactly those
+four working-tree items, or `HEAD` moves without a documented reason, something touched the wrong repo (or the
+wrong part of it) — stop and investigate before proceeding.
 
 ## When verifying a dispatched agent's completion report
 
