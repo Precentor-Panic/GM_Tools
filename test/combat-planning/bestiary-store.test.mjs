@@ -174,7 +174,8 @@ const IMPLAUSIBLE_RAW_FIELDS = {
     listBestiaryEntries,
     updateBestiaryEntryScore,
     acceptBestiaryEntry,
-    discardBestiaryEntry
+    discardBestiaryEntry,
+    updateBestiaryEntryRawFields
   } = await import("../../combat-planning/bestiary-store.mjs");
 
   test("directory isolation: bestiaryRoot() honors GM_TOOLS_BESTIARY_DIR, never the repo's real default", () => {
@@ -255,6 +256,51 @@ const IMPLAUSIBLE_RAW_FIELDS = {
     const after = existsSync(REPO_DEFAULT_ROOT) ? new Set(readdirSync(REPO_DEFAULT_ROOT)) : new Set();
     const added = [...after].filter((f) => !before.has(f));
     assert.deepEqual(added, [], `this test run must not add new entries to ${REPO_DEFAULT_ROOT}, found: ${added}`);
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 32 task 32.2 -- foundryActorRef link field + updateBestiaryEntryRawFields,
+  // the store-side half of the Foundry PULL ingest's review-gated
+  // dedup/re-ingest contract (wf-mcp-server/lib/foundry-pull-ops.mjs).
+  // -------------------------------------------------------------------------
+
+  test("saveBestiaryEntry: foundryActorRef defaults to null for every pre-existing (non-Foundry) caller", () => {
+    const entry = saveBestiaryEntry({ rawFields: PLAUSIBLE_RAW_FIELDS }, { makeId: () => "bst-no-ref", now: "2026-08-06T00:00:00.000Z" });
+    assert.equal(entry.foundryActorRef, null);
+  });
+
+  test("saveBestiaryEntry: foundryActorRef round-trips when explicitly provided (the Foundry-pull ingest's path)", () => {
+    const entry = saveBestiaryEntry(
+      { rawFields: PLAUSIBLE_RAW_FIELDS, foundryActorRef: "Actor.gob001boss" },
+      { makeId: () => "bst-ref-1", now: "2026-08-06T00:00:00.000Z" }
+    );
+    assert.equal(entry.foundryActorRef, "Actor.gob001boss");
+    assert.equal(entry.status, "proposed");
+    const reread = getBestiaryEntry("bst-ref-1");
+    assert.equal(reread.foundryActorRef, "Actor.gob001boss");
+  });
+
+  test("updateBestiaryEntryRawFields: overwrites rawFields/sourceText on a still-'proposed' entry, preserving id/foundryActorRef/status/createdAt", () => {
+    const updatedRawFields = { ...PLAUSIBLE_RAW_FIELDS, hp: 40 };
+    const updated = updateBestiaryEntryRawFields("bst-ref-1", { rawFields: updatedRawFields, sourceText: "re-pulled" });
+    assert.equal(updated.id, "bst-ref-1");
+    assert.equal(updated.foundryActorRef, "Actor.gob001boss");
+    assert.equal(updated.status, "proposed");
+    assert.equal(updated.createdAt, "2026-08-06T00:00:00.000Z");
+    assert.equal(updated.rawFields.hp, 40);
+    assert.equal(updated.sourceText, "re-pulled");
+  });
+
+  test("updateBestiaryEntryRawFields: NEVER silently overwrites an already-'accepted' entry -- refuses with a clear error (the no-silent-auto-write invariant, applied to a re-ingest)", () => {
+    const accepted = acceptBestiaryEntry("bst-ref-1");
+    assert.equal(accepted.status, "accepted");
+    assert.throws(
+      () => updateBestiaryEntryRawFields("bst-ref-1", { rawFields: { ...PLAUSIBLE_RAW_FIELDS, hp: 999 } }),
+      /accepted/i
+    );
+    // and the entry's own content is provably untouched by the refused call
+    const reread = getBestiaryEntry("bst-ref-1");
+    assert.equal(reread.rawFields.hp, 40, "must still be the value from the last successful update, not 999");
   });
 
   console.log(`\n${passed} passed`);

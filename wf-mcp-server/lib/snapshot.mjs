@@ -21,3 +21,14 @@ export function loadSnapshot(dataDir, world) {
 export function mutationsPath(dataDir, world) {
   return join(dataDir, "worlds", world, "world-fabric-mutations.json");
 }
+
+/**
+ * Phase 32 task 32.2 — path to a world's world-fabric-foundry-index.json
+ * (Foundry → GM_Tools PULL file, plans/phase-32-bridge-contract.md §1).
+ * Sibling helper to snapshotFilePath/mutationsPath above, same "same
+ * worlds/<world>/ directory as the existing bridge" convention the contract
+ * itself calls out — no new directory/resolution logic introduced.
+ */
+export function foundryIndexPath(dataDir, world) {
+  return join(dataDir, "worlds", world, "world-fabric-foundry-index.json");
+}

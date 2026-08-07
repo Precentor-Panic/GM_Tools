@@ -15,6 +15,34 @@
  * PartyMember STRUCTURALLY separates combatRelevant/buildRelevant, mirroring
  * party-roster-ingest.mjs's own extraction split -- this store never
  * flattens or merges the two groups.
+ *
+ * Phase 32 task 32.2 addendum -- this store had NO status/review-gate model
+ * at all before this task (every savePartyMember() call was immediately
+ * "live" in the roster). The Foundry PULL slice needs one: re-ingesting the
+ * same Foundry actor must be able to update a not-yet-reviewed candidate in
+ * place without ever silently clobbering a member a DM has since accepted/
+ * hand-edited (the no-silent-auto-write invariant, gm-tools-conventions'
+ * SKILL.md). Two options were on the table (see the task's own framing):
+ * (a) give this store the SAME status:'proposed'|'accepted'|'discarded' gate
+ * bestiary-store.mjs already has, or (b) return pull candidates to the
+ * caller for review WITHOUT saving, persisting only on an explicit accept
+ * that re-sends the full candidate payload. Chose (a): every EXISTING
+ * caller (today's LLM text/PDF ingest route, any hand-added member) keeps
+ * its current immediately-usable behavior byte-for-byte via a default
+ * `status:'accepted'` on savePartyMember() -- a DM directly adding a member
+ * today already IS the deliberate-authorship act bestiary's LLM-ingest path
+ * needs a separate accept step for; there was never a reason to add review
+ * friction to that existing flow. The NEW Foundry-pull path
+ * (wf-mcp-server/lib/foundry-pull-ops.mjs) is the only caller that ever
+ * passes `status:'proposed'` explicitly. This also lets the SAME find-by-
+ * foundryActorRef / update-if-proposed / skip-if-accepted upsert logic work
+ * identically for both stores, instead of inventing a second review
+ * mechanic — and avoids the harder-to-get-right alternative of a client
+ * round-tripping an entire unsaved candidate payload back through an accept
+ * call.
+ *
+ * `foundryActorRef` (nullable) links a member back to the Foundry actor it
+ * was pulled from; null for every manually- or LLM-added member.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -54,13 +82,17 @@ export function makePartyMemberId() {
 
 /**
  * @param {string} world
- * @param {{name:string, combatRelevant:object, buildRelevant:object, sourceText?:string|null, sourcePdfName?:string|null}} fields
+ * @param {{name:string, combatRelevant:object, buildRelevant:object, sourceText?:string|null, sourcePdfName?:string|null, foundryActorRef?:string|null, status?:'proposed'|'accepted'}} fields
  * @param {object} [opts]
  * @param {() => string} [opts.makeId]
  * @param {string} [opts.now]
  * @returns {object}   the created PartyMember
  */
-export function savePartyMember(world, { name, combatRelevant, buildRelevant, sourceText = null, sourcePdfName = null }, opts = {}) {
+export function savePartyMember(
+  world,
+  { name, combatRelevant, buildRelevant, sourceText = null, sourcePdfName = null, foundryActorRef = null, status = "accepted" },
+  opts = {}
+) {
   const makeId = opts.makeId ?? makePartyMemberId;
   const now = opts.now ?? new Date().toISOString();
 
@@ -72,6 +104,12 @@ export function savePartyMember(world, { name, combatRelevant, buildRelevant, so
     buildRelevant: buildRelevant ?? {},
     sourceText,
     sourcePdfName,
+    // Phase 32 task 32.2 -- see this module's header comment for the full
+    // status-gate reasoning. Default 'accepted' preserves every pre-existing
+    // caller's behavior unchanged; only the Foundry-pull ingest ever passes
+    // 'proposed' explicitly.
+    foundryActorRef,
+    status,
     createdAt: now
   };
 
@@ -92,6 +130,81 @@ export function getPartyMember(world, memberId) {
 /** @returns {object[]}   every PartyMember for `world`, in creation order. [] if none. */
 export function listPartyMembers(world) {
   return readMembers(world);
+}
+
+function findMemberIndex(world, memberId, members) {
+  const idx = members.findIndex((m) => m.id === memberId);
+  if (idx === -1) {
+    throw new Error(`No party member found: world="${world}" memberId="${memberId}"`);
+  }
+  return idx;
+}
+
+/** status: 'proposed' -> 'accepted'. Mirrors acceptBestiaryEntry. @returns {object} the updated PartyMember. */
+export function acceptPartyMember(world, memberId) {
+  const members = readMembers(world);
+  const idx = findMemberIndex(world, memberId, members);
+  const updated = { ...members[idx], status: "accepted" };
+  const next = [...members];
+  next[idx] = updated;
+  writeMembers(world, next);
+  return updated;
+}
+
+/**
+ * status: 'proposed' -> 'discarded' ONLY. Mirrors discardBestiaryEntry's
+ * "refuses to discard accepted content" convention. @returns {object} the updated PartyMember.
+ */
+export function discardPartyMember(world, memberId) {
+  const members = readMembers(world);
+  const idx = findMemberIndex(world, memberId, members);
+  if (members[idx].status === "accepted") {
+    throw new Error(
+      `Refusing to discard party member "${memberId}" (status "accepted") -- only a not-yet-accepted 'proposed' ` +
+      `member can be discarded outright.`
+    );
+  }
+  const updated = { ...members[idx], status: "discarded" };
+  const next = [...members];
+  next[idx] = updated;
+  writeMembers(world, next);
+  return updated;
+}
+
+/**
+ * Overwrites name/combatRelevant/buildRelevant/sourceText/sourcePdfName on
+ * an EXISTING member — the "re-ingesting the same Foundry actor updates the
+ * still-proposed candidate" half of the pull ingest's review-gate
+ * (wf-mcp-server/lib/foundry-pull-ops.mjs, Phase 32 task 32.2). `id`/
+ * `world`/`createdAt`/`foundryActorRef`/`status` are preserved untouched.
+ * Refuses (throws) unless the member is still `status:'proposed'` — mirrors
+ * updateBestiaryEntryRawFields's identical guard exactly, same no-silent-
+ * auto-write reasoning.
+ * @returns {object}   the updated PartyMember
+ */
+export function updatePartyMemberFields(world, memberId, { name, combatRelevant, buildRelevant, sourceText = null, sourcePdfName = null }) {
+  const members = readMembers(world);
+  const idx = findMemberIndex(world, memberId, members);
+  const existing = members[idx];
+  if (existing.status !== "proposed") {
+    throw new Error(
+      `Refusing to overwrite party member "${memberId}" (status "${existing.status}") -- only a still-'proposed' ` +
+      `member may be updated by a re-ingest; an accepted/hand-edited member is a human decision, never silently ` +
+      `overwritten.`
+    );
+  }
+  const updated = {
+    ...existing,
+    name: name ?? existing.name,
+    combatRelevant: combatRelevant ?? existing.combatRelevant,
+    buildRelevant: buildRelevant ?? existing.buildRelevant,
+    sourceText,
+    sourcePdfName
+  };
+  const next = [...members];
+  next[idx] = updated;
+  writeMembers(world, next);
+  return updated;
 }
 
 export { ConcurrentWriteError };

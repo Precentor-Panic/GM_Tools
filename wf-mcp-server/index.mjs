@@ -88,6 +88,13 @@ import {
   markPrepContentStaleOp
 } from "./lib/prep-content-ops.mjs";
 
+// Phase 32 task 32.2 -- Foundry actor PULL ingest (the phase's primary
+// deliverable): worlds/<world>/world-fabric-foundry-index.json ->
+// bestiary/party-roster, review-gated. Shared verbatim with
+// review-ui/server.mjs's POST /api/foundry/pull-actors route -- see
+// lib/foundry-pull-ops.mjs's own header comment for the full contract.
+import { pullFoundryActorsToStores } from "./lib/foundry-pull-ops.mjs";
+
 const server = new McpServer({ name: "world-fabric", version: "0.1.0" });
 
 const worldParam = z.string().optional().describe(
@@ -1262,6 +1269,39 @@ server.registerTool(
       const w = resolveWorld(world);
       const { entities, edges } = loadSnapshot(dir, w).snapshot;
       const result = await resolvePending(w, entityId, { depth, maxNeighbors }, { entities, edges, elapsedTimeDescriptor });
+      return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_pull_foundry_actors -------------------------------------------------
+
+server.registerTool(
+  "wf_pull_foundry_actors",
+  {
+    title: "Pull Foundry actors into the bestiary + party roster (review-gated)",
+    description:
+      "Reads worlds/<world>/world-fabric-foundry-index.json (written by the Foundry-side module's Reindex-for-" +
+      "GM_Tools flow, Phase 32 task 32.1 -- a separate repo) and classifies every actor as a monster or a PC " +
+      "(users[].characterUuid ownership is the authoritative signal; actor.type='character' is only a fallback " +
+      "when no user claims it). Maps each into the EXISTING bestiary/party-roster stores' raw-field shapes and " +
+      "saves as status:'proposed' -- NEVER silently 'accepted', matching this project's no-silent-auto-write " +
+      "invariant; a human still has to accept each candidate. Re-running this against the same actor updates its " +
+      "still-proposed candidate in place (never a duplicate); an already-accepted entry/member for that actor is " +
+      "left completely untouched and reported back under alreadyLinked instead. Attacks/multiattack/recharge/" +
+      "legendary-action fields are BEST-EFFORT, derived from the actor's embedded items -- read them as a " +
+      "starting draft to review, not ground truth. Returns null-safe empty results (never throws) when no index " +
+      "has been written yet for this world -- check `indexFound` to tell 'never reindexed' apart from 'reindexed, " +
+      "but had zero actors'.",
+    inputSchema: { world: worldParam, dataDir: dataDirParam }
+  },
+  async ({ world, dataDir }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const result = pullFoundryActorsToStores(dir, w);
       return text(result);
     } catch (err) {
       return errorText(err);

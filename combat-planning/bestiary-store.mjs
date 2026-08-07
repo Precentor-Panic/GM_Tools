@@ -123,13 +123,16 @@ function writeEntry(entry) {
 /**
  * Always runs checkBestiaryOutliers(rawFields) and stamps the result.
  * status is always 'proposed' at creation.
- * @param {{rawFields:object, derivedScore?:object|null, sourceText?:string|null, sourcePdfName?:string|null}} fields
+ * @param {{rawFields:object, derivedScore?:object|null, sourceText?:string|null, sourcePdfName?:string|null, foundryActorRef?:string|null}} fields
  * @param {object} [opts]
  * @param {() => string} [opts.makeId]
  * @param {string} [opts.now]
  * @returns {object}   the created BestiaryEntry
  */
-export function saveBestiaryEntry({ rawFields, derivedScore = null, sourceText = null, sourcePdfName = null }, opts = {}) {
+export function saveBestiaryEntry(
+  { rawFields, derivedScore = null, sourceText = null, sourcePdfName = null, foundryActorRef = null },
+  opts = {}
+) {
   const makeId = opts.makeId ?? makeBestiaryEntryId;
   const now = opts.now ?? new Date().toISOString();
   const outlier = checkBestiaryOutliers(rawFields);
@@ -140,6 +143,15 @@ export function saveBestiaryEntry({ rawFields, derivedScore = null, sourceText =
     derivedScore,
     sourceText,
     sourcePdfName,
+    // Phase 32 task 32.2 -- nullable link back to the Foundry actor this
+    // entry was pulled from (null for every pre-existing LLM-ingested/
+    // hand-added entry). Additive field, SCHEMA_VERSION-equivalent note:
+    // this store has no explicit SCHEMA_VERSION constant of its own to bump
+    // (unlike interchange.mjs's WFI_VERSION) -- an ADDITIVE optional field
+    // on an existing flat-JSON shape needs none, per
+    // plans/phase-32-bridge-contract.md's own "additive-only versioning"
+    // convention (adding an optional field is not a breaking change).
+    foundryActorRef,
     needsConfirmation: outlier.flagged,
     outlierReasons: outlier.reasons,
     status: "proposed",
@@ -147,6 +159,39 @@ export function saveBestiaryEntry({ rawFields, derivedScore = null, sourceText =
   };
 
   return writeEntry(entry);
+}
+
+/**
+ * Overwrites rawFields/sourceText/sourcePdfName on an EXISTING entry and
+ * re-runs checkBestiaryOutliers — the "re-ingesting the same Foundry actor
+ * updates the still-proposed candidate" half of the pull ingest's
+ * review-gate (wf-mcp-server/lib/foundry-pull-ops.mjs, Phase 32 task 32.2).
+ * `id`/`createdAt`/`foundryActorRef`/`status` are preserved untouched.
+ * Refuses (throws) unless the entry is still `status:'proposed'` — an
+ * 'accepted' entry is a human decision this function must never silently
+ * overwrite, matching discardBestiaryEntry's own "refuses on accepted"
+ * convention (the no-silent-auto-write invariant, applied to a RE-ingest
+ * rather than a first ingest).
+ * @returns {object}   the updated BestiaryEntry
+ */
+export function updateBestiaryEntryRawFields(entryId, { rawFields, sourceText = null, sourcePdfName = null }) {
+  const entry = readEntry(entryId);
+  if (entry.status !== "proposed") {
+    throw new Error(
+      `Refusing to overwrite bestiary entry "${entryId}" (status "${entry.status}") -- only a still-'proposed' ` +
+      `entry may be updated by a re-ingest; an accepted/discarded entry is a human decision, never silently ` +
+      `overwritten.`
+    );
+  }
+  const outlier = checkBestiaryOutliers(rawFields);
+  return writeEntry({
+    ...entry,
+    rawFields,
+    sourceText,
+    sourcePdfName,
+    needsConfirmation: outlier.flagged,
+    outlierReasons: outlier.reasons
+  });
 }
 
 /** @returns {object}   the BestiaryEntry. Throws a clear Error if not found. */

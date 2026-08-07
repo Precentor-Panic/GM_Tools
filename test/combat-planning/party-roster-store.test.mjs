@@ -83,8 +83,15 @@ const COMBAT = { class: "Ranger", level: 5, ac: 15, hp: 44, damagePerRoundEstima
 const BUILD = { skills: ["Survival"], backstoryHooks: ["Estranged from a ranger lodge"] };
 
 (async () => {
-  const { partyRosterRoot, savePartyMember, getPartyMember, listPartyMembers } =
-    await import("../../combat-planning/party-roster-store.mjs");
+  const {
+    partyRosterRoot,
+    savePartyMember,
+    getPartyMember,
+    listPartyMembers,
+    acceptPartyMember,
+    discardPartyMember,
+    updatePartyMemberFields
+  } = await import("../../combat-planning/party-roster-store.mjs");
 
   test("directory isolation: partyRosterRoot() honors GM_TOOLS_PARTY_ROSTER_DIR, never the repo's real default", () => {
     assert.equal(partyRosterRoot(), process.env.GM_TOOLS_PARTY_ROSTER_DIR);
@@ -131,6 +138,75 @@ const BUILD = { skills: ["Survival"], backstoryHooks: ["Estranged from a ranger 
     const after = existsSync(REPO_DEFAULT_ROOT) ? new Set(readdirSync(REPO_DEFAULT_ROOT)) : new Set();
     const added = [...after].filter((f) => !before.has(f));
     assert.deepEqual(added, [], `this test run must not add new entries to ${REPO_DEFAULT_ROOT}, found: ${added}`);
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 32 task 32.2 -- the status:'proposed'|'accepted'|'discarded' gate +
+  // foundryActorRef link field this store gained for the Foundry PULL ingest
+  // (see this module's own header comment for the full reasoning: every
+  // PRE-EXISTING caller keeps its current immediately-usable behavior via a
+  // default status:'accepted'; only the Foundry-pull ingest ever passes
+  // 'proposed' explicitly).
+  // -------------------------------------------------------------------------
+
+  test("savePartyMember: status defaults to 'accepted' and foundryActorRef defaults to null for every pre-existing (non-Foundry) caller -- current behavior unchanged", () => {
+    const member = savePartyMember(WORLD, { name: "Legacy Caller", combatRelevant: {}, buildRelevant: {} }, { makeId: () => "pm-legacy" });
+    assert.equal(member.status, "accepted");
+    assert.equal(member.foundryActorRef, null);
+  });
+
+  test("savePartyMember: an explicit status:'proposed' + foundryActorRef round-trips (the Foundry-pull ingest's path)", () => {
+    const member = savePartyMember(
+      WORLD,
+      { name: "Pulled PC", combatRelevant: { hp: 27 }, buildRelevant: {}, foundryActorRef: "Actor.pc001elowen", status: "proposed" },
+      { makeId: () => "pm-pulled-1", now: "2026-08-06T00:00:00.000Z" }
+    );
+    assert.equal(member.status, "proposed");
+    assert.equal(member.foundryActorRef, "Actor.pc001elowen");
+    const reread = getPartyMember(WORLD, "pm-pulled-1");
+    assert.equal(reread.foundryActorRef, "Actor.pc001elowen");
+  });
+
+  test("updatePartyMemberFields: overwrites name/combatRelevant/buildRelevant on a still-'proposed' member, preserving id/world/foundryActorRef/status/createdAt", () => {
+    const updated = updatePartyMemberFields(WORLD, "pm-pulled-1", {
+      name: "Pulled PC (re-synced)",
+      combatRelevant: { hp: 30 },
+      buildRelevant: { skills: ["Perception"] },
+      sourceText: "re-pulled"
+    });
+    assert.equal(updated.id, "pm-pulled-1");
+    assert.equal(updated.foundryActorRef, "Actor.pc001elowen");
+    assert.equal(updated.status, "proposed");
+    assert.equal(updated.createdAt, "2026-08-06T00:00:00.000Z");
+    assert.equal(updated.name, "Pulled PC (re-synced)");
+    assert.equal(updated.combatRelevant.hp, 30);
+  });
+
+  test("updatePartyMemberFields: NEVER silently overwrites an already-'accepted' member -- refuses with a clear error (the no-silent-auto-write invariant, applied to a re-ingest)", () => {
+    const accepted = acceptPartyMember(WORLD, "pm-pulled-1");
+    assert.equal(accepted.status, "accepted");
+    assert.throws(
+      () => updatePartyMemberFields(WORLD, "pm-pulled-1", { name: "Should Not Land", combatRelevant: {}, buildRelevant: {} }),
+      /accepted/i
+    );
+    const reread = getPartyMember(WORLD, "pm-pulled-1");
+    assert.equal(reread.name, "Pulled PC (re-synced)", "must still be the value from the last successful update");
+  });
+
+  test("acceptPartyMember: proposed -> accepted", () => {
+    const member = savePartyMember(WORLD, { name: "To Accept", combatRelevant: {}, buildRelevant: {}, status: "proposed" }, { makeId: () => "pm-to-accept" });
+    const updated = acceptPartyMember(WORLD, member.id);
+    assert.equal(updated.status, "accepted");
+  });
+
+  test("discardPartyMember: refuses to discard an already-accepted member", () => {
+    assert.throws(() => discardPartyMember(WORLD, "pm-to-accept"), /accepted/i);
+  });
+
+  test("discardPartyMember: a still-'proposed' member discards cleanly", () => {
+    const member = savePartyMember(WORLD, { name: "To Discard", combatRelevant: {}, buildRelevant: {}, status: "proposed" }, { makeId: () => "pm-to-discard" });
+    const updated = discardPartyMember(WORLD, member.id);
+    assert.equal(updated.status, "discarded");
   });
 
   console.log(`\n${passed} passed`);

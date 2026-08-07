@@ -170,6 +170,10 @@ import { proposePartyMemberFromText, proposePartyMemberFromPdf } from "../combat
 import { savePartyMember, listPartyMembers } from "../combat-planning/party-roster-store.mjs";
 import { proposeThematicTags } from "../combat-planning/thematic-filter.mjs";
 import { suggestEncounter, scoreCombination } from "../combat-planning/encounter-heuristic.mjs";
+// Phase 32 task 32.2 -- Foundry actor PULL ingest (bestiary + party roster,
+// review-gated). Shared verbatim with wf-mcp-server/index.mjs's
+// wf_pull_foundry_actors tool -- see that module's own header comment.
+import { pullFoundryActorsToStores } from "../wf-mcp-server/lib/foundry-pull-ops.mjs";
 
 // Phase 22 (task 22.7) -- Scene Engine routes. Thin wrappers only, same
 // convention as every other route in this file: resolveWorld()/resolveDir()
@@ -1667,6 +1671,35 @@ async function handleApi(req, res, url, parts) {
   if (method === "GET" && parts.length === 3 && parts[1] === "combat-planning" && parts[2] === "party-roster") {
     const w = resolveWorld(q.get("world"));
     return sendJson(res, 200, { members: listPartyMembers(w) });
+  }
+
+  // -----------------------------------------------------------------------
+  // Phase 32 task 32.2 -- Foundry PULL slice, the phase's primary
+  // deliverable. Thin wrapper ONLY (per gm-tools-conventions' "front-ends
+  // are thin wrappers, never logic duplicators") -- all classify/map/upsert
+  // logic lives in wf-mcp-server/lib/foundry-pull-ops.mjs, shared verbatim
+  // with wf-mcp-server/index.mjs's wf_pull_foundry_actors tool. Kept
+  // tightly localized/commented here: task 32.3 (a LATER, separate task)
+  // adds a SIBLING push route near this same block -- do not intermix the
+  // two when that lands, keep each op's route self-contained like this one.
+  // -----------------------------------------------------------------------
+
+  // POST /api/foundry/pull-actors   { world }
+  // Reads worlds/<world>/world-fabric-foundry-index.json (written by the
+  // Foundry-side module's Reindex-for-GM_Tools flow, task 32.1 -- a
+  // SEPARATE repo, not built here) and review-gates every actor into the
+  // EXISTING bestiary/party-roster stores as status:'proposed'. Response
+  // 200: { indexFound, bestiaryProposed, partyProposed, alreadyLinked, skippedActors }
+  // -- see foundry-pull-ops.mjs's own header comment for the full
+  // dedup/re-ingest contract. World-scoped, resolveWorld(body.world), no
+  // client-supplied dataDir honored (same convention as every other route
+  // in this file).
+  if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "pull-actors") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const result = pullFoundryActorsToStores(dir, w);
+    return sendJson(res, 200, result);
   }
 
   // POST /api/combat-planning/encounter-suggest
