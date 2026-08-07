@@ -295,19 +295,23 @@ test('confirming with the opt-in "also remove from all N scenes" checkbox ON del
 });
 
 // ---------------------------------------------------------------------------
-// 6. Route-level: pins the NEW route the opt-in cleanup needs, which does
-//    not exist yet -- a real 404 is the expected, documented red here.
+// 6. Route-level: pins the NEW route the opt-in cleanup needs.
+//    UPDATED (33.2 reconcile): this pin was authored (33.0) to assert today's
+//    404 while the route was un-built; 33.2 builds it, so the pin now asserts
+//    the BUILT reality -- the route exists (not the generic "No route" 404) and
+//    returns removeEntityFromAllScenes's `{removedElements, unanchoredScenes}`
+//    summary. (This is the orchestrator reconciling a QE-first route-absence
+//    pin once its route lands, same as Phase 28.4's wrap pin.)
 // ---------------------------------------------------------------------------
-test("route-level: POST /api/graph/nodes/:entityId/remove-from-scenes (the chosen contract for the NEW removeEntityFromAllScenes op 33.2 wires) does not exist yet -- today's real server 404 fallback", async () => {
+test("route-level: POST /api/graph/nodes/:entityId/remove-from-scenes (the removeEntityFromAllScenes op) is genuinely wired -- returns the {removedElements, unanchoredScenes} summary, not a 404 'no route'", async () => {
   const res = await fetch(`${base}/api/graph/nodes/${encodeURIComponent("p33b-node")}/remove-from-scenes`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ world: WORLD })
   });
   const body = await res.json().catch(() => null);
-  assert.equal(
-    res.status,
-    404,
-    `no route wires removeEntityFromAllScenes yet -- expected the server's generic "No route: METHOD path" 404 fallback (server.mjs's final handler), got ${res.status}: ${JSON.stringify(body)}`
-  );
+  assert.notEqual(res.status, 404, `the remove-from-scenes route must now be wired (33.2) -- a 404 would mean it was never built. Got ${res.status}: ${JSON.stringify(body)}`);
+  assert.equal(res.status, 200, `expected 200 from the wired removeEntityFromAllScenes route, got ${res.status}: ${JSON.stringify(body)}`);
+  assert.equal(typeof body?.removedElements, "number", "the route returns removeEntityFromAllScenes's summary with a numeric removedElements");
+  assert.equal(typeof body?.unanchoredScenes, "number", "the route returns removeEntityFromAllScenes's summary with a numeric unanchoredScenes");
 });
