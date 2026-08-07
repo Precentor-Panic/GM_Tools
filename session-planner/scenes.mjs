@@ -218,12 +218,19 @@ export function renameScene(world, sceneId, name, opts = {}) {
  *
  * @param {string} world
  * @param {string} sceneId
- * @param {{name?:string|null, objectiveNote?:string|null, foundrySceneRef?:string|null}} patch
+ * @param {{name?:string|null, objectiveNote?:string|null, foundrySceneRef?:string|null, locationEntityId?:string|null}} patch
  * @param {object} [opts]
  * @param {string} [opts.now]   injectable ISO timestamp, for deterministic tests
  * @returns {object}   the updated Scene
+ *
+ * Phase 33 task 33.2: `locationEntityId` joined the patch vocabulary so the
+ * "Remove from graph" opt-in cleanup (removeEntityFromAllScenes,
+ * scene-lookup.mjs) can clear a scene's anchor to `null` when the node it
+ * pointed at is deleted -- the scene then renders "Unplaced", which the scene
+ * page already tolerates (session-planner-view.js:2761). Purely additive,
+ * same undefined-means-leave-untouched merge semantics as every other key.
  */
-export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneRef } = {}, opts = {}) {
+export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneRef, locationEntityId } = {}, opts = {}) {
   const scenes = readScenes(world);
   const scene = scenes.find((s) => s.id === sceneId);
   if (!scene) {
@@ -232,6 +239,7 @@ export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneR
   if (name !== undefined) scene.name = name;
   if (objectiveNote !== undefined) scene.objectiveNote = objectiveNote;
   if (foundrySceneRef !== undefined) scene.foundrySceneRef = foundrySceneRef;
+  if (locationEntityId !== undefined) scene.locationEntityId = locationEntityId;
   scene.updatedAt = opts.now ?? new Date().toISOString();
   writeScenes(world, scenes);
   return scene;

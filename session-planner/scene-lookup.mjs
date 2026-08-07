@@ -27,8 +27,8 @@
  * contents are unified as scene-elements, so anything that used to be a bare
  * membership entry is now, post-redirect, a real "element" role instead.
  */
-import { listScenesForWorld } from "./scenes.mjs";
-import { listElementsForScene } from "./scene-elements.mjs";
+import { listScenesForWorld, updateScene } from "./scenes.mjs";
+import { listElementsForScene, removeElement } from "./scene-elements.mjs";
 
 /**
  * @param {string} world
@@ -52,4 +52,46 @@ export function scenesForEntity(world, entityId) {
     if (roles.length) appearances.push({ scene, roles });
   }
   return appearances;
+}
+
+/**
+ * Phase 33 task 33.2 -- the opt-in cleanup behind the World inspector's
+ * "Remove from graph" action's "also remove it from all N scenes" checkbox.
+ * For every scene that references `entityId` (via scenesForEntity above):
+ *   - role "element": `removeElement` every `kind:'graph'` element whose
+ *     `graphEntityId === entityId` (the dangling KEY-element rows a bare
+ *     `deleteNodeOp` would otherwise leave silently demoted to dressing).
+ *   - role "anchor": clear the scene's `locationEntityId` to null via
+ *     `updateScene` (-> the scene renders "Unplaced", which the scene page
+ *     already tolerates -- session-planner-view.js:2761).
+ *
+ * Deliberately a pure store op with NO graph write of its own -- the caller
+ * (the confirm handler) fires this BEFORE `deleteNodeOp`; the node deletion
+ * and its atomic undo are entirely separate. Idempotent and safe when the
+ * entity is referenced by no scene (returns a zeroed summary, writes nothing).
+ * This cleanup is NOT covered by deleteNodeOp's single-slot undo -- surfaced
+ * honestly in the toast text.
+ *
+ * @param {string} world
+ * @param {string} entityId
+ * @returns {{removedElements:number, unanchoredScenes:number}}
+ */
+export function removeEntityFromAllScenes(world, entityId) {
+  let removedElements = 0;
+  let unanchoredScenes = 0;
+  for (const { scene, roles } of scenesForEntity(world, entityId)) {
+    if (roles.includes("element")) {
+      const graphElements = listElementsForScene(world, scene.id).filter(
+        (el) => el.kind === "graph" && el.graphEntityId === entityId
+      );
+      for (const el of graphElements) {
+        if (removeElement(world, scene.id, el.id).deleted) removedElements += 1;
+      }
+    }
+    if (roles.includes("anchor")) {
+      updateScene(world, scene.id, { locationEntityId: null });
+      unanchoredScenes += 1;
+    }
+  }
+  return { removedElements, unanchoredScenes };
 }

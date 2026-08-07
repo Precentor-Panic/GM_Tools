@@ -757,8 +757,24 @@ function renderInspector() {
 
   const header = el("div", { class: "wv-inspector-header" });
   header.appendChild(el("span", { class: "wv-inspector-title" }, sel.name || sel.id));
-  header.append(el("span", { style: "flex:1" }), el("span", { class: "wv-inspector-openfull" }, "Open full page →"));
+  // Phase 33 task 33.2: the inert "Open full page →" span (de-advertised in
+  // Phase 31, never wired) is recycled here into a guarded "Remove from graph"
+  // button, in the SAME right-aligned header slot -- no layout change.
+  const removeBtn = el("button", {
+    type: "button",
+    class: "wv-inspector-remove",
+    "data-testid": "world-remove-from-graph-btn",
+    "data-entity-id": sel.id
+  }, "Remove from graph");
+  header.append(el("span", { style: "flex:1" }), removeBtn);
   insp.appendChild(header);
+
+  // Host for the inline confirm panel (mirrors the beyond-room drawer's
+  // per-item confirm host, one panel at a time). Sits directly under the
+  // header so the guarded confirm reads as part of this node's inspector.
+  const confirmHost = el("div", { class: "wv-inspector-remove-host" });
+  insp.appendChild(confirmHost);
+  removeBtn.addEventListener("click", () => openRemoveFromGraphConfirm(sel, confirmHost));
 
   const body = el("div", { class: "wv-inspector-body" });
 
@@ -830,6 +846,112 @@ async function fillAppearsIn(id, target) {
   } catch {
     if (captured === selectedId) target.textContent = "No scene has used this yet.";
   }
+}
+
+// Phase 33 task 33.2: the guarded "Remove from graph" confirm panel. Mirrors
+// the scene page's beyond-room drawer (session-planner-view.js:1469-1577) --
+// an inline confirm with a cascade-edge warning and danger/cancel buttons --
+// but shows the REAL cascade-edge count BEFORE the delete (computed
+// client-side from the already-loaded graph cache -- the SAME edge set
+// deleteNodeOp cascades: every edge touching this node) rather than after,
+// plus a "used in N scene(s)" line from scenesForEntity and an opt-in "also
+// remove from all N scenes" checkbox (unchecked = the locked default,
+// warn-and-leave-references).
+async function openRemoveFromGraphConfirm(sel, confirmHost) {
+  if (confirmHost.childElementCount) return; // already open -- one panel at a time
+
+  // Cascade-edge count, client-side, from the already-loaded graph: every
+  // edge where this node is source or target (deleteNodeOp's own cascade set,
+  // manual-edit-ops.mjs's `e.sourceId === id || e.targetId === id`).
+  const edges = (cache.graph && cache.graph.edges) || [];
+  const cascadeCount = edges.filter((e) => e.sourceId === sel.id || e.targetId === sel.id).length;
+
+  // "used in N scene(s)" -- the same scenesForEntity appearances the inspector
+  // already fetches for its "Appears in" section (fetched fresh here so the
+  // panel is populated before it becomes visible).
+  let sceneCount = 0;
+  try {
+    const { appearances } = await wApi(`/api/scene-planning/entities/${encodeURIComponent(sel.id)}/scenes${withWorld()}`);
+    sceneCount = (appearances || []).length;
+  } catch { /* leave 0 -- worst case the warning under-counts, delete still guarded */ }
+
+  const panel = el("div", {
+    class: "wv-remove-confirm",
+    "data-testid": "world-remove-from-graph-confirm-panel",
+    "data-entity-id": sel.id,
+    "data-cascade-edge-count": String(cascadeCount)
+  });
+
+  panel.appendChild(el("div", { class: "wv-remove-confirm-warn" },
+    `Delete “${sel.name || sel.id}” from the graph? ${cascadeCount} connected edge${cascadeCount === 1 ? "" : "s"} removed · used in ${sceneCount} scene${sceneCount === 1 ? "" : "s"}.`));
+
+  const optLabel = el("label", { class: "wv-remove-confirm-opt" });
+  const checkbox = el("input", { type: "checkbox", "data-testid": "world-remove-from-all-scenes-checkbox" });
+  optLabel.append(checkbox, el("span", {}, `also remove it from all ${sceneCount} scene${sceneCount === 1 ? "" : "s"}`));
+  panel.appendChild(optLabel);
+
+  const btnRow = el("div", { class: "wv-remove-confirm-actions" });
+  const confirmBtn = el("button", {
+    type: "button",
+    class: "wv-remove-confirm-yes",
+    "data-testid": "world-remove-from-graph-confirm-btn"
+  }, "Delete node");
+  const cancelBtn = el("button", {
+    type: "button",
+    class: "wv-remove-confirm-cancel",
+    "data-testid": "world-remove-from-graph-cancel-btn"
+  }, "Cancel");
+  btnRow.append(confirmBtn, cancelBtn);
+  panel.appendChild(btnRow);
+
+  cancelBtn.addEventListener("click", () => { confirmHost.innerHTML = ""; });
+
+  confirmBtn.addEventListener("click", async () => {
+    confirmBtn.disabled = true;
+    cancelBtn.disabled = true;
+    const name = sel.name || sel.id;
+    const alsoScenes = checkbox.checked;
+    try {
+      // Opt-in scene-reference cleanup FIRST (not covered by the node's undo).
+      if (alsoScenes) {
+        await wApi(`/api/graph/nodes/${encodeURIComponent(sel.id)}/remove-from-scenes`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: currentWorld() })
+        });
+      }
+      // Then always the guarded delete (deleteNodeOp -- cascades edges, atomic
+      // single-slot undo).
+      await wApi(`/api/graph/nodes/${encodeURIComponent(sel.id)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      });
+      confirmHost.innerHTML = "";
+      // The node is gone -- reload re-fetches the graph and re-renders; the
+      // stale selection self-clears to the empty inspector (renderInspector's
+      // own `if (!sel)` path).
+      await reload();
+      // Undo restores the graph node + edges via the existing atomic manual-
+      // undo slot. The opt-in scene cleanup is a deliberate, separate action
+      // NOT reversed by this undo -- surfaced honestly.
+      const undoNote = alsoScenes ? " (not the scene cleanup)" : "";
+      showUndoToast(`Removed “${name}” from the graph. Undo restores the node${undoNote}.`, async () => {
+        await wApi("/api/manual-undo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: currentWorld() })
+        });
+        await reload();
+      });
+    } catch (err) {
+      confirmBtn.disabled = false;
+      cancelBtn.disabled = false;
+      panel.querySelector(".wv-remove-confirm-warn").textContent = `Could not remove: ${err.message}`;
+    }
+  });
+
+  confirmHost.appendChild(panel);
 }
 
 function sceneDisplayName(scene) {

@@ -45,9 +45,9 @@ process.env.WF_DATA_DIR = dataDir;
 
 const WORLD = "scene-lookup-test-world";
 
-const { scenesForEntity } = await import("../../session-planner/scene-lookup.mjs");
-const { createScene } = await import("../../session-planner/scenes.mjs");
-const { attachExistingNodeAsElement, createElement } = await import("../../session-planner/scene-elements.mjs");
+const { scenesForEntity, removeEntityFromAllScenes } = await import("../../session-planner/scene-lookup.mjs");
+const { createScene, getScene } = await import("../../session-planner/scenes.mjs");
+const { attachExistingNodeAsElement, createElement, listElementsForScene } = await import("../../session-planner/scene-elements.mjs");
 const { snapshotFilePath } = await import("../../wf-mcp-server/lib/snapshot.mjs");
 const { bootstrapSnapshot, applyHeadless } = await import("../../graph-import/headless-apply.mjs");
 
@@ -130,6 +130,64 @@ test("scenesForEntity: a scene with NO relationship to the entity is simply abse
   const world = "scene-lookup-unrelated-world";
   createScene(world, { locationEntityId: "place-anchor-b" }, { makeId: () => "lookup-unrelated-scene" });
   assert.deepEqual(scenesForEntity(world, "place-anchor-a"), []);
+});
+
+// ---------------------------------------------------------------------------
+// Phase 33 task 33.2 -- removeEntityFromAllScenes: the opt-in cleanup behind
+// the World inspector's "Remove from graph" "also remove from all N scenes"
+// checkbox. Strips a node's kind:'graph' elements from every scene that
+// referenced it, and clears any anchor pointing at it.
+// ---------------------------------------------------------------------------
+
+test("removeEntityFromAllScenes: strips the node's kind:'graph' element from every scene that referenced it", () => {
+  const world = "rfa-elements-world";
+  const sceneA = createScene(world, { locationEntityId: "place-anchor-a" }, { makeId: () => "rfa-scene-a" });
+  const sceneB = createScene(world, { locationEntityId: "place-anchor-b" }, { makeId: () => "rfa-scene-b" });
+  attachExistingNodeAsElement(dataDir, world, sceneA.id, "npc-element", { name: "Element NPC" });
+  attachExistingNodeAsElement(dataDir, world, sceneB.id, "npc-element", { name: "Element NPC" });
+  // A sibling element for an UNRELATED entity must survive untouched.
+  attachExistingNodeAsElement(dataDir, world, sceneA.id, "npc-member", { name: "Member NPC" });
+
+  const summary = removeEntityFromAllScenes(world, "npc-element");
+  assert.deepEqual(summary, { removedElements: 2, unanchoredScenes: 0 });
+  assert.equal(listElementsForScene(world, sceneA.id).some((e) => e.graphEntityId === "npc-element"), false);
+  assert.equal(listElementsForScene(world, sceneB.id).some((e) => e.graphEntityId === "npc-element"), false);
+  // The unrelated sibling element is still there.
+  assert.equal(listElementsForScene(world, sceneA.id).some((e) => e.graphEntityId === "npc-member"), true);
+  assert.deepEqual(scenesForEntity(world, "npc-element"), []);
+});
+
+test("removeEntityFromAllScenes: clears locationEntityId (-> Unplaced) for every scene anchored on the entity", () => {
+  const world = "rfa-anchor-world";
+  const sceneA = createScene(world, { locationEntityId: "place-anchor-a" }, { makeId: () => "rfa-anchor-a" });
+  const sceneB = createScene(world, { locationEntityId: "place-anchor-a" }, { makeId: () => "rfa-anchor-b" });
+  const sceneOther = createScene(world, { locationEntityId: "place-anchor-b" }, { makeId: () => "rfa-anchor-other" });
+
+  const summary = removeEntityFromAllScenes(world, "place-anchor-a");
+  assert.deepEqual(summary, { removedElements: 0, unanchoredScenes: 2 });
+  assert.equal(getScene(world, sceneA.id).locationEntityId, null);
+  assert.equal(getScene(world, sceneB.id).locationEntityId, null);
+  // A scene anchored on a DIFFERENT place is untouched.
+  assert.equal(getScene(world, sceneOther.id).locationEntityId, "place-anchor-b");
+});
+
+test("removeEntityFromAllScenes: a scene where the entity is BOTH anchor and element -- both cleaned in one pass", () => {
+  const world = "rfa-multirole-world";
+  const scene = createScene(world, { locationEntityId: "place-anchor-a" }, { makeId: () => "rfa-multirole" });
+  attachExistingNodeAsElement(dataDir, world, scene.id, "place-anchor-a", { name: "Anchor Place A" });
+
+  const summary = removeEntityFromAllScenes(world, "place-anchor-a");
+  assert.deepEqual(summary, { removedElements: 1, unanchoredScenes: 1 });
+  assert.equal(getScene(world, scene.id).locationEntityId, null);
+  assert.equal(listElementsForScene(world, scene.id).some((e) => e.graphEntityId === "place-anchor-a"), false);
+});
+
+test("removeEntityFromAllScenes: idempotent/safe when the entity is referenced by no scene -- zeroed summary, no throw", () => {
+  const world = "rfa-empty-world";
+  createScene(world, { locationEntityId: "place-anchor-b" }, { makeId: () => "rfa-empty-scene" });
+  assert.deepEqual(removeEntityFromAllScenes(world, "npc-untouched"), { removedElements: 0, unanchoredScenes: 0 });
+  // A second call is still a clean no-op.
+  assert.deepEqual(removeEntityFromAllScenes(world, "npc-untouched"), { removedElements: 0, unanchoredScenes: 0 });
 });
 
 console.log(`\n${passed} passed`);

@@ -147,7 +147,7 @@ import { createScene, forkScene, getScene, listScenesForWorld, listScenesByRecen
 // Phase 30 task 30.1 -- the World inspector's "appears in" reverse lookup.
 // A separate module from scenes.mjs itself (avoids a circular import --
 // scene-lookup.mjs's own header comment explains why).
-import { scenesForEntity } from "../session-planner/scene-lookup.mjs";
+import { scenesForEntity, removeEntityFromAllScenes } from "../session-planner/scene-lookup.mjs";
 import { buildSessionBrief } from "../session-planner/brief.mjs";
 import { captureNote, runBatchIntake } from "../session-planner/session-notes.mjs";
 
@@ -1255,6 +1255,20 @@ async function handleApi(req, res, url, parts) {
     const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await reparentNode(dir, w, parts[3], body.parentId ?? null);
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/graph/nodes/:entityId/remove-from-scenes  { world }  -> {removedElements, unanchoredScenes}
+  // Phase 33 task 33.2 -- the opt-in cleanup behind the World inspector's
+  // "Remove from graph" action's "also remove from all N scenes" checkbox.
+  // Thin wrapper over removeEntityFromAllScenes (scene-lookup.mjs): strips the
+  // node's kind:'graph' elements from every scene that referenced it and
+  // clears any anchor pointing at it. NOT a graph write and NOT covered by the
+  // manual-undo slot -- deliberately a separate, pre-delete cleanup step.
+  if (method === "POST" && parts.length === 5 && parts[1] === "graph" && parts[2] === "nodes" && parts[4] === "remove-from-scenes") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world ?? q.get("world"));
+    const result = removeEntityFromAllScenes(w, parts[3]);
     return sendJson(res, 200, result);
   }
 
