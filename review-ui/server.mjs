@@ -174,6 +174,10 @@ import { suggestEncounter, scoreCombination } from "../combat-planning/encounter
 // review-gated). Shared verbatim with wf-mcp-server/index.mjs's
 // wf_pull_foundry_actors tool -- see that module's own header comment.
 import { pullFoundryActorsToStores } from "../wf-mcp-server/lib/foundry-pull-ops.mjs";
+// Phase 32 task 32.3 -- the thin PUSH slice (a GM_Tools scene -> a Foundry
+// Scene seeded with a map, via the ops channel). Sibling module to
+// foundry-pull-ops.mjs above -- see its own header comment.
+import { pushSceneToFoundry } from "../wf-mcp-server/lib/foundry-push-ops.mjs";
 
 // Phase 22 (task 22.7) -- Scene Engine routes. Thin wrappers only, same
 // convention as every other route in this file: resolveWorld()/resolveDir()
@@ -1699,6 +1703,38 @@ async function handleApi(req, res, url, parts) {
     const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = pullFoundryActorsToStores(dir, w);
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/foundry/push-scene   { world, sceneId, mapSrc, name?, width?, height? }
+  // The thin PUSH slice (task 32.3): writes a `create_scene` op onto
+  // worlds/<world>/world-fabric-foundry-ops.json (plans/phase-32-bridge-
+  // contract.md §2) and polls briefly (mirrors the existing sync/rollback
+  // routes' own live-Foundry poll convention) for the Foundry-side watcher
+  // (task 32.1, a SEPARATE repo, not built here) to apply it and echo back a
+  // result. Response 200 either way:
+  //   - { status:'queued', sceneId, opId, note }              -- no live
+  //     Foundry client picked this batch up within the poll window.
+  //   - { status:'applied', sceneId, opId, ok:true, foundryUuid, scene }
+  //     -- the pushed scene's `foundrySceneRef` was written.
+  //   - { status:'applied', sceneId, opId, ok:false, error }  -- Foundry
+  //     itself reported a failure for this op; no ref written.
+  // World-scoped, resolveWorld(body.world), no client-supplied dataDir
+  // honored (same convention as every other route in this file). `mapSrc`
+  // is a required caller-supplied input for now (see foundry-push-ops.mjs's
+  // own header comment) -- an unknown sceneId or a missing mapSrc throws,
+  // same 400 as every other validation error in this file (statusForError).
+  if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "push-scene") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    if (!body.sceneId) throw new Error("POST /api/foundry/push-scene requires sceneId.");
+    const result = await pushSceneToFoundry(dir, w, body.sceneId, {
+      mapSrc: body.mapSrc,
+      name: body.name,
+      width: body.width,
+      height: body.height
+    });
     return sendJson(res, 200, result);
   }
 

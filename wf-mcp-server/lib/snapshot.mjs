@@ -32,3 +32,18 @@ export function mutationsPath(dataDir, world) {
 export function foundryIndexPath(dataDir, world) {
   return join(dataDir, "worlds", world, "world-fabric-foundry-index.json");
 }
+
+/**
+ * Phase 32 task 32.3 — paths to a world's world-fabric-foundry-ops.json /
+ * world-fabric-foundry-results.json (the GM_Tools -> Foundry PUSH channel +
+ * its per-op result echo, plans/phase-32-bridge-contract.md §2/§3). Same
+ * sibling-helper convention as foundryIndexPath above — same worlds/<world>/
+ * directory, no new resolution logic.
+ */
+export function foundryOpsPath(dataDir, world) {
+  return join(dataDir, "worlds", world, "world-fabric-foundry-ops.json");
+}
+
+export function foundryResultsPath(dataDir, world) {
+  return join(dataDir, "worlds", world, "world-fabric-foundry-results.json");
+}

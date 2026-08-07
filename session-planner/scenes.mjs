@@ -33,6 +33,19 @@
  * no `updatedAt` key, which `listScenesByRecency`'s own fallback (treat a
  * missing `updatedAt` as that scene's own `createdAt`, or the epoch if even
  * that's missing) sorts as oldest, exactly as if it had never been touched.
+ *
+ * ADDITIVE CHANGE (Phase 32 task 32.3): the Scene record gained a
+ * `foundrySceneRef` field (string|null, default null on create/fork --
+ * deliberately NOT inherited by forkScene, same reasoning as `name` just
+ * below it: a fork is a different actual scene instance, so it must not
+ * silently point at the parent's already-pushed Foundry Scene document).
+ * Written by wf-mcp-server/lib/foundry-push-ops.mjs's pushSceneToFoundry
+ * (via updateScene's new optional `foundrySceneRef` patch key) once a
+ * `create_scene` ops-channel push comes back `ok:true` with a real
+ * `foundryUuid` -- plans/phase-32-bridge-contract.md §3. Same no-
+ * `SCHEMA_VERSION`-bump reasoning as `updatedAt` above: a scene persisted
+ * before this change simply has no `foundrySceneRef` key, which every
+ * reader must treat identically to an explicit `null` (never pushed yet).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -91,6 +104,7 @@ export function createScene(world, { locationEntityId = null, objectiveNote = nu
     locationEntityId: locationEntityId ?? null,
     objectiveNote: objectiveNote ?? null,
     name: name ?? null,
+    foundrySceneRef: null,
     createdAt: now,
     updatedAt: now
   };
@@ -129,6 +143,10 @@ export function forkScene(world, parentSceneId, { locationEntityId, objectiveNot
     // identically-named scenes with no way to tell them apart in a list.
     // Pass an explicit `name` to set one anyway.
     name,
+    // Deliberately NOT inherited from the parent either, same reasoning as
+    // `name` immediately above -- see this module's own Phase 32 task 32.3
+    // header note.
+    foundrySceneRef: null,
     createdAt: now,
     updatedAt: now
   };
@@ -191,14 +209,21 @@ export function renameScene(world, sceneId, name, opts = {}) {
  * to leave both fields' VALUES unchanged (matches touchScene's own
  * unconditional-bump semantics below).
  *
+ * Phase 32 task 32.3: gained an independent optional `foundrySceneRef` patch
+ * key (same "only patch what's provided" convention as name/objectiveNote)
+ * -- the write-back point wf-mcp-server/lib/foundry-push-ops.mjs's
+ * pushSceneToFoundry uses once a create_scene push comes back `ok:true`
+ * with a real Foundry UUID, per this task's own instruction to write it "via
+ * updateScene" rather than adding a second, parallel setter.
+ *
  * @param {string} world
  * @param {string} sceneId
- * @param {{name?:string|null, objectiveNote?:string|null}} patch
+ * @param {{name?:string|null, objectiveNote?:string|null, foundrySceneRef?:string|null}} patch
  * @param {object} [opts]
  * @param {string} [opts.now]   injectable ISO timestamp, for deterministic tests
  * @returns {object}   the updated Scene
  */
-export function updateScene(world, sceneId, { name, objectiveNote } = {}, opts = {}) {
+export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneRef } = {}, opts = {}) {
   const scenes = readScenes(world);
   const scene = scenes.find((s) => s.id === sceneId);
   if (!scene) {
@@ -206,6 +231,7 @@ export function updateScene(world, sceneId, { name, objectiveNote } = {}, opts =
   }
   if (name !== undefined) scene.name = name;
   if (objectiveNote !== undefined) scene.objectiveNote = objectiveNote;
+  if (foundrySceneRef !== undefined) scene.foundrySceneRef = foundrySceneRef;
   scene.updatedAt = opts.now ?? new Date().toISOString();
   writeScenes(world, scenes);
   return scene;
