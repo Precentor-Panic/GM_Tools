@@ -79,7 +79,14 @@ const DEFAULT_ROOT = join(__dirname, "..", "manual-undo");
 // migration needed for a persisted v1 slot, since a stale slot is consumed
 // (or simply overwritten by the next write) rather than read back across a
 // process restart in any load-bearing way).
-export const SCHEMA_VERSION = 2;
+//
+// SCHEMA_VERSION 3 (Phase 34 task 34.1): additive -- ManualUndoKind gained
+// "remove_reparent_up" (manual-edit-ops.mjs's new removeNodeReparentUp, the
+// hybrid "remove from graph" op: reparent every containment child up one
+// level, THEN delete the node cascading its remaining edges, as ONE atomic
+// undo action -- same `graphMutations`-array shape, same no-migration
+// reasoning as SCHEMA_VERSION 2's own note above).
+export const SCHEMA_VERSION = 3;
 
 export const ManualUndoKind = z.enum([
   "add_node",
@@ -89,6 +96,7 @@ export const ManualUndoKind = z.enum([
   "delete_node",
   "delete_edge",
   "reparent_node",
+  "remove_reparent_up",
   "narration_reset"
 ]);
 

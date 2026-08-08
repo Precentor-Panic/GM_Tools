@@ -29,6 +29,15 @@ const dataDir = join(scratchDir, "foundrydata");
 process.env.GM_TOOLS_REVIEW_STATE_DIR = join(scratchDir, "review-state");
 process.env.GM_TOOLS_PENDING_LEDGER_DIR = join(scratchDir, "pending-resolution");
 process.env.GM_TOOLS_HUMAN_REVIEW_DIR = join(scratchDir, "human-review");
+// Phase 34 task 34.1: manual-edit-ops.mjs's write path (reparentNode
+// already, and now removeNodeReparentUp) also touches entity-narration/
+// prep-content/manual-undo -- isolated here too, same convention as
+// wf-mcp-server/test/manual-edit-ops.test.mjs's own scratch env vars,
+// so this file's HTTP-level reparent/remove-reparent-up tests never write
+// into the repo's real default directories.
+process.env.GM_TOOLS_ENTITY_NARRATION_DIR = join(scratchDir, "entity-narration");
+process.env.GM_TOOLS_PREP_CONTENT_DIR = join(scratchDir, "prep-content");
+process.env.GM_TOOLS_MANUAL_UNDO_DIR = join(scratchDir, "manual-undo");
 process.env.WF_DATA_DIR = dataDir;
 
 const WORLD = "graph-routes-test-world";
@@ -307,6 +316,50 @@ test("POST /api/graph/nodes/:entityId/reparent rejects a cycle with a non-500 cl
 
 test("SECURITY: POST /api/graph/nodes/:entityId/reparent rejects a path-traversal-shaped world id with 400", async () => {
   const { status, body } = await postJson("/api/graph/nodes/reparent-child/reparent", { world: "../../../../etc", parentId: "alvor" });
+  assert.equal(status, 400);
+  assert.match(body.error, /Invalid world id/);
+});
+
+// ---------------------------------------------------------------------------
+// Phase 34 task 34.1 -- POST /api/graph/nodes/:entityId/remove-reparent-up,
+// real HTTP round trip. Store-level coverage of the atomic reparent+delete
+// logic itself lives in wf-mcp-server/test/manual-edit-ops.test.mjs -- this
+// file only proves the route wiring (path param -> removeNodeReparentUp,
+// response shape, error status mapping), same division of labor as the
+// /reparent route tests immediately above.
+// ---------------------------------------------------------------------------
+
+applyHeadless(snapPath, [
+  { op: "upsert_entity", data: { id: "rru-route-parent", name: "RRU Route Parent", type: "place", importance: 0.5 } },
+  { op: "upsert_entity", data: { id: "rru-route-node", name: "RRU Route Node", type: "place", importance: 0.5 } },
+  { op: "upsert_entity", data: { id: "rru-route-child", name: "RRU Route Child", type: "place", importance: 0.5 } },
+  { op: "upsert_edge", data: { id: "rru-route-edge-node-parent", sourceId: "rru-route-node", targetId: "rru-route-parent", relationshipType: "containment" } },
+  { op: "upsert_edge", data: { id: "rru-route-edge-child-node", sourceId: "rru-route-child", targetId: "rru-route-node", relationshipType: "containment" } }
+]);
+
+test("POST /api/graph/nodes/:entityId/remove-reparent-up: reparents the child up, deletes the node, reports counts", async () => {
+  const { status, body } = await postJson("/api/graph/nodes/rru-route-node/remove-reparent-up", { world: WORLD });
+  assert.equal(status, 200);
+  assert.equal(body.entityId, "rru-route-node");
+  assert.equal(body.name, "RRU Route Node");
+  assert.equal(body.reparentedChildren, 1);
+  assert.equal(body.droppedEdges, 0);
+
+  const { body: graph } = await getJson(`/api/graph?world=${WORLD}&filter=all`);
+  assert.equal(graph.nodes.some((n) => n.id === "rru-route-node"), false, "the removed node must be genuinely gone from a real graph read");
+  const childEdge = graph.edges.find((e) => e.id === "rru-route-edge-child-node");
+  assert.ok(childEdge, "the child's containment edge must still exist (repointed, not deleted)");
+  assert.equal(childEdge.targetId, "rru-route-parent", "the child must now point at the removed node's own parent");
+});
+
+test("POST /api/graph/nodes/:entityId/remove-reparent-up: unknown entityId -- clean non-500 error", async () => {
+  const { status, body } = await postJson("/api/graph/nodes/does-not-exist-at-all/remove-reparent-up", { world: WORLD });
+  assert.notEqual(status, 500);
+  assert.match(body.error, /No entity/i);
+});
+
+test("SECURITY: POST /api/graph/nodes/:entityId/remove-reparent-up rejects a path-traversal-shaped world id with 400", async () => {
+  const { status, body } = await postJson("/api/graph/nodes/reparent-root/remove-reparent-up", { world: "../../../../etc" });
   assert.equal(status, 400);
   assert.match(body.error, /Invalid world id/);
 });

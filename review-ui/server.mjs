@@ -118,6 +118,7 @@ import {
   deleteNodeOp,
   deleteEdgeOp,
   reparentNode,
+  removeNodeReparentUp,
   resetEntityNarrationOp,
   undoLastManualEditOp,
   getManualUndoStatusOp,
@@ -178,6 +179,16 @@ import { pullFoundryActorsToStores } from "../wf-mcp-server/lib/foundry-pull-ops
 // Scene seeded with a map, via the ops channel). Sibling module to
 // foundry-pull-ops.mjs above -- see its own header comment.
 import { pushSceneToFoundry } from "../wf-mcp-server/lib/foundry-push-ops.mjs";
+
+// Phase 34 task 34.1 -- Connection-Menu backend glue: connection-state
+// derivation + sync-now (foundry-connection.mjs composes readFoundryIndex
+// with the EXISTING pullFoundryActorsToStores above, no second pull path),
+// the per-world app-settings store, and the World Anvil URL lore-intake
+// route (composes with the EXISTING importWriteup pipeline, same shape as
+// /api/writeup-propose below).
+import { deriveConnectionState, syncNow } from "../wf-mcp-server/lib/foundry-connection.mjs";
+import { getSettings as getAppSettings, patchSettings as patchAppSettings } from "../session-planner/app-settings.mjs";
+import { importFromWorldAnvil } from "../wf-mcp-server/lib/worldanvil-intake.mjs";
 
 // Phase 22 (task 22.7) -- Scene Engine routes. Thin wrappers only, same
 // convention as every other route in this file: resolveWorld()/resolveDir()
@@ -1258,6 +1269,30 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, result);
   }
 
+  // POST /api/graph/nodes/:entityId/remove-reparent-up  { world }
+  // -> {entityId, name, reparentedChildren, droppedEdges}
+  // Phase 34 task 34.1 -- the hybrid "Remove from graph" delete
+  // (manual-edit-ops.mjs's removeNodeReparentUp): every containment child
+  // of the node is reparented up to the node's own parent (or unparented
+  // if the node is itself a root), THEN the node is deleted cascading its
+  // remaining edges -- ONE atomic undo unit. The existing
+  // /remove-from-scenes route (above) is reused UNCHANGED by the frontend
+  // for the opt-in "also remove from all N scenes" cleanup -- this route
+  // does not touch scenes at all.
+  if (
+    method === "POST" &&
+    parts.length === 5 &&
+    parts[1] === "graph" &&
+    parts[2] === "nodes" &&
+    parts[4] === "remove-reparent-up"
+  ) {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const result = await removeNodeReparentUp(dir, w, parts[3]);
+    return sendJson(res, 200, result);
+  }
+
   // POST /api/graph/nodes/:entityId/remove-from-scenes  { world }  -> {removedElements, unanchoredScenes}
   // Phase 33 task 33.2 -- the opt-in cleanup behind the World inspector's
   // "Remove from graph" action's "also remove from all N scenes" checkbox.
@@ -1748,6 +1783,81 @@ async function handleApi(req, res, url, parts) {
       width: body.width,
       height: body.height
     });
+    return sendJson(res, 200, result);
+  }
+
+  // -----------------------------------------------------------------------
+  // Phase 34 task 34.1 -- Connection-Menu backend glue. Pre-specified route/
+  // store contract, plans/phase-34-tasks.md ("orchestrator-locked so 34.0's
+  // e2e ∥ this task can be built in parallel against the SAME shapes").
+  // -----------------------------------------------------------------------
+
+  // GET /api/foundry/connection?world=...
+  // -> {state:'live'|'stale'|'off', exportedAt, ageMs, staleThresholdMs,
+  //     counts:{actors,items,scenes,journals}|null, lastSync:{at,ok,error?}|null, world}
+  // Thin wrapper over foundry-connection.mjs's deriveConnectionState; the
+  // stale threshold is read from the per-world app-settings store when set
+  // (falls back to deriveConnectionState's own DEFAULT_STALE_THRESHOLD_MS
+  // otherwise), never from a client-supplied query param -- same
+  // "settings are server-resolved, never client-overridden" convention as
+  // every other route in this file.
+  if (method === "GET" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "connection") {
+    const dir = resolveDir();
+    const w = resolveWorld(q.get("world"));
+    const settings = getAppSettings(w);
+    const opts = settings.staleThresholdMs !== undefined ? { staleThresholdMs: settings.staleThresholdMs } : {};
+    return sendJson(res, 200, deriveConnectionState(dir, w, opts));
+  }
+
+  // POST /api/foundry/sync-now  { world }
+  // -> {state:'off', message} (no index yet -- 200, NOT a throw/block) or
+  //    {pulled:{bestiaryProposed,partyProposed,alreadyLinked}, indexAgeMs, state}.
+  // Composition (foundry-connection.mjs's syncNow): read the index (never
+  // blocks on a live Foundry client) -> pullFoundryActorsToStores (the
+  // EXISTING, unmodified review-gated ingest) -> append a sync-log entry.
+  // Reindex triggering itself stays Foundry-side (api.reindexForGmTools()),
+  // documented here, not performed by this route.
+  if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "sync-now") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    return sendJson(res, 200, syncNow(dir, w));
+  }
+
+  // GET /api/settings?world=...  -> the full stored AppSettings object (session-planner/app-settings.mjs)
+  if (method === "GET" && parts.length === 2 && parts[1] === "settings") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, getAppSettings(w));
+  }
+
+  // POST /api/settings  { world, ...patch }  -- shallow patch, only the
+  // supplied keys change (patchSettings). `world`/`dataDir` are stripped
+  // before the remaining body is validated as an AppSettings patch.
+  if (method === "POST" && parts.length === 2 && parts[1] === "settings") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const { world: _world, dataDir: _dataDir, ...patch } = body;
+    return sendJson(res, 200, patchAppSettings(w, patch));
+  }
+
+  // POST /api/lore/worldanvil  { world, url }
+  // -> the same response shape POST /api/writeup-propose (below) returns for
+  // a pasted writeup -- the new review batch's own id, mutationCount,
+  // importSummary, suggestions, headline -- since this route delegates to
+  // the SAME importWriteup pipeline. Server-side fetch of `url`, HTML-
+  // stripped to text, capped at MAX_WRITEUP_CHARS (truncated, not rejected
+  // -- see worldanvil-intake.mjs's own header). An unreachable/non-2xx URL
+  // throws a WorldAnvilFetchError, which falls through statusForError's
+  // default branch to a clean 400 (no special-case needed there).
+  if (method === "POST" && parts.length === 3 && parts[1] === "lore" && parts[2] === "worldanvil") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    if (typeof body.url !== "string" || !body.url.trim()) {
+      throw new Error("POST /api/lore/worldanvil requires a non-empty `url`.");
+    }
+    const existingSnapshot = loadSnapshot(dir, w).snapshot;
+    const result = await importFromWorldAnvil(w, body.url, existingSnapshot);
     return sendJson(res, 200, result);
   }
 

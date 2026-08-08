@@ -47,6 +47,7 @@ const {
   deleteNodeOp,
   deleteEdgeOp,
   reparentNode,
+  removeNodeReparentUp,
   resetEntityNarrationOp,
   undoLastManualEditOp,
   getManualUndoStatusOp,
@@ -350,6 +351,120 @@ await test("reparentNode: a node with MULTIPLE existing containment edges (an un
     [secondEdge.targetId, "loc-root"].sort(),
     "the exact original targets are restored"
   );
+});
+
+// ---------------------------------------------------------------- removeNodeReparentUp (Phase 34 task 34.1)
+
+// A dedicated fixture, deliberately separate ids from the reparentNode
+// fixture above (rru- prefix) so this block's assertions never depend on
+// state left over from earlier tests in this file:
+//   rru-grandparent <- rru-parent <- rru-node <- {rru-child-a, rru-child-b}
+// plus a non-containment edge touching rru-node (rru-node <-knows-> rru-ally)
+// and a completely separate root node (rru-lone-root) with one child
+// (rru-lone-root-child) for the "node is itself a root" case.
+applyHeadless(snapPath, [
+  { op: "upsert_entity", data: { id: "rru-grandparent", name: "RRU Grandparent", type: "place", importance: 0.5 } },
+  { op: "upsert_entity", data: { id: "rru-parent", name: "RRU Parent", type: "place", importance: 0.5 } },
+  { op: "upsert_entity", data: { id: "rru-node", name: "RRU Node", type: "place", importance: 0.5 } },
+  { op: "upsert_entity", data: { id: "rru-child-a", name: "RRU Child A", type: "place", importance: 0.5 } },
+  { op: "upsert_entity", data: { id: "rru-child-b", name: "RRU Child B", type: "place", importance: 0.5 } },
+  { op: "upsert_entity", data: { id: "rru-ally", name: "RRU Ally", type: "person", importance: 0.5 } },
+  { op: "upsert_entity", data: { id: "rru-lone-root", name: "RRU Lone Root", type: "place", importance: 0.5 } },
+  { op: "upsert_entity", data: { id: "rru-lone-root-child", name: "RRU Lone Root Child", type: "place", importance: 0.5 } },
+  { op: "upsert_edge", data: { id: "rru-edge-parent-grandparent", sourceId: "rru-parent", targetId: "rru-grandparent", relationshipType: "containment" } },
+  { op: "upsert_edge", data: { id: "rru-edge-node-parent", sourceId: "rru-node", targetId: "rru-parent", relationshipType: "containment" } },
+  { op: "upsert_edge", data: { id: "rru-edge-child-a-node", sourceId: "rru-child-a", targetId: "rru-node", relationshipType: "containment" } },
+  { op: "upsert_edge", data: { id: "rru-edge-child-b-node", sourceId: "rru-child-b", targetId: "rru-node", relationshipType: "containment" } },
+  { op: "upsert_edge", data: { id: "rru-edge-node-ally", sourceId: "rru-node", targetId: "rru-ally", relationshipType: "knows" } },
+  { op: "upsert_edge", data: { id: "rru-edge-lone-root-child", sourceId: "rru-lone-root-child", targetId: "rru-lone-root", relationshipType: "containment" } }
+]);
+
+function containmentEdgesInto(entityId) {
+  return edges().filter((e) => e.targetId === entityId && e.relationshipType === "containment");
+}
+
+let rruNodeBefore; // captured in the delete test below, compared against in the undo test right after it
+
+await test("removeNodeReparentUp: children adopt the grandparent, node's own edges are cascade-dropped, all in ONE atomic write", async () => {
+  rruNodeBefore = findEntity("rru-node");
+  const edgesTouchingNodeBefore = edges().filter((e) => e.sourceId === "rru-node" || e.targetId === "rru-node");
+  assert.equal(edgesTouchingNodeBefore.length, 4, "sanity: rru-node starts with 4 edges (up to parent, 2 children in, 1 ally)");
+
+  const result = await removeNodeReparentUp(dataDir, WORLD, "rru-node");
+  assert.equal(result.entityId, "rru-node");
+  assert.equal(result.name, "RRU Node");
+  assert.equal(result.reparentedChildren, 2);
+  assert.equal(result.droppedEdges, 0);
+
+  assert.equal(findEntity("rru-node"), undefined, "rru-node itself must be gone");
+  assert.equal(
+    edges().filter((e) => e.sourceId === "rru-node" || e.targetId === "rru-node").length,
+    0,
+    "no edge should still reference the deleted node"
+  );
+
+  // Both children now point directly at the grandparent -- reparented UP one level, not left dangling or deleted.
+  const childA = findEdge("rru-edge-child-a-node");
+  const childB = findEdge("rru-edge-child-b-node");
+  assert.ok(childA && childB, "both child containment edges must still exist (same ids, repointed) not be deleted");
+  assert.equal(childA.targetId, "rru-parent", "rru-child-a adopts rru-node's own parent");
+  assert.equal(childB.targetId, "rru-parent", "rru-child-b adopts rru-node's own parent");
+
+  // The non-containment edge to rru-ally must be genuinely GONE (dropped by
+  // the node's own cascade delete), not reparented anywhere.
+  assert.equal(findEdge("rru-edge-node-ally"), undefined, "a non-containment edge touching the removed node must be dropped, not reparented");
+  assert.equal(edges().some((e) => e.sourceId === "rru-ally" || e.targetId === "rru-ally"), false, "rru-ally itself must have no remaining edges either");
+});
+
+await test("removeNodeReparentUp: undo restores the EXACT original topology -- node, its own edges, AND children's original parent links", async () => {
+  const undoResult = await undoLastManualEditOp(dataDir, WORLD);
+  assert.equal(undoResult.status, "undone");
+  assert.equal(undoResult.kind, "remove_reparent_up");
+
+  assert.deepEqual(findEntity("rru-node"), rruNodeBefore, "rru-node's full original state must come back exactly");
+
+  const restoredChildA = findEdge("rru-edge-child-a-node");
+  const restoredChildB = findEdge("rru-edge-child-b-node");
+  assert.equal(restoredChildA.targetId, "rru-node", "rru-child-a's containment edge must point back at rru-node, not still at rru-parent");
+  assert.equal(restoredChildB.targetId, "rru-node", "rru-child-b's containment edge must point back at rru-node");
+
+  const restoredParentEdge = findEdge("rru-edge-node-parent");
+  assert.ok(restoredParentEdge, "rru-node's own upward containment edge must be restored");
+  assert.equal(restoredParentEdge.targetId, "rru-parent");
+
+  const restoredAllyEdge = findEdge("rru-edge-node-ally");
+  assert.ok(restoredAllyEdge, "the dropped non-containment edge must be restored too");
+  assert.equal(restoredAllyEdge.targetId, "rru-ally");
+
+  assert.equal(
+    edges().filter((e) => e.sourceId === "rru-node" || e.targetId === "rru-node").length,
+    4,
+    "exactly the original 4 edges must be back -- not more, not fewer"
+  );
+});
+
+await test("removeNodeReparentUp: ROOT-NODE case -- a node with no parent drops its children's containment edges instead of reparenting (children become roots)", async () => {
+  const result = await removeNodeReparentUp(dataDir, WORLD, "rru-lone-root");
+  assert.equal(result.reparentedChildren, 0);
+  assert.equal(result.droppedEdges, 1);
+  assert.equal(findEntity("rru-lone-root"), undefined);
+
+  // The child itself must survive (only its containment LINK is dropped, not the child entity).
+  assert.ok(findEntity("rru-lone-root-child"), "the child entity itself must still exist");
+  assert.equal(findEdge("rru-edge-lone-root-child"), undefined, "the child's containment edge to the removed root must be gone");
+  assert.equal(containmentEdgesInto("rru-lone-root-child").length, 0, "rru-lone-root-child has no parent now -- it is itself a root");
+
+  const undoResult = await undoLastManualEditOp(dataDir, WORLD);
+  assert.equal(undoResult.status, "undone");
+  assert.equal(undoResult.kind, "remove_reparent_up");
+  assert.ok(findEntity("rru-lone-root"), "undo must restore the removed root node");
+  const restoredEdge = findEdge("rru-edge-lone-root-child");
+  assert.ok(restoredEdge, "undo must restore the child's original containment edge (same id)");
+  assert.equal(restoredEdge.targetId, "rru-lone-root");
+});
+
+await test("removeNodeReparentUp: unknown entityId throws a clear error", async () => {
+  await assert.rejects(() => removeNodeReparentUp(dataDir, WORLD, "does-not-exist-at-all"), /No entity/i);
 });
 
 // ---------------------------------------------------------------- last-write-wins (overwrite, not stack)

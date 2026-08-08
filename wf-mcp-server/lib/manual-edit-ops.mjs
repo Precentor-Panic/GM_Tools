@@ -448,6 +448,134 @@ export async function reparentNode(dir, w, entityId, newParentId) {
   return { entityId, parentId: normalizedParentId, removedEdgeCount: existingEdges.length, edgeId: newEdgeId };
 }
 
+// --- hybrid remove (Phase 34 task 34.1) -------------------------------------
+
+/**
+ * The "Remove from graph" hybrid delete (design record + plans/phase-34-
+ * tasks.md's locked spec): for every containment CHILD of `entityId`
+ * (edges where `entityId` is the containment PARENT -- `targetId`, per this
+ * project's established child=sourceId/parent=targetId convention, same
+ * direction reparentNode/scene-elements.mjs's promote already use), re-point
+ * its containment edge to `entityId`'s OWN parent (or drop that edge
+ * entirely if `entityId` is itself a root with no parent -- the child then
+ * becomes a root). THEN delete `entityId` cascading its remaining edges
+ * (its own upward containment edge, if any, plus every non-containment edge
+ * touching it) -- composes reparentNode + deleteNodeOp's own internals, not
+ * a third independent implementation of either half.
+ *
+ * ATOMICITY: every one of the above (0+ child reparent/drop mutations, plus
+ * the node's own delete_entity) lands in ONE applyManualMutations call and
+ * ONE undo slot, restoring the EXACT original topology on undo -- the
+ * node itself, its own original edges (parent-direction + any non-
+ * containment edges), AND every child's ORIGINAL containment edge (its
+ * original targetId=entityId, whether that edge was repointed or dropped by
+ * this op). This mirrors deleteNodeOp's own "capture pre-delete state for
+ * every cascaded edge, restore all of them together" pattern, one level up
+ * (children's edges plus the node's own edges, not just the node's own).
+ *
+ * `applyHeadless` does NOT process a call's mutations sequentially against
+ * each other (each upsert merges onto the ORIGINAL pre-call snapshot, and
+ * delete_entity's cascade runs as a separate pass over the FINAL merged
+ * result afterward -- see headless-apply.mjs's own runApplyHeadless) --
+ * which is exactly what makes emitting "repoint this child edge" and
+ * "delete_entity for the node" in the SAME call correct regardless of
+ * array order: a repointed child edge's `targetId` no longer equals
+ * `entityId` in the merged result, so delete_entity's own cascade-delete
+ * pass correctly leaves it alone (already reparented, not touching
+ * `entityId` anymore) rather than double-handling it.
+ *
+ * @param {string} dir
+ * @param {string} w
+ * @param {string} entityId
+ * @returns {Promise<{entityId:string, name:string, reparentedChildren:number, droppedEdges:number}>}
+ */
+export async function removeNodeReparentUp(dir, w, entityId) {
+  requireNonEmptyString(entityId, "entityId");
+  const { entities, edges } = loadSnapshot(dir, w).snapshot;
+  const before = entities.find((e) => e.id === entityId);
+  if (!before) throw new Error(`No entity "${entityId}" found in the live graph.`);
+
+  // The node's own parent-direction containment edge(s) -- entityId is the
+  // CHILD (sourceId). Reparenting logic below only ever needs "is entityId
+  // a root or not," so the first one found is enough to answer that; any
+  // additional (unusual, but legal per reparentNode's own precedent) parent
+  // edges are still captured and restored via the generic cascadeEdges
+  // sweep below.
+  const parentEdge = edges.find((e) => e.sourceId === entityId && e.relationshipType === "containment");
+  const grandparentId = parentEdge ? parentEdge.targetId : null;
+
+  // The node's own containment CHILDREN -- entityId is the PARENT (targetId).
+  const childEdges = edges.filter((e) => e.targetId === entityId && e.relationshipType === "containment");
+  const childEdgeIds = new Set(childEdges.map((e) => e.id));
+
+  const reparentMutations = [];
+  let reparentedChildren = 0;
+  let droppedEdges = 0;
+  for (const childEdge of childEdges) {
+    if (grandparentId !== null) {
+      reparentMutations.push({
+        op: "upsert_edge",
+        id: childEdge.id,
+        data: { targetId: grandparentId },
+        rationale:
+          `Manual edit: remove-from-graph -- "${childEdge.sourceId}" reparented up from "${entityId}" to "${grandparentId}".`
+      });
+      reparentedChildren++;
+    } else {
+      reparentMutations.push({
+        op: "delete_edge",
+        id: childEdge.id,
+        rationale:
+          `Manual edit: remove-from-graph -- containment link from "${childEdge.sourceId}" dropped ` +
+          `("${entityId}" had no parent to reparent up to, so "${childEdge.sourceId}" becomes a root).`
+      });
+      droppedEdges++;
+    }
+  }
+
+  // Every OTHER edge touching entityId -- its own parent-direction edge(s)
+  // plus any non-containment edge from either side -- captured for the
+  // undo restore AND left to delete_entity's own cascade to remove (see
+  // this function's own doc comment for why omitting these from the
+  // mutation array entirely, relying on the cascade, is correct here).
+  const cascadeEdges = edges.filter((e) => (e.sourceId === entityId || e.targetId === entityId) && !childEdgeIds.has(e.id));
+
+  const mutationCores = [
+    ...reparentMutations,
+    {
+      op: "delete_entity",
+      id: entityId,
+      rationale:
+        `Manual edit: "${before.name}" removed from the graph (${reparentedChildren} child(ren) reparented up, ` +
+        `${droppedEdges} link(s) dropped).`
+    }
+  ];
+
+  applyManualMutations(dir, w, mutationCores);
+  supersedeEntityNarration(w, entityId);
+  markPrepContentStale(w, entityId);
+  const touchedForReview = [...childEdges.map((e) => e.sourceId), ...(grandparentId ? [grandparentId] : [])];
+  if (touchedForReview.length) markHumanReviewed(w, touchedForReview);
+
+  // Undo inverse, grouped as ONE action: re-create the node itself, every
+  // one of its own cascade-captured edges, AND every child's ORIGINAL
+  // containment edge (original id, original targetId=entityId) -- restores
+  // the exact original topology, not just "the node comes back."
+  const graphMutations = [
+    { op: "upsert_entity", id: entityId, data: before },
+    ...cascadeEdges.map((e) => ({ op: "upsert_edge", id: e.id, data: e })),
+    ...childEdges.map((e) => ({ op: "upsert_edge", id: e.id, data: e }))
+  ];
+  setUndoSlot(w, {
+    kind: "remove_reparent_up",
+    description:
+      `"${before.name}" removed from the graph (${reparentedChildren} child(ren) reparented up, ${droppedEdges} link(s) dropped).`,
+    graphMutations
+  });
+
+  return { entityId, name: before.name, reparentedChildren, droppedEdges };
+}
+
 // --- delete ----------------------------------------------------------------
 
 /**
