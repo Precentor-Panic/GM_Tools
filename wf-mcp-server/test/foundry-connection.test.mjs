@@ -138,7 +138,8 @@ test("syncNow: real fixture -- pulls actors, appends a sync-log entry, reports s
   assert.equal(result.indexAgeMs, 0);
   assert.equal(result.pulled.bestiaryProposed.length, 2);
   assert.equal(result.pulled.partyProposed.length, 1);
-  assert.deepEqual(result.pulled.alreadyLinked, { bestiary: [], party: [] });
+  // Phase 35 task 35.1, §6: alreadyLinked gains a THIRD key, `items` (foundry-pull-ops.mjs's own additive response-shape change) -- passed through here unmodified by syncNow's own `pulled` composition.
+  assert.deepEqual(result.pulled.alreadyLinked, { bestiary: [], party: [], items: [] });
 
   const log = readSyncLog(world);
   assert.equal(log.length, 1);

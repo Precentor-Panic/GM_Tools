@@ -25,14 +25,92 @@
  * See combat-planning/party-roster-store.mjs's own header comment for why
  * party-roster gained the SAME status gate bestiary already had, rather
  * than the "return candidates without saving" alternative.
+ *
+ * Phase 35 task 35.1, §6 of review-ui/test/e2e/phase35-fixture.mjs (THE
+ * WRITTEN CONTRACT): this composition grows to ALSO read `index.scenes[]`
+ * (already present on every index per the bridge contract §1.3 -- the
+ * pre-35.1 implementation read ONLY `index.actors`) in the SAME pass, per
+ * plans/phase-32-deferred.md §1/§2's own designs. Response shape gains
+ * THREE new keys -- `itemsProposed`, `stagecraftProposed`, `tokensSynced` --
+ * alongside the EXISTING `bestiaryProposed`/`partyProposed`/`alreadyLinked`/
+ * `skippedActors` (all four UNCHANGED, this is a strictly additive response
+ * shape); `alreadyLinked` itself gains a THIRD key, `items`.
+ *
+ * itemsProposed SCOPE (deferred §1's own scope rule, reused verbatim): only
+ * a PC actor's (classifyActor==="pc") items[] feed Reliquary -- a monster's
+ * items[] already feeds mapActorToBestiary's own attack/feature derivation,
+ * never Reliquary. Within a PC's items[], mapActorItemsToInventory
+ * (combat-planning/foundry-actor-mapper.mjs) further excludes class/weapon/
+ * feat items -- those already feed this SAME actor's own combat-relevant
+ * stat block via mapActorToPartyMember, so surfacing them a second time as
+ * Reliquary rows would just duplicate that data (this filter is THIS task's
+ * own resolution of an ambiguity the written contract's §6 prose leaves
+ * open -- "one per actors[].items[] entry" could be read as "every item,
+ * no filter" -- resolved by cross-checking the concrete, already-written
+ * assertion in test/e2e/phase35-pull-and-persistence.e2e.mjs, which pins
+ * Kestrel Windrider's itemsProposed count at exactly 3, excluding her
+ * Ranger class item and Longbow weapon; flagged here and in this task's own
+ * completion report as a deviation-resolution, not a silent guess).
+ *
+ * ownerPartyMemberId resolution: always the PartyMember.id JUST created/
+ * updated for this SAME PC actor in this SAME pass (upsertPartyMember's own
+ * return value) -- deferred §1's "one click populates bestiary + roster +
+ * items together" ordering, never a second lookup pass.
+ *
+ * stagecraftProposed: one `kind:"map"` StagecraftAsset per `index.scenes[]`
+ * entry that has a usable background (a scene with `background:null`, or no
+ * `background.src`, is SKIPPED -- "nothing to reference yet", README §H).
+ * Dedup/upsert on `foundryRef.sceneUuid`, the SAME three-way branch as
+ * upsertBestiary/upsertItem, one more time. Deliberately does NOT gain its
+ * own `alreadyLinked` bucket (the written contract's §6 text scopes that
+ * addition to `items` only) -- an already-`accepted` map asset is simply
+ * left untouched and not re-reported, same effect, no new response key.
+ *
+ * tokensSynced: one entry per distinct sceneUuid appearing in EITHER
+ * `index.scenes[]` OR the flattened `index.tokens[]` (the union, so a scene
+ * with zero placed tokens this run still gets its token set correctly
+ * wiped/replaced and reported as `count:0`, per token-store.mjs's own
+ * REPLACE-semantics doc comment) -- `syncTokensForScene` does the actual
+ * per-scene replace + best-effort sceneId resolution.
  */
 import { readFoundryIndex } from "./foundry-index.mjs";
-import { classifyActor, mapActorToBestiary, mapActorToPartyMember } from "../../combat-planning/foundry-actor-mapper.mjs";
+import {
+  classifyActor,
+  mapActorToBestiary,
+  mapActorToPartyMember,
+  mapActorItemsToInventory
+} from "../../combat-planning/foundry-actor-mapper.mjs";
 import { saveBestiaryEntry, listBestiaryEntries, updateBestiaryEntryRawFields } from "../../combat-planning/bestiary-store.mjs";
 import { savePartyMember, listPartyMembers, updatePartyMemberFields } from "../../combat-planning/party-roster-store.mjs";
+import { saveItem, listItems, updateItemFields } from "../../combat-planning/item-store.mjs";
+import { saveStagecraftAsset, listStagecraftAssets, updateStagecraftAssetFields } from "../../session-planner/stagecraft-store.mjs";
+import { syncTokensForScene } from "../../session-planner/token-store.mjs";
 
 function sourceTextFor(actor) {
   return `Pulled from Foundry actor ${actor.uuid} (${actor.name ?? "unnamed"}).`;
+}
+
+function sourceTextForItem(actor, item) {
+  return `Pulled from Foundry actor ${actor.uuid}, item ${item.foundryItemRef} (${item.name}).`;
+}
+
+/**
+ * Derived display string from a scene's width/height/grid -- free-form, not
+ * parsed back (StagecraftAsset.meta's own documented shape). Fail-soft: any
+ * missing piece is simply omitted from the joined string, never throws.
+ */
+function sceneMetaString(scene) {
+  const parts = [];
+  if (typeof scene?.width === "number" && typeof scene?.height === "number") {
+    parts.push(`${scene.width}x${scene.height}`);
+  }
+  const grid = scene?.grid;
+  if (grid && typeof grid.size === "number") {
+    const distance = typeof grid.distance === "number" ? grid.distance : "?";
+    const units = typeof grid.units === "string" ? grid.units : "";
+    parts.push(`grid ${grid.size}/${distance}${units}`);
+  }
+  return parts.length > 0 ? parts.join(", ") : null;
 }
 
 function upsertBestiary(actor, mapped, opts) {
@@ -81,27 +159,125 @@ function upsertPartyMember(world, actor, mapped, opts) {
   return { record: member, action: "created" };
 }
 
+/** upsertItem -- Phase 35 task 35.1, §6. Same three-way branch as upsertBestiary/upsertPartyMember, keyed on foundryItemRef. */
+function upsertItem(world, actor, mappedItem, ownerPartyMemberId, opts) {
+  const matches = listItems(world).filter((i) => i.foundryItemRef === mappedItem.foundryItemRef);
+  const acceptedMatch = matches.find((i) => i.status === "accepted");
+  if (acceptedMatch) return { record: acceptedMatch, action: "already-linked" };
+
+  const proposedMatch = matches.find((i) => i.status === "proposed");
+  if (proposedMatch) {
+    const item = updateItemFields(world, proposedMatch.id, {
+      name: mappedItem.name,
+      type: mappedItem.type,
+      quantity: mappedItem.quantity,
+      description: mappedItem.description,
+      sourceText: sourceTextForItem(actor, mappedItem),
+      ownerFoundryActorUuid: actor.uuid,
+      ownerPartyMemberId
+    });
+    return { record: item, action: "updated" };
+  }
+
+  const item = saveItem(
+    world,
+    {
+      name: mappedItem.name,
+      type: mappedItem.type,
+      quantity: mappedItem.quantity,
+      description: mappedItem.description,
+      foundryItemRef: mappedItem.foundryItemRef,
+      ownerFoundryActorUuid: actor.uuid,
+      ownerPartyMemberId,
+      sourceText: sourceTextForItem(actor, mappedItem)
+    },
+    opts
+  );
+  return { record: item, action: "created" };
+}
+
+/** upsertStagecraftMap -- Phase 35 task 35.1, §6. Same three-way branch, keyed on foundryRef.sceneUuid. No dedicated alreadyLinked bucket (see this file's own header note). */
+function upsertStagecraftMap(world, scene, opts) {
+  const matches = listStagecraftAssets(world, "map").filter((a) => a.foundryRef?.sceneUuid === scene.uuid);
+  const acceptedMatch = matches.find((a) => a.status === "accepted");
+  if (acceptedMatch) return { record: acceptedMatch, action: "already-linked" };
+
+  const mapped = {
+    name: typeof scene?.name === "string" && scene.name ? scene.name : "Unnamed Scene",
+    source: "foundry",
+    meta: sceneMetaString(scene),
+    foundryRef: { sceneUuid: scene.uuid }
+  };
+
+  const proposedMatch = matches.find((a) => a.status === "proposed");
+  if (proposedMatch) {
+    const asset = updateStagecraftAssetFields(world, proposedMatch.id, mapped);
+    return { record: asset, action: "updated" };
+  }
+
+  const asset = saveStagecraftAsset(world, { kind: "map", ...mapped, status: "proposed" }, opts);
+  return { record: asset, action: "created" };
+}
+
+/** True only when a scene has a genuinely usable background to reference -- README §H: "a null background has nothing findable." */
+function hasUsableBackground(scene) {
+  return typeof scene?.background?.src === "string" && scene.background.src.length > 0;
+}
+
+/**
+ * Every distinct sceneUuid touched this pull -- the union of index.scenes[]
+ * and the flattened index.tokens[]'s own sceneUuid, so a scene with zero
+ * placed tokens this run still gets its token set correctly wiped/replaced
+ * (token-store.mjs's own REPLACE-semantics doc comment).
+ */
+function distinctSceneUuidsWithTokens(index) {
+  const bySceneUuid = new Map();
+  for (const scene of Array.isArray(index.scenes) ? index.scenes : []) {
+    if (scene?.uuid && !bySceneUuid.has(scene.uuid)) bySceneUuid.set(scene.uuid, []);
+  }
+  for (const token of Array.isArray(index.tokens) ? index.tokens : []) {
+    if (!token?.sceneUuid) continue;
+    if (!bySceneUuid.has(token.sceneUuid)) bySceneUuid.set(token.sceneUuid, []);
+    bySceneUuid.get(token.sceneUuid).push(token);
+  }
+  return bySceneUuid;
+}
+
 /**
  * @param {string} dataDir
  * @param {string} world
- * @param {object} [opts]   forwarded to saveBestiaryEntry/savePartyMember (makeId/now — test-injectable determinism)
+ * @param {object} [opts]   forwarded to saveBestiaryEntry/savePartyMember/saveItem/saveStagecraftAsset (makeId/now — test-injectable determinism)
  * @returns {{
  *   indexFound: boolean,
  *   bestiaryProposed: object[],               // bestiary entries now status:'proposed' (created OR updated this run)
  *   partyProposed: object[],                  // party members now status:'proposed' (created OR updated this run)
- *   alreadyLinked: {bestiary: string[], party: string[]},  // foundryActorRefs skipped because already 'accepted'
+ *   itemsProposed: object[],                  // ItemRecords now status:'proposed' (PC actors' items[] only, created OR updated this run)
+ *   stagecraftProposed: object[],              // StagecraftAssets (kind:"map") now status:'proposed' (created OR updated this run)
+ *   tokensSynced: {sceneUuid:string, count:number}[],   // one entry per distinct sceneUuid touched, count = TokenRecords on file for that scene AFTER the replace
+ *   alreadyLinked: {bestiary: string[], party: string[], items: string[]},  // foundryActorRefs/foundryItemRefs skipped because already 'accepted'
  *   skippedActors: {uuid: string, reason: string}[]         // actors that couldn't be classified/mapped (defense-in-depth; the mappers themselves never throw)
  * }}
  */
 export function pullFoundryActorsToStores(dataDir, world, opts = {}) {
   const index = readFoundryIndex(dataDir, world);
   if (!index || !Array.isArray(index.actors) || index.actors.length === 0) {
-    return { indexFound: !!index, bestiaryProposed: [], partyProposed: [], alreadyLinked: { bestiary: [], party: [] }, skippedActors: [] };
+    return {
+      indexFound: !!index,
+      bestiaryProposed: [],
+      partyProposed: [],
+      itemsProposed: [],
+      stagecraftProposed: [],
+      tokensSynced: [],
+      alreadyLinked: { bestiary: [], party: [], items: [] },
+      skippedActors: []
+    };
   }
 
   const bestiaryProposed = [];
   const partyProposed = [];
-  const alreadyLinked = { bestiary: [], party: [] };
+  const itemsProposed = [];
+  const stagecraftProposed = [];
+  const alreadyLinked = { bestiary: [], party: [], items: [] };
   const skippedActors = [];
 
   for (const actor of index.actors) {
@@ -116,6 +292,16 @@ export function pullFoundryActorsToStores(dataDir, world, opts = {}) {
         const { record, action } = upsertPartyMember(world, actor, mapped, opts);
         if (action === "already-linked") alreadyLinked.party.push(actor.uuid);
         else partyProposed.push(record);
+
+        // Phase 35 task 35.1, §6 -- items are strictly a function of the PC
+        // actor just pulled, populated in the SAME pass so ownerPartyMemberId
+        // can resolve against `record` above with no second pull action.
+        for (const mappedItem of mapActorItemsToInventory(actor)) {
+          if (!mappedItem.foundryItemRef) continue; // can't dedup/link without a stable ref -- skip, matching the actor-uuid guard above
+          const { record: itemRecord, action: itemAction } = upsertItem(world, actor, mappedItem, record.id, opts);
+          if (itemAction === "already-linked") alreadyLinked.items.push(mappedItem.foundryItemRef);
+          else itemsProposed.push(itemRecord);
+        }
       } else {
         const mapped = mapActorToBestiary(actor);
         const { record, action } = upsertBestiary(actor, mapped, opts);
@@ -132,5 +318,25 @@ export function pullFoundryActorsToStores(dataDir, world, opts = {}) {
     }
   }
 
-  return { indexFound: true, bestiaryProposed, partyProposed, alreadyLinked, skippedActors };
+  // Phase 35 task 35.1, §6 -- scenes[] -> Stagecraft `map` refs.
+  for (const scene of Array.isArray(index.scenes) ? index.scenes : []) {
+    if (!scene || typeof scene !== "object" || !scene.uuid) continue;
+    if (!hasUsableBackground(scene)) continue; // "a null background has nothing findable" -- skipped, not proposed
+    try {
+      const { record, action } = upsertStagecraftMap(world, scene, opts);
+      if (action !== "already-linked") stagecraftProposed.push(record);
+    } catch {
+      // Defense-in-depth only, same reasoning as the actor loop's own catch --
+      // a genuinely malformed scene record must never abort the whole pull.
+    }
+  }
+
+  // Phase 35 task 35.1, §6 -- tokens[] -> token-index, per-scene REPLACE.
+  const tokensSynced = [];
+  for (const [sceneUuid, tokens] of distinctSceneUuidsWithTokens(index)) {
+    const synced = syncTokensForScene(world, sceneUuid, tokens, index.exportedAt, opts);
+    tokensSynced.push({ sceneUuid, count: synced.length });
+  }
+
+  return { indexFound: true, bestiaryProposed, partyProposed, itemsProposed, stagecraftProposed, tokensSynced, alreadyLinked, skippedActors };
 }

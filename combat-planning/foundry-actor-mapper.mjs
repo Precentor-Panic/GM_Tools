@@ -38,8 +38,15 @@ const WORD_TO_NUMBER = {
   six: 6, seven: 7, eight: 8, nine: 9, ten: 10
 };
 
-/** Best-effort strip of HTML tags from a Foundry biography/description blob. Never throws. */
-function stripHtml(html) {
+/**
+ * Best-effort strip of HTML tags from a Foundry biography/description blob.
+ * Never throws. EXPORTED as of Phase 35 task 35.1 (per
+ * plans/phase-32-deferred.md §1's own instruction -- combat-planning/
+ * item-store.mjs's ItemRecord.description reuses this exact helper via
+ * mapActorItemsToInventory below, rather than a second HTML-stripping
+ * implementation).
+ */
+export function stripHtml(html) {
   if (typeof html !== "string") return null;
   const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   return text.length > 0 ? text : null;
@@ -172,6 +179,57 @@ function deriveEffects(effects) {
     appliedEffects: names.length > 0 ? names : undefined,
     auraEffects: auraNames.length > 0 ? auraNames : undefined
   };
+}
+
+/**
+ * Item types that feed a PC's OWN combat-relevant/build-relevant stat block
+ * elsewhere in this file (deriveAttacksFromItems for weapons, `classItem`
+ * lookup in mapActorToPartyMember, `notableAbilities` for feats) rather than
+ * being genuine tracked inventory/loot -- excluded from
+ * mapActorItemsToInventory below so a PC's Reliquary items are their actual
+ * carried gear (potions, containers, mundane loot), not a duplicate of the
+ * class/weapon/feat data the party-roster stat block already carries.
+ */
+// KNOWN LIMITATION (confirmed against the real wf-test-5e world's own
+// export, wf-mcp-server/test/foundry-pull-ops-wf-test-5e.test.mjs): a
+// quantity-bearing THROWN weapon (e.g. a PC's stack of Javelins) is
+// EXCLUDED here along with every other "weapon" type item, even though it's
+// genuinely expendable inventory a GM might want to track in Reliquary.
+// This is a deliberate, documented trade-off (not a bug) -- the type-only
+// filter is what the written contract's own concrete test assertion
+// (review-ui/test/e2e/phase35-pull-and-persistence.e2e.mjs, Kestrel's
+// itemsProposed count pinned at exactly 3, excluding her Longbow) requires;
+// a finer-grained rule (e.g. "a weapon item WITH quantity>1 is inventory
+// too") would need its own explicit test/contract sign-off before landing.
+const NON_INVENTORY_ITEM_TYPES = new Set(["class", "subclass", "weapon", "feat", "spell", "race", "background"]);
+
+/**
+ * actor.items[] → ItemRecord-SHAPED raw fields (name/type/quantity/
+ * description/foundryItemRef), one per genuine INVENTORY item -- Phase 35
+ * task 35.1, per plans/phase-32-deferred.md §1's own instruction to keep
+ * item derivation next to attack/feature derivation (both read the same
+ * `items[]` array). PURE, no I/O, fail-soft on a malformed item.
+ *
+ * Deliberately excludes NON_INVENTORY_ITEM_TYPES above (class/weapon/feat/
+ * etc.) -- those already feed this actor's own combat-relevant stat block
+ * (deriveAttacksFromItems, the classItem lookup, notableAbilities) via
+ * mapActorToPartyMember, so re-surfacing them as separate Reliquary rows
+ * would just duplicate that same data under a different name.
+ *
+ * @param {object} actor
+ * @returns {{name:string, type:string|null, quantity:number|null, description:string|null, foundryItemRef:string|null}[]}
+ */
+export function mapActorItemsToInventory(actor) {
+  const items = Array.isArray(actor?.items) ? actor.items : [];
+  return items
+    .filter((it) => it && typeof it.type === "string" && !NON_INVENTORY_ITEM_TYPES.has(it.type))
+    .map((it) => ({
+      name: typeof it.name === "string" && it.name ? it.name : "Unnamed Item",
+      type: typeof it.type === "string" ? it.type : null,
+      quantity: typeof it?.system?.quantity === "number" ? it.system.quantity : null,
+      description: stripHtml(it?.system?.description?.value),
+      foundryItemRef: typeof it.uuid === "string" ? it.uuid : null
+    }));
 }
 
 // --- classifyActor ---------------------------------------------------------

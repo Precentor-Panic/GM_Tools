@@ -55,7 +55,14 @@ const DEFAULT_ROOT = join(__dirname, "..", "scene-elements");
 // decision, matches the prototype's `element.stat`). Old elements persisted
 // under v1 simply have no `stat` key at all, which zod's `.optional()`
 // accepts fine on read -- no migration needed.
-export const SCHEMA_VERSION = 2;
+//
+// SCHEMA_VERSION 3 (Phase 35 task 35.1): additive -- `SceneElementFields`
+// gained an optional `bestiaryEntryId` key (see its own doc comment above)
+// plus `StatBlock`'s `ac`/`hp`/`cr` widened to accept string OR number. Both
+// changes are read-compatible with every pre-existing element (an absent
+// key/a string value both still parse fine) -- no migration needed, same
+// "additive, no migration" reasoning as the v1->v2 bump above.
+export const SCHEMA_VERSION = 3;
 
 export const SceneElementKind = z.enum(["local", "graph"]);
 
@@ -65,12 +72,27 @@ export const SceneElementKind = z.enum(["local", "graph"]);
 // field, everything else is free text so a DM can type "13" or "13 (from
 // Studded Leather)" without a schema fight. `foundryActor` is STORED ONLY --
 // no route anywhere pushes it to Foundry.
+//
+// Phase 35 task 35.1: `ac`/`hp`/`cr` widened to `z.union([z.string(),
+// z.number()])` -- the scene tray's creature-drop route (review-ui/
+// server.mjs's statFromBestiaryRawFields) populates these DIRECTLY from a
+// BestiaryEntry's own `rawFields.ac`/`hp`/`challengeRating`, which are
+// genuinely numbers for a Foundry-pulled monster (combat-planning/
+// foundry-actor-mapper.mjs's mapActorToBestiary), not the free-text strings
+// a hand-typed stat block (Phase 29's own original use case) carries.
+// Stringifying them would have broken review-ui/test/e2e/
+// phase35-pull-and-persistence.e2e.mjs's own strict-equal assertion against
+// the source rawFields value's exact type -- widening the schema, not the
+// route coercing to match a narrower one, keeps both call sites' native
+// value types intact. Every pre-existing string-only caller (Phase 29's own
+// hand-typed "13"/"22 (4d8+4)" free text) is unaffected -- z.union still
+// accepts a plain string.
 export const StatBlock = z.object({
   count: z.number().optional(),
-  ac: z.string().optional(),
-  hp: z.string().optional(),
+  ac: z.union([z.string(), z.number()]).optional(),
+  hp: z.union([z.string(), z.number()]).optional(),
   speed: z.string().optional(),
-  cr: z.string().optional(),
+  cr: z.union([z.string(), z.number()]).optional(),
   raw: z.string().optional(),
   foundryActor: z.string().optional()
 }).strict();
@@ -89,6 +111,18 @@ const ElementCheck = z.object({
 // optional and show-only-if-filled. This module doesn't distinguish
 // core-vs-optional itself (that's a frontend rendering concern) — it just
 // stores whatever subset of this fixed vocabulary the caller supplies.
+//
+// Phase 35 task 35.1: gained `bestiaryEntryId` (optional string) -- the
+// scene tray's creature-drop route (review-ui/server.mjs, §7 of
+// review-ui/test/e2e/phase35-fixture.mjs) needs a scene-element-local field
+// to dedup "has this bestiary entry already been dropped into this scene"
+// (an existing element whose `fields.bestiaryEntryId === id` is reused
+// rather than creating a duplicate). NOTE: this schema is `.strict()` --
+// unlike the free-form "open bag" this field was originally described as in
+// planning prose, zod actually REJECTS an unrecognized key here, so this
+// field had to be added to the schema explicitly, not just passed through;
+// caught by this task's own real route test (a genuine 400 ZodError,
+// "Unrecognized key: bestiaryEntryId", before this addition).
 export const SceneElementFields = z.object({
   trigger: z.string().optional(),
   gives: z.string().optional(),
@@ -98,7 +132,8 @@ export const SceneElementFields = z.object({
   function: z.string().optional(),
   wants: z.string().optional(),
   secret: z.string().optional(),
-  statblockRef: z.string().optional()
+  statblockRef: z.string().optional(),
+  bestiaryEntryId: z.string().optional()
 }).strict();
 
 export const SceneElement = z.object({

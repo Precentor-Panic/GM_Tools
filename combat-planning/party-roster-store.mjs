@@ -43,6 +43,20 @@
  *
  * `foundryActorRef` (nullable) links a member back to the Foundry actor it
  * was pulled from; null for every manually- or LLM-added member.
+ *
+ * Phase 35 task 35.1, §5 of review-ui/test/e2e/phase35-fixture.mjs (THE
+ * WRITTEN CONTRACT): gains two additive fields -- `passive` (number|null,
+ * passive Perception or whichever skill the design's own passiveText cell
+ * shows) and `conditions` (string, default "" -- "one-click, always
+ * visible" per the locked design decision, NOT behind a disclosure click
+ * unlike ratings/notes). Both default via a READ-TIME fallback at
+ * getPartyMember/listPartyMembers (a pre-Phase-35 member simply lacks the
+ * key on disk). Patched via updatePartyMemberPassive/
+ * updatePartyMemberConditions -- STATUS-INDEPENDENT (mirrors
+ * bestiary-store.mjs's updateBestiaryEntryNote/Rating's identical "no status
+ * check" convention, NOT updatePartyMemberFields's proposed-only guard): a
+ * DM editing passive/conditions on an already-accepted member is an ongoing
+ * table-use edit, not a re-ingest a human decision should gate.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -118,18 +132,28 @@ export function savePartyMember(
   return member;
 }
 
-/** @returns {object}   the PartyMember. Throws a clear Error if not found. */
+/**
+ * Read-time projection applied at every read boundary (Phase 35 task 35.1,
+ * §5) -- `passive` defaults to `null`, `conditions` defaults to `""` for a
+ * pre-Phase-35 member, never persisted back to disk just from a read.
+ */
+function projectMemberReadFields(member) {
+  if (!member) return member;
+  return { ...member, passive: member.passive ?? null, conditions: member.conditions ?? "" };
+}
+
+/** @returns {object}   the PartyMember (§5's passive/conditions projection included). Throws a clear Error if not found. */
 export function getPartyMember(world, memberId) {
   const member = readMembers(world).find((m) => m.id === memberId);
   if (!member) {
     throw new Error(`No party member found: world="${world}" memberId="${memberId}"`);
   }
-  return member;
+  return projectMemberReadFields(member);
 }
 
-/** @returns {object[]}   every PartyMember for `world`, in creation order. [] if none. */
+/** @returns {object[]}   every PartyMember for `world`, in creation order, §5's projection included. [] if none. */
 export function listPartyMembers(world) {
-  return readMembers(world);
+  return readMembers(world).map(projectMemberReadFields);
 }
 
 function findMemberIndex(world, memberId, members) {
@@ -205,6 +229,37 @@ export function updatePartyMemberFields(world, memberId, { name, combatRelevant,
   next[idx] = updated;
   writeMembers(world, next);
   return updated;
+}
+
+/**
+ * §5's status-INDEPENDENT patch -- mirrors bestiary-store.mjs's
+ * updateBestiaryEntryNote/Rating's "no status check" convention (an ongoing
+ * table-use edit, not a re-ingest a DM's own acceptance decision should
+ * gate).
+ * @returns {object}   the updated PartyMember (projection included)
+ */
+export function updatePartyMemberPassive(world, memberId, passive) {
+  const members = readMembers(world);
+  const idx = findMemberIndex(world, memberId, members);
+  const updated = { ...members[idx], passive: passive ?? null };
+  const next = [...members];
+  next[idx] = updated;
+  writeMembers(world, next);
+  return projectMemberReadFields(updated);
+}
+
+/**
+ * §5's status-INDEPENDENT patch, same convention as updatePartyMemberPassive.
+ * @returns {object}   the updated PartyMember (projection included)
+ */
+export function updatePartyMemberConditions(world, memberId, conditions) {
+  const members = readMembers(world);
+  const idx = findMemberIndex(world, memberId, members);
+  const updated = { ...members[idx], conditions: conditions ?? "" };
+  const next = [...members];
+  next[idx] = updated;
+  writeMembers(world, next);
+  return projectMemberReadFields(updated);
 }
 
 export { ConcurrentWriteError };

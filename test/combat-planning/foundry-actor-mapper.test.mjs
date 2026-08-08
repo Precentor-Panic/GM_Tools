@@ -26,7 +26,7 @@ function test(name, fn) {
   }
 }
 
-const { classifyActor, mapActorToBestiary, mapActorToPartyMember } =
+const { classifyActor, mapActorToBestiary, mapActorToPartyMember, mapActorItemsToInventory, stripHtml } =
   await import("../../combat-planning/foundry-actor-mapper.mjs");
 
 const sample = JSON.parse(readFileSync(join(FIXTURES_DIR, "foundry-index.sample.json"), "utf8"));
@@ -195,6 +195,59 @@ test("mapActorToPartyMember: never throws on a minimal/empty actor -- every comb
     notableAbilities: undefined
   });
   assert.deepEqual(raw.buildRelevant, { skills: undefined, expertise: undefined, notableTraits: undefined, backstoryHooks: undefined });
+});
+
+// ------------------------------------------------------- stripHtml (now exported)
+
+test("stripHtml: EXPORTED as of Phase 35 task 35.1 -- strips tags, collapses whitespace, null for empty/non-string", () => {
+  assert.equal(stripHtml("<p>Hello   <b>world</b>.</p>"), "Hello world .");
+  assert.equal(stripHtml(""), null);
+  assert.equal(stripHtml(null), null);
+  assert.equal(stripHtml(42), null);
+});
+
+// ------------------------------------------------------- mapActorItemsToInventory (Phase 35 task 35.1)
+
+test("mapActorItemsToInventory: the sample fixture's PC (Elowen) has only a class item + a weapon -- BOTH excluded, [] returned", () => {
+  assert.deepEqual(mapActorItemsToInventory(elowen), [], "class/weapon items already feed this PC's own combat-relevant stat block, never re-surfaced as Reliquary rows");
+});
+
+test("mapActorItemsToInventory: a monster's items[] (weapons/feats) are ALSO excluded by the same type filter -- this function is never called for a monster in practice (foundry-pull-ops.mjs's own scope rule), but is itself just a pure type filter with no actor-role awareness", () => {
+  assert.deepEqual(mapActorItemsToInventory(goblinBoss), [], "Scimitar (weapon) + Multiattack/Redcap Fury (feat) are all excluded item TYPES, regardless of whose actor they're on");
+});
+
+test("mapActorItemsToInventory: a genuine inventory item (consumable/equipment/loot) is included, with quantity/description/foundryItemRef mapped", () => {
+  const actor = {
+    uuid: "Actor.invTest",
+    name: "Inventory Test PC",
+    items: [
+      { uuid: "Item.potion", name: "Potion of Healing", type: "consumable", system: { quantity: 3, description: { value: "<p>Regains 2d4 + 2 hit points.</p>" } } },
+      { uuid: "Item.bag", name: "Bag of Holding", type: "equipment", system: { quantity: 1 } },
+      { uuid: "Item.class", name: "Fighter", type: "class", system: { levels: 3 } },
+      { uuid: "Item.sword", name: "Longsword", type: "weapon", system: { damage: { parts: [["1d8", "slashing"]] } } }
+    ]
+  };
+  const mapped = mapActorItemsToInventory(actor);
+  const names = mapped.map((i) => i.name).sort();
+  assert.deepEqual(names, ["Bag of Holding", "Potion of Healing"], "class + weapon excluded, consumable + equipment included");
+
+  const potion = mapped.find((i) => i.name === "Potion of Healing");
+  assert.equal(potion.type, "consumable");
+  assert.equal(potion.quantity, 3);
+  assert.equal(potion.description, "Regains 2d4 + 2 hit points.");
+  assert.equal(potion.foundryItemRef, "Item.potion");
+
+  const bag = mapped.find((i) => i.name === "Bag of Holding");
+  assert.equal(bag.quantity, 1);
+  assert.equal(bag.description, null, "no description.value present -- null, not a fabricated default");
+});
+
+test("mapActorItemsToInventory: fail-soft -- no items[]/malformed actor never throws, quantity defaults to null when non-numeric/absent", () => {
+  assert.deepEqual(mapActorItemsToInventory({}), []);
+  assert.deepEqual(mapActorItemsToInventory(null), []);
+  const mapped = mapActorItemsToInventory({ items: [{ uuid: "Item.x", name: "Loose Loot", type: "loot", system: {} }] });
+  assert.equal(mapped[0].quantity, null);
+  assert.equal(mapped[0].description, null);
 });
 
 console.log(`\n${passed} passed`);

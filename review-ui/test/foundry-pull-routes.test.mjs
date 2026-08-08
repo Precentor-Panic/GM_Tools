@@ -70,7 +70,8 @@ test("POST /api/foundry/pull-actors: real fixture round trip -- 2 monsters + 1 P
   assert.equal(body.partyProposed.length, 1);
   assert.ok(body.bestiaryProposed.every((e) => e.status === "proposed"));
   assert.equal(body.partyProposed[0].status, "proposed");
-  assert.deepEqual(body.alreadyLinked, { bestiary: [], party: [] });
+  // Phase 35 task 35.1, §6: alreadyLinked gains a THIRD key, `items` -- strictly additive response shape.
+  assert.deepEqual(body.alreadyLinked, { bestiary: [], party: [], items: [] });
 });
 
 test("POST /api/foundry/pull-actors: a world with no index file yet -- 200, indexFound:false, empty arrays (not a 404/500)", async () => {

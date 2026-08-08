@@ -1,0 +1,3371 @@
+{
+  "version": 1,
+  "worldId": "wf-test-5e",
+  "exportedAt": "2026-08-08T17:58:41.215Z",
+  "actors": [
+    {
+      "uuid": "Actor.TjWQOgI3A4UAl7lC",
+      "name": "Goblin",
+      "type": "npc",
+      "img": "systems/dnd5e/tokens/humanoid/Goblin.webp",
+      "ownership": {
+        "default": 0,
+        "znQwOcWuPTZKlHIf": 3
+      },
+      "system": {
+        "hp": {
+          "value": 7,
+          "max": 7,
+          "temp": 0
+        },
+        "ac": 15,
+        "cr": 0.25,
+        "level": 0,
+        "abilities": {
+          "str": {
+            "value": 8,
+            "mod": -1,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": -1
+            }
+          },
+          "dex": {
+            "value": 14,
+            "mod": 2,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": 2
+            }
+          },
+          "con": {
+            "value": 10,
+            "mod": 0,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": 0
+            }
+          },
+          "int": {
+            "value": 10,
+            "mod": 0,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": 0
+            }
+          },
+          "wis": {
+            "value": 8,
+            "mod": -1,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": -1
+            }
+          },
+          "cha": {
+            "value": 8,
+            "mod": -1,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": -1
+            }
+          }
+        },
+        "saves": {
+          "str": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": -1
+          },
+          "dex": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": 2
+          },
+          "con": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": 0
+          },
+          "int": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": 0
+          },
+          "wis": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": -1
+          },
+          "cha": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": -1
+          }
+        },
+        "skills": {
+          "acr": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 12
+          },
+          "ani": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 9
+          },
+          "arc": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 10
+          },
+          "ath": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 9
+          },
+          "dec": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 9
+          },
+          "his": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 10
+          },
+          "ins": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 9
+          },
+          "itm": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 9
+          },
+          "inv": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 10
+          },
+          "med": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 9
+          },
+          "nat": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 10
+          },
+          "prc": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 9
+          },
+          "prf": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 9
+          },
+          "per": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 9
+          },
+          "rel": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 10
+          },
+          "slt": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 12
+          },
+          "ste": {
+            "value": 2,
+            "proficient": 2,
+            "passive": 16
+          },
+          "sur": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 9
+          }
+        },
+        "biography": "<p><em>Token artwork by <a href=\"https://www.forgotten-adventures.net/\" target=\"_blank\" rel=\"noopener\">Forgotten Adventures</a>.</em></p>"
+      },
+      "items": [
+        {
+          "uuid": "Actor.TjWQOgI3A4UAl7lC.Item.Ti3XQOmTKdgcnpAa",
+          "name": "Leather Armor",
+          "type": "equipment",
+          "img": "icons/equipment/chest/breastplate-quilted-brown.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "description": {
+              "value": "<p>The breastplate and shoulder protectors of this armor are made of leather that has been stiffened by being boiled in oil. The rest of the armor is made of softer and more flexible materials.</p>",
+              "chat": ""
+            },
+            "identifier": "leather-armor",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 10,
+              "units": "lb"
+            },
+            "price": {
+              "value": 10,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": true,
+            "cover": null,
+            "crew": {
+              "value": []
+            },
+            "hp": {
+              "conditions": "",
+              "dt": null,
+              "max": 0,
+              "value": 0
+            },
+            "speed": {
+              "conditions": "",
+              "units": "ft",
+              "value": null
+            },
+            "armor": {
+              "value": 11,
+              "dex": null
+            },
+            "proficient": 1,
+            "properties": [],
+            "strength": null,
+            "type": {
+              "value": "light",
+              "baseItem": "leather"
+            }
+          }
+        },
+        {
+          "uuid": "Actor.TjWQOgI3A4UAl7lC.Item.sSs3hSzkKBMNBgTs",
+          "name": "Shield",
+          "type": "equipment",
+          "img": "icons/equipment/shield/oval-wooden-boss-steel.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "description": {
+              "value": "<p>A shield is made from wood or metal and is carried in one hand. Wielding a shield increases your Armor Class by 2. You can benefit from only one shield at a time.</p>",
+              "chat": ""
+            },
+            "identifier": "shield",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 6,
+              "units": "lb"
+            },
+            "price": {
+              "value": 10,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": true,
+            "cover": null,
+            "crew": {
+              "value": []
+            },
+            "hp": {
+              "conditions": "",
+              "dt": null,
+              "max": 0,
+              "value": 0
+            },
+            "speed": {
+              "conditions": "",
+              "units": "ft",
+              "value": null
+            },
+            "armor": {
+              "value": 2,
+              "dex": null
+            },
+            "proficient": 1,
+            "properties": [],
+            "strength": null,
+            "type": {
+              "value": "shield",
+              "baseItem": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.TjWQOgI3A4UAl7lC.Item.SxVatHq02vURYDt3",
+          "name": "Nimble Escape",
+          "type": "feat",
+          "img": "icons/skills/movement/feet-winged-boots-brown.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "advancement": {},
+            "description": {
+              "value": "<p>The goblin can take the Disengage or Hide action as a bonus action on each of its turns.</p>",
+              "chat": ""
+            },
+            "identifier": "nimble-escape",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "crewed": false,
+            "enchant": {},
+            "prerequisites": {
+              "items": [],
+              "level": null,
+              "repeatable": false
+            },
+            "properties": [],
+            "requirements": "",
+            "type": {
+              "value": "",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.TjWQOgI3A4UAl7lC.Item.S6UTTLu0bEB32HNG",
+          "name": "Scimitar",
+          "type": "weapon",
+          "img": "icons/weapons/swords/sword-katana.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "description": {
+              "value": "<p>[[/attack extended]]. [[/damage extended]].</p>",
+              "chat": "<p>The Goblin attacks with its Scimitar.</p>"
+            },
+            "identifier": "scimitar",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 3,
+              "units": "lb"
+            },
+            "price": {
+              "value": 25,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": true,
+            "cover": null,
+            "crew": {
+              "value": []
+            },
+            "hp": {
+              "conditions": "",
+              "dt": null,
+              "max": 0,
+              "value": 0
+            },
+            "ammunition": {},
+            "armor": {
+              "value": 10
+            },
+            "damage": {
+              "base": {
+                "number": 1,
+                "denomination": 6,
+                "bonus": "",
+                "types": [
+                  "slashing"
+                ],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              },
+              "versatile": {
+                "number": null,
+                "denomination": null,
+                "bonus": "",
+                "types": [],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              }
+            },
+            "properties": [
+              "fin",
+              "lgt"
+            ],
+            "proficient": 1,
+            "range": {
+              "value": null,
+              "long": null,
+              "reach": 5,
+              "units": "ft"
+            },
+            "type": {
+              "value": "martialM",
+              "baseItem": "scimitar"
+            }
+          }
+        },
+        {
+          "uuid": "Actor.TjWQOgI3A4UAl7lC.Item.YqS3dsIlpWb2Q2UI",
+          "name": "Shortbow",
+          "type": "weapon",
+          "img": "icons/weapons/bows/shortbow-recurve.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "description": {
+              "value": "<p>[[/attack extended]]. [[/damage extended]].</p>",
+              "chat": "<p>The Goblin attacks with its Shortbow.</p>"
+            },
+            "identifier": "shortbow",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 2,
+              "units": "lb"
+            },
+            "price": {
+              "value": 25,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": true,
+            "cover": null,
+            "crew": {
+              "value": []
+            },
+            "hp": {
+              "conditions": "",
+              "dt": null,
+              "max": 0,
+              "value": 0
+            },
+            "ammunition": {},
+            "armor": {
+              "value": 10
+            },
+            "damage": {
+              "base": {
+                "number": 1,
+                "denomination": 6,
+                "bonus": "",
+                "types": [
+                  "piercing"
+                ],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              },
+              "versatile": {
+                "number": null,
+                "denomination": null,
+                "bonus": "",
+                "types": [],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              }
+            },
+            "properties": [
+              "two",
+              "amm"
+            ],
+            "proficient": 1,
+            "range": {
+              "value": 80,
+              "long": 320,
+              "reach": null,
+              "units": "ft"
+            },
+            "type": {
+              "value": "simpleR",
+              "baseItem": "shortbow"
+            }
+          }
+        }
+      ],
+      "effects": []
+    },
+    {
+      "uuid": "Actor.ZyIBOoZZD0nDaO2s",
+      "name": "Adult Red Dragon",
+      "type": "npc",
+      "img": "systems/dnd5e/tokens/thumbs/dragon/RedDragonAdult.webp",
+      "ownership": {
+        "default": 0,
+        "znQwOcWuPTZKlHIf": 3
+      },
+      "system": {
+        "hp": {
+          "value": 256,
+          "max": 256,
+          "temp": null
+        },
+        "ac": 19,
+        "cr": 17,
+        "level": 0,
+        "abilities": {
+          "str": {
+            "value": 27,
+            "mod": 8,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": 8
+            }
+          },
+          "dex": {
+            "value": 10,
+            "mod": 0,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": 6
+            }
+          },
+          "con": {
+            "value": 25,
+            "mod": 7,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": 13
+            }
+          },
+          "int": {
+            "value": 16,
+            "mod": 3,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": 3
+            }
+          },
+          "wis": {
+            "value": 13,
+            "mod": 1,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": 7
+            }
+          },
+          "cha": {
+            "value": 21,
+            "mod": 5,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": 11
+            }
+          }
+        },
+        "saves": {
+          "str": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": 8
+          },
+          "dex": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": 6
+          },
+          "con": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": 13
+          },
+          "int": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": 3
+          },
+          "wis": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": 7
+          },
+          "cha": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": 11
+          }
+        },
+        "skills": {
+          "acr": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 10
+          },
+          "ani": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 11
+          },
+          "arc": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 13
+          },
+          "ath": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 18
+          },
+          "dec": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 15
+          },
+          "his": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 13
+          },
+          "ins": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 11
+          },
+          "itm": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 15
+          },
+          "inv": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 13
+          },
+          "med": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 11
+          },
+          "nat": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 13
+          },
+          "prc": {
+            "value": 2,
+            "proficient": 2,
+            "passive": 23
+          },
+          "prf": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 15
+          },
+          "per": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 15
+          },
+          "rel": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 13
+          },
+          "slt": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 10
+          },
+          "ste": {
+            "value": 1,
+            "proficient": 1,
+            "passive": 16
+          },
+          "sur": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 11
+          }
+        },
+        "biography": "<p><em>Token artwork by <a href=\"https://www.forgotten-adventures.net/\" target=\"_blank\" rel=\"noopener\">Forgotten Adventures</a>.</em></p>"
+      },
+      "items": [
+        {
+          "uuid": "Actor.ZyIBOoZZD0nDaO2s.Item.MN60UTO1pjltasYN",
+          "name": "Legendary Resistance",
+          "type": "feat",
+          "img": "icons/equipment/shield/kite-wooden-oak-glow.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "advancement": {},
+            "description": {
+              "value": "<p>If the dragon fails a saving throw, it can choose to succeed instead.</p>",
+              "chat": ""
+            },
+            "identifier": "legendary-resistance",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "crewed": false,
+            "enchant": {},
+            "prerequisites": {
+              "items": [],
+              "level": null,
+              "repeatable": false
+            },
+            "properties": [
+              "trait"
+            ],
+            "requirements": "",
+            "type": {
+              "value": "",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.ZyIBOoZZD0nDaO2s.Item.nF4ZHYj37UstHCUT",
+          "name": "Multiattack",
+          "type": "feat",
+          "img": "icons/skills/melee/blade-tips-triple-steel.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "advancement": {},
+            "description": {
+              "value": "<p>The dragon can use its [[/item .ftqEpCKoioTST72K]]{Frightful Presence}. It then makes three attacks: one with its [[/item .060hAjIEDdMDfVoE]]{bite} and two with its [[/item .pzDFBmC7wfQsMJzw]]{claws}.</p>",
+              "chat": ""
+            },
+            "identifier": "multiattack",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "crewed": false,
+            "enchant": {},
+            "prerequisites": {
+              "items": [],
+              "level": null,
+              "repeatable": false
+            },
+            "properties": [],
+            "requirements": "",
+            "type": {
+              "value": "",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.ZyIBOoZZD0nDaO2s.Item.ftqEpCKoioTST72K",
+          "name": "Frightful Presence",
+          "type": "feat",
+          "img": "icons/creatures/unholy/demons-horned-glowing-pink.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "advancement": {},
+            "description": {
+              "value": "<p>Each creature of the dragon's choice that is within 120 feet of the dragon and aware of it must succeed on a [[/save]] saving throw or become &amp;Reference[frightened] for 1 minute.</p><p>A creature can repeat the saving throw at the end of each of its turns, ending the effect on itself on a success. If a creature's saving throw is successful or the effect ends for it, the creature is immune to the dragon's Frightful Presence for the next 24 hours .</p>",
+              "chat": "<p>Each creature of the dragon's choice that is <strong>within 120 feet</strong> of the dragon and aware of it must succeed on a Wisdom saving throw. A creature can repeat the saving throw at the end of each of its turns.</p>"
+            },
+            "identifier": "frightful-presence",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "crewed": false,
+            "enchant": {},
+            "prerequisites": {
+              "items": [],
+              "level": null,
+              "repeatable": false
+            },
+            "properties": [],
+            "requirements": "",
+            "type": {
+              "value": "",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.ZyIBOoZZD0nDaO2s.Item.tD8Vmsb4B5eqTOJA",
+          "name": "Fire Breath",
+          "type": "feat",
+          "img": "icons/creatures/abilities/dragon-fire-breath-orange.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": 1,
+              "recovery": [
+                {
+                  "period": "recharge",
+                  "type": "recoverAll",
+                  "formula": "5"
+                }
+              ]
+            },
+            "advancement": {},
+            "description": {
+              "value": "<p>The dragon exhales fire in a 60-foot cone. Each creature in that area must make a [[/save]] saving throw, taking [[/damage average]] damage on a failed save, or half as much damage on a successful one.</p>",
+              "chat": "<p>The dragon exhales fire in a 60-foot cone. Each creature in that area must make a <strong>Dexterity</strong> saving throw.</p>"
+            },
+            "identifier": "fire-breath",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "crewed": false,
+            "enchant": {},
+            "prerequisites": {
+              "items": [],
+              "level": null,
+              "repeatable": false
+            },
+            "properties": [],
+            "requirements": "",
+            "type": {
+              "value": "",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.ZyIBOoZZD0nDaO2s.Item.060hAjIEDdMDfVoE",
+          "name": "Bite",
+          "type": "weapon",
+          "img": "icons/creatures/abilities/mouth-teeth-long-red.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "description": {
+              "value": "<p>[[/attack extended]]. [[/damage extended]].</p>",
+              "chat": "<p>The Adult Red Dragon attacks with its Bite.</p>"
+            },
+            "identifier": "bite",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 0,
+              "units": "lb"
+            },
+            "price": {
+              "value": 0,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": true,
+            "cover": null,
+            "crew": {
+              "value": []
+            },
+            "hp": {
+              "conditions": "",
+              "dt": null,
+              "max": 0,
+              "value": 0
+            },
+            "ammunition": {},
+            "armor": {
+              "value": 10
+            },
+            "damage": {
+              "base": {
+                "number": 2,
+                "denomination": 10,
+                "bonus": "",
+                "types": [
+                  "piercing"
+                ],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              },
+              "versatile": {
+                "number": null,
+                "denomination": null,
+                "bonus": "",
+                "types": [],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              }
+            },
+            "properties": [],
+            "proficient": 1,
+            "range": {
+              "value": null,
+              "long": null,
+              "reach": 10,
+              "units": "ft"
+            },
+            "type": {
+              "value": "natural",
+              "baseItem": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.ZyIBOoZZD0nDaO2s.Item.pzDFBmC7wfQsMJzw",
+          "name": "Claw",
+          "type": "weapon",
+          "img": "icons/skills/melee/strike-slashes-red.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "description": {
+              "value": "<p>[[/attack extended]]. [[/damage extended]].</p>",
+              "chat": "<p>The Adult Red Dragon attacks with its Claw.</p>"
+            },
+            "identifier": "claw",
+            "source": {
+              "book": "",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 0,
+              "units": "lb"
+            },
+            "price": {
+              "value": 0,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": true,
+            "cover": null,
+            "crew": {
+              "value": []
+            },
+            "hp": {
+              "conditions": "",
+              "dt": null,
+              "max": 0,
+              "value": 0
+            },
+            "ammunition": {},
+            "armor": {
+              "value": 10
+            },
+            "damage": {
+              "base": {
+                "number": 2,
+                "denomination": 6,
+                "bonus": "",
+                "types": [
+                  "slashing"
+                ],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              },
+              "versatile": {
+                "number": null,
+                "denomination": null,
+                "bonus": "",
+                "types": [],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              }
+            },
+            "properties": [],
+            "proficient": 1,
+            "range": {
+              "value": null,
+              "long": null,
+              "reach": 5,
+              "units": "ft"
+            },
+            "type": {
+              "value": "natural",
+              "baseItem": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.ZyIBOoZZD0nDaO2s.Item.DF0doZR8pYSjsrme",
+          "name": "Tail",
+          "type": "weapon",
+          "img": "icons/skills/wounds/injury-pain-impaled-hand-blood.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "description": {
+              "value": "<p>[[/attack extended]]. [[/damage extended]].</p>",
+              "chat": "<p>The Adult Red Dragon attacks with its Tail.</p>"
+            },
+            "identifier": "tail",
+            "source": {
+              "book": "",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 0,
+              "units": "lb"
+            },
+            "price": {
+              "value": 0,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": true,
+            "cover": null,
+            "crew": {
+              "value": []
+            },
+            "hp": {
+              "conditions": "",
+              "dt": null,
+              "max": 0,
+              "value": 0
+            },
+            "ammunition": {},
+            "armor": {
+              "value": 10
+            },
+            "damage": {
+              "base": {
+                "number": 2,
+                "denomination": 8,
+                "bonus": "",
+                "types": [
+                  "bludgeoning"
+                ],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              },
+              "versatile": {
+                "number": null,
+                "denomination": null,
+                "bonus": "",
+                "types": [],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              }
+            },
+            "properties": [],
+            "proficient": 1,
+            "range": {
+              "value": null,
+              "long": null,
+              "reach": 15,
+              "units": "ft"
+            },
+            "type": {
+              "value": "natural",
+              "baseItem": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.ZyIBOoZZD0nDaO2s.Item.LESSs8CLEr1DEuLM",
+          "name": "Legendary Actions",
+          "type": "feat",
+          "img": "icons/magic/light/hand-sparks-glow-yellow.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "advancement": {},
+            "description": {
+              "value": "<p>[[lookup @resources.legact.label]]</p>",
+              "chat": "<p>The dragon can take 3 legendary actions. </p>"
+            },
+            "identifier": "legendary-actions",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "crewed": false,
+            "enchant": {},
+            "prerequisites": {
+              "items": [],
+              "level": null,
+              "repeatable": false
+            },
+            "properties": [],
+            "requirements": "",
+            "type": {
+              "value": "",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.ZyIBOoZZD0nDaO2s.Item.1PppVLNAsjADU0Za",
+          "name": "Detect",
+          "type": "feat",
+          "img": "icons/creatures/eyes/lizard-single-slit-blue.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "advancement": {},
+            "description": {
+              "value": "<p>The dragon makes a Wisdom (Perception) check.</p>",
+              "chat": "<p>The dragon watches its surrounding...</p>"
+            },
+            "identifier": "detect",
+            "source": {
+              "book": "",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "crewed": false,
+            "enchant": {},
+            "prerequisites": {
+              "items": [],
+              "level": null,
+              "repeatable": false
+            },
+            "properties": [],
+            "requirements": "",
+            "type": {
+              "value": "",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.ZyIBOoZZD0nDaO2s.Item.ut9yaZWaSkU7bT1h",
+          "name": "Tail Attack",
+          "type": "weapon",
+          "img": "icons/skills/wounds/injury-pain-impaled-hand-blood.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "description": {
+              "value": "<p>The dragon makes a [[/item .DF0doZR8pYSjsrme]]{tail} attack.</p>",
+              "chat": "<p>The dragon slams its long tail against its foe!</p>"
+            },
+            "identifier": "tail-attack",
+            "source": {
+              "book": "",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 0,
+              "units": "lb"
+            },
+            "price": {
+              "value": 0,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": true,
+            "cover": null,
+            "crew": {
+              "value": []
+            },
+            "hp": {
+              "conditions": "",
+              "dt": null,
+              "max": 0,
+              "value": 0
+            },
+            "ammunition": {},
+            "armor": {
+              "value": 10
+            },
+            "damage": {
+              "base": {
+                "number": null,
+                "denomination": 0,
+                "bonus": "",
+                "types": [],
+                "custom": {
+                  "enabled": false
+                },
+                "scaling": {
+                  "number": 1
+                }
+              },
+              "versatile": {
+                "number": null,
+                "denomination": null,
+                "bonus": "",
+                "types": [],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              }
+            },
+            "mastery": "",
+            "properties": [],
+            "proficient": 1,
+            "range": {
+              "value": null,
+              "long": null,
+              "reach": 5,
+              "units": "ft"
+            },
+            "type": {
+              "value": "natural",
+              "baseItem": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.ZyIBOoZZD0nDaO2s.Item.Q5JDbGOejqXyeaCj",
+          "name": "Wing Attack",
+          "type": "weapon",
+          "img": "icons/creatures/abilities/wing-batlike-white-blue.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "description": {
+              "value": "<p>The dragon beats its wings. Each creature within 10 feet of the dragon must succeed on a [[/save]] saving throw or take [[/damage average]] damage and be knocked &amp;Reference[prone]. The dragon can then fly up to half its flying speed.</p>",
+              "chat": "<p>The dragon beats its wings!</p>"
+            },
+            "identifier": "wing-attack",
+            "source": {
+              "book": "",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 0,
+              "units": "lb"
+            },
+            "price": {
+              "value": 0,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": true,
+            "cover": null,
+            "crew": {
+              "value": []
+            },
+            "hp": {
+              "conditions": "",
+              "dt": null,
+              "max": 0,
+              "value": 0
+            },
+            "ammunition": {},
+            "armor": {
+              "value": 10
+            },
+            "damage": {
+              "base": {
+                "number": 2,
+                "denomination": 6,
+                "bonus": "",
+                "types": [
+                  "bludgeoning"
+                ],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              },
+              "versatile": {
+                "number": null,
+                "denomination": null,
+                "bonus": "",
+                "types": [],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              }
+            },
+            "mastery": "",
+            "properties": [],
+            "proficient": 1,
+            "range": {
+              "value": null,
+              "long": null,
+              "reach": 10,
+              "units": "ft"
+            },
+            "type": {
+              "value": "natural",
+              "baseItem": ""
+            }
+          }
+        }
+      ],
+      "effects": []
+    },
+    {
+      "uuid": "Actor.Dh1AA6w104V17V6w",
+      "name": "Krusk (Half-Orc Paladin)",
+      "type": "character",
+      "img": "systems/dnd5e/tokens/heroes/PaladinHammer.webp",
+      "ownership": {
+        "default": 0,
+        "znQwOcWuPTZKlHIf": 3
+      },
+      "system": {
+        "hp": {
+          "value": 12,
+          "max": 12,
+          "temp": null
+        },
+        "ac": 18,
+        "cr": null,
+        "level": 1,
+        "abilities": {
+          "str": {
+            "value": 17,
+            "mod": 3,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": 3
+            }
+          },
+          "dex": {
+            "value": 8,
+            "mod": -1,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": -1
+            }
+          },
+          "con": {
+            "value": 14,
+            "mod": 2,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": 2
+            }
+          },
+          "int": {
+            "value": 10,
+            "mod": 0,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": 0
+            }
+          },
+          "wis": {
+            "value": 12,
+            "mod": 1,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": 3
+            }
+          },
+          "cha": {
+            "value": 14,
+            "mod": 2,
+            "save": {
+              "roll": {
+                "min": null,
+                "max": null,
+                "mode": 0
+              },
+              "value": 4
+            }
+          }
+        },
+        "saves": {
+          "str": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": 3
+          },
+          "dex": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": -1
+          },
+          "con": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": 2
+          },
+          "int": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": 0
+          },
+          "wis": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": 3
+          },
+          "cha": {
+            "roll": {
+              "min": null,
+              "max": null,
+              "mode": 0
+            },
+            "value": 4
+          }
+        },
+        "skills": {
+          "acr": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 9
+          },
+          "ani": {
+            "value": 1,
+            "proficient": 1,
+            "passive": 13
+          },
+          "arc": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 10
+          },
+          "ath": {
+            "value": 1,
+            "proficient": 1,
+            "passive": 15
+          },
+          "dec": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 12
+          },
+          "his": {
+            "value": 1,
+            "proficient": 1,
+            "passive": 12
+          },
+          "ins": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 11
+          },
+          "itm": {
+            "value": 1,
+            "proficient": 1,
+            "passive": 14
+          },
+          "inv": {
+            "value": 1,
+            "proficient": 1,
+            "passive": 12
+          },
+          "med": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 11
+          },
+          "nat": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 10
+          },
+          "prc": {
+            "value": 1,
+            "proficient": 1,
+            "passive": 13
+          },
+          "prf": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 12
+          },
+          "per": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 12
+          },
+          "rel": {
+            "value": 1,
+            "proficient": 1,
+            "passive": 12
+          },
+          "slt": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 9
+          },
+          "ste": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 9
+          },
+          "sur": {
+            "value": 0,
+            "proficient": 0,
+            "passive": 11
+          }
+        },
+        "biography": "<p>Roaming the land brigning justice to all, Krusk has just one goal: the destruction of evil wherever it lies.</p><p><em>Token artwork by <a href=\"https://www.forgotten-adventures.net/\" target=\"_blank\" rel=\"noopener\">Forgotten Adventures</a>.</em></p>"
+      },
+      "items": [
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.mmNOUJeTSbhakKbO",
+          "name": "Amulet (Holy Symbol)",
+          "type": "equipment",
+          "img": "icons/equipment/neck/pendant-bronze-gem-blue.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "description": {
+              "value": "<p>An amulet depicting a symbol representing a deity through which a true believer can call forth their power and in doing so spread the faith.</p><p><strong>Spellcasting Focus</strong>. A cleric or paladin can use a holy symbol as a spellcasting focus. To use the symbol in this way, the caster must hold it in hand, wear it visibly, or bear it on a shield.</p>",
+              "chat": ""
+            },
+            "identifier": "amulet-holy-symbol",
+            "source": {
+              "book": "",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 1,
+              "units": "lb"
+            },
+            "price": {
+              "value": 5,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": true,
+            "cover": null,
+            "crew": {
+              "value": []
+            },
+            "hp": {
+              "conditions": "",
+              "dt": null,
+              "max": 0,
+              "value": 0
+            },
+            "speed": {
+              "conditions": "",
+              "units": "ft",
+              "value": null
+            },
+            "armor": {
+              "value": 0,
+              "dex": null
+            },
+            "proficient": null,
+            "properties": [],
+            "strength": null,
+            "type": {
+              "value": "trinket",
+              "baseItem": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.h9ta6MMHygQtSvhd",
+          "name": "Love Letter",
+          "type": "loot",
+          "img": "icons/sundries/scrolls/scroll-plain-red.webp",
+          "system": {
+            "description": {
+              "value": "<p>A love letter sent by an admirer.</p>",
+              "chat": ""
+            },
+            "identifier": "love-letter",
+            "source": {
+              "book": "",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 0,
+              "units": "lb"
+            },
+            "price": {
+              "value": 0,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "properties": [],
+            "type": {
+              "value": "",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.gfQ9BWSZtm6WJyZr",
+          "name": "Local Champion",
+          "type": "background",
+          "img": "icons/environment/people/infantry-armored.webp",
+          "system": {
+            "advancement": {},
+            "description": {
+              "value": "<ul><li><strong>Skill Proficiencies:</strong> Animal Handling, Survival</li><li><strong>Tool Proficiencies:</strong> Artisan's tools, vehicles (land)</li><li><strong>Equipment:</strong> A set of artisan's tools, common clothes, and a pouch containing 10 gp</li></ul>",
+              "chat": ""
+            },
+            "identifier": "local-champion",
+            "source": {
+              "book": "",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "startingEquipment": []
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.k1DGfhs1ZfnWZQaL",
+          "name": "Half-Orc",
+          "type": "race",
+          "img": "icons/commodities/bones/skull-tusked-grey.webp",
+          "system": {
+            "advancement": {},
+            "description": {
+              "value": "<p>Your half-orc character has certain traits deriving from your orc ancestry.</p><p><em><strong>Ability Score Increase.</strong></em> Your Strength score increases by 2, and your Constitution score increases by 1.</p><p><em><strong>Age.</strong></em> Half-­orcs mature a little faster than humans, reaching adulthood around age 14. They age noticeably faster and rarely live longer than 75 years.</p><p><em><strong>Alignment.</strong></em> Half-orcs inherit a tendency toward chaos from their orc parents and are not strongly inclined toward good. Half-orcs raised among orcs and willing to live out their lives among them are usually evil.</p><p><em><strong>Size.</strong></em> Half‑orcs are somewhat larger and bulkier than humans, and they range from 5 to well over 6 feet tall. Your size is Medium.</p><p><em><strong>Speed.</strong></em> Your base walking speed is 30 feet.</p><p><em><strong>Darkvision.</strong></em> Thanks to your orc blood, you have superior vision in dark and dim conditions. You can see in dim light within 60 feet of you as if it were bright light, and in darkness as if it were dim light. You can't discern color in darkness, only shades of gray.</p><p><em><strong>Menacing.</strong></em> You gain proficiency in the Intimidation skill.</p><p><em><strong>Relentless Endurance.</strong></em> When you are reduced to 0 hit points but not killed outright, you can drop to 1 hit point instead. You can't use this feature again until you finish a long rest.</p><p><em><strong>Savage Attacks.</strong></em> When you score a critical hit with a melee weapon attack, you can roll one of the weapon's damage dice one additional time and add it to the extra damage of the critical hit.</p><p><em><strong>Languages.</strong></em> You can speak, read, and write Common and Orc. Orc is a harsh, grating language with hard consonants. It has no script of its own but is written in the Dwarvish script.</p>",
+              "chat": ""
+            },
+            "identifier": "half-orc",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "movement": {
+              "walk": "30",
+              "units": "ft",
+              "hover": false,
+              "ignoredDifficultTerrain": []
+            },
+            "senses": {
+              "ranges": {
+                "blindsight": null,
+                "darkvision": 60,
+                "tremorsense": null,
+                "truesight": null
+              },
+              "units": "ft",
+              "special": ""
+            },
+            "type": {
+              "value": "humanoid",
+              "subtype": "orc",
+              "custom": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.WBbDX9rHq98Tnimi",
+          "name": "Relentless Endurance",
+          "type": "feat",
+          "img": "icons/magic/control/control-influence-rally-purple.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": 1,
+              "recovery": [
+                {
+                  "period": "lr",
+                  "type": "recoverAll"
+                }
+              ]
+            },
+            "advancement": {},
+            "description": {
+              "value": "<p>When you are reduced to 0 hit points but not killed outright, you can drop to 1 hit point instead. You can't use this feature again until you finish a long rest.</p>",
+              "chat": ""
+            },
+            "identifier": "relentless-endurance",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "crewed": false,
+            "enchant": {},
+            "prerequisites": {
+              "items": [],
+              "level": null,
+              "repeatable": false
+            },
+            "properties": [],
+            "requirements": "Half-Orc",
+            "type": {
+              "value": "race",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.B8MsTHgz7ooglEVG",
+          "name": "Savage Attacks",
+          "type": "feat",
+          "img": "icons/skills/melee/weapons-crossed-swords-purple.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "advancement": {},
+            "description": {
+              "value": "<p>When you score a critical hit with a melee weapon attack, you can roll one of the weapon's damage dice one additional time and add it to the extra damage of the critical hit.</p>",
+              "chat": ""
+            },
+            "identifier": "savage-attacks",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "crewed": false,
+            "enchant": {},
+            "prerequisites": {
+              "items": [],
+              "level": null,
+              "repeatable": false
+            },
+            "properties": [],
+            "requirements": "Half-Orc",
+            "type": {
+              "value": "race",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.00NeikN42J9spbqf",
+          "name": "Paladin",
+          "type": "class",
+          "img": "icons/commodities/treasure/token-gold-gem-purple.webp",
+          "system": {
+            "advancement": {},
+            "description": {
+              "value": "<p>As a paladin, you gain the following class features.</p><h3>Hit Points</h3><p><strong>Hit Dice:</strong> 1d10 per paladin level<br><strong>Hit Points at 1st Level:</strong> 10 + your Constitution modifier<br><strong>Hit Points at Higher Levels:</strong> 1d10 (or 6) + your Constitution modifier per paladin level after 1st</p><h3>Proficiencies</h3><p><strong>Armor:</strong> All armor, shields<br><strong>Weapons:</strong> Simple weapons, martial weapons<br><strong>Tools:</strong> None<br><strong>Saving Throws:</strong> Wisdom, Charisma<br><strong>Skills:</strong> Choose two from Athletics, Insight, Intimidation, Medicine, Persuasion, and Religion</p><h1>Paladin Advancement</h1><table><thead><tr><td>Level</td><td>Proficiency Bonus</td><td>Features</td></tr></thead><tbody><tr><td>1st</td><td>+2</td><td>@UUID[Compendium.dnd5e.classfeatures.Item.E8ozg8avUVOX9N7u]{Divine Sense}, @UUID[Compendium.dnd5e.classfeatures.Item.OdrvL3afwLOPeuYZ]{Lay on Hands}</td></tr><tr><td>2nd</td><td>+2</td><td>@UUID[Compendium.dnd5e.classfeatures.Item.Ho7dVxBlOYFlfBHk]{Fighting Style}, @UUID[Compendium.dnd5e.classfeatures.Item.ihoQHsmVZlyDbPhX]{Spellcasting}, @UUID[Compendium.dnd5e.classfeatures.Item.ySMPQ6zNSlvkrl2f]{Divine Smite}</td></tr><tr><td>3rd</td><td>+2</td><td>@UUID[Compendium.dnd5e.classfeatures.Item.dY9yrqkyEDuF0CG2]{Divine Health}, @UUID[Compendium.dnd5e.classfeatures.Item.olAqNsUTIef9x8xC]{Sacred Oath}, @UUID[Compendium.dnd5e.classfeatures.Item.8M7uOPhbTxoxxJSo]{Channel Divinity}</td></tr><tr><td>4th</td><td>+2</td><td>@UUID[Compendium.dnd5e.classfeatures.Item.s0Cc2zcX0JzIgam5]{Ability Score Improvement}</td></tr><tr><td>5th</td><td>+3</td><td>2nd Level Spell Slot, @UUID[Compendium.dnd5e.classfeatures.Item.XogoBnFWmCAHXppo]{Extra Attack}</td></tr><tr><td>6th</td><td>+3</td><td>@UUID[Compendium.dnd5e.classfeatures.Item.carGDhkIdoduTC0I]{Aura of Protection}</td></tr><tr><td>7th</td><td>+3</td><td>Sacred Oath feature</td></tr><tr><td>8th</td><td>+3</td><td>@UUID[Compendium.dnd5e.classfeatures.Item.s0Cc2zcX0JzIgam5]{Ability Score Improvement}</td></tr><tr><td>9th</td><td>+4</td><td>3rd Level Spell Slot</td></tr><tr><td>10th</td><td>+4</td><td>@UUID[Compendium.dnd5e.classfeatures.Item.nahSkBO6LH4HkpaT]{Aura of Courage}</td></tr><tr><td>11th</td><td>+4</td><td>@UUID[Compendium.dnd5e.classfeatures.Item.FAk41RPCTcvCk6KI]{Improved Divine Smite}</td></tr><tr><td>12th</td><td>+4</td><td>@UUID[Compendium.dnd5e.classfeatures.Item.s0Cc2zcX0JzIgam5]{Ability Score Improvement}</td></tr><tr><td>13th</td><td>+5</td><td>4th Level Spell Slot</td></tr><tr><td>14th</td><td>+5</td><td>@UUID[Compendium.dnd5e.classfeatures.Item.U7BIPVPsptBmwsnV]{Cleansing Touch}</td></tr><tr><td>15th</td><td>+5</td><td>Sacred Oath feature</td></tr><tr><td>16th</td><td>+5</td><td>@UUID[Compendium.dnd5e.classfeatures.Item.s0Cc2zcX0JzIgam5]{Ability Score Improvement}</td></tr><tr><td>17th</td><td>+6</td><td>5th Level Spell Slot</td></tr><tr><td>18th</td><td>+6</td><td>Aura improvements</td></tr><tr><td>19th</td><td>+6</td><td>@UUID[Compendium.dnd5e.classfeatures.Item.s0Cc2zcX0JzIgam5]{Ability Score Improvement}</td></tr><tr><td>20th</td><td>+6</td><td>Sacred Oath feature</td></tr></tbody></table><h1>Sacred Oaths</h1><p>Becoming a paladin involves taking vows that commit the paladin to the cause of righteousness, an active path of fighting wickedness. The final oath, taken when he or she reaches 3rd level, is the culmination of all the paladin's training. Some characters with this class don't consider themselves true paladins until they have reached 3rd level and made this oath. For others, the actual swearing of the oath is a formality, an official stamp on what has always been true in the paladin's heart.</p><p>@UUID[Compendium.dnd5e.subclasses.Item.sZ86mbX8D5PfYuhl]{Oath of Devotion}</p><div class=\"sidebar-block\"><h4>Breaking Your Oath</h4><p>A paladin tries to hold to the highest standards of conduct, but even the most virtuous paladin is fallible. Sometimes the right path proves too demanding, sometimes a situation calls for the lesser of two evils, and sometimes the heat of emotion causes a paladin to transgress his or her oath.</p><p>A paladin who has broken a vow typically seeks absolution from a cleric who shares his or her faith or from another paladin of the same order. The paladin might spend an allnight vigil in prayer as a sign of penitence, or undertake a fast or similar act of self-denial. After a rite of confession and forgiveness, the paladin starts fresh.</p><p>If a paladin willfully violates his or her oath and shows no sign of repentance, the consequences can be more serious. At the GM's discretion, an impenitent paladin might be forced to abandon this class and adopt another.</p></div>",
+              "chat": ""
+            },
+            "identifier": "paladin",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "startingEquipment": [
+              {
+                "_id": "mNW3DhRGE7hORMia",
+                "group": "",
+                "sort": 100000,
+                "type": "OR",
+                "requiresProficiency": false
+              },
+              {
+                "_id": "qtoUTXznLIdqzLDC",
+                "group": "mNW3DhRGE7hORMia",
+                "sort": 600000,
+                "type": "AND",
+                "requiresProficiency": false
+              },
+              {
+                "_id": "sMUMbtr7U7orGlw1",
+                "group": "qtoUTXznLIdqzLDC",
+                "sort": 650000,
+                "type": "weapon",
+                "count": null,
+                "key": "mar",
+                "requiresProficiency": false
+              },
+              {
+                "_id": "RCUC6iX1bx8RbdYi",
+                "group": "qtoUTXznLIdqzLDC",
+                "sort": 700000,
+                "type": "armor",
+                "count": null,
+                "key": "shield",
+                "requiresProficiency": false
+              },
+              {
+                "_id": "qpxs0rk4lOYOveVf",
+                "group": "mNW3DhRGE7hORMia",
+                "sort": 800000,
+                "type": "weapon",
+                "count": 2,
+                "key": "mar",
+                "requiresProficiency": false
+              },
+              {
+                "_id": "KU6igyNLG0PRlFkl",
+                "group": "",
+                "sort": 200000,
+                "type": "OR",
+                "requiresProficiency": false
+              },
+              {
+                "_id": "PJ66eV1adKQqkHvZ",
+                "group": "KU6igyNLG0PRlFkl",
+                "sort": 900000,
+                "type": "linked",
+                "count": 5,
+                "key": "Compendium.dnd5e.items.Item.DWLMnODrnHn8IbAG",
+                "requiresProficiency": false
+              },
+              {
+                "_id": "qbjwGvxDVuBdPxjg",
+                "group": "KU6igyNLG0PRlFkl",
+                "sort": 1000000,
+                "type": "weapon",
+                "count": null,
+                "key": "simpleM",
+                "requiresProficiency": false
+              },
+              {
+                "_id": "WpRsbaUbRDpHYmTY",
+                "group": "",
+                "sort": 300000,
+                "type": "OR",
+                "requiresProficiency": false
+              },
+              {
+                "_id": "jeQyetu8yEeSivyL",
+                "group": "WpRsbaUbRDpHYmTY",
+                "sort": 1100000,
+                "type": "linked",
+                "count": null,
+                "key": "Compendium.dnd5e.items.Item.6BybWxK5GcEzqcOV",
+                "requiresProficiency": false
+              },
+              {
+                "_id": "GWGVhytRaKQXNUna",
+                "group": "WpRsbaUbRDpHYmTY",
+                "sort": 1200000,
+                "type": "linked",
+                "count": null,
+                "key": "Compendium.dnd5e.items.Item.8KWz5DJbWUpNWniP",
+                "requiresProficiency": false
+              },
+              {
+                "_id": "lYcSORTIlg5LwdX7",
+                "group": "",
+                "sort": 400000,
+                "type": "AND",
+                "requiresProficiency": false
+              },
+              {
+                "_id": "REA8qwWfZCpl5ZqP",
+                "group": "lYcSORTIlg5LwdX7",
+                "sort": 1300000,
+                "type": "linked",
+                "count": null,
+                "key": "Compendium.dnd5e.items.Item.rLMflzmxpe8JGTOA",
+                "requiresProficiency": false
+              },
+              {
+                "_id": "9ELn1dIN7WY1YJb8",
+                "group": "lYcSORTIlg5LwdX7",
+                "sort": 1400000,
+                "type": "focus",
+                "count": null,
+                "key": "holy",
+                "requiresProficiency": false
+              }
+            ],
+            "wealth": "5d4 * 10",
+            "hd": {
+              "additional": 0,
+              "denomination": "d10",
+              "spent": 0
+            },
+            "levels": 1,
+            "primaryAbility": {
+              "value": [],
+              "all": true
+            },
+            "properties": [],
+            "spellcasting": {
+              "progression": "half",
+              "ability": "cha",
+              "preparation": {
+                "formula": "@abilities.cha.mod + floor(@classes.paladin.levels / 2)"
+              }
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.r2wKhAitYHdCMCTd",
+          "name": "Divine Sense",
+          "type": "feat",
+          "img": "icons/creatures/eyes/human-single-blue.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": 3,
+              "recovery": [
+                {
+                  "period": "lr",
+                  "type": "recoverAll"
+                }
+              ]
+            },
+            "advancement": {},
+            "description": {
+              "value": "<p>The presence of strong evil registers on your senses like a noxious odor, and powerful good rings like heavenly music in your ears. As an action, you can open your awareness to detect such forces. Until the end of your next turn, you know the location of any celestial, fiend, or undead within 60 feet of you that is not behind total cover. You know the type (celestial, fiend, or undead) of any being whose presence you sense, but not its identity (the vampire Count Strahd von Zarovich, for instance). Within the same radius, you also detect the presence of any place or object that has been consecrated or desecrated, as with the @UUID[Compendium.dnd5e.spells.Item.SLxA9QhrggTz0taU]{Hallow} spell.</p><p>You can use this feature a number of times equal to 1 + your Charisma modifier. When you finish a long rest, you regain all expended uses.</p>",
+              "chat": ""
+            },
+            "identifier": "divine-sense",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "crewed": false,
+            "enchant": {},
+            "prerequisites": {
+              "items": [],
+              "level": null,
+              "repeatable": false
+            },
+            "properties": [],
+            "requirements": "Paladin 1",
+            "type": {
+              "value": "class",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.hXdhD97eIEu4TZqT",
+          "name": "Lay on Hands",
+          "type": "feat",
+          "img": "icons/magic/light/orbs-hand-gray.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": 5,
+              "recovery": [
+                {
+                  "period": "lr",
+                  "type": "recoverAll"
+                }
+              ]
+            },
+            "advancement": {},
+            "description": {
+              "value": "<p>Your blessed touch can heal wounds. You have a pool of healing power that replenishes when you take a long rest. With that pool, you can restore a total number of hit points equal to your paladin level × 5.</p><p>As an action, you can touch a creature and draw power from the pool to restore a number of hit points to that creature, up to the maximum amount remaining in your pool.</p><p>Alternatively, you can expend 5 hit points from your pool of healing to cure the target of one disease or neutralize one poison affecting it. You can cure multiple diseases and neutralize multiple poisons with a single use of Lay on Hands, expending hit points separately for each one.</p><p>This feature has no effect on undead and constructs.</p>",
+              "chat": ""
+            },
+            "identifier": "lay-on-hands",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "crewed": false,
+            "enchant": {},
+            "prerequisites": {
+              "items": [],
+              "level": null,
+              "repeatable": false
+            },
+            "properties": [],
+            "requirements": "Paladin 1",
+            "type": {
+              "value": "class",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.O8zxaD0RfSdc0hE9",
+          "name": "Longsword",
+          "type": "weapon",
+          "img": "icons/weapons/swords/greatsword-guard.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "description": {
+              "value": "<p>A lengthy straight blade designed for slashing foes, the longsword is a highly versatile weapon that may also be wielded with two hands for more punishing strikes.</p>",
+              "chat": ""
+            },
+            "identifier": "longsword",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 3,
+              "units": "lb"
+            },
+            "price": {
+              "value": 15,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": true,
+            "cover": null,
+            "crew": {
+              "value": []
+            },
+            "hp": {
+              "conditions": "",
+              "dt": null,
+              "max": 0,
+              "value": 0
+            },
+            "ammunition": {},
+            "armor": {
+              "value": 10
+            },
+            "damage": {
+              "base": {
+                "number": 1,
+                "denomination": 8,
+                "bonus": "",
+                "types": [
+                  "slashing"
+                ],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              },
+              "versatile": {
+                "number": null,
+                "denomination": 0,
+                "bonus": "",
+                "types": [],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              }
+            },
+            "mastery": "",
+            "properties": [
+              "ver"
+            ],
+            "proficient": null,
+            "range": {
+              "value": null,
+              "long": null,
+              "reach": 5,
+              "units": "ft"
+            },
+            "type": {
+              "value": "martialM",
+              "baseItem": "longsword"
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.dLZZeF4GdmnVzMPU",
+          "name": "Tinderbox",
+          "type": "loot",
+          "img": "icons/sundries/lights/torch-black.webp",
+          "system": {
+            "description": {
+              "value": "<p>This small container holds flint, fire steel, and tinder (usually dry cloth soaked in light oil) used to kindle a fire. Using it to light a torch - or anything else with abundant, exposed fuel - takes an action. Lighting any other fire takes 1 minute.</p>\n<p> </p>",
+              "chat": ""
+            },
+            "identifier": "tinderbox",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": "8KWz5DJbWUpNWniP",
+            "quantity": 1,
+            "weight": {
+              "value": 1,
+              "units": "lb"
+            },
+            "price": {
+              "value": 5,
+              "denomination": "sp"
+            },
+            "rarity": "",
+            "properties": [],
+            "type": {
+              "value": "",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.efhXrQbirl8VZyB4",
+          "name": "Waterskin",
+          "type": "consumable",
+          "img": "icons/sundries/survival/wetskin-leather-purple.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": 4,
+              "recovery": [],
+              "autoDestroy": false
+            },
+            "description": {
+              "value": "<p>A leather hide sewn into an enclosed skin which can contain up to 4 pints of liquid. It weighs 5 pounds when full; a pint of water is approximately 1 pound.</p>",
+              "chat": ""
+            },
+            "identifier": "waterskin",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": "6OYR11aJX2dEVtOj",
+            "quantity": 1,
+            "weight": {
+              "value": 5,
+              "units": "lb"
+            },
+            "price": {
+              "value": 2,
+              "denomination": "sp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": false,
+            "damage": {
+              "base": {
+                "number": null,
+                "denomination": null,
+                "types": [],
+                "custom": {
+                  "enabled": false
+                },
+                "scaling": {
+                  "number": 1
+                }
+              },
+              "replace": false
+            },
+            "properties": [],
+            "type": {
+              "value": "food",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.c2kXiYCCI3GoUOei",
+          "name": "Torch",
+          "type": "consumable",
+          "img": "icons/sundries/lights/torch-black.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": 1,
+              "recovery": [],
+              "autoDestroy": false
+            },
+            "description": {
+              "value": "<p>A torch burns for 1 hour, providing bright light in a 20-foot radius and dim light for an additional 20 feet. If you make a melee attack with a burning torch and hit, it deals 1 fire damage.</p>",
+              "chat": ""
+            },
+            "identifier": "torch",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": "8KWz5DJbWUpNWniP",
+            "quantity": 10,
+            "weight": {
+              "value": 1,
+              "units": "lb"
+            },
+            "price": {
+              "value": 1,
+              "denomination": "cp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": false,
+            "damage": {
+              "base": {
+                "number": null,
+                "denomination": null,
+                "bonus": "",
+                "types": [
+                  "fire"
+                ],
+                "custom": {
+                  "enabled": true,
+                  "formula": "1"
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              },
+              "replace": false
+            },
+            "properties": [],
+            "type": {
+              "value": "trinket",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.JRf1p7SRfgidLypC",
+          "name": "Rations",
+          "type": "consumable",
+          "img": "icons/consumables/grains/bread-loaf-boule-rustic-brown.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": 1,
+              "recovery": [],
+              "autoDestroy": true
+            },
+            "description": {
+              "value": "<p>Rations consist of dry foods suitable for extended travel, including jerky, dried fruit, hardtack, and nuts.</p>",
+              "chat": ""
+            },
+            "identifier": "rations",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": "XY8b594Dn7plACLL",
+            "quantity": 10,
+            "weight": {
+              "value": 2,
+              "units": "lb"
+            },
+            "price": {
+              "value": 5,
+              "denomination": "sp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": false,
+            "damage": {
+              "base": {
+                "number": null,
+                "denomination": null,
+                "types": [],
+                "custom": {
+                  "enabled": false
+                },
+                "scaling": {
+                  "number": 1
+                }
+              },
+              "replace": false
+            },
+            "properties": [],
+            "type": {
+              "value": "food",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.dxPcTaoaq9SXqphI",
+          "name": "Bedroll",
+          "type": "loot",
+          "img": "icons/sundries/survival/bedroll-grey.webp",
+          "system": {
+            "description": {
+              "value": "<p>Roll of cloth used by traveller to sleep in.</p>",
+              "chat": ""
+            },
+            "identifier": "bedroll",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 7,
+              "units": "lb"
+            },
+            "price": {
+              "value": 1,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "properties": [],
+            "type": {
+              "value": "",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.G9505KmrMSHBWf8g",
+          "name": "Javelin",
+          "type": "weapon",
+          "img": "icons/weapons/polearms/javelin-flared.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "description": {
+              "value": "<p>This light and flexible spear is designed for throwing, but is versatile enough to be used in melee combat as well.</p>",
+              "chat": ""
+            },
+            "identifier": "javelin",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 5,
+            "weight": {
+              "value": 2,
+              "units": "lb"
+            },
+            "price": {
+              "value": 5,
+              "denomination": "sp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": true,
+            "cover": null,
+            "crew": {
+              "value": []
+            },
+            "hp": {
+              "conditions": "",
+              "dt": null,
+              "max": 0,
+              "value": 0
+            },
+            "ammunition": {},
+            "armor": {
+              "value": 10
+            },
+            "damage": {
+              "base": {
+                "number": 1,
+                "denomination": 6,
+                "bonus": "",
+                "types": [
+                  "piercing"
+                ],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              },
+              "versatile": {
+                "number": null,
+                "denomination": null,
+                "bonus": "",
+                "types": [],
+                "custom": {
+                  "enabled": false,
+                  "formula": ""
+                },
+                "scaling": {
+                  "mode": "",
+                  "number": null,
+                  "formula": ""
+                }
+              }
+            },
+            "mastery": "",
+            "properties": [
+              "thr"
+            ],
+            "proficient": null,
+            "range": {
+              "value": 30,
+              "long": 120,
+              "reach": 5,
+              "units": "ft"
+            },
+            "type": {
+              "value": "simpleM",
+              "baseItem": "javelin"
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.ywNBNpv1C7BCgkex",
+          "name": "Backpack",
+          "type": "container",
+          "img": "icons/containers/bags/pack-leather-white-tan.webp",
+          "system": {
+            "description": {
+              "value": "<p>A backpack can hold one cubic foot or 30 pounds of gear. You can also strap items, such as a bedroll or a coil of rope, to the outside of a backpack.</p>",
+              "chat": ""
+            },
+            "identifier": "backpack",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 5,
+              "units": "lb"
+            },
+            "price": {
+              "value": 2,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": false,
+            "currency": {
+              "pp": 0,
+              "gp": 0,
+              "ep": 0,
+              "sp": 0,
+              "cp": 0
+            },
+            "capacity": {
+              "volume": {
+                "units": "cubicFoot"
+              },
+              "weight": {
+                "value": 30,
+                "units": "lb"
+              }
+            },
+            "properties": []
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.d4CmvW8R3FAjbWKu",
+          "name": "Smith's Tools",
+          "type": "tool",
+          "img": "icons/skills/trades/smithing-tongs-metal-red.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "description": {
+              "value": "<p>These special tools include the items needed to pursue a craft or trade in smithing.</p>\n<p>Proficiency with a set of artisan's tools lets you add your proficiency bonus to any ability checks you make using the tools in your craft. Each type of artisan's tools requires a separate proficiency.</p>",
+              "chat": ""
+            },
+            "identifier": "smiths-tools",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 8,
+              "units": "lb"
+            },
+            "price": {
+              "value": 20,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": false,
+            "ability": "str",
+            "bonus": "",
+            "chatFlavor": "",
+            "proficient": null,
+            "properties": [],
+            "type": {
+              "value": "art",
+              "baseItem": "smith"
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.jPU066t1jdacJtqh",
+          "name": "Hempen Rope (50 ft.)",
+          "type": "consumable",
+          "img": "icons/sundries/survival/rope-wrapped-brown.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": 1,
+              "recovery": [],
+              "autoDestroy": false
+            },
+            "description": {
+              "value": "<p>Rope, whether made of hemp or silk, has 2 hit points and can be burst with a DC 17 Strength check.</p>",
+              "chat": ""
+            },
+            "identifier": "hempen-rope-50-ft",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 10,
+              "units": "lb"
+            },
+            "price": {
+              "value": 1,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": false,
+            "damage": {
+              "base": {
+                "number": null,
+                "denomination": null,
+                "types": [],
+                "custom": {
+                  "enabled": false
+                },
+                "scaling": {
+                  "number": 1
+                }
+              },
+              "replace": false
+            },
+            "properties": [],
+            "type": {
+              "value": "trinket",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.9GZ9g4sWxCBmDAOQ",
+          "name": "Mess Kit",
+          "type": "loot",
+          "img": "icons/tools/cooking/fork-steel-tan.webp",
+          "system": {
+            "description": {
+              "value": "<p>This tin box contains a cup and simple cutlery. The box clamps together, and one side can be used as a cooking pan and the other as a plate or shallow bowl.</p>",
+              "chat": ""
+            },
+            "identifier": "mess-kit",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 1,
+              "units": "lb"
+            },
+            "price": {
+              "value": 2,
+              "denomination": "sp"
+            },
+            "rarity": "",
+            "properties": [],
+            "type": {
+              "value": "",
+              "subtype": ""
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.0uUSKFCkeEIm0CaD",
+          "name": "Chain Mail",
+          "type": "equipment",
+          "img": "icons/equipment/chest/breastplate-metal-scaled-grey.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "description": {
+              "value": "<p>Made of interlocking metal rings, chain mail includes a layer of quilted fabric worn underneath the mail to prevent chafing and to cushion the impact of blows. The suit includes gauntlets.</p>",
+              "chat": ""
+            },
+            "identifier": "chain-mail",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 55,
+              "units": "lb"
+            },
+            "price": {
+              "value": 75,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": true,
+            "cover": null,
+            "crew": {
+              "value": []
+            },
+            "hp": {
+              "conditions": "",
+              "dt": null,
+              "max": 0,
+              "value": 0
+            },
+            "speed": {
+              "conditions": "",
+              "units": "ft",
+              "value": null
+            },
+            "armor": {
+              "value": 16,
+              "dex": 0
+            },
+            "proficient": null,
+            "properties": [
+              "stealthDisadvantage"
+            ],
+            "strength": 13,
+            "type": {
+              "value": "heavy",
+              "baseItem": "chainmail"
+            }
+          }
+        },
+        {
+          "uuid": "Actor.Dh1AA6w104V17V6w.Item.jTyfsfOKBhVQG2Tu",
+          "name": "Shield",
+          "type": "equipment",
+          "img": "icons/equipment/shield/round-wooden-boss-steel-brown.webp",
+          "system": {
+            "activities": {},
+            "uses": {
+              "spent": 0,
+              "max": "",
+              "recovery": []
+            },
+            "description": {
+              "value": "<p>A shield is made from wood or metal and is carried in one hand. Wielding a shield increases your Armor Class by 2. You can benefit from only one shield at a time.</p>",
+              "chat": ""
+            },
+            "identifier": "shield",
+            "source": {
+              "book": "SRD 5.1",
+              "page": "",
+              "custom": "",
+              "license": "CC-BY-4.0",
+              "revision": 1,
+              "rules": "2014"
+            },
+            "identified": true,
+            "unidentified": {
+              "description": ""
+            },
+            "container": null,
+            "quantity": 1,
+            "weight": {
+              "value": 6,
+              "units": "lb"
+            },
+            "price": {
+              "value": 10,
+              "denomination": "gp"
+            },
+            "rarity": "",
+            "attunement": "",
+            "attuned": false,
+            "equipped": true,
+            "cover": null,
+            "crew": {
+              "value": []
+            },
+            "hp": {
+              "conditions": "",
+              "dt": null,
+              "max": 0,
+              "value": 0
+            },
+            "speed": {
+              "conditions": "",
+              "units": "ft",
+              "value": null
+            },
+            "armor": {
+              "value": 2,
+              "dex": null
+            },
+            "proficient": null,
+            "properties": [],
+            "strength": null,
+            "type": {
+              "value": "shield",
+              "baseItem": "shield"
+            }
+          }
+        }
+      ],
+      "effects": []
+    }
+  ],
+  "users": [
+    {
+      "id": "znQwOcWuPTZKlHIf",
+      "name": "Gamemaster",
+      "role": 4,
+      "characterUuid": null
+    },
+    {
+      "id": "29YQuWkR9z9249Hx",
+      "name": "Player One",
+      "role": 1,
+      "characterUuid": "Actor.2Pdtnswo8Nj2nafY"
+    }
+  ],
+  "scenes": [
+    {
+      "uuid": "Scene.zyNVtRkXB50dgi3M",
+      "name": "Dragon's Lair",
+      "background": {
+        "src": "systems/dnd5e/ui/official/dnd5e-background.webp"
+      },
+      "width": 3000,
+      "height": 2000,
+      "grid": {
+        "size": 100,
+        "distance": 5,
+        "units": "ft"
+      },
+      "tokens": [
+        {
+          "name": "Bugbear",
+          "x": 400,
+          "y": 600,
+          "actorUuid": "Scene.zyNVtRkXB50dgi3M.Token.H3TkmIzeWATLk5Yg.Actor.QtJairF0h18BRhEM",
+          "img": "systems/dnd5e/tokens/humanoid/Bugbear.webp"
+        },
+        {
+          "name": "Ogre",
+          "x": 700,
+          "y": 600,
+          "actorUuid": "Scene.zyNVtRkXB50dgi3M.Token.nh28TQEj5GqJ2o3A.Actor.eIGowKTkEBC9gUzx",
+          "img": "systems/dnd5e/tokens/giant/Ogre.webp"
+        },
+        {
+          "name": "Owlbear",
+          "x": 1000,
+          "y": 600,
+          "actorUuid": "Scene.zyNVtRkXB50dgi3M.Token.CP1NoR2HIKutGAJx.Actor.zY3W5MG7FjssENf6",
+          "img": "systems/dnd5e/tokens/monstrosity/Owlbear.webp"
+        },
+        {
+          "name": "Knight",
+          "x": 1300,
+          "y": 600,
+          "actorUuid": "Scene.zyNVtRkXB50dgi3M.Token.aSfi6tmoUiBnKqfb.Actor.D5UqYD1EnTrJaMTO",
+          "img": "systems/dnd5e/tokens/humanoid/Knight.webp"
+        }
+      ]
+    }
+  ],
+  "tokens": [
+    {
+      "sceneUuid": "Scene.zyNVtRkXB50dgi3M",
+      "name": "Bugbear",
+      "x": 400,
+      "y": 600,
+      "actorUuid": "Scene.zyNVtRkXB50dgi3M.Token.H3TkmIzeWATLk5Yg.Actor.QtJairF0h18BRhEM",
+      "img": "systems/dnd5e/tokens/humanoid/Bugbear.webp"
+    },
+    {
+      "sceneUuid": "Scene.zyNVtRkXB50dgi3M",
+      "name": "Ogre",
+      "x": 700,
+      "y": 600,
+      "actorUuid": "Scene.zyNVtRkXB50dgi3M.Token.nh28TQEj5GqJ2o3A.Actor.eIGowKTkEBC9gUzx",
+      "img": "systems/dnd5e/tokens/giant/Ogre.webp"
+    },
+    {
+      "sceneUuid": "Scene.zyNVtRkXB50dgi3M",
+      "name": "Owlbear",
+      "x": 1000,
+      "y": 600,
+      "actorUuid": "Scene.zyNVtRkXB50dgi3M.Token.CP1NoR2HIKutGAJx.Actor.zY3W5MG7FjssENf6",
+      "img": "systems/dnd5e/tokens/monstrosity/Owlbear.webp"
+    },
+    {
+      "sceneUuid": "Scene.zyNVtRkXB50dgi3M",
+      "name": "Knight",
+      "x": 1300,
+      "y": 600,
+      "actorUuid": "Scene.zyNVtRkXB50dgi3M.Token.aSfi6tmoUiBnKqfb.Actor.D5UqYD1EnTrJaMTO",
+      "img": "systems/dnd5e/tokens/humanoid/Knight.webp"
+    }
+  ]
+}

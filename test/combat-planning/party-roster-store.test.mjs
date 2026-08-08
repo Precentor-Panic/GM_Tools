@@ -209,6 +209,47 @@ const BUILD = { skills: ["Survival"], backstoryHooks: ["Estranged from a ranger 
     assert.equal(updated.status, "discarded");
   });
 
+  // -------------------------------------------------------------------------
+  // Phase 35 task 35.1, §5 -- passive/conditions (status-independent patch),
+  // read-time defaults for a pre-Phase-35 member.
+  // -------------------------------------------------------------------------
+
+  const { updatePartyMemberPassive, updatePartyMemberConditions } = await import("../../combat-planning/party-roster-store.mjs");
+
+  test("getPartyMember/listPartyMembers: a pre-Phase-35 member (no passive/conditions on disk) reads passive:null, conditions:''", () => {
+    // savePartyMember's own return value is NOT run through the read-time
+    // projection (it's a create, not a read boundary) -- assert the
+    // projection via getPartyMember/listPartyMembers instead.
+    savePartyMember(WORLD, { name: "Legacy Member", combatRelevant: {}, buildRelevant: {} }, { makeId: () => "pm-p35-legacy" });
+    const reread = getPartyMember(WORLD, "pm-p35-legacy");
+    assert.equal(reread.passive, null);
+    assert.equal(reread.conditions, "");
+    const inList = listPartyMembers(WORLD).find((m) => m.id === "pm-p35-legacy");
+    assert.equal(inList.passive, null);
+    assert.equal(inList.conditions, "");
+  });
+
+  test("updatePartyMemberPassive/updatePartyMemberConditions: STATUS-INDEPENDENT -- patch an ALREADY-ACCEPTED member successfully", () => {
+    assert.equal(getPartyMember(WORLD, "pm-p35-legacy").status, "accepted", "savePartyMember's own default");
+
+    const withPassive = updatePartyMemberPassive(WORLD, "pm-p35-legacy", 18);
+    assert.equal(withPassive.passive, 18);
+    assert.equal(withPassive.status, "accepted", "status untouched by a passive edit");
+
+    const withConditions = updatePartyMemberConditions(WORLD, "pm-p35-legacy", "Poisoned, Prone");
+    assert.equal(withConditions.conditions, "Poisoned, Prone");
+    assert.equal(withConditions.status, "accepted", "status untouched by a conditions edit");
+
+    const reread = getPartyMember(WORLD, "pm-p35-legacy");
+    assert.equal(reread.passive, 18);
+    assert.equal(reread.conditions, "Poisoned, Prone");
+  });
+
+  test("updatePartyMemberConditions: an explicit empty string clears conditions back to 'none'", () => {
+    const cleared = updatePartyMemberConditions(WORLD, "pm-p35-legacy", "");
+    assert.equal(cleared.conditions, "");
+  });
+
   console.log(`\n${passed} passed`);
 })();
 

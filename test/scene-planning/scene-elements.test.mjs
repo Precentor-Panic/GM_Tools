@@ -96,8 +96,8 @@ test("directory isolation: sceneElementsRoot() honors GM_TOOLS_SCENE_ELEMENTS_DI
   assert.notEqual(sceneElementsRoot(), REPO_DEFAULT_ROOT);
 });
 
-test("SCHEMA_VERSION is exported -- bumped to 2 by Phase 29 task 29.1's additive `stat` field", () => {
-  assert.equal(SCHEMA_VERSION, 2);
+test("SCHEMA_VERSION is exported -- bumped to 3 by Phase 35 task 35.1's additive `fields.bestiaryEntryId` + widened StatBlock ac/hp/cr", () => {
+  assert.equal(SCHEMA_VERSION, 3);
 });
 
 test("listElementsForScene: [] for a scene with no elements yet -- not an error", () => {

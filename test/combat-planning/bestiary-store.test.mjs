@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, existsSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -301,6 +301,69 @@ const IMPLAUSIBLE_RAW_FIELDS = {
     // and the entry's own content is provably untouched by the refused call
     const reread = getBestiaryEntry("bst-ref-1");
     assert.equal(reread.rawFields.hp, 40, "must still be the value from the last successful update, not 999");
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 35 task 35.1, §5 -- note/rating (status-independent patch) +
+  // sourcePill (derived, read-time-only projection).
+  // -------------------------------------------------------------------------
+
+  const { deriveSourcePill, updateBestiaryEntryNote, updateBestiaryEntryRating } = await import("../../combat-planning/bestiary-store.mjs");
+
+  test("deriveSourcePill: PURE -- foundryActorRef present -> 'foundry'", () => {
+    assert.equal(deriveSourcePill({ foundryActorRef: "Actor.x", sourceText: null, sourcePdfName: null }), "foundry");
+  });
+
+  test("deriveSourcePill: sourceText/sourcePdfName mentioning 'SRD' (case-insensitive) -> 'srd'", () => {
+    assert.equal(deriveSourcePill({ foundryActorRef: null, sourceText: "Pulled from the 2014 SRD", sourcePdfName: null }), "srd");
+    assert.equal(deriveSourcePill({ foundryActorRef: null, sourceText: null, sourcePdfName: "srd-monsters.pdf" }), "srd");
+  });
+
+  test("deriveSourcePill: neither signal present -> 'mine'", () => {
+    assert.equal(deriveSourcePill({ foundryActorRef: null, sourceText: "hand-typed", sourcePdfName: null }), "mine");
+  });
+
+  test("getBestiaryEntry/listBestiaryEntries: a pre-Phase-35 entry (no note/rating on disk) reads note:null, rating:null, and a derived sourcePill", () => {
+    // saveBestiaryEntry's own return value is NOT run through the read-time
+    // projection (it's a create, not a read boundary) -- assert the
+    // projection via getBestiaryEntry/listBestiaryEntries instead, the two
+    // actual read boundaries §5 pins.
+    saveBestiaryEntry({ rawFields: PLAUSIBLE_RAW_FIELDS }, { makeId: () => "bst-p35-legacy", now: "2026-08-08T00:00:00.000Z" });
+    const reread = getBestiaryEntry("bst-p35-legacy");
+    assert.equal(reread.note, null);
+    assert.equal(reread.rating, null);
+    assert.equal(reread.sourcePill, "mine");
+    const inList = listBestiaryEntries().find((e) => e.id === "bst-p35-legacy");
+    assert.equal(inList.note, null);
+    assert.equal(inList.rating, null);
+    assert.equal(inList.sourcePill, "mine");
+  });
+
+  test("sourcePill is NEVER persisted to disk -- it's a pure read-time projection of already-stored fields", () => {
+    const raw = JSON.parse(readFileSync(join(process.env.GM_TOOLS_BESTIARY_DIR, "bst-p35-legacy.json"), "utf8"));
+    assert.equal("sourcePill" in raw, false, "sourcePill must not exist in the on-disk JSON at all");
+  });
+
+  test("updateBestiaryEntryNote/updateBestiaryEntryRating: STATUS-INDEPENDENT -- patch an ALREADY-ACCEPTED entry successfully (mirrors updateBestiaryEntryScore's own no-status-check convention, not the proposed-only guard)", () => {
+    const accepted = acceptBestiaryEntry("bst-p35-legacy");
+    assert.equal(accepted.status, "accepted");
+
+    const noted = updateBestiaryEntryNote("bst-p35-legacy", "Watch for the ambush.");
+    assert.equal(noted.note, "Watch for the ambush.");
+    assert.equal(noted.status, "accepted", "status untouched by a note edit");
+
+    const rated = updateBestiaryEntryRating("bst-p35-legacy", "3");
+    assert.equal(rated.rating, "3");
+    assert.equal(rated.status, "accepted", "status untouched by a rating edit");
+
+    const reread = getBestiaryEntry("bst-p35-legacy");
+    assert.equal(reread.note, "Watch for the ambush.");
+    assert.equal(reread.rating, "3");
+  });
+
+  test("updateBestiaryEntryNote/updateBestiaryEntryRating: an explicit null clears the field back to 'use the book value'/no note", () => {
+    const cleared = updateBestiaryEntryRating("bst-p35-legacy", null);
+    assert.equal(cleared.rating, null);
   });
 
   console.log(`\n${passed} passed`);

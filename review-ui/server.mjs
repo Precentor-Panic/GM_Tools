@@ -163,12 +163,40 @@ import { buildAdjacencyContext, DEFAULT_ENTITY_NARRATE_DEPTH } from "../mutation
 import { proposeBestiaryEntryFromText, proposeBestiaryEntryFromPdf } from "../combat-planning/bestiary-ingest.mjs";
 import {
   saveBestiaryEntry,
+  getBestiaryEntry,
   listBestiaryEntries,
   acceptBestiaryEntry,
-  discardBestiaryEntry
+  discardBestiaryEntry,
+  updateBestiaryEntryNote,
+  updateBestiaryEntryRating
 } from "../combat-planning/bestiary-store.mjs";
 import { proposePartyMemberFromText, proposePartyMemberFromPdf } from "../combat-planning/party-roster-ingest.mjs";
-import { savePartyMember, listPartyMembers } from "../combat-planning/party-roster-store.mjs";
+import {
+  savePartyMember,
+  getPartyMember,
+  listPartyMembers,
+  updatePartyMemberPassive,
+  updatePartyMemberConditions
+} from "../combat-planning/party-roster-store.mjs";
+// Phase 35 task 35.1, §1/§4/§8 -- item store (Reliquary) + the shared tags
+// helper API. Thin route wrappers only, per gm-tools-conventions.
+import { listItems, getItem, acceptItem, discardItem, addItemTag, removeItemTag } from "../combat-planning/item-store.mjs";
+// Phase 35 task 35.1, §2/§8 -- stagecraft asset store (map/splash/music).
+import {
+  listStagecraftAssets,
+  getStagecraftAsset,
+  acceptStagecraftAsset,
+  discardStagecraftAsset,
+  addStagecraftTag,
+  removeStagecraftTag
+} from "../session-planner/stagecraft-store.mjs";
+// Phase 35 task 35.1, §3/§8 -- token index (read-only route).
+import { listTokens } from "../session-planner/token-store.mjs";
+// Phase 35 task 35.1, §7/§8 -- shared scene tray store, roster/budget
+// bookkeeping only (the creature-drop "create/reuse a stat-carrying scene
+// element" composition lives at THIS file's own route handler below, per
+// §7's own explicit instruction).
+import { getSceneTray, addToSceneTray, removeFromSceneTray, setSceneTrayXpBudget } from "../session-planner/scene-tray.mjs";
 import { proposeThematicTags } from "../combat-planning/thematic-filter.mjs";
 import { suggestEncounter, scoreCombination } from "../combat-planning/encounter-heuristic.mjs";
 // Phase 32 task 32.2 -- Foundry actor PULL ingest (bestiary + party roster,
@@ -408,6 +436,29 @@ function touchSceneSafely(w, sceneId) {
   } catch {
     // Best-effort only -- see this function's own doc comment.
   }
+}
+
+/**
+ * Phase 35 task 35.1, §7 -- the scene tray's creature-drop route composition:
+ * a bestiary entry's `rawFields` (ac/hp/cr/etc) projected into
+ * scene-elements.mjs's StatBlock shape (Phase 29's `{count,ac,hp,speed,cr,
+ * raw,foundryActor}`), reused verbatim, no new stat fields invented here.
+ * Values are passed through with their OWN native type (ac/hp/challengeRating
+ * are genuinely numbers on a Foundry-pulled monster) -- StatBlock's ac/hp/cr
+ * were widened to accept string OR number specifically for this call site
+ * (scene-elements.mjs's own header comment explains why: stringifying here
+ * would silently diverge from the source rawFields value's exact type). A
+ * missing rawFields value is simply omitted, never a fabricated default.
+ */
+function statFromBestiaryRawFields(entry) {
+  const rawFields = entry?.rawFields ?? {};
+  const stat = {};
+  if (rawFields.hp != null) stat.hp = rawFields.hp;
+  if (rawFields.ac != null) stat.ac = rawFields.ac;
+  if (rawFields.challengeRating != null) stat.cr = rawFields.challengeRating;
+  if (rawFields.speed != null) stat.speed = typeof rawFields.speed === "string" ? rawFields.speed : String(rawFields.speed);
+  if (entry?.foundryActorRef) stat.foundryActor = entry.foundryActorRef;
+  return stat;
 }
 
 /**
@@ -2407,6 +2458,235 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world);
     const result = await proposeUpdatesForPlan(dir, w, parts[3]);
     return sendJson(res, 200, result);
+  }
+
+  // ===========================================================================
+  // Phase 35 task 35.1 -- Library + sync-IN stores' routes, per §8 of
+  // review-ui/test/e2e/phase35-fixture.mjs (THE WRITTEN CONTRACT). Thin
+  // wrappers only, per gm-tools-conventions -- no independent business logic
+  // beyond the tray-drop route's own §7-pinned composition (creature-drop
+  // element create/reuse), which is explicitly a ROUTE-level concern per the
+  // contract's own instruction (scene-tray.mjs stays roster/budget-only).
+  // ===========================================================================
+
+  // -----------------------------------------------------------------------
+  // §1/§4 -- combat-planning/item-store.mjs (Reliquary), world-scoped.
+  // -----------------------------------------------------------------------
+
+  // GET /api/combat-planning/items?world=   -> {items}
+  if (method === "GET" && parts.length === 3 && parts[1] === "combat-planning" && parts[2] === "items") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, { items: listItems(w) });
+  }
+
+  // POST /api/combat-planning/items/:id/accept   {world}   -> {item}
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "items" && parts[4] === "accept") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const item = acceptItem(w, parts[3]);
+    return sendJson(res, 200, { item });
+  }
+
+  // POST /api/combat-planning/items/:id/discard   {world}   -> {item}
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "items" && parts[4] === "discard") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const item = discardItem(w, parts[3]);
+    return sendJson(res, 200, { item });
+  }
+
+  // POST /api/combat-planning/items/:id/tags   {world, tag}   -> {item}   (§4 addTag)
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "items" && parts[4] === "tags") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const item = addItemTag(w, parts[3], body.tag);
+    return sendJson(res, 200, { item });
+  }
+
+  // DELETE /api/combat-planning/items/:id/tags/:tag   {world}   -> {item}   (§4 removeTag)
+  if (method === "DELETE" && parts.length === 6 && parts[1] === "combat-planning" && parts[2] === "items" && parts[4] === "tags") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world ?? q.get("world"));
+    const item = removeItemTag(w, parts[3], decodeURIComponent(parts[5]));
+    return sendJson(res, 200, { item });
+  }
+
+  // -----------------------------------------------------------------------
+  // §2/§4 -- session-planner/stagecraft-store.mjs (Reliquary+Stagecraft's
+  // shared tagged-shelf, this half is the Stagecraft store), world-scoped.
+  // -----------------------------------------------------------------------
+
+  // GET /api/session-planner/stagecraft?world=[&kind=map|splash|music]   -> {assets}
+  if (method === "GET" && parts.length === 3 && parts[1] === "session-planner" && parts[2] === "stagecraft") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, { assets: listStagecraftAssets(w, q.get("kind") || undefined) });
+  }
+
+  // POST /api/session-planner/stagecraft/:id/accept   {world}   -> {asset}
+  if (method === "POST" && parts.length === 5 && parts[1] === "session-planner" && parts[2] === "stagecraft" && parts[4] === "accept") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const asset = acceptStagecraftAsset(w, parts[3]);
+    return sendJson(res, 200, { asset });
+  }
+
+  // POST /api/session-planner/stagecraft/:id/discard   {world}   -> {asset}
+  if (method === "POST" && parts.length === 5 && parts[1] === "session-planner" && parts[2] === "stagecraft" && parts[4] === "discard") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const asset = discardStagecraftAsset(w, parts[3]);
+    return sendJson(res, 200, { asset });
+  }
+
+  // POST /api/session-planner/stagecraft/:id/tags   {world, tag}   -> {asset}
+  if (method === "POST" && parts.length === 5 && parts[1] === "session-planner" && parts[2] === "stagecraft" && parts[4] === "tags") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const asset = addStagecraftTag(w, parts[3], body.tag);
+    return sendJson(res, 200, { asset });
+  }
+
+  // DELETE /api/session-planner/stagecraft/:id/tags/:tag   {world}   -> {asset}
+  if (method === "DELETE" && parts.length === 6 && parts[1] === "session-planner" && parts[2] === "stagecraft" && parts[4] === "tags") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world ?? q.get("world"));
+    const asset = removeStagecraftTag(w, parts[3], decodeURIComponent(parts[5]));
+    return sendJson(res, 200, { asset });
+  }
+
+  // -----------------------------------------------------------------------
+  // §3 -- session-planner/token-store.mjs, read-only.
+  // -----------------------------------------------------------------------
+
+  // GET /api/session-planner/token-index?world=[&sceneUuid=]   -> {tokens}
+  if (method === "GET" && parts.length === 3 && parts[1] === "session-planner" && parts[2] === "token-index") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, { tokens: listTokens(w, q.get("sceneUuid") || undefined) });
+  }
+
+  // -----------------------------------------------------------------------
+  // §7/§8 -- shared scene tray, prefix `/api/scene-planning/scenes/:sceneId/tray*`.
+  // -----------------------------------------------------------------------
+
+  // GET /api/scene-planning/scenes/:sceneId/tray?world=   -> {roster, xpBudget}   NEVER 404s.
+  if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "tray") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, getSceneTray(w, parts[3]));
+  }
+
+  // POST /api/scene-planning/scenes/:sceneId/tray/budget   {world, xpBudget}   -> {roster, xpBudget}
+  if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "tray" && parts[5] === "budget") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    return sendJson(res, 200, setSceneTrayXpBudget(w, parts[3], body.xpBudget));
+  }
+
+  // POST /api/scene-planning/scenes/:sceneId/tray/drop   {world, kind, id}   -> {roster, xpBudget, element}
+  // §7's pinned drop behavior, implemented AT THIS ROUTE (not in
+  // scene-tray.mjs) per the contract's own instruction: a "creature" drop's
+  // FIRST occurrence creates/reuses a kind:'local' SceneElement carrying a
+  // stat block (dedup via fields.bestiaryEntryId, reusing createElement
+  // unchanged); a repeat drop only stacks the roster, element:null. "hero"/
+  // "asset" drops never touch scene-elements.mjs at all (display-only /
+  // the roster row itself IS the scene-asset link). An unresolvable id for
+  // the given kind throws a "No ... found" error -> 404 via statusForError.
+  if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "tray" && parts[5] === "drop") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const sceneId = parts[3];
+    const { kind, id } = body;
+
+    if (kind === "creature") {
+      const entry = getBestiaryEntry(id); // throws "No bestiary entry found" -> 404
+      const before = getSceneTray(w, sceneId);
+      const alreadyInRoster = before.roster.some((r) => r.id === id && r.kind === "creature");
+      let element = null;
+      if (!alreadyInRoster) {
+        const existingElement = listElementsForScene(w, sceneId).find((e) => e.fields?.bestiaryEntryId === id);
+        if (existingElement) {
+          element = existingElement;
+        } else {
+          element = createElement(w, sceneId, {
+            name: entry.rawFields?.name ?? "Unnamed Creature",
+            kind: "local",
+            fields: { bestiaryEntryId: id },
+            stat: statFromBestiaryRawFields(entry)
+          });
+          touchSceneSafely(w, sceneId);
+        }
+      }
+      const result = addToSceneTray(w, sceneId, { id, kind }, {});
+      return sendJson(res, 200, { ...result, element });
+    }
+
+    if (kind === "hero") {
+      getPartyMember(w, id); // throws "No party member found" -> 404
+      const result = addToSceneTray(w, sceneId, { id, kind }, {});
+      return sendJson(res, 200, { ...result, element: null });
+    }
+
+    if (kind === "asset") {
+      // §7's own pin: resolves item-store-first, then stagecraft-store.
+      let resolved = false;
+      try {
+        getItem(w, id);
+        resolved = true;
+      } catch { /* fall through to stagecraft-store */ }
+      if (!resolved) {
+        try {
+          getStagecraftAsset(w, id);
+          resolved = true;
+        } catch { /* neither store has it -- 404 below */ }
+      }
+      if (!resolved) {
+        throw new Error(`No asset found: world="${w}" id="${id}"`);
+      }
+      const result = addToSceneTray(w, sceneId, { id, kind }, {});
+      return sendJson(res, 200, { ...result, element: null });
+    }
+
+    throw new Error(`Unknown scene tray drop kind: "${kind}" -- expected "creature"|"hero"|"asset"`);
+  }
+
+  // DELETE /api/scene-planning/scenes/:sceneId/tray/:kind/:id   {world}   -> {roster, xpBudget}
+  if (method === "DELETE" && parts.length === 7 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "tray") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world ?? q.get("world"));
+    return sendJson(res, 200, removeFromSceneTray(w, parts[3], parts[5], decodeURIComponent(parts[6])));
+  }
+
+  // -----------------------------------------------------------------------
+  // §5 -- bestiary/party additive fields, status-INDEPENDENT patch routes.
+  // -----------------------------------------------------------------------
+
+  // POST /api/combat-planning/bestiary/:id/note   {note}   -> {entry}
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "note") {
+    const body = await readBody(req);
+    const entry = updateBestiaryEntryNote(parts[3], body.note);
+    return sendJson(res, 200, { entry });
+  }
+
+  // POST /api/combat-planning/bestiary/:id/rating   {rating}   -> {entry}
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "rating") {
+    const body = await readBody(req);
+    const entry = updateBestiaryEntryRating(parts[3], body.rating);
+    return sendJson(res, 200, { entry });
+  }
+
+  // POST /api/combat-planning/party-roster/:id/passive   {world, passive}   -> {member}
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "party-roster" && parts[4] === "passive") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const member = updatePartyMemberPassive(w, parts[3], body.passive);
+    return sendJson(res, 200, { member });
+  }
+
+  // POST /api/combat-planning/party-roster/:id/conditions   {world, conditions}   -> {member}
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "party-roster" && parts[4] === "conditions") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const member = updatePartyMemberConditions(w, parts[3], body.conditions);
+    return sendJson(res, 200, { member });
   }
 
   sendJson(res, 404, { error: `No route: ${req.method} ${url.pathname}` });

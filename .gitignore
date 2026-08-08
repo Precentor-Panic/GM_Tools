@@ -113,6 +113,23 @@ scene-elements/*
 scene-narration/*/
 !scene-narration/.gitkeep
 
+# Phase 35 task 35.1 (added at spec time, not after the fact -- per this
+# project's own recurring-gap lesson): combat-planning/item-store.mjs,
+# session-planner/stagecraft-store.mjs, session-planner/token-store.mjs, and
+# session-planner/scene-tray.mjs are all flat per-world-file stores, same
+# convention as session-scenes/ above.
+items/*
+!items/.gitkeep
+
+stagecraft/*
+!stagecraft/.gitkeep
+
+tokens/*
+!tokens/.gitkeep
+
+scene-tray/*
+!scene-tray/.gitkeep
+
 node_modules/
 
 # never commit API keys / secrets

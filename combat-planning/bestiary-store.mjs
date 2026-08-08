@@ -37,6 +37,27 @@
  * record §1a: "more like prep-content-ops.mjs's accept/discard pattern"): a
  * BestiaryEntry's status is 'proposed' | 'accepted' | 'discarded' -- no
  * batchId, no diff, no sync-to-Foundry reachability at all.
+ *
+ * Phase 35 task 35.1, §5 of review-ui/test/e2e/phase35-fixture.mjs (THE
+ * WRITTEN CONTRACT): gains two additive, optional/nullable persisted fields
+ * -- `note` (free-form GM note) and `rating` (the user's own star/CR-override
+ * value; null = "use the book value"). Both default to `null` via a
+ * READ-TIME fallback (`?? null`, applied at getBestiaryEntry/
+ * listBestiaryEntries -- every pre-Phase-35 entry simply lacks the key on
+ * disk and reads as `null`, no migration/SCHEMA_VERSION bump needed, per
+ * this module's own already-established additive-field convention above).
+ * Patched via updateBestiaryEntryNote/updateBestiaryEntryRating -- STATUS-
+ * INDEPENDENT (no proposed/accepted check), mirroring updateBestiaryEntryScore's
+ * own "no status check" convention below, NOT updateBestiaryEntryRawFields's
+ * proposed-only guard: a GM editing their own note/rating on an
+ * already-accepted entry is exactly the kind of ongoing table-use edit these
+ * fields exist for, not a re-ingest a human decision should gate.
+ *
+ * Also gains `sourcePill` -- a DERIVED, NEVER-PERSISTED read-time projection
+ * (`deriveSourcePill`, applied at the same two read boundaries): "foundry" if
+ * `foundryActorRef` is set, "srd" if `sourceText`/`sourcePdfName` mentions
+ * "SRD" (case-insensitive), else "mine". A pure function of already-stored
+ * fields -- never a fifth persisted status value.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -101,6 +122,32 @@ export function checkBestiaryOutliers(rawFields) {
   }
 
   return { flagged: reasons.length > 0, reasons };
+}
+
+/**
+ * PURE, no I/O. Phase 35 task 35.1, §5: derives the read-time `sourcePill`
+ * projection from fields already on the entry -- foundryActorRef present ->
+ * "foundry"; sourceText/sourcePdfName mentioning "SRD" (case-insensitive) ->
+ * "srd"; else "mine".
+ * @param {object} entry
+ * @returns {"foundry"|"srd"|"mine"}
+ */
+export function deriveSourcePill(entry) {
+  if (entry?.foundryActorRef) return "foundry";
+  const flagText = `${entry?.sourceText ?? ""} ${entry?.sourcePdfName ?? ""}`;
+  if (/srd/i.test(flagText)) return "srd";
+  return "mine";
+}
+
+/**
+ * Read-time projection applied at every read boundary (getBestiaryEntry/
+ * listBestiaryEntries/updateBestiaryEntryNote/updateBestiaryEntryRating) --
+ * `note`/`rating` default to `null` for a pre-Phase-35 entry, `sourcePill` is
+ * always derived fresh, NEVER persisted back to disk.
+ */
+function projectReadFields(entry) {
+  if (!entry) return entry;
+  return { ...entry, note: entry.note ?? null, rating: entry.rating ?? null, sourcePill: deriveSourcePill(entry) };
 }
 
 function readEntry(entryId) {
@@ -194,18 +241,18 @@ export function updateBestiaryEntryRawFields(entryId, { rawFields, sourceText = 
   });
 }
 
-/** @returns {object}   the BestiaryEntry. Throws a clear Error if not found. */
+/** @returns {object}   the BestiaryEntry (§5's note/rating/sourcePill projection included). Throws a clear Error if not found. */
 export function getBestiaryEntry(entryId) {
-  return readEntry(entryId);
+  return projectReadFields(readEntry(entryId));
 }
 
-/** @returns {object[]}   every BestiaryEntry across the whole library (NOT scoped to any world). [] if none exist yet. */
+/** @returns {object[]}   every BestiaryEntry across the whole library (NOT scoped to any world), §5's projection included. [] if none exist yet. */
 export function listBestiaryEntries() {
   const root = bestiaryRoot();
   if (!existsSync(root)) return [];
   return readdirSync(root)
     .filter((f) => f.endsWith(".json"))
-    .map((f) => JSON.parse(readFileSync(join(root, f), "utf8")));
+    .map((f) => projectReadFields(JSON.parse(readFileSync(join(root, f), "utf8"))));
 }
 
 /**
@@ -241,6 +288,26 @@ export function discardBestiaryEntry(entryId) {
     );
   }
   return writeEntry({ ...entry, status: "discarded" });
+}
+
+/**
+ * §5's status-INDEPENDENT patch -- mirrors updateBestiaryEntryScore's own
+ * "no status check" convention (an ongoing table-use edit, not a re-ingest a
+ * DM's own acceptance decision should gate).
+ * @returns {object}   the updated BestiaryEntry (projection included)
+ */
+export function updateBestiaryEntryNote(entryId, note) {
+  const entry = readEntry(entryId);
+  return projectReadFields(writeEntry({ ...entry, note: note ?? null }));
+}
+
+/**
+ * §5's status-INDEPENDENT patch, same convention as updateBestiaryEntryNote.
+ * @returns {object}   the updated BestiaryEntry (projection included)
+ */
+export function updateBestiaryEntryRating(entryId, rating) {
+  const entry = readEntry(entryId);
+  return projectReadFields(writeEntry({ ...entry, rating: rating ?? null }));
 }
 
 export { ConcurrentWriteError };
