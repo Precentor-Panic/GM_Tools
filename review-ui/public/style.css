@@ -2606,12 +2606,18 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 #app-shell .shell-scene-library-item {
   padding: 6px 9px;
   border-radius: 5px;
-  cursor: pointer;
+}
+#app-shell .shell-scene-library-item:hover { background: var(--sp-row-hover-bg); }
+/* Phase 35 task 35.3: the always-visible controls row -- split out of
+   .shell-scene-library-item itself so the relocated delete-scene confirm
+   panel (a sibling of this row, appended straight onto the item) renders as
+   a full-width block below it instead of squeezed into the same flex row. */
+#app-shell .shell-scene-library-item-row {
   display: flex;
   align-items: center;
   gap: 8px;
+  cursor: pointer;
 }
-#app-shell .shell-scene-library-item:hover { background: var(--sp-row-hover-bg); }
 #app-shell .shell-scene-library-item-main { flex: 1; min-width: 0; }
 #app-shell .shell-scene-library-item-name {
   font-size: 12.5px;
@@ -2621,7 +2627,8 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   white-space: nowrap;
 }
 #app-shell .shell-scene-library-item-place { font-family: var(--sp-font-mono); font-size: 9.5px; color: var(--sp-ink-muted); }
-#app-shell .shell-scene-library-item-add-btn {
+#app-shell .shell-scene-library-item-add-btn,
+#app-shell .shell-scene-library-item-delete-btn {
   font-family: var(--sp-font-mono);
   font-size: 14px; line-height: 1;
   border: none; background: none;
@@ -2630,6 +2637,18 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   padding: 0 2px;
 }
 #app-shell .shell-scene-library-item-add-btn:hover { color: var(--sp-accent-teal); }
+#app-shell .shell-scene-library-item-delete-btn { font-size: 11px; }
+#app-shell .shell-scene-library-item-delete-btn:hover { color: var(--sp-accent-rust); }
+#app-shell .shell-scene-library-item-delete-confirm-panel {
+  margin: 6px 2px 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--sp-accent-danger);
+  border-radius: var(--sp-radius-md);
+  background: oklch(0.97 0.02 25);
+  cursor: default;
+}
+#app-shell .shell-scene-library-item-delete-confirm-panel .hint { margin: 0 0 7px; }
+#app-shell .shell-scene-library-item-delete-confirm-panel .btn { margin-right: 6px; }
 
 #app-shell .shell-rail-notices { padding: 6px 13px 12px; }
 #app-shell [data-testid="shell-add-to-plan-no-target-notice"],

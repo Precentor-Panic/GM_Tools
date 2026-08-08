@@ -7,7 +7,6 @@
 import { renderGraph, showCreateNodeForm, armPlacementMode, seedNodePosition, removeNodePosition } from "./graph-view.js";
 import { renderSessionPlanner, flushActiveNoteSave, cancelActiveAssist } from "./session-planner-view.js";
 import { renderCombatPlanning, renderCombatPlanningIngest, cancelActiveCombatPlanningRequest } from "./combat-planning-view.js";
-import { renderScenesTab } from "./scenes-view.js";
 import { renderPlansView } from "./plans-view.js";
 import { renderShell } from "./app-shell.js";
 import { requestConnectionPanel } from "./connection-menu.js";
@@ -82,8 +81,11 @@ async function initWorldSelect() {
 function parseHash() {
   // Phase 30: a bare/empty hash lands on the new designer app (the Session
   // Planner shelf), not the legacy `#queue` GM-Review view. Every legacy hash
-  // (`#queue`, `#review/<id>`, `#graph`, `#scenes`, ...) still resolves to its
-  // shelved view when navigated to explicitly -- only the DEFAULT changed.
+  // (`#queue`, `#review/<id>`, `#graph`, ...) still resolves to its shelved
+  // view when navigated to explicitly -- only the DEFAULT changed. `#scenes`
+  // is the one exception (Phase 35 task 35.3): it's retired and
+  // hash-redirects to `#planner/plans`, same convention as `#settings`/
+  // `#import` below.
   const raw = (location.hash || "#planner/plans").slice(1);
   // Split off the leading view segment, but preserve the REST as a single arg
   // (joined on "/") -- Phase 27 introduces the multi-segment
@@ -152,6 +154,19 @@ function renderCurrentView() {
     return;
   }
 
+  // Phase 35 task 35.3: retire #scenes -- keep-by-hash convention (Phase 34's
+  // own precedent, just above). The world-scoped browse screen is superseded
+  // by the planner rail's "Scene library" section (fast re-entry into any
+  // scene) + the shared scene tray's own search (browsing); the delete-scene
+  // guarded flow that screen uniquely owned was relocated to that SAME rail
+  // section first (app-shell.js's fillRailScenes) -- see index.html's own
+  // retirement comment for the full accounting. An old bookmark/link to
+  // `#scenes` lands on the rail's default view instead of a dead route.
+  if (view === "scenes") {
+    location.hash = "planner/plans";
+    return;
+  }
+
   // Phase 30 task 30.2: shell-vs-legacy visibility switch. The #app-shell root
   // is shown (and the legacy header.topbar/main hidden) iff the hash's leading
   // segment is `planner` or `world`; the reverse for any legacy hash. Kept as a
@@ -178,7 +193,6 @@ function renderCurrentView() {
   else if (view === "session-planner") renderSessionPlanner(arg);
   else if (view === "combat-planning") renderCombatPlanning(arg);
   else if (view === "combat-planning-ingest") renderCombatPlanningIngest(arg);
-  else if (view === "scenes") renderScenesTab();
   else if (view === "planner" || view === "world" || view === "chronicle" || view === "library") renderShell(view, arg);
 }
 

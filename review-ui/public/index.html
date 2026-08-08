@@ -24,7 +24,6 @@
       <button data-nav="graph">Graph</button>
       <button data-nav="plans" data-testid="plans-nav">Plans</button>
       <button data-nav="combat-planning" data-testid="combat-planning-nav">Encounter Builder</button>
-      <button data-nav="scenes" data-testid="scenes-nav">Scenes</button>
     </nav>
     <div class="topbar-right">
       <select id="world-select" aria-label="World"></select>
@@ -181,12 +180,17 @@
   <div id="session-planner-body"></div>
 </section>
 
-<!-- ================= SCENES (Phase 24) ================= -->
-<section id="view-scenes" class="view">
-  <h1>Scenes</h1>
-  <p class="hint">Browse and search every previously-prepared scene across this world, and jump back into any of them — not just the one you touched last.</p>
-  <div id="scenes-body"></div>
-</section>
+<!-- ================= SCENES (Phase 24) -- RETIRED Phase 35 task 35.3 =====
+     The world-scoped browse-every-scene screen is superseded: browsing +
+     search now lives in the shared scene tray (scene-tray.js, mounted on
+     every Library tab + the World inspector), fast re-entry into a scene
+     lives in the planner rail's own "Scene library" section
+     (app-shell.js's fillRailScenes), and the one piece of real, load-bearing
+     behavior this screen still uniquely owned -- the guarded TRUE
+     delete-scene flow -- was relocated to that SAME rail section
+     (shell-scene-library-item-delete-btn et al) before this section was
+     removed. `#scenes` hash-redirects to `#planner/plans` (app.js's
+     renderCurrentView) rather than 404ing on an old bookmark/link. ==== -->
 
 <!-- ================= ENCOUNTER BUILDER (Phase 19) ================= -->
 <section id="view-combat-planning" class="view">

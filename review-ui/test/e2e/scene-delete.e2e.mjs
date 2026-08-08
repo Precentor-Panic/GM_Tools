@@ -15,11 +15,43 @@
 // routes + deleteScene's scene-link cascade import") -- asserting on a
 // cascade path about to be deleted is testing a soon-dead contract, not the
 // surviving one. What SURVIVES and is KEPT here, unchanged in spirit: the
-// Scenes-tab delete-scene flow (`scene-list-item-delete` et al, still real,
-// still shipped, still green) and the plan-membership-cascade + place-
-// entity-survives guarantees of the real DELETE /api/session-planner/
-// scenes/:sceneId route (Decision 2: deleting a scene is never a graph
-// mutation).
+// plan-membership-cascade + place-entity-survives guarantees of the real
+// DELETE /api/session-planner/scenes/:sceneId route (Decision 2: deleting a
+// scene is never a graph mutation).
+//
+// ===========================================================================
+// RETIRED-AS-SUPERSEDED (Phase 35 task 35.3): `#scenes` (the Scenes tab) is
+// retired this phase (plans/phase-35-tasks.md's "Retire-as-hit this phase" --
+// its browse function is superseded by the planner rail's "Scene library"
+// section + the shared scene tray's own search; see index.html's own
+// retirement comment on the removed `<section id="view-scenes">`). Two
+// things changed here as a direct result, in the SAME commit:
+//
+//   1. The UI-level "SCENES TAB: delete removes the scene entirely" test
+//      below is REPLACED (not removed outright -- the guarded delete flow
+//      itself is real, load-bearing behavior that had to survive) by
+//      "PLANNER RAIL: scene-library delete removes the scene entirely",
+//      driving the SAME real DELETE route through the flow's NEW home:
+//      app-shell.js's `fillRailScenes`/`toggleSceneDeleteConfirm`
+//      (`shell-scene-library-item-delete-btn` et al), per the four-verbs
+//      rule (design/session-planner/README.md:163) -- kept distinct from
+//      that same rail row's pre-existing `+` (add-to-plan, an unlink-
+//      reversible membership edit, a different verb entirely).
+//   2. This file's sibling, `scenes-tab-browse-and-navigate.e2e.mjs`, is
+//      REMOVED entirely (not just trimmed) -- all 5 of its tests pinned
+//      `#scenes`-specific DOM (the nav button, `#view-scenes`,
+//      `scenes-list`/`scene-list-item`/`scenes-search-input`/
+//      `scenes-empty-state`) that no longer exists anywhere in the app.
+//      Nothing there needs a like-for-like replacement: fast re-entry into a
+//      scene is the planner rail's own pre-existing `shell-scene-library-
+//      item` row (already covered by phase30-shell.e2e.mjs), and browse/
+//      search is the shared scene tray's own `scene-tray-search-input`
+//      (already covered by the phase35 e2e suite) -- both predate this
+//      retirement and needed no new test written for it. The two routes that
+//      file exercised (`GET /api/scene-planning/scenes`,
+//      `POST /api/session-planner/scenes`) remain covered by their own
+//      already-shipped consumers' tests throughout this suite.
+// ===========================================================================
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import { chromium } from "playwright";
@@ -98,37 +130,45 @@ test("ROUTE LEVEL: DELETE /api/session-planner/scenes/:sceneId cascades -- scene
   assert.notEqual(secondStatus, 500, "deleting an already-deleted scene must not crash the server");
 });
 
-test("SCENES TAB: delete removes the scene entirely (real DELETE route, confirmed row-removal, gone from a fresh list)", async () => {
+test("PLANNER RAIL: scene-library delete removes the scene entirely (real DELETE route, confirmed row-removal, gone from a fresh list)", async () => {
   const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "scdel-place-c" });
 
-  await page.goto(`${base}/#scenes`);
-  const item = page.locator(`[data-testid="scene-list-item"][data-scene-id="${scene.id}"]`);
+  await page.goto(`${base}/#planner/plans`);
+  const item = page.locator(`[data-testid="shell-scene-library-item"][data-scene-id="${scene.id}"]`);
   await item.waitFor({ state: "visible", timeout: 15000 });
 
-  const deleteBtn = item.locator('[data-testid="scene-list-item-delete"]');
+  const deleteBtn = item.locator('[data-testid="shell-scene-library-item-delete-btn"]');
   await deleteBtn.waitFor({ state: "visible", timeout: 5000 });
   await deleteBtn.click();
 
-  const confirmPanel = item.locator(`[data-testid="scene-list-item-delete-confirm-panel"][data-scene-id="${scene.id}"]`);
+  const confirmPanel = item.locator(`[data-testid="shell-scene-library-item-delete-confirm-panel"][data-scene-id="${scene.id}"]`);
   await confirmPanel.waitFor({ state: "visible", timeout: 5000 });
-  await confirmPanel.locator('[data-testid="scene-list-item-delete-confirm-btn"]').click();
+  await confirmPanel.locator('[data-testid="shell-scene-library-item-delete-confirm-btn"]').click();
 
   await assert.doesNotReject(async () => {
     await page.waitForFunction(
-      (id) => document.querySelectorAll(`[data-testid="scene-list-item"][data-scene-id="${id}"]`).length === 0,
+      (id) => document.querySelectorAll(`[data-testid="shell-scene-library-item"][data-scene-id="${id}"]`).length === 0,
       scene.id,
       { timeout: 10000 }
     );
-  }, "confirming the delete must remove the row from the Scenes tab");
+  }, "confirming the delete must remove the row from the planner rail's scene library");
 
   // Confirm via a completely fresh page load + the real route, not just
   // in-page DOM state.
-  await page.goto(`${base}/#scenes`);
-  const itemAgain = page.locator(`[data-testid="scene-list-item"][data-scene-id="${scene.id}"]`);
-  assert.equal(await itemAgain.count(), 0, "a fresh Scenes-tab load must not show the deleted scene");
+  await page.goto(`${base}/#planner/plans`);
+  const itemAgain = page.locator(`[data-testid="shell-scene-library-item"][data-scene-id="${scene.id}"]`);
+  assert.equal(await itemAgain.count(), 0, "a fresh planner rail load must not show the deleted scene");
 
   const getRes = await fetch(`${base}/api/session-planner/scenes/${scene.id}?world=${WORLD}`);
   assert.notEqual(getRes.status, 200, "the scene must be genuinely gone from the real store, not just hidden in the DOM");
+});
+
+test("#scenes hash-redirects to the planner rail (keep-by-hash retirement convention) instead of 404ing on an old bookmark", async () => {
+  await page.goto(`${base}/#scenes`);
+  await assert.doesNotReject(async () => {
+    await page.waitForFunction(() => location.hash === "#planner/plans", { timeout: 5000 });
+  }, "navigating to the retired #scenes hash must redirect to #planner/plans");
+  await page.locator('[data-testid="shell-rail-planner"]').waitFor({ state: "visible", timeout: 15000 });
 });
 
 // The two former "PLAN VIEW: remove from plan" scenarios that used to live

@@ -326,6 +326,11 @@ async function fillRailScenes(listEl, countEl) {
   for (const s of scenes) {
     sceneNameCache.set(s.id, resolveSceneDisplayName(s, infoMap));
     const item = el("div", { class: "shell-scene-library-item", "data-testid": "shell-scene-library-item", "data-scene-id": s.id });
+    // Phase 35 task 35.3: a plain flex-row wrapper for the always-visible
+    // controls, keeping `item` itself a column so the relocated delete
+    // flow's confirm panel (appended straight onto `item` below) renders as
+    // a full-width block underneath, not squeezed into the row.
+    const row = el("div", { class: "shell-scene-library-item-row" });
 
     const main = el("div", { class: "shell-scene-library-item-main" });
     const name = el("div", { class: "shell-scene-library-item-name", "data-testid": "shell-scene-library-item-name" });
@@ -349,9 +354,81 @@ async function fillRailScenes(listEl, countEl) {
       addSceneToOpenPlan(s.id);
     });
 
-    item.append(main, addBtn);
+    // Phase 35 task 35.3: the guarded TRUE delete-scene flow, relocated here
+    // from the retired #scenes tab (scenes-view.js's own renderSceneListItem,
+    // pre-retirement) -- this rail section is already the world-scoped
+    // scene-browse list #scenes itself used to be, so a TRUE delete (the
+    // scene record + every plan membership + every scene-link gone; the
+    // place entity survives, `session-planner/scenes.mjs`'s deleteScene
+    // cascade) belongs on the SAME row as every other per-scene action here.
+    // Kept DISTINCT per the four-verbs rule (design/session-planner/
+    // README.md:163): the + button above is remove/add-from-plan (an
+    // unlink, reversible membership edit) -- a completely different verb
+    // from this one.
+    const deleteBtn = el("button", {
+      class: "shell-scene-library-item-delete-btn",
+      "data-testid": "shell-scene-library-item-delete-btn",
+      "data-scene-id": s.id,
+      title: "Delete this scene entirely",
+      type: "button"
+    });
+    deleteBtn.textContent = "✕";
+    deleteBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleSceneDeleteConfirm(item, s, countEl);
+    });
+
+    row.append(main, addBtn, deleteBtn);
+    item.appendChild(row);
     listEl.appendChild(item);
   }
+}
+
+// Guarded confirm panel, same shape/copy as the retired #scenes tab's own
+// (scenes-view.js's renderSceneListItem) -- a second click while already
+// open is a no-op (idempotent toggle-open), not a second panel.
+function toggleSceneDeleteConfirm(item, scene, countEl) {
+  const existing = item.querySelector('[data-testid="shell-scene-library-item-delete-confirm-panel"]');
+  if (existing) { existing.remove(); return; }
+
+  const panel = el("div", {
+    class: "shell-scene-library-item-delete-confirm-panel",
+    "data-testid": "shell-scene-library-item-delete-confirm-panel",
+    "data-scene-id": scene.id
+  });
+  const warn = el("p", { class: "hint" });
+  warn.textContent = "Delete this scene entirely? It will be removed from every plan it's in — the underlying location survives, but this scene itself is gone for good.";
+  const status = el("span", { class: "hint" });
+  const confirmBtn = el("button", { class: "btn btn--accept", type: "button", "data-testid": "shell-scene-library-item-delete-confirm-btn" });
+  confirmBtn.textContent = "Yes, delete";
+  const cancelBtn = el("button", { class: "btn", type: "button", "data-testid": "shell-scene-library-item-delete-cancel-btn" });
+  cancelBtn.textContent = "Cancel";
+
+  confirmBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    confirmBtn.disabled = true;
+    try {
+      await shApi(`/api/session-planner/scenes/${encodeURIComponent(scene.id)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      });
+      sceneNameCache.delete(scene.id);
+      item.remove();
+      if (countEl) countEl.textContent = String(Math.max(0, Number(countEl.textContent || "0") - 1));
+      // If the open plan's runsheet is showing and referenced this scene,
+      // reflect the removal -- same precedent as removeSceneFromPlan/
+      // reorderRunsheet already use elsewhere in this file.
+      if (railOpenPlanId) refreshMainIfPlan(railOpenPlanId);
+    } catch (err) {
+      status.textContent = `Could not delete: ${err.message}`;
+      confirmBtn.disabled = false;
+    }
+  });
+  cancelBtn.addEventListener("click", (e) => { e.stopPropagation(); panel.remove(); });
+
+  panel.append(warn, confirmBtn, cancelBtn, status);
+  item.appendChild(panel);
 }
 
 async function createNewPlanAndOpen() {

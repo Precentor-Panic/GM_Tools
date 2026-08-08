@@ -23,6 +23,15 @@
 import { showUndoToast } from "./plans-view.js";
 import { createFlushableDebounce } from "./debounced-save.mjs";
 import { colorForType } from "./graph-view.js";
+// Phase 35 task 35.3: the World inspector's own bespoke buildSceneTray/srow
+// implementation is RETIRED in favor of the shared component ("one tray" —
+// README's "implement once", scene-tray.js's own header). A graph-node drag
+// is NOT one of the shared tray's roster kinds (creature/hero/asset) — see
+// scene-tray.js's own header for the `onExternalDrop` hook this file wires
+// `addToScene` (the existing, UNCHANGED `.../elements/from-graph` route) into
+// so the phase33 "drop a node -> real kind:'graph' scene-element" pin
+// survives the unification unchanged.
+import { mountSceneTray, setTrayDragPayload } from "./scene-tray.js";
 
 // ---------------------------------------------------------------------------
 // Canonical designer type vocabulary (README §F glyph set + oklch accents).
@@ -95,8 +104,7 @@ const ui = {
   query: "",
   types: new Set(),
   looseOpen: true,
-  looseFilter: null,
-  sceneQuery: ""
+  looseFilter: null
 };
 const cache = { world: null, graph: null, derived: null, scenes: null, usedInScene: null };
 let selectedId = null;
@@ -128,7 +136,6 @@ function resetForWorld(world) {
   ui.types = new Set();
   ui.looseOpen = true;
   ui.looseFilter = null;
-  ui.sceneQuery = "";
   ui.expandedInit = false;
   cache.world = null;
   cache.graph = null;
@@ -393,6 +400,7 @@ function buildTreeRow(r) {
   row.addEventListener("click", () => select(n.id));
   wireReparentTarget(row, n.id, () => n.id);
   row.addEventListener("dragstart", (e) => { e.stopPropagation(); startDrag(n.id, e); });
+  row.addEventListener("dragend", endDrag);
   return row;
 }
 
@@ -402,7 +410,18 @@ function buildTreeRow(r) {
 let dragId = null;
 function startDrag(id, e) {
   dragId = id;
+  // Also populate the shared tray's drag-payload channel (scene-tray.js) --
+  // a graph node's own kind is "graph", never one of the tray's roster kinds,
+  // so this only ever resolves through the World-specific onExternalDrop
+  // hook wired in mountWorldSceneTray() below; it's a silent no-op wherever
+  // else the same drag might land (e.g. a tree-row reparent target, which
+  // reads `dragId` directly and ignores this channel entirely).
+  setTrayDragPayload({ kind: "graph", id });
   if (e && e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", id); } catch { /* ignore */ } }
+}
+function endDrag() {
+  dragId = null;
+  setTrayDragPayload(null);
 }
 function wireReparentTarget(rowEl, targetIdArg, resolveTargetId) {
   rowEl.addEventListener("dragover", (e) => { e.preventDefault(); rowEl.classList.add("wv-drop-target"); });
@@ -541,6 +560,7 @@ function buildContentChip(k) {
     kidCount ? `${kidCount} inside` : ((k.description || "").trim() ? "" : "no detail")));
   chip.addEventListener("click", () => select(k.id));
   chip.addEventListener("dragstart", (e) => { e.stopPropagation(); startDrag(k.id, e); });
+  chip.addEventListener("dragend", endDrag);
   return chip;
 }
 
@@ -770,6 +790,7 @@ function renderLoose() {
     }
     lrow.addEventListener("click", () => select(n.id));
     lrow.addEventListener("dragstart", (e) => { e.stopPropagation(); startDrag(n.id, e); });
+    lrow.addEventListener("dragend", endDrag);
     rows.appendChild(lrow);
   }
   host.appendChild(rows);
@@ -877,8 +898,11 @@ function renderInspector() {
 
   insp.appendChild(body);
 
-  // Scene tray
-  insp.appendChild(buildSceneTray(sel));
+  // Scene tray (Phase 35 task 35.3: the shared component, unified — see the
+  // import comment above + mountWorldSceneTray's own comment below).
+  const trayHost = el("div");
+  insp.appendChild(trayHost);
+  mountWorldSceneTray(trayHost);
 
   pane.appendChild(insp);
   fillAppearsIn(sel.id, appears);
@@ -1019,61 +1043,38 @@ function sceneDisplayName(scene) {
   return scene.objectiveNote || scene.id || "Ad-hoc scene";
 }
 
-function buildSceneTray(sel) {
-  const tray = el("div", { class: "wv-scene-tray" });
-  const head = el("div", { class: "wv-scene-tray-head" });
-  head.append(
-    el("div", { class: "wv-mono-label" }, "Drop into a scene"),
-    el("div", { style: "flex:1" }),
-    // §3.2(b) / D12 (Phase 34 task 34.3): label the gesture so the scene-add
-    // tray reads distinctly from a tree-row reparent drop -- copy + testid
-    // per the new prototype (`World Graph.dc.html:241`'s own "Drop into a
-    // scene" section label, reused verbatim for the hint per the fixture).
-    el("div", { class: "wv-mono wv-scene-tray-hint", "data-testid": "world-scene-tray-hint" }, "Drop into a scene")
-  );
-  const search = el("input", { class: "wv-scene-tray-search", type: "text", placeholder: "Find a scene…", value: ui.sceneQuery });
-  const list = el("div", { class: "wv-scene-tray-list" });
-  const renderList = () => {
-    list.innerHTML = "";
-    const q = ui.sceneQuery.trim().toLowerCase();
-    const scenes = (cache.scenes || []).filter((s) => {
-      if (!q) return true;
-      const pn = (node(s.locationEntityId) || {}).name || "";
-      return sceneDisplayName(s).toLowerCase().includes(q) || pn.toLowerCase().includes(q);
-    });
-    if (!scenes.length) { list.appendChild(el("div", { class: "wv-hint" }, "No scenes yet.")); return; }
-    for (const s of scenes) {
-      srow(s, sel, list);
+// Phase 35 task 35.3: mounts the SHARED scene-tray component (scene-tray.js)
+// in place of the retired buildSceneTray/srow above. Every DOM/behavior
+// contract the phase30/33/34 e2e suite pins (`world-scene-drop-row`,
+// `world-scene-tray-hint` reading "Drop into a scene" verbatim, the
+// `.wv-scene-drop-meta` "place · N elements · ago" line ticking after a
+// drop) is preserved via scene-tray.js's own additive opts -- see its header
+// comment. `onExternalDrop` is the actual unification seam: a graph-node
+// drop's payload.kind is "graph" (set by startDrag above), never one of the
+// shared tray's own roster kinds, so it's routed here to the EXISTING,
+// UNCHANGED `addToScene` (the `.../elements/from-graph` route, its own
+// dedupe/undo-toast/flash) instead of the generic `POST .../tray/drop` --
+// the "roster-drop and element-creation flows are complementary" reading of
+// the task brief. `addToScene` itself already calls `renderInspector()` on
+// success, which remounts this tray fresh with up-to-date data (including
+// the ticked element count) -- no separate refresh() call needed here.
+function mountWorldSceneTray(host) {
+  mountSceneTray(host, {
+    world: currentWorld(),
+    rowTestid: "world-scene-drop-row",
+    hintText: "Drop into a scene",
+    hintTestid: "world-scene-tray-hint",
+    metaClass: "wv-scene-drop-meta",
+    computeMeta: (scene) => `${(node(scene.locationEntityId) || {}).name || "—"} · ${agoLabel(scene)}`,
+    computeMetaAsync: (scene) => sceneContentCount(scene.id).then((n) => {
+      if (n == null) return null;
+      return `${(node(scene.locationEntityId) || {}).name || "—"} · ${n} elements · ${agoLabel(scene)}`;
+    }),
+    onExternalDrop: (scene, payload) => {
+      if (payload.kind !== "graph") return false;
+      return addToScene(payload.id, scene).then(() => true);
     }
-  };
-  search.addEventListener("input", () => { ui.sceneQuery = search.value; renderList(); });
-  head.appendChild(search);
-  tray.append(head, list);
-  renderList();
-  return tray;
-}
-function srow(s, sel, list) {
-  const placeName = (node(s.locationEntityId) || {}).name || "—";
-  const row = el("div", { class: "wv-scene-drop", "data-testid": "world-scene-drop-row", "data-scene-id": s.id });
-  row.appendChild(el("div", { class: "wv-scene-drop-name" }, sceneDisplayName(s)));
-  // Meta reads `place · N elements · ago` (prototype World Graph.dc.html:608).
-  // N is fetched async from the SAME /scenes/:id/elements count app-shell.js:680
-  // uses — a tree->tray drop now creates a REAL kind:'graph' scene-element
-  // (Phase 33 task 33.1), so the count ticks correctly with no second term.
-  const meta = el("div", { class: "wv-scene-drop-meta" }, `${placeName} · ${agoLabel(s)}`);
-  row.appendChild(meta);
-  sceneContentCount(s.id).then((n) => {
-    if (n != null) meta.textContent = `${placeName} · ${n} elements · ${agoLabel(s)}`;
   });
-  row.addEventListener("dragover", (e) => { e.preventDefault(); row.classList.add("wv-drop-target"); });
-  row.addEventListener("dragleave", () => row.classList.remove("wv-drop-target"));
-  row.addEventListener("drop", (e) => {
-    e.preventDefault();
-    row.classList.remove("wv-drop-target");
-    const src = dragId; dragId = null;
-    if (src) addToScene(src, s);
-  });
-  list.appendChild(row);
 }
 // Element count for the scene-tray meta (Phase 33 task 33.1: a tree->tray
 // drop now creates a REAL scene-ELEMENT, same store app-shell.js:680 counts

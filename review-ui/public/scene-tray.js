@@ -20,6 +20,30 @@
 // share one module-level payload set on dragstart (setTrayDragPayload) and read
 // on drop — robust across the synthetic DataTransfer the e2e drag helper uses,
 // and it carries the `kind` a bare text/plain id could not.
+//
+// Phase 35 task 35.3: world-view.js adopts this SAME component for the World
+// inspector's "Drop into a scene" tray (retiring its own bespoke
+// buildSceneTray/srow implementation — one tray, per README's "implement
+// once"). A World graph-node drag is NOT one of this store's roster kinds
+// (creature/hero/asset) — dropping a node there must keep creating a real
+// `kind:'graph'` scene-ELEMENT via the existing, unchanged
+// `.../elements/from-graph` route (phase33's pinned behavior), never a roster
+// row. `mountSceneTray` therefore accepts a handful of narrow, additive-only
+// opts (all optional — every Library call site is unaffected, since none of
+// them pass these) so ONE implementation serves both:
+//   - `rowTestid`/`hintText`/`hintTestid`/`metaClass` — cosmetic DOM overrides
+//     so a caller can match its own pre-existing, e2e-pinned contract instead
+//     of this module's own Library-pinned testids.
+//   - `computeMeta(scene, roster)` / `computeMetaAsync(scene)` — override the
+//     built-in "N creatures · N heroes · N props" meta line (sync initial
+//     text + an optional async follow-up patch, mirroring the exact
+//     sync-then-async-refine pattern world-view.js's own retired
+//     `srow`/`sceneContentCount` already used).
+//   - `onExternalDrop(scene, payload)` — first refusal on every drop; a
+//     truthy (possibly-async) return means "handled elsewhere," skipping this
+//     module's own generic `POST .../tray/drop` entirely. World's own
+//     unchanged `addToScene` (the from-graph route + its own undo toast) is
+//     wired in through this hook.
 "use strict";
 
 // ---------------------------------------------------------------------------
@@ -118,7 +142,8 @@ export function mountSceneTray(host, opts = {}) {
     }),
     el("div", { style: "flex: 1;" }),
     el("div", {
-      text: "creatures, heroes, props",
+      testid: opts.hintTestid,
+      text: opts.hintText || "creatures, heroes, props",
       style: "font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70);"
     })
   ]);
@@ -191,6 +216,11 @@ export function mountSceneTray(host, opts = {}) {
   }
 
   async function doDrop(scene, payload) {
+    if (opts.onExternalDrop) {
+      let handled = false;
+      try { handled = await opts.onExternalDrop(scene, payload); } catch { /* fall through to the generic roster drop below */ }
+      if (handled) return;
+    }
     try {
       await api(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/tray/drop`, {
         method: "POST",
@@ -223,7 +253,7 @@ export function mountSceneTray(host, opts = {}) {
     const total = xpFor(roster);
 
     const row = el("div", {
-      testid: "scene-tray-scene-row",
+      testid: opts.rowTestid || "scene-tray-scene-row",
       "data-scene-id": scene.id,
       style: "padding: 8px 10px; border: 1px dashed oklch(0.86 0.010 80); border-radius: 4px; background: oklch(0.965 0.006 85);"
     });
@@ -255,11 +285,21 @@ export function mountSceneTray(host, opts = {}) {
 
     const meta = el("div", {
       testid: "scene-tray-scene-row-meta",
-      text: metaFor(roster),
+      class: opts.metaClass,
+      text: opts.computeMeta ? opts.computeMeta(scene, roster) : metaFor(roster),
       style: "font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70); margin-top: 3px;"
     });
 
     row.append(head, meta);
+
+    if (opts.computeMetaAsync) {
+      // Sync-then-async-refine, matching world-view.js's own retired
+      // sceneContentCount().then(...) pattern verbatim: `meta` is closed over
+      // this specific render's DOM node, so a stale/detached update (the row
+      // was already rebuilt by a later paintScenes()) is a harmless no-op —
+      // the exact same edge case the retired implementation already had.
+      opts.computeMetaAsync(scene).then((text) => { if (text != null) meta.textContent = text; }).catch(() => {});
+    }
 
     if (roster.length) {
       const chips = el("div", { style: "display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;" });
