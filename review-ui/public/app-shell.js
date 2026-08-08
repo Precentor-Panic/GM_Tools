@@ -20,6 +20,7 @@
 import { showUndoToast, buildAddScenePanel } from "./plans-view.js";
 import { renderPlannerScenePage } from "./session-planner-view.js";
 import { renderWorldSurface as renderWorldSurfaceView, clearWorldTopbar } from "./world-view.js";
+import { mountConnectionChip } from "./connection-menu.js";
 
 // ---------------------------------------------------------------------------
 // local api/world helpers (same standalone convention as plans-view.js)
@@ -148,6 +149,16 @@ function wireStaticControls() {
     ?.addEventListener("click", () => goto("planner/plans"));
   document.querySelector('[data-testid="shell-surface-toggle-world"]')
     ?.addEventListener("click", () => goto("world"));
+  // Phase 34 task 34.2: the two new surfaces navigate to their canonical
+  // bare hash (Decision 4's precedent, extended). We also render the surface
+  // synchronously here rather than waiting only for the async hashchange --
+  // setting location.hash dispatches hashchange as a later task, leaving a
+  // window where the hash reads "#chronicle" but data-surface hasn't been
+  // repainted yet; the hashchange re-render that follows is idempotent.
+  document.querySelector('[data-testid="shell-nav-chronicle"]')
+    ?.addEventListener("click", () => { goto("chronicle"); renderShell("chronicle"); });
+  document.querySelector('[data-testid="shell-nav-library"]')
+    ?.addEventListener("click", () => { goto("library"); renderShell("library"); });
 
   const sel = document.querySelector('[data-testid="shell-world-select"]');
   sel?.addEventListener("change", () => {
@@ -765,6 +776,60 @@ function renderWorldSurface(entityId) {
   renderWorldSurfaceView(entityId);
 }
 
+// view=chronicle / view=library -> designed placeholder surfaces (Phase 34
+// task 34.2 scaffold). Correct chrome (a sub-bar with the mono kicker, per the
+// prototypes) + a short placeholder body in the design's voice. No planner
+// rail (like the World surface). The scaffold root is the SOLE occupant of
+// #shell-main (the e2e asserts a child count of exactly 1).
+const SCAFFOLD_COPY = {
+  chronicle: {
+    kicker: "Chronicle",
+    title: "Let time pass",
+    body: "This is where advances are composed and reviewed — queued intents ride along on the next passage of time, and the world moves once instead of eleven times. The Chronicle arrives in Phase 37."
+  },
+  library: {
+    kicker: "Library",
+    title: "The bestiary and Hero's Hall",
+    body: "This is where the bestiary, party and compendium mirror will live — everything a scene can reach for, browsable and taggable. The Library arrives in Phase 35."
+  }
+};
+
+function renderScaffoldSurface(surface) {
+  const copy = SCAFFOLD_COPY[surface];
+  const root = el("div", { class: "surface-scaffold", "data-testid": `${surface}-surface-root` });
+
+  const subbar = el("div", { class: "surface-scaffold-subbar" });
+  const kicker = el("div", { class: "surface-scaffold-kicker" });
+  kicker.textContent = copy.kicker;
+  subbar.appendChild(kicker);
+  root.appendChild(subbar);
+
+  const bodyWrap = el("div", { class: "surface-scaffold-body" });
+  const h1 = el("div", { class: "surface-scaffold-title" });
+  h1.textContent = copy.title;
+  const p = el("p", { class: "surface-scaffold-note" });
+  p.textContent = copy.body;
+  bodyWrap.append(h1, p);
+  root.appendChild(bodyWrap);
+
+  setMain(root);
+}
+
+// Paint the active nav button off the shell root's data-surface (planner/world
+// keep their Phase-30 CSS active rule; the two new surfaces are painted here).
+function paintNavActive(surface) {
+  const map = {
+    planner: '[data-testid="shell-surface-toggle-planner"]',
+    world: '[data-testid="shell-surface-toggle-world"]',
+    chronicle: '[data-testid="shell-nav-chronicle"]',
+    library: '[data-testid="shell-nav-library"]'
+  };
+  for (const [surf, sel] of Object.entries(map)) {
+    const btn = document.querySelector(sel);
+    if (btn) btn.classList.toggle("shell-surface-btn--active", surf === surface);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Entry point, called by app.js's renderCurrentView for #planner/* and #world*.
 // ---------------------------------------------------------------------------
@@ -775,9 +840,15 @@ export function renderShell(view, arg) {
   const titleEl = document.getElementById("shell-world-title");
   if (titleEl) titleEl.textContent = currentWorld() || "";
   populateWorldSelect();
+  // Phase 34 task 34.2: the Connection Menu chip lives in the topbar right
+  // slot on every shell surface. mountConnectionChip is idempotent (builds
+  // once, then refreshes) and also honors any queued #settings/#import
+  // redirect that asked the panel to open.
+  mountConnectionChip();
 
   if (view === "world") {
     shell.setAttribute("data-surface", "world");
+    paintNavActive("world");
     railOpenPlanId = null;
     renderBreadcrumb(null);
     renderRail(null);
@@ -785,7 +856,19 @@ export function renderShell(view, arg) {
     return;
   }
 
+  if (view === "chronicle" || view === "library") {
+    shell.setAttribute("data-surface", view);
+    paintNavActive(view);
+    railOpenPlanId = null;
+    clearWorldTopbar();
+    renderBreadcrumb(null);
+    renderRail(null);
+    renderScaffoldSurface(view);
+    return;
+  }
+
   shell.setAttribute("data-surface", "planner");
+  paintNavActive("planner");
   clearWorldTopbar();
   const sub = parsePlannerArg(arg);
   if (sub.kind === "plans") railOpenPlanId = null;

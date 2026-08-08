@@ -267,6 +267,8 @@
     <div class="shell-surface-toggle">
       <button type="button" class="shell-surface-btn" data-testid="shell-surface-toggle-planner">Session planner</button>
       <button type="button" class="shell-surface-btn" data-testid="shell-surface-toggle-world">World</button>
+      <button type="button" class="shell-surface-btn" data-testid="shell-nav-chronicle">Chronicle</button>
+      <button type="button" class="shell-surface-btn" data-testid="shell-nav-library">Library</button>
     </div>
     <div class="shell-divider"></div>
     <!-- filled with [data-testid="shell-breadcrumb"] on the planner surface,
@@ -277,6 +279,12 @@
          world-view.js on the World surface, emptied on the planner surface. -->
     <div class="shell-world-topbar-slot" id="shell-world-topbar-slot"></div>
     <select class="shell-world-select" data-testid="shell-world-select" aria-label="World"></select>
+    <!-- Phase 34 task 34.2: the Connection Menu chip + its right-anchored panel
+         mount here (connection-menu.js). position:relative so the panel anchors
+         to this slot. World selection stays in the topbar select above (kept
+         functional for backward-compat + the panel's click-outside target);
+         the panel's Foundry section also carries a switch-world list. -->
+    <div class="shell-conn-slot" id="shell-conn-slot"></div>
   </div>
   <div class="shell-body">
     <!-- filled with [data-testid="shell-rail-planner"] on the planner surface,

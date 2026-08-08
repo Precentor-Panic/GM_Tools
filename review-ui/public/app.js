@@ -10,6 +10,7 @@ import { renderCombatPlanning, renderCombatPlanningIngest, cancelActiveCombatPla
 import { renderScenesTab } from "./scenes-view.js";
 import { renderPlansView } from "./plans-view.js";
 import { renderShell } from "./app-shell.js";
+import { requestConnectionPanel } from "./connection-menu.js";
 
 // ---------------------------------------------------------------------------
 // world selection
@@ -136,12 +137,27 @@ function renderCurrentView() {
   // submit) -- see combat-planning-view.js's own header.
   cancelActiveCombatPlanningRequest();
   const { view, arg } = parseHash();
+
+  // Phase 34 task 34.2: retire #settings / #import as standalone views. Both
+  // fold into the Connection Menu panel: #settings -> panel open on the
+  // "Campaign & keys" section; #import -> panel open on lore intake (paste
+  // mode). We queue the open, then rewrite the hash to the shell's default
+  // landing -- the hashchange re-render mounts the shell (and thus the chip),
+  // which honors the queued request. The legacy view-settings/view-import
+  // sections stay in the DOM (their top-level button wiring references them)
+  // but are never navigated to as an active view again.
+  if (view === "settings" || view === "import") {
+    requestConnectionPanel({ section: view === "settings" ? "settings" : "lore" });
+    location.hash = "planner/plans";
+    return;
+  }
+
   // Phase 30 task 30.2: shell-vs-legacy visibility switch. The #app-shell root
   // is shown (and the legacy header.topbar/main hidden) iff the hash's leading
   // segment is `planner` or `world`; the reverse for any legacy hash. Kept as a
   // branch INSIDE this same renderCurrentView so the 4 nav-cancel hooks above
   // fire on a shell navigation exactly as for any legacy hash (§2/§4).
-  const inShell = view === "planner" || view === "world";
+  const inShell = view === "planner" || view === "world" || view === "chronicle" || view === "library";
   document.getElementById("app-shell").hidden = !inShell;
   document.querySelector("header.topbar").hidden = inShell;
   document.querySelector("main").hidden = inShell;
@@ -155,8 +171,6 @@ function renderCurrentView() {
   if (view === "queue") renderQueue();
   else if (view === "review") renderReview(arg);
   else if (view === "debt") renderDebt();
-  else if (view === "settings") renderSettings();
-  else if (view === "import") renderImportView();
   else if (view === "framing") renderFramingView();
   else if (view === "graph") renderGraphStandaloneView();
   else if (view === "entity") renderEntityDetail(arg);
@@ -165,7 +179,7 @@ function renderCurrentView() {
   else if (view === "combat-planning") renderCombatPlanning(arg);
   else if (view === "combat-planning-ingest") renderCombatPlanningIngest(arg);
   else if (view === "scenes") renderScenesTab();
-  else if (view === "planner" || view === "world") renderShell(view, arg);
+  else if (view === "planner" || view === "world" || view === "chronicle" || view === "library") renderShell(view, arg);
 }
 
 // Phase 15 task 15.3: closing the mobile drawer belongs on the hashchange
