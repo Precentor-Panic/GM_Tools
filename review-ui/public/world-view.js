@@ -111,6 +111,14 @@ let descSaverForId = null;
 // fetch between the inspector's own display and the arm's consequence-line
 // N count -- no second route call for the same data.
 let removeArmedId = null;
+// The armed opt-in ("also remove from all N scenes") lives HERE, not only in
+// the DOM: any async inspector re-render while armed (the consequence line's
+// own awaited appearances fetch, a chip refresh) rebuilds the checkbox and a
+// DOM-only checked state would silently reset -- a real race the phase34 e2e
+// surfaced intermittently under load (check -> re-render -> execute read a
+// fresh unchecked box). The module var survives re-renders; it resets on
+// arm/disarm/selection-change so it can never leak across nodes.
+let removeAlsoScenes = false;
 let appearsCache = { id: null, promise: null };
 
 function resetForWorld(world) {
@@ -128,6 +136,7 @@ function resetForWorld(world) {
   cache.scenes = null;
   cache.usedInScene = null;
   removeArmedId = null;
+  removeAlsoScenes = false;
   appearsCache = { id: null, promise: null };
 }
 
@@ -242,6 +251,7 @@ function buildSkeleton() {
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || removeArmedId === null) return;
   removeArmedId = null;
+  removeAlsoScenes = false;
   renderInspector();
 });
 
@@ -818,6 +828,7 @@ function renderInspector() {
     if (consequenceHost.contains(e.target)) return;
     if (removeArmedId !== null) {
       removeArmedId = null;
+      removeAlsoScenes = false;
       renderInspector();
     }
   });
@@ -931,6 +942,10 @@ async function renderRemoveConsequence(sel, host) {
 
   const optLabel = el("label", { class: "wv-remove-checkbox-row" });
   const checkbox = el("input", { type: "checkbox", "data-testid": "world-remove-from-all-scenes-checkbox" });
+  // Render FROM and write TO the module flag so the choice survives any async
+  // re-render of the armed state (see removeAlsoScenes's own comment).
+  checkbox.checked = removeAlsoScenes;
+  checkbox.addEventListener("change", () => { removeAlsoScenes = checkbox.checked; });
   optLabel.append(checkbox, el("span", {}, `also remove from all ${N} scene${N === 1 ? "" : "s"}`));
   host.appendChild(optLabel);
 }
@@ -947,14 +962,19 @@ async function renderRemoveConsequence(sel, host) {
 async function handleRemoveClick(sel, btn, consequenceHost) {
   if (removeArmedId !== sel.id) {
     removeArmedId = sel.id;
+    removeAlsoScenes = false; // fresh arm = fresh choice
     renderInspector();
     return;
   }
 
   btn.disabled = true;
   const name = sel.name || sel.id;
-  const checkbox = consequenceHost.querySelector('[data-testid="world-remove-from-all-scenes-checkbox"]');
-  const alsoScenes = !!(checkbox && checkbox.checked);
+  // Read the module flag (kept in sync by the checkbox's change listener), NOT
+  // the live DOM -- an async re-render may have rebuilt the checkbox since the
+  // user checked it, but the flag survives. Fall back to the DOM only if the
+  // flag is unset and a checked box exists (belt-and-suspenders).
+  const domCheckbox = consequenceHost.querySelector('[data-testid="world-remove-from-all-scenes-checkbox"]');
+  const alsoScenes = removeAlsoScenes || !!(domCheckbox && domCheckbox.checked);
   try {
     // Opt-in scene-reference cleanup FIRST (not covered by the node's undo).
     if (alsoScenes) {
@@ -972,6 +992,7 @@ async function handleRemoveClick(sel, btn, consequenceHost) {
       body: JSON.stringify({ world: currentWorld() })
     });
     removeArmedId = null;
+    removeAlsoScenes = false;
     // The node is gone -- reload re-fetches the graph and re-renders; the
     // stale selection self-clears to the empty inspector (renderInspector's
     // own `if (!sel)` path).
@@ -1224,7 +1245,7 @@ function applySelection(id) {
   // Selecting a different node always disarms a pending remove (D5-D8's own
   // "selecting another node disarms" rule) -- do this BEFORE reassigning
   // selectedId so the comparison is against the outgoing selection.
-  if (selectedId !== id) removeArmedId = null;
+  if (selectedId !== id) { removeArmedId = null; removeAlsoScenes = false; }
   selectedId = id || null;
   if (!cache.derived) return;
   if (selectedId) for (const a of ancestorChain(selectedId)) ui.expanded.add(a);
