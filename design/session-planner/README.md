@@ -1,13 +1,37 @@
-# Handoff: Session Planner + World Graph UI (GM_Tools)
+# Handoff: GM_Tools — Session Planner, World Graph, Chronicle, Library
 
 ## Overview
 
-Two UI surfaces for the GM_Tools TTRPG session-planning app (`panic-mw/GM_Tools`, branch `master`):
+Four UI surfaces plus one shared menu for the GM_Tools TTRPG session-planning app (`panic-mw/GM_Tools`, branch `master`):
 
 1. **Session Planner** — plan shelf → plan runsheet → the scene page (the Phase 28 "one edit-in-place page that reads like a printed module"), plus a Wrap-up review panel.
 2. **World Graph** — a containment-tree-first replacement for the current force-directed graph view, oriented around *"where things are in the world"*, loose-thread triage, and feeding the session planner.
+3. **Chronicle** — passage of time. Deferred intents, a fortune track, scoped world mutation, and a review-gated diff of what changed.
+4. **Library** — four tabs: Bestiary, Hero's Hall, Reliquary (items), Stagecraft (maps / splash art / music). Everything a scene can be given that isn't authored prose.
+5. **Connection Menu** — a shared top-bar component on every page: Foundry connection state, live sync, lore intake, intake history, review gating.
 
 These replace / complete the Phase 28 (28.2, 28.3, 28.4) and graph-view work. They were designed against the real data model in the repo — `session-planner/scene-elements.mjs`, `session-planner/plans.mjs`, `session-planner/scenes.mjs`, `plans/phase-28-tasks.md`.
+
+## Why four pages and not one
+
+The pages are not feature silos — they are four **working postures**, and the same objects show up in more than one of them on purpose:
+
+| Page | You are… | Time horizon |
+|---|---|---|
+| Session Planner | preparing or running *tonight* | this session |
+| World Graph | recording what exists and where | continuous |
+| Chronicle | moving the world between sessions | months |
+| Library | reaching for a thing to put in a scene | instant |
+
+The Library looks self-sufficient because it carries the **scene tray** — the drop target that appears on every page. That tray is the app's one cross-cutting gesture (*find a thing → hand it to a scene*), not a Library feature. It is shared UI, not duplicated UI: implement it once.
+
+The honest overlap to resolve in code: the Bestiary and the Reliquary/Stagecraft shelves are the same list-with-tags pattern, and the Chronicle diff, the Wrap-up panel, and the Connection Menu's intake review are **the same review-gated proposal component** with different sources. Build one of each and reuse.
+
+## Reading this bundle
+
+Each `.dc.html` opens standalone in a browser and seeds its own fake campaign in memory — that is a prototype convenience, **not** the intended architecture. In the real app there is one store (graph nodes, scenes, plans, assets, connection state) and these are four views over it. Do not port the per-file seed data or the per-file copies of shared state.
+
+Give a developer (or Claude Code / Codex) the **whole folder**, not one file: the README is the spec, and the pages only make sense against each other.
 
 ## About the Design Files
 
@@ -175,10 +199,59 @@ All colours are oklch (the prototypes use no hex).
 
 None. No images, no icon library — every glyph is a Unicode character rendered in IBM Plex Mono (`◆ ○ ◇ ⭑ ✦ ✕ ↑ ↓ ▸ ▾ ▢ ◉ ⬗ ✧ ◌ ⌁ ▣ ! −`). Fonts load from Google Fonts.
 
+---
+
+## G. Chronicle — passage of time
+
+Three panes under a 40px sub-bar (mono kicker "CHRONICLE" + the world clock, e.g. current in-world date).
+
+**Left (306px) — Deferred.** Intents queued from play ("Sella's brother's ring — who has it now?"), each a checkbox row; checked intents are the ones the next time-pass must answer. Footer: a hand-add input, same styling as the scene-tray filter.
+
+**Middle — two modes**, switched by a segmented control:
+- **Composer** — "Let time pass", Spectral 27px, blurb 13.5px `oklch(0.48 0.014 65)` max-width 62ch. A prose textarea ("Three months pass…"), then **How far it reaches**: whole world / queued intents only / picked branches. Picking branches opens an inline search picker over graph nodes ("Find a place, faction, event, or object…"); picks render as removable chips.
+- **Timeline** — "Drag the world forward": a horizontal time scrubber with deferred intents marked on the line, an optional colouring prompt, and the **fortune track** — five stops, Bountiful · Fair · Mixed · Hard · Ruinous, with optional nudge tags. Fortune biases the proposals; it never writes anything by itself.
+
+**What changed** (below either mode) — the review-gated diff: same proposal card as the Wrap-up panel (kind badge, target, −/+ diff rows, rationale, Accept/Reject, "Apply N to graph"). Nothing is written to the graph until applied.
+
+**Right (306px) — The chronicle**: past time-passes, newest first, each with its date range, scope, fortune, and how many edits were applied. This is the world's history log.
+
+## H. Library — four tabs
+
+Top bar (42px) holds the tab control (label + mono count) and per-tab controls on the right.
+
+- **Bestiary** — habitat tree (from the graph) at left, creature cards centre, full stat block at right. Cards carry a per-table rating stepper, source pill (`srd` / `foundry` / `mine`), and a personal note. Right rail: Foundry push state + actor id, a reskin suggester, and the note ("stays here — never pushed to Foundry").
+- **Hero's Hall** — the party, in Cards or Side-by-side layouts. HP/AC/passive, Saves, Notable skills (✦ marks expertise), conditions, and a free-form per-PC note. Read from Foundry actors.
+- **Reliquary** — items. Simple searchable list; each row is name + kind/meta + source pill + description + tags. Descriptions come across from Foundry when the item has one; rows without one say so in italic grey rather than rendering empty.
+- **Stagecraft** — maps, splash art, music, filtered by an All / Maps / Splash art / Music segmented control. Rows are **references only** — the files themselves live in Foundry (scene id, image path, playlist id); this UI exists so the right one is findable mid-session.
+
+**Shelf row anatomy** (Reliquary + Stagecraft share it): 1px border `oklch(0.88 0.010 80)`, `border-left: 3px` in the kind accent (item teal `oklch(0.55 0.075 185)`, map green `oklch(0.50 0.09 145)`, splash amber `oklch(0.58 0.10 65)`, music violet `oklch(0.52 0.09 300)`), radius 4px, background `oklch(0.985 0.005 85)`, padding `10px 13px`, `cursor: grab`. Mono kind glyph (`◈ ▦ ◐ ♪`), Spectral 16px name, mono 9.5px meta ("Map · 40×30 grid · walls set"), right-aligned source pill, description 12px max-width 78ch, then the tag row.
+
+**Tags** are the whole findability model: pills at 11px, radius 20px. Clicking a tag filters by it; ✕ removes it from that row; `+ tag` opens an inline input (Enter commits, Esc cancels). The left rail lists every tag in the current tab with live counts; selected tags AND together, with a "Clear tag filter" escape. Free-text search matches name, description, and tags at once.
+
+Every row on all four tabs is draggable onto the **scene tray** in the left rail. Creatures stack (`×N`) and count against the scene's XP budget; heroes and props (items/maps/art/music) are single and cost nothing — the tray meta reads "N creatures · N heroes · N props".
+
+## I. Connection Menu (shared)
+
+A compact chip in every page's top bar — mono, e.g. `Foundry · live · 312 ▾` — dot colour carries state (live teal / stale amber / off grey). Opens a 620×720 panel: connection setup, live sync with intake review (bulk accept or drill into a single proposal), lore intake (paste text or a World Anvil URL), and intake history. Its review surface is the same component as Chronicle's "What changed".
+
+**Every page mounts this same component** — it is the single place external I/O is configured, and the reason no page needs its own settings screen.
+
+---
+
 ## Files
 
 - `Session Planner.dc.html` — plan shelf, plan runsheet, scene page (both layouts), stat blocks, Wrap panel, run mode.
-- `World Graph.dc.html` — containment tree, contents pane, loose threads, detail panel, scene tray.
+- `World Graph.dc.html` — containment tree, contents pane, loose threads, detail panel, scene tray. The detail panel's destructive action is **remove from graph**: two-click arm ("remove — sure?"), children reparent up one level, non-containment edges drop, undo toast.
+- `Chronicle.dc.html` — deferred intents, composer, timeline + fortune track, review diff, chronicle log.
+- `Library.dc.html` — Bestiary, Hero's Hall, Reliquary, Stagecraft, and the shared scene tray.
+- `Connection Menu.dc.html` — the top-bar chip and its panel; imported by all four pages.
 - `support.js` — the prototype runtime. **Not part of the design**; ignore it when porting.
+
+### Ported once, used everywhere
+
+1. **Scene tray** — filter + recency-ordered scene list + drop target (all four pages).
+2. **Proposal / diff card** — Wrap-up, Chronicle, and intake review.
+3. **Tagged shelf list** — Reliquary, Stagecraft, and (with a stat block attached) the Bestiary.
+4. **Top bar** — 52px, brand + primary nav + Connection Menu chip. Identical on every page.
 
 Open either file directly in a browser. All data is seeded in the logic class at the top of each file.

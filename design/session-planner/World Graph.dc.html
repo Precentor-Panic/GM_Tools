@@ -30,24 +30,27 @@
 <div style="display: flex; flex-direction: column; height: 100vh; background: oklch(0.955 0.008 85); font-size: 14px;">
 
   <div style="display: flex; align-items: center; gap: 14px; padding: 0 16px; height: 52px; flex: none; border-bottom: 1px solid oklch(0.87 0.010 80); background: oklch(0.925 0.009 85);">
-    <div style="display: flex; align-items: center; gap: 9px;">
-      <div style="width: 8px; height: 8px; transform: rotate(45deg); background: oklch(0.55 0.075 185);"></div>
-      <div style="font-family: Spectral, serif; font-size: 15.5px; font-weight: 600;">The Verdigris Compact</div>
+    <div style="display: flex; align-items: center; gap: 9px; flex: none; white-space: nowrap;">
+      <div style="width: 8px; height: 8px; transform: rotate(45deg); background: oklch(0.55 0.075 185); flex: none;"></div>
+      <div style="font-family: Spectral, serif; font-size: 15.5px; font-weight: 600; white-space: nowrap;">The Verdigris Compact</div>
     </div>
     <div style="width: 1px; height: 20px; background: oklch(0.85 0.010 80);"></div>
-    <div style="display: flex; align-items: center; gap: 4px; padding: 3px; border: 1px solid oklch(0.86 0.010 80); border-radius: 7px; background: oklch(0.955 0.008 85);">
+    <div style="display: flex; align-items: center; gap: 4px; padding: 3px; border: 1px solid oklch(0.86 0.010 80); border-radius: 7px; background: oklch(0.955 0.008 85); flex: none; white-space: nowrap;">
       <a href="Session Planner.dc.html" style="padding: 4px 11px; border-radius: 5px; font-size: 12px; color: oklch(0.48 0.014 65);" style-hover="background: oklch(0.90 0.010 80); text-decoration: none;">Session planner</a>
       <div style="padding: 4px 11px; border-radius: 5px; font-size: 12px; background: oklch(0.55 0.075 185); color: oklch(0.99 0.005 185);">World</div>
+      <a href="Chronicle.dc.html" style="padding: 4px 11px; border-radius: 5px; font-size: 12px; color: oklch(0.48 0.014 65);" style-hover="background: oklch(0.90 0.010 80); text-decoration: none;">Chronicle</a>
+      <a href="Library.dc.html" style="padding: 4px 11px; border-radius: 5px; font-size: 12px; color: oklch(0.48 0.014 65);" style-hover="background: oklch(0.90 0.010 80); text-decoration: none;">Library</a>
     </div>
     <div style="flex: 1;"></div>
-    <input value="{{ query }}" onChange="{{ setQuery }}" placeholder="Search the world…" style="width: 260px; padding: 6px 11px; border: 1px solid oklch(0.84 0.010 80); border-radius: 6px; font-family: inherit; font-size: 13px; background: oklch(1 0 0); color: inherit;" />
-    <div style="display: flex; gap: 4px;">
+    <input value="{{ query }}" onChange="{{ setQuery }}" placeholder="Search the world…" style="width: 220px; flex: none; padding: 6px 11px; border: 1px solid oklch(0.84 0.010 80); border-radius: 6px; font-family: inherit; font-size: 13px; background: oklch(1 0 0); color: inherit;" />
+    <div style="display: flex; gap: 4px; flex: none;">
       <sc-for list="{{ typeChips }}" as="t" hint-placeholder-count="6">
-        <div onClick="{{ t.toggle }}" title="{{ t.title }}" style="display: flex; align-items: center; gap: 6px; padding: 4px 9px; border: 1px solid {{ t.border }}; border-radius: 20px; cursor: pointer; font-size: 11.5px; background: {{ t.bg }}; color: {{ t.fg }};" style-hover="border-color: oklch(0.65 0.045 185);">
-          <span style="font-family: 'IBM Plex Mono', monospace;">{{ t.glyph }}</span><span>{{ t.label }}</span>
+        <div onClick="{{ t.toggle }}" title="{{ t.title }}" style="display: flex; align-items: center; justify-content: center; width: 27px; height: 27px; border: 1px solid {{ t.border }}; border-radius: 50%; cursor: pointer; font-size: 12px; background: {{ t.bg }}; color: {{ t.fg }};" style-hover="border-color: oklch(0.65 0.045 185);">
+          <span style="font-family: 'IBM Plex Mono', monospace;">{{ t.glyph }}</span>
         </div>
       </sc-for>
     </div>
+    <dc-import name="Connection Menu" compact="{{ true }}" hint-size="190px,30px"></dc-import>
   </div>
 
   <div style="display: flex; flex: 1; min-height: 0;">
@@ -199,8 +202,11 @@
       <div style="padding: 12px 14px; border-bottom: 1px solid oklch(0.88 0.010 80); display: flex; align-items: center; gap: 8px;">
         <span style="font-size: 13px; font-weight: 500;">{{ selName }}</span>
         <span style="flex: 1;"></span>
-        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.075 185); cursor: pointer;" style-hover="text-decoration: underline;">Open full page →</span>
+        <span onClick="{{ armRemove }}" title="Take this node out of the graph — children move up a level" style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.03em; color: {{ removeColor }}; cursor: pointer; white-space: nowrap;" style-hover="color: oklch(0.50 0.13 25);">{{ removeLabel }}</span>
       </div>
+      <sc-if value="{{ removeHintShown }}" hint-placeholder-val="{{ false }}">
+        <div style="padding: 8px 14px; border-bottom: 1px solid oklch(0.88 0.010 80); background: oklch(0.955 0.022 40); font-size: 11.5px; line-height: 1.45; color: oklch(0.44 0.09 30);">{{ removeHint }}</div>
+      </sc-if>
 
       <div style="flex: 1; overflow-y: auto; padding: 12px 14px;">
         <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.56 0.012 70); margin-bottom: 7px;">Contained in</div>
@@ -509,7 +515,7 @@ class Component extends DCLogic {
       typeChips: TYPES.map((t) => {
         const on = st.types.includes(t.id);
         return {
-          label: t.label, glyph: t.glyph, title: "Filter to " + t.label.toLowerCase() + "s",
+          label: t.label, glyph: t.glyph, title: t.label + " — filter to " + t.label.toLowerCase() + "s",
           border: on ? t.accent : "oklch(0.86 0.010 80)",
           bg: on ? "oklch(0.94 0.020 185)" : "transparent",
           fg: on ? "oklch(0.30 0.015 60)" : "oklch(0.52 0.012 70)",
@@ -579,10 +585,32 @@ class Component extends DCLogic {
       looseLabel: (st.looseOpen ? "▾" : "▸") + "  Loose threads",
       toggleLoose: () => this.setState({ looseOpen: !st.looseOpen }),
 
-      hasParent: !!sel.parentId, noParent: !sel.parentId,
-      parentName: sel.parentId ? (this.node(sel.parentId) || {}).name : "",
+      hasParent: !!(sel.parentId && this.node(sel.parentId)), noParent: !(sel.parentId && this.node(sel.parentId)),
+      parentName: sel.parentId ? ((this.node(sel.parentId) || {}).name || "nowhere in particular") : "",
       selectParent: () => this.setState({ selectedId: sel.parentId }),
       selRelations, noRelations: selRelations.length === 0,
+
+      removeArmed: st.removeArmed === sel.id,
+      removeLabel: st.removeArmed === sel.id ? "remove — sure?" : "remove from graph",
+      removeColor: st.removeArmed === sel.id ? "oklch(0.50 0.13 25)" : "oklch(0.60 0.012 70)",
+      armRemove: () => {
+        if (st.removeArmed !== sel.id) { this.setState({ removeArmed: sel.id }); return; }
+        const prevNodes = st.nodes, prevRels = st.rels, prevSel = sel.id;
+        this.setState((s) => ({
+          nodes: s.nodes.filter((n) => n.id !== sel.id).map((n) => (n.parentId === sel.id ? { ...n, parentId: sel.parentId || null } : n)),
+          rels: s.rels.filter((r) => r.a !== sel.id && r.b !== sel.id),
+          selectedId: sel.parentId || (s.nodes.find((n) => n.id !== sel.id) || {}).id,
+          removeArmed: null
+        }));
+        this.showToast("“" + sel.name + "” is out of the graph", () =>
+          this.setState({ nodes: prevNodes, rels: prevRels, selectedId: prevSel }));
+      },
+      removeHint: (() => {
+        const k = st.nodes.filter((n) => n.parentId === sel.id).length;
+        if (st.removeArmed !== sel.id) return "";
+        return k ? "Its " + k + (k === 1 ? " child moves" : " children move") + " up a level. Links are dropped." : "Links are dropped. Scenes keep their own copy.";
+      })(),
+      removeHintShown: st.removeArmed === sel.id,
       selAppears: refs.length ? refs.join(", ") : "No scene has used this yet.",
 
       isPlace: sel.type === "place",
@@ -605,7 +633,7 @@ class Component extends DCLogic {
         })
         .map((s) => ({
         name: s.name,
-        meta: (this.node(s.placeId) || {}).name + " · " + s.count + " elements · " + ago(s.visited),
+        meta: ((this.node(s.placeId) || {}).name || "no place") + " · " + s.count + " elements · " + ago(s.visited),
         border: st.dropTarget === s.id ? "oklch(0.55 0.075 185)" : "oklch(0.84 0.010 80)",
         bg: st.dropTarget === s.id ? "oklch(0.92 0.030 185)" : "oklch(0.965 0.006 85)",
         dragOver: (e) => { e.preventDefault(); if (st.dropTarget !== s.id) this.setState({ dropTarget: s.id }); },

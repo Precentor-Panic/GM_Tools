@@ -1,0 +1,1244 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+<link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: oklch(0.955 0.008 85); }
+  * { box-sizing: border-box; }
+  body { font-family: "IBM Plex Sans", system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: oklch(0.27 0.015 60); }
+  a { color: oklch(0.50 0.075 185); text-decoration: none; }
+  a:hover { color: oklch(0.42 0.075 185); text-decoration: underline; }
+  ::selection { background: oklch(0.75 0.09 185 / 0.32); }
+  [contenteditable] { outline: none; border-radius: 3px; }
+  [contenteditable]:hover { box-shadow: 0 0 0 4px oklch(0.90 0.012 85); background: oklch(0.90 0.012 85); }
+  [contenteditable]:focus { box-shadow: 0 0 0 4px oklch(0.86 0.045 185 / 0.45); background: oklch(0.86 0.045 185 / 0.28); }
+  textarea { font-family: inherit; }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: oklch(0.83 0.010 80); border-radius: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  @keyframes libpulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+</style>
+</helmet>
+
+<div style="display: flex; flex-direction: column; height: 100vh; background: oklch(0.955 0.008 85); font-size: 14px;">
+
+  <div style="display: flex; align-items: center; gap: 14px; padding: 0 16px; height: 52px; flex: none; border-bottom: 1px solid oklch(0.87 0.010 80); background: oklch(0.925 0.009 85);">
+    <div style="display: flex; align-items: center; gap: 9px;">
+      <div style="width: 8px; height: 8px; transform: rotate(45deg); background: oklch(0.55 0.075 185);"></div>
+      <div style="font-family: Spectral, serif; font-size: 15.5px; font-weight: 600;">The Verdigris Compact</div>
+    </div>
+    <div style="width: 1px; height: 20px; background: oklch(0.85 0.010 80);"></div>
+    <div style="display: flex; align-items: center; gap: 4px; padding: 3px; border: 1px solid oklch(0.86 0.010 80); border-radius: 7px; background: oklch(0.955 0.008 85);">
+      <a href="Session Planner.dc.html" style="padding: 4px 11px; border-radius: 5px; font-size: 12px; color: oklch(0.48 0.014 65);" style-hover="background: oklch(0.90 0.010 80); text-decoration: none;">Session planner</a>
+      <a href="World Graph.dc.html" style="padding: 4px 11px; border-radius: 5px; font-size: 12px; color: oklch(0.48 0.014 65);" style-hover="background: oklch(0.90 0.010 80); text-decoration: none;">World</a>
+      <a href="Chronicle.dc.html" style="padding: 4px 11px; border-radius: 5px; font-size: 12px; color: oklch(0.48 0.014 65);" style-hover="background: oklch(0.90 0.010 80); text-decoration: none;">Chronicle</a>
+      <div style="padding: 4px 11px; border-radius: 5px; font-size: 12px; background: oklch(0.55 0.075 185); color: oklch(0.99 0.005 185);">Library</div>
+    </div>
+    <div style="flex: 1;"></div>
+    <dc-import name="Connection Menu" hint-size="330px,30px"></dc-import>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 0 16px; height: 42px; flex: none; border-bottom: 1px solid oklch(0.88 0.010 80); background: oklch(0.945 0.009 85);">
+    <div style="display: flex; gap: 3px; padding: 2px; border: 1px solid oklch(0.86 0.010 80); border-radius: 6px; background: oklch(0.965 0.006 85);">
+      <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="2">
+        <div onClick="{{ t.pick }}" style="display: flex; align-items: center; gap: 7px; padding: 4px 12px; border-radius: 4px; font-size: 12.5px; cursor: pointer; background: {{ t.bg }}; color: {{ t.fg }};">
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px;">{{ t.glyph }}</span><span>{{ t.label }}</span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; opacity: 0.75;">{{ t.count }}</span>
+        </div>
+      </sc-for>
+    </div>
+    <div style="flex: 1;"></div>
+
+    <sc-if value="{{ isBestiary }}" hint-placeholder-val="{{ true }}">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <input value="{{ query }}" onChange="{{ setQuery }}" placeholder="Find a creature…" style="width: 220px; padding: 5px 10px; border: 1px solid oklch(0.84 0.010 80); border-radius: 6px; font-family: inherit; font-size: 12.5px; background: oklch(1 0 0); color: inherit;" />
+        <div style="display: flex; gap: 5px;">
+          <sc-for list="{{ sourceChips }}" as="c" hint-placeholder-count="4">
+            <div onClick="{{ c.toggle }}" style="padding: 4px 10px; border: 1px solid {{ c.border }}; border-radius: 20px; cursor: pointer; font-size: 11.5px; background: {{ c.bg }}; color: {{ c.fg }};" style-hover="border-color: oklch(0.65 0.045 185);">{{ c.label }}</div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isHall }}" hint-placeholder-val="{{ false }}">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.012 70);">Layout</div>
+        <div style="display: flex; gap: 3px; padding: 2px; border: 1px solid oklch(0.86 0.010 80); border-radius: 6px; background: oklch(0.965 0.006 85);">
+          <sc-for list="{{ layouts }}" as="l" hint-placeholder-count="2">
+            <div onClick="{{ l.pick }}" style="padding: 3px 10px; border-radius: 4px; font-size: 11.5px; cursor: pointer; background: {{ l.bg }}; color: {{ l.fg }};">{{ l.label }}</div>
+          </sc-for>
+        </div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.58 0.012 70);">{{ restMeta }}</div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isShelf }}" hint-placeholder-val="{{ false }}">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <input value="{{ shelfQuery }}" onChange="{{ setShelfQuery }}" placeholder="{{ shelfPlaceholder }}" style="width: 240px; padding: 5px 10px; border: 1px solid oklch(0.84 0.010 80); border-radius: 6px; font-family: inherit; font-size: 12.5px; background: oklch(1 0 0); color: inherit;" />
+        <sc-if value="{{ isStage }}" hint-placeholder-val="{{ false }}">
+          <div style="display: flex; gap: 3px; padding: 2px; border: 1px solid oklch(0.86 0.010 80); border-radius: 6px; background: oklch(0.965 0.006 85);">
+            <sc-for list="{{ kindChips }}" as="k" hint-placeholder-count="4">
+              <div onClick="{{ k.pick }}" style="padding: 3px 10px; border-radius: 4px; font-size: 11.5px; cursor: pointer; background: {{ k.bg }}; color: {{ k.fg }};">{{ k.label }}</div>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+  </div>
+
+  <sc-if value="{{ isBestiary }}" hint-placeholder-val="{{ true }}">
+    <div style="display: flex; flex: 1; min-height: 0;">
+
+      <div style="width: 296px; flex: none; border-right: 1px solid oklch(0.87 0.010 80); background: oklch(0.938 0.009 85); display: flex; flex-direction: column; min-height: 0;">
+        <div style="padding: 13px 14px 8px;">
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: oklch(0.53 0.012 70);">What belongs where</div>
+          <div style="font-size: 11.5px; color: oklch(0.56 0.012 70); line-height: 1.45; margin-top: 6px;">Habitats come from the world graph. A creature can belong to several, or to none and just sit in the catalogue.</div>
+        </div>
+        <div style="flex: 1; overflow-y: auto; padding: 0 8px 14px; min-height: 0;">
+          <sc-for list="{{ habitatRows }}" as="h" hint-placeholder-count="8">
+            <div onClick="{{ h.pick }}" style="display: flex; align-items: center; gap: 8px; padding: 6px 9px; padding-left: {{ h.indent }}; border-radius: 5px; cursor: pointer; background: {{ h.bg }};" style-hover="background: oklch(0.905 0.010 85);">
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: {{ h.glyphColor }};">{{ h.glyph }}</span>
+              <span style="flex: 1; min-width: 0; font-size: 12.5px; color: {{ h.color }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ h.label }}</span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.64 0.012 70);">{{ h.count }}</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="border-top: 1px solid oklch(0.88 0.010 80); background: oklch(0.925 0.009 85); padding: 11px 14px 13px; flex: none;">
+          <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.53 0.012 70);">Drop into a scene</div>
+            <div style="flex: 1;"></div>
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: {{ trayHintColor }};">{{ trayHint }}</div>
+          </div>
+          <input value="{{ sceneQuery }}" onChange="{{ setSceneQuery }}" placeholder="Find a scene…" style="width: 100%; padding: 5px 9px; border: 1px solid oklch(0.85 0.010 80); border-radius: 4px; font-family: inherit; font-size: 12px; background: oklch(1 0 0); color: inherit; margin-bottom: 8px;" />
+          <div style="display: flex; flex-direction: column; gap: 5px; max-height: 268px; overflow-y: auto;">
+            <sc-for list="{{ sceneTargets }}" as="sc" hint-placeholder-count="3">
+              <div onDragOver="{{ sc.dragOver }}" onDragLeave="{{ sc.dragLeave }}" onDrop="{{ sc.drop }}" style="padding: 8px 10px; border: 1px dashed {{ sc.border }}; border-radius: 4px; background: {{ sc.bg }};">
+                <div style="display: flex; align-items: baseline; gap: 8px;">
+                  <span style="font-size: 12.5px; color: oklch(0.28 0.015 60);">{{ sc.name }}</span>
+                  <span style="flex: 1;"></span>
+                  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: {{ sc.budgetColor }};">{{ sc.budget }}</span>
+                </div>
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70); margin-top: 3px;">{{ sc.meta }}</div>
+                <sc-if value="{{ sc.hasRoster }}" hint-placeholder-val="{{ false }}">
+                  <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;">
+                    <sc-for list="{{ sc.roster }}" as="r" hint-placeholder-count="2">
+                      <span style="display: flex; align-items: center; gap: 5px; padding: 2px 7px; border: 1px solid {{ r.border }}; border-radius: 20px; background: {{ r.bg }}; font-size: 11px; color: {{ r.fg }};">
+                        <span>{{ r.label }}</span>
+                        <span onClick="{{ r.remove }}" style="font-size: 9px; cursor: pointer; color: oklch(0.50 0.030 185);" style-hover="color: oklch(0.50 0.13 25);">✕</span>
+                      </span>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;">
+        <div style="flex: 1; overflow-y: auto; padding: 22px 26px 40px;">
+          <div style="display: flex; align-items: baseline; gap: 11px; margin-bottom: 4px;">
+            <div style="font-family: Spectral, serif; font-size: 25px; font-weight: 500;">{{ habitatTitle }}</div>
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.60 0.012 70);">{{ habitatMeta }}</div>
+          </div>
+          <div style="font-size: 12.5px; color: oklch(0.52 0.014 65); margin-bottom: 16px; max-width: 66ch; line-height: 1.5;">{{ habitatBlurb }}</div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 10px;">
+            <sc-for list="{{ creatures }}" as="c" hint-placeholder-count="6">
+              <div draggable="true" onDragStart="{{ c.dragStart }}" onDragEnd="{{ c.dragEnd }}" title="Drag onto a scene at lower left to add it to that encounter" onClick="{{ c.select }}" style="border: 1px solid {{ c.border }}; border-top: 3px solid {{ c.accent }}; border-radius: 4px; background: {{ c.bg }}; padding: 11px 12px 10px; cursor: pointer;" style-hover="border-color: oklch(0.68 0.045 185);">
+                <div style="display: flex; align-items: baseline; gap: 8px;">
+                  <span style="flex: 1; min-width: 0; font-family: Spectral, serif; font-size: 16.5px; font-weight: 500; line-height: 1.2;">{{ c.name }}</span>
+                  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: {{ c.ratingColor }}; flex: none;">{{ c.rating }}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 7px; margin-top: 5px;">
+                  <span style="padding: 1px 6px; border-radius: 20px; background: {{ c.srcBg }}; font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.05em; text-transform: uppercase; color: {{ c.srcFg }};">{{ c.source }}</span>
+                  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70);">{{ c.kind }}</span>
+                </div>
+                <div style="font-size: 12px; color: oklch(0.48 0.014 65); line-height: 1.45; margin-top: 8px;">{{ c.line }}</div>
+                <sc-if value="{{ c.hasNote }}" hint-placeholder-val="{{ false }}">
+                  <div style="display: flex; gap: 7px; margin-top: 8px; padding: 5px 8px; border-radius: 3px; background: oklch(0.96 0.030 65);">
+                    <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.52 0.10 65);">✎</span>
+                    <span style="font-size: 11.5px; line-height: 1.4; color: oklch(0.42 0.06 65);">{{ c.note }}</span>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 12px; margin-top: 16px;">
+            <div onClick="{{ importFoundry }}" style="display: inline-flex; align-items: center; gap: 8px; padding: 8px 13px; border: 1px solid oklch(0.80 0.040 185); border-radius: 5px; cursor: pointer; background: oklch(0.965 0.014 185); color: oklch(0.38 0.060 185); font-size: 12.5px;" style-hover="border-color: oklch(0.62 0.060 185);"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px;">↧</span><span>Import from Foundry compendium</span></div>
+            <div onClick="{{ addCreature }}" style="font-size: 12px; color: oklch(0.56 0.012 70); cursor: pointer;" style-hover="color: oklch(0.45 0.075 185);">or write one by hand</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="width: 396px; flex: none; border-left: 1px solid oklch(0.87 0.010 80); background: oklch(0.938 0.009 85); display: flex; flex-direction: column; min-height: 0;">
+        <div style="padding: 12px 15px; border-bottom: 1px solid oklch(0.88 0.010 80); display: flex; align-items: center; gap: 9px;">
+          <span style="padding: 1px 6px; border-radius: 20px; background: {{ sel.srcBg }}; font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.05em; text-transform: uppercase; color: {{ sel.srcFg }};">{{ sel.source }}</span>
+          <span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ sel.name }}</span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.075 185); cursor: pointer;" style-hover="text-decoration: underline;">Drop into a scene</span>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; padding: 9px 15px; border-bottom: 1px solid oklch(0.88 0.010 80); background: {{ sel.pushBg }};">
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: {{ sel.pushDotColor }};">{{ sel.pushDot }}</span>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 12px; color: {{ sel.pushFg }};">{{ sel.pushState }}</div>
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.60 0.012 70); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ sel.actorId }}</div>
+          </div>
+          <div onClick="{{ push }}" style="flex: none; padding: 4px 11px; border: 1px solid oklch(0.80 0.040 185); border-radius: 4px; cursor: pointer; font-size: 11.5px; background: oklch(1 0 0); color: oklch(0.38 0.060 185);" style-hover="border-color: oklch(0.62 0.060 185);">{{ sel.pushLabel }}</div>
+        </div>
+
+        <div style="flex: 1; overflow-y: auto; padding: 14px 15px 20px;">
+          <div style="font-family: Spectral, serif; font-size: 23px; font-weight: 500; line-height: 1.15;">{{ sel.name }}</div>
+          <div style="font-style: italic; font-family: Spectral, serif; font-size: 13px; color: oklch(0.50 0.014 65); margin-top: 3px;">{{ sel.kind }}</div>
+
+          <div style="display: flex; align-items: center; gap: 10px; margin: 12px 0 12px; padding: 9px 11px; border: 1px solid oklch(0.86 0.030 185); border-radius: 4px; background: oklch(0.968 0.012 185);">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.07em; text-transform: uppercase; color: oklch(0.44 0.050 185);">{{ sel.ratingLabel }}</div>
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; color: oklch(0.32 0.060 185);">{{ sel.ratingBook }}</div>
+            <div style="flex: 1;"></div>
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.50 0.014 65);">at my table</div>
+            <div style="display: flex; align-items: center; gap: 7px; padding: 2px; border: 1px solid oklch(0.84 0.030 185); border-radius: 4px; background: oklch(1 0 0);">
+              <span onClick="{{ sel.ratingDown }}" style="padding: 0 7px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: oklch(0.50 0.014 65); cursor: pointer;" style-hover="color: oklch(0.40 0.075 185);">−</span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: {{ sel.ratingColor }}; min-width: 26px; text-align: center;">{{ sel.ratingMine }}</span>
+              <span onClick="{{ sel.ratingUp }}" style="padding: 0 7px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: oklch(0.50 0.014 65); cursor: pointer;" style-hover="color: oklch(0.40 0.075 185);">+</span>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat({{ sel.defenseCols }}, 1fr); gap: 6px; margin-bottom: 12px;">
+            <sc-for list="{{ sel.defenses }}" as="d" hint-placeholder-count="4">
+              <div style="padding: 7px 8px; border: 1px solid oklch(0.88 0.010 80); border-radius: 3px; background: oklch(1 0 0); text-align: center;">
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.07em; text-transform: uppercase; color: oklch(0.60 0.012 70);">{{ d.label }}</div>
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: oklch(0.30 0.015 60); margin-top: 3px;">{{ d.value }}</div>
+              </div>
+            </sc-for>
+          </div>
+
+          <sc-if value="{{ sel.hasAbilities }}" hint-placeholder-val="{{ true }}">
+            <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; padding: 9px 0; border-top: 1px solid oklch(0.88 0.010 80); border-bottom: 1px solid oklch(0.88 0.010 80); margin-bottom: 12px;">
+              <sc-for list="{{ sel.abilities }}" as="a" hint-placeholder-count="6">
+                <div style="text-align: center;">
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.06em; color: oklch(0.58 0.012 70);">{{ a.k }}</div>
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: oklch(0.32 0.015 60); margin-top: 2px;">{{ a.v }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <div style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 13px;">
+            <sc-for list="{{ sel.lines }}" as="l" hint-placeholder-count="3">
+              <div style="display: grid; grid-template-columns: 74px 1fr; gap: 10px;">
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.60 0.012 70); text-align: right; padding-top: 2px;">{{ l.k }}</div>
+                <div style="font-size: 12.5px; line-height: 1.45; color: oklch(0.38 0.014 65);">{{ l.v }}</div>
+              </div>
+            </sc-for>
+          </div>
+
+          <sc-for list="{{ sel.sections }}" as="sec" hint-placeholder-count="2">
+            <div style="margin-bottom: 13px;">
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.50 0.09 40); border-bottom: 1px solid oklch(0.80 0.060 40); padding-bottom: 3px; margin-bottom: 8px;">{{ sec.label }}</div>
+              <div style="display: flex; flex-direction: column; gap: 7px;">
+                <sc-for list="{{ sec.items }}" as="it" hint-placeholder-count="3">
+                  <div style="font-size: 12.5px; line-height: 1.5; color: oklch(0.36 0.014 65);">
+                    <span style="font-family: Spectral, serif; font-weight: 600; font-style: italic;">{{ it.name }}</span>
+                    <span> {{ it.text }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+
+          <div style="margin-top: 16px; border-top: 1px solid oklch(0.88 0.010 80); padding-top: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 7px;">
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.53 0.012 70);">My note</div>
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.64 0.012 70);">stays here — never pushed to Foundry</div>
+            </div>
+            <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ saveNote }}" style="min-height: 34px; padding: 8px 10px; border: 1px solid oklch(0.88 0.010 80); border-radius: 4px; background: oklch(0.975 0.006 85); font-size: 12.5px; line-height: 1.5; color: oklch(0.40 0.014 65);">{{ sel.note }}</div>
+          </div>
+
+          <div style="margin-top: 14px; border: 1px solid {{ reskinBorder }}; border-radius: 4px; background: {{ reskinBg }}; padding: 11px 12px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.08 300);">✦</span>
+              <span style="font-size: 12.5px; font-weight: 500; color: oklch(0.34 0.06 300);">Wear it as something else</span>
+              <span style="flex: 1;"></span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.58 0.012 70);">{{ keyState }}</span>
+            </div>
+            <div style="font-size: 11.5px; line-height: 1.45; color: oklch(0.50 0.014 65); margin-top: 6px;">Same numbers, different creature. The stat block stays; name, flavour and action wording get rewritten.</div>
+            <input value="{{ reskinPrompt }}" onChange="{{ setReskinPrompt }}" placeholder="an absolute chad of a city patrolman" style="width: 100%; margin-top: 9px; padding: 6px 10px; border: 1px solid oklch(0.85 0.010 80); border-radius: 4px; font-family: inherit; font-size: 12.5px; background: oklch(1 0 0); color: inherit;" />
+            <div style="display: flex; align-items: center; gap: 10px; margin-top: 9px;">
+              <div onClick="{{ reskin }}" style="padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; background: {{ reskinBtnBg }}; color: oklch(0.99 0.005 300);" style-hover="filter: brightness(1.06);">{{ reskinBtnLabel }}</div>
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70);">saves as a new entry, marked reskin</div>
+            </div>
+            <sc-if value="{{ hasReskinResult }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top: 10px; padding: 9px 10px; border: 1px solid oklch(0.84 0.045 300); border-radius: 4px; background: oklch(1 0 0);">
+                <div style="font-family: Spectral, serif; font-size: 16px; font-weight: 500;">{{ reskinName }}</div>
+                <div style="font-size: 12px; line-height: 1.5; color: oklch(0.44 0.014 65); margin-top: 5px;">{{ reskinBlurb }}</div>
+                <div style="display: flex; gap: 8px; margin-top: 9px;">
+                  <div onClick="{{ keepReskin }}" style="padding: 4px 11px; border: 1px solid oklch(0.76 0.060 300); border-radius: 4px; cursor: pointer; font-size: 11.5px; color: oklch(0.36 0.08 300); background: oklch(0.96 0.020 300);" style-hover="filter: brightness(1.03);">Keep it</div>
+                  <div onClick="{{ reskin }}" style="padding: 4px 11px; border: 1px solid oklch(0.86 0.010 80); border-radius: 4px; cursor: pointer; font-size: 11.5px; color: oklch(0.50 0.014 65); background: oklch(1 0 0);" style-hover="border-color: oklch(0.70 0.045 300);">Again</div>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+
+          <div style="margin-top: 14px; border-top: 1px solid oklch(0.88 0.010 80); padding-top: 12px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.53 0.012 70); margin-bottom: 7px;">Where it's been</div>
+            <div style="display: flex; flex-direction: column; gap: 5px;">
+              <sc-for list="{{ sel.appearances }}" as="ap" hint-placeholder-count="2">
+                <div style="display: flex; align-items: baseline; gap: 9px; padding: 6px 9px; border: 1px solid oklch(0.90 0.010 80); border-radius: 4px; background: oklch(0.975 0.006 85);">
+                  <span style="font-size: 12.5px; color: oklch(0.30 0.015 60);">{{ ap.name }}</span>
+                  <span style="flex: 1;"></span>
+                  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.62 0.012 70);">{{ ap.when }}</span>
+                </div>
+              </sc-for>
+              <sc-if value="{{ sel.neverUsed }}" hint-placeholder-val="{{ false }}">
+                <div style="font-size: 12px; color: oklch(0.58 0.012 70); line-height: 1.45;">Never used. It's a catalogue entry, not a character — that's fine.</div>
+              </sc-if>
+            </div>
+            <div onClick="{{ promote }}" style="display: flex; align-items: center; gap: 8px; margin-top: 9px; padding: 8px 11px; border: 1px dashed oklch(0.82 0.010 80); border-radius: 4px; cursor: pointer;" style-hover="border-color: oklch(0.62 0.060 185); background: oklch(0.965 0.012 185);">
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.075 185);">◉</span>
+              <div>
+                <div style="font-size: 12.5px; color: oklch(0.38 0.030 185);">Promote to a named world figure</div>
+                <div style="font-size: 11px; color: oklch(0.58 0.012 70); margin-top: 2px;">Only when one of them earns a name. Creates a graph node that keeps this stat block.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isHall }}" hint-placeholder-val="{{ false }}">
+    <div style="display: flex; flex: 1; min-height: 0;">
+      <div style="flex: 1; min-width: 0; overflow-y: auto; padding: 22px 28px 44px;">
+        <div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px;">
+          <div style="font-family: Spectral, serif; font-size: 25px; font-weight: 500;">The Hero's Hall</div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.60 0.012 70);">{{ hallMeta }}</div>
+        </div>
+        <div style="font-size: 12.5px; color: oklch(0.52 0.014 65); margin-bottom: 18px; max-width: 72ch; line-height: 1.5;">State as of the end of session 11 — what's spent, what they'll save against, and the few skills good enough to matter. Everything else stays a surprise unless you note it. The encounter builder measures against these numbers, not against level.</div>
+
+        <sc-if value="{{ isCards }}" hint-placeholder-val="{{ true }}">
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px;">
+            <sc-for list="{{ party }}" as="p" hint-placeholder-count="4">
+              <div draggable="true" onDragStart="{{ p.dragStart }}" onDragEnd="{{ p.dragEnd }}" title="Drag onto a scene at right to place this hero" style="border: 1px solid oklch(0.88 0.010 80); border-top: 3px solid {{ p.accent }}; border-radius: 4px; background: oklch(0.985 0.005 85); padding: 13px 14px 12px;">
+                <div style="display: flex; align-items: baseline; gap: 9px;">
+                  <span style="font-family: Spectral, serif; font-size: 19px; font-weight: 500;">{{ p.name }}</span>
+                  <span style="flex: 1; min-width: 0; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ p.build }}</span>
+                  <span style="padding: 1px 6px; border-radius: 20px; background: {{ p.srcBg }}; font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.05em; text-transform: uppercase; color: {{ p.srcFg }};">{{ p.source }}</span>
+                </div>
+
+                <div style="display: flex; align-items: center; gap: 10px; margin-top: 11px;">
+                  <div style="flex: 1;">
+                    <div style="display: flex; align-items: baseline; gap: 7px;">
+                      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; color: oklch(0.60 0.012 70);">HP</span>
+                      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: {{ p.hpColor }};">{{ p.hpText }}</span>
+                    </div>
+                    <div style="height: 6px; border-radius: 4px; background: oklch(0.90 0.008 80); margin-top: 5px; overflow: hidden;">
+                      <div style="height: 6px; width: {{ p.hpPct }}; background: {{ p.hpColor }};"></div>
+                    </div>
+                  </div>
+                  <sc-for list="{{ p.defenses }}" as="d" hint-placeholder-count="3">
+                    <div style="text-align: center; min-width: 42px;">
+                      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.60 0.012 70);">{{ d.label }}</div>
+                      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: oklch(0.31 0.015 60); margin-top: 2px;">{{ d.value }}</div>
+                    </div>
+                  </sc-for>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 5px; margin-top: 12px;">
+                  <sc-for list="{{ p.resources }}" as="r" hint-placeholder-count="3">
+                    <div style="display: flex; align-items: center; gap: 9px;">
+                      <span style="width: 96px; flex: none; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.55 0.012 70); text-align: right;">{{ r.label }}</span>
+                      <div style="flex: 1; display: flex; gap: 3px;">
+                        <sc-for list="{{ r.pips }}" as="pip" hint-placeholder-count="4">
+                          <span style="flex: 1; height: 7px; border-radius: 2px; background: {{ pip.bg }}; border: 1px solid {{ pip.border }};"></span>
+                        </sc-for>
+                      </div>
+                      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70); flex: none;">{{ r.text }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+
+                <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 7px;">
+                  <sc-for list="{{ p.rows }}" as="row" hint-placeholder-count="3">
+                    <div style="display: grid; grid-template-columns: 74px 1fr; gap: 10px;">
+                      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.60 0.012 70); text-align: right; padding-top: 3px;">{{ row.label }}</div>
+                      <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                        <sc-for list="{{ row.items }}" as="ch" hint-placeholder-count="3">
+                          <span style="padding: 2px 8px; border: 1px solid {{ ch.border }}; border-radius: 20px; font-size: 11.5px; background: {{ ch.bg }}; color: {{ ch.fg }};">{{ ch.label }}</span>
+                        </sc-for>
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+
+                <div style="margin-top: 11px;">
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.60 0.012 70); margin-bottom: 4px;">My note</div>
+                  <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ p.saveNote }}" data-placeholder="—" style="min-height: 30px; padding: 6px 9px; border: 1px solid oklch(0.89 0.010 80); border-radius: 3px; background: oklch(0.975 0.006 85); font-size: 11.5px; line-height: 1.45; color: oklch(0.42 0.014 65);">{{ p.note }}</div>
+                </div>
+              </div>
+            </sc-for>
+
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; min-height: 130px; border: 1px dashed oklch(0.80 0.010 80); border-radius: 4px; padding: 14px;">
+              <div onClick="{{ pullParty }}" style="display: flex; align-items: center; gap: 8px; padding: 7px 13px; border: 1px solid oklch(0.80 0.040 185); border-radius: 5px; cursor: pointer; background: oklch(0.965 0.014 185); color: oklch(0.38 0.060 185); font-size: 12.5px;" style-hover="border-color: oklch(0.62 0.060 185);"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px;">↧</span><span>Pull characters from Foundry</span></div>
+              <div onClick="{{ addPc }}" style="font-size: 11.5px; color: oklch(0.56 0.012 70); cursor: pointer;" style-hover="color: oklch(0.45 0.075 185);">or type one in by hand</div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isTable }}" hint-placeholder-val="{{ false }}">
+          <div style="border: 1px solid oklch(0.88 0.010 80); border-radius: 4px; background: oklch(0.985 0.005 85); overflow: hidden;">
+            <div style="display: grid; grid-template-columns: 184px 88px 52px 62px 1.05fr 128px 1.15fr 1.15fr; gap: 0; background: oklch(0.928 0.009 85); border-bottom: 1px solid oklch(0.88 0.010 80);">
+              <sc-for list="{{ tableHead }}" as="h" hint-placeholder-count="7">
+                <div style="padding: 8px 11px; font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.53 0.012 70);">{{ h.label }}</div>
+              </sc-for>
+            </div>
+            <sc-for list="{{ party }}" as="p" hint-placeholder-count="4">
+              <div style="display: grid; grid-template-columns: 184px 88px 52px 62px 1.05fr 128px 1.15fr 1.15fr; border-bottom: 1px solid oklch(0.91 0.010 80);" style-hover="background: oklch(0.965 0.010 185);">
+                <div draggable="true" onDragStart="{{ p.dragStart }}" onDragEnd="{{ p.dragEnd }}" title="Drag onto a scene at right" style="padding: 11px; border-left: 3px solid {{ p.accent }}; cursor: grab;">
+                  <div style="font-family: Spectral, serif; font-size: 15.5px; font-weight: 500;">{{ p.name }}</div>
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.60 0.012 70); margin-top: 2px;">{{ p.build }}</div>
+                </div>
+                <div style="padding: 11px;">
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: {{ p.hpColor }};">{{ p.hpText }}</div>
+                  <div style="height: 5px; border-radius: 3px; background: oklch(0.90 0.008 80); margin-top: 5px; overflow: hidden;">
+                    <div style="height: 5px; width: {{ p.hpPct }}; background: {{ p.hpColor }};"></div>
+                  </div>
+                </div>
+                <div style="padding: 11px; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: oklch(0.31 0.015 60);">{{ p.acText }}</div>
+                <div style="padding: 11px; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: oklch(0.31 0.015 60);">{{ p.passiveText }}</div>
+                <div style="padding: 11px; display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start;">
+                  <sc-for list="{{ p.resourceChips }}" as="ch" hint-placeholder-count="2">
+                    <span style="padding: 2px 8px; border: 1px solid {{ ch.border }}; border-radius: 20px; font-family: 'IBM Plex Mono', monospace; font-size: 10px; background: {{ ch.bg }}; color: {{ ch.fg }};">{{ ch.label }}</span>
+                  </sc-for>
+                </div>
+                <div style="padding: 11px; display: flex; flex-direction: column; gap: 3px; align-items: flex-start;">
+                  <sc-for list="{{ p.saveChips }}" as="ch" hint-placeholder-count="2">
+                    <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.36 0.014 65);">{{ ch.label }}</span>
+                  </sc-for>
+                </div>
+                <div style="padding: 11px; display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start;">
+                  <sc-for list="{{ p.notableChips }}" as="ch" hint-placeholder-count="3">
+                    <span style="padding: 2px 8px; border: 1px solid {{ ch.border }}; border-radius: 20px; font-size: 11.5px; background: {{ ch.bg }}; color: {{ ch.fg }};">{{ ch.label }}</span>
+                  </sc-for>
+                </div>
+                <div style="padding: 9px 11px;">
+                  <div contentEditable="true" suppressContentEditableWarning="{{ true }}" onBlur="{{ p.saveNote }}" style="min-height: 26px; padding: 5px 8px; border: 1px solid oklch(0.91 0.010 80); border-radius: 3px; background: oklch(0.975 0.006 85); font-size: 11.5px; line-height: 1.45; color: oklch(0.42 0.014 65);">{{ p.note }}</div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display: flex; gap: 22px; margin-top: 14px; padding: 12px 14px; border: 1px solid oklch(0.88 0.010 80); border-radius: 4px; background: oklch(0.975 0.006 85);">
+            <sc-for list="{{ partyReadout }}" as="r" hint-placeholder-count="4">
+              <div>
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; color: oklch(0.58 0.012 70);">{{ r.label }}</div>
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: {{ r.color }}; margin-top: 3px;">{{ r.value }}</div>
+              </div>
+            </sc-for>
+            <div style="flex: 1;"></div>
+            <div style="max-width: 40ch; font-size: 11.5px; line-height: 1.45; color: oklch(0.54 0.012 70);">{{ partyAdvice }}</div>
+          </div>
+        </sc-if>
+      </div>
+      <div style="width: 306px; flex: none; border-left: 1px solid oklch(0.87 0.010 80); background: oklch(0.938 0.009 85); display: flex; flex-direction: column; min-height: 0; justify-content: flex-end;">
+        <div style="border-top: 1px solid oklch(0.88 0.010 80); background: oklch(0.925 0.009 85); padding: 11px 14px 13px; flex: none;">
+          <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.53 0.012 70);">Drop into a scene</div>
+            <div style="flex: 1;"></div>
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: {{ trayHintColor }};">{{ trayHint }}</div>
+          </div>
+          <input value="{{ sceneQuery }}" onChange="{{ setSceneQuery }}" placeholder="Find a scene…" style="width: 100%; padding: 5px 9px; border: 1px solid oklch(0.85 0.010 80); border-radius: 4px; font-family: inherit; font-size: 12px; background: oklch(1 0 0); color: inherit; margin-bottom: 8px;" />
+          <div style="display: flex; flex-direction: column; gap: 5px; max-height: 268px; overflow-y: auto;">
+            <sc-for list="{{ sceneTargets }}" as="sc" hint-placeholder-count="3">
+              <div onDragOver="{{ sc.dragOver }}" onDragLeave="{{ sc.dragLeave }}" onDrop="{{ sc.drop }}" style="padding: 8px 10px; border: 1px dashed {{ sc.border }}; border-radius: 4px; background: {{ sc.bg }};">
+                <div style="display: flex; align-items: baseline; gap: 8px;">
+                  <span style="font-size: 12.5px; color: oklch(0.28 0.015 60);">{{ sc.name }}</span>
+                  <span style="flex: 1;"></span>
+                  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: {{ sc.budgetColor }};">{{ sc.budget }}</span>
+                </div>
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70); margin-top: 3px;">{{ sc.meta }}</div>
+                <sc-if value="{{ sc.hasRoster }}" hint-placeholder-val="{{ false }}">
+                  <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;">
+                    <sc-for list="{{ sc.roster }}" as="r" hint-placeholder-count="2">
+                      <span style="display: flex; align-items: center; gap: 5px; padding: 2px 7px; border: 1px solid {{ r.border }}; border-radius: 20px; background: {{ r.bg }}; font-size: 11px; color: {{ r.fg }};">
+                        <span>{{ r.label }}</span>
+                        <span onClick="{{ r.remove }}" style="font-size: 9px; cursor: pointer; color: oklch(0.50 0.030 185);" style-hover="color: oklch(0.50 0.13 25);">✕</span>
+                      </span>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isShelf }}" hint-placeholder-val="{{ false }}">
+    <div style="display: flex; flex: 1; min-height: 0;">
+
+      <div style="width: 268px; flex: none; border-right: 1px solid oklch(0.87 0.010 80); background: oklch(0.938 0.009 85); display: flex; flex-direction: column; min-height: 0;">
+        <div style="padding: 13px 14px 8px;">
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: oklch(0.53 0.012 70);">Tags</div>
+          <div style="font-size: 11.5px; color: oklch(0.56 0.012 70); line-height: 1.45; margin-top: 6px;">{{ shelfSideBlurb }}</div>
+        </div>
+        <div style="flex: 1; overflow-y: auto; padding: 0 10px 14px; min-height: 0; display: flex; flex-wrap: wrap; gap: 5px; align-content: flex-start;">
+          <sc-for list="{{ tagFilters }}" as="t" hint-placeholder-count="10">
+            <div onClick="{{ t.toggle }}" style="display: flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid {{ t.border }}; border-radius: 20px; cursor: pointer; font-size: 11.5px; background: {{ t.bg }}; color: {{ t.fg }};" style-hover="border-color: oklch(0.65 0.045 185);">
+              <span>{{ t.label }}</span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; opacity: 0.7;">{{ t.count }}</span>
+            </div>
+          </sc-for>
+        </div>
+        <sc-if value="{{ hasTagFilter }}" hint-placeholder-val="{{ false }}">
+          <div onClick="{{ clearTags }}" style="padding: 8px 14px; font-size: 11.5px; color: oklch(0.50 0.075 185); cursor: pointer; border-top: 1px solid oklch(0.90 0.010 80);">Clear tag filter</div>
+        </sc-if>
+
+        <div style="border-top: 1px solid oklch(0.88 0.010 80); background: oklch(0.925 0.009 85); padding: 11px 14px 13px; flex: none;">
+          <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.53 0.012 70);">Drop into a scene</div>
+            <div style="flex: 1;"></div>
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: {{ trayHintColor }};">{{ trayHint }}</div>
+          </div>
+          <input value="{{ sceneQuery }}" onChange="{{ setSceneQuery }}" placeholder="Find a scene…" style="width: 100%; padding: 5px 9px; border: 1px solid oklch(0.85 0.010 80); border-radius: 4px; font-family: inherit; font-size: 12px; background: oklch(1 0 0); color: inherit; margin-bottom: 8px;" />
+          <div style="display: flex; flex-direction: column; gap: 5px; max-height: 268px; overflow-y: auto;">
+            <sc-for list="{{ sceneTargets }}" as="sc" hint-placeholder-count="3">
+              <div onDragOver="{{ sc.dragOver }}" onDragLeave="{{ sc.dragLeave }}" onDrop="{{ sc.drop }}" style="padding: 8px 10px; border: 1px dashed {{ sc.border }}; border-radius: 4px; background: {{ sc.bg }};">
+                <div style="display: flex; align-items: baseline; gap: 8px;">
+                  <span style="font-size: 12.5px; color: oklch(0.28 0.015 60);">{{ sc.name }}</span>
+                  <span style="flex: 1;"></span>
+                  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: {{ sc.budgetColor }};">{{ sc.budget }}</span>
+                </div>
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70); margin-top: 3px;">{{ sc.meta }}</div>
+                <sc-if value="{{ sc.hasRoster }}" hint-placeholder-val="{{ false }}">
+                  <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;">
+                    <sc-for list="{{ sc.roster }}" as="r" hint-placeholder-count="2">
+                      <span style="display: flex; align-items: center; gap: 5px; padding: 2px 7px; border: 1px solid {{ r.border }}; border-radius: 20px; background: {{ r.bg }}; font-size: 11px; color: {{ r.fg }};">
+                        <span>{{ r.label }}</span>
+                        <span onClick="{{ r.remove }}" style="font-size: 9px; cursor: pointer; color: oklch(0.50 0.030 185);" style-hover="color: oklch(0.50 0.13 25);">✕</span>
+                      </span>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex: 1; min-width: 0; overflow-y: auto; padding: 22px 28px 44px;">
+        <div style="display: flex; align-items: baseline; gap: 11px; margin-bottom: 4px;">
+          <div style="font-family: Spectral, serif; font-size: 25px; font-weight: 500;">{{ shelfTitle }}</div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.60 0.012 70);">{{ shelfMeta }}</div>
+        </div>
+        <div style="font-size: 12.5px; color: oklch(0.52 0.014 65); margin-bottom: 16px; max-width: 68ch; line-height: 1.5;">{{ shelfBlurb }}</div>
+
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <sc-for list="{{ shelfRows }}" as="r" hint-placeholder-count="8">
+            <div draggable="true" onDragStart="{{ r.dragStart }}" onDragEnd="{{ r.dragEnd }}" title="Drag onto a scene at left to hand it to that scene" style="display: flex; align-items: flex-start; gap: 12px; padding: 10px 13px; border: 1px solid oklch(0.88 0.010 80); border-left: 3px solid {{ r.accent }}; border-radius: 4px; background: oklch(0.985 0.005 85); cursor: grab;" style-hover="border-color: oklch(0.70 0.045 185); background: oklch(1 0 0);">
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: {{ r.accent }}; padding-top: 2px; flex: none;">{{ r.glyph }}</span>
+              <div style="flex: 1; min-width: 0;">
+                <div style="display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap;">
+                  <span style="font-family: Spectral, serif; font-size: 16px; font-weight: 500;">{{ r.name }}</span>
+                  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70);">{{ r.meta }}</span>
+                  <span style="flex: 1;"></span>
+                  <span style="padding: 1px 6px; border-radius: 20px; background: {{ r.srcBg }}; font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.05em; text-transform: uppercase; color: {{ r.srcFg }};">{{ r.source }}</span>
+                </div>
+                <sc-if value="{{ r.hasDesc }}" hint-placeholder-val="{{ true }}">
+                  <div style="font-size: 12px; color: oklch(0.48 0.014 65); line-height: 1.45; margin-top: 5px; max-width: 78ch;">{{ r.desc }}</div>
+                </sc-if>
+                <sc-if value="{{ r.noDesc }}" hint-placeholder-val="{{ false }}">
+                  <div style="font-size: 11.5px; color: oklch(0.64 0.012 70); font-style: italic; margin-top: 5px;">No description came across from Foundry.</div>
+                </sc-if>
+                <div style="display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; align-items: center;">
+                  <sc-for list="{{ r.tags }}" as="tg" hint-placeholder-count="3">
+                    <span style="display: flex; align-items: center; gap: 5px; padding: 2px 8px; border: 1px solid {{ tg.border }}; border-radius: 20px; background: {{ tg.bg }}; font-size: 11px; color: {{ tg.fg }};">
+                      <span onClick="{{ tg.filter }}" style="cursor: pointer;">{{ tg.label }}</span>
+                      <span onClick="{{ tg.remove }}" style="font-size: 9px; cursor: pointer; color: oklch(0.62 0.012 70);" style-hover="color: oklch(0.50 0.13 25);">✕</span>
+                    </span>
+                  </sc-for>
+                  <sc-if value="{{ r.tagOpen }}" hint-placeholder-val="{{ false }}">
+                    <input value="{{ tagDraft }}" onChange="{{ setTagDraft }}" onKeyDown="{{ r.tagKey }}" onBlur="{{ closeTag }}" autoFocus="{{ true }}" placeholder="tag…" style="width: 120px; padding: 2px 9px; border: 1px solid oklch(0.72 0.045 185); border-radius: 20px; font-family: inherit; font-size: 11px; background: oklch(1 0 0); color: inherit;" />
+                  </sc-if>
+                  <sc-if value="{{ r.tagClosed }}" hint-placeholder-val="{{ true }}">
+                    <span onClick="{{ r.openTag }}" style="padding: 2px 8px; border: 1px dashed oklch(0.83 0.010 80); border-radius: 20px; font-size: 11px; color: oklch(0.58 0.012 70); cursor: pointer;" style-hover="border-color: oklch(0.65 0.045 185); color: oklch(0.45 0.075 185);">+ tag</span>
+                  </sc-if>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+
+        <sc-if value="{{ shelfEmpty }}" hint-placeholder-val="{{ false }}">
+          <div style="padding: 26px; border: 1px dashed oklch(0.86 0.010 80); border-radius: 4px; font-size: 12.5px; color: oklch(0.56 0.012 70); text-align: center;">Nothing matches that. Loosen the search or clear a tag.</div>
+        </sc-if>
+
+        <div style="display: flex; align-items: center; gap: 12px; margin-top: 16px;">
+          <div onClick="{{ pullShelf }}" style="display: inline-flex; align-items: center; gap: 8px; padding: 8px 13px; border: 1px solid oklch(0.80 0.040 185); border-radius: 5px; cursor: pointer; background: oklch(0.965 0.014 185); color: oklch(0.38 0.060 185); font-size: 12.5px;" style-hover="border-color: oklch(0.62 0.060 185);"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px;">↧</span><span>{{ pullShelfLabel }}</span></div>
+          <div style="font-size: 11.5px; color: oklch(0.60 0.012 70);">{{ shelfFootnote }}</div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ hasToast }}" hint-placeholder-val="{{ false }}">
+    <div style="position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-radius: 6px; background: oklch(0.26 0.015 60); color: oklch(0.96 0.008 85); font-size: 12.5px; box-shadow: 0 8px 26px oklch(0.26 0.015 60 / 0.28); z-index: 40;">
+      <span>{{ toastText }}</span>
+      <span onClick="{{ undoToast }}" style="cursor: pointer; color: oklch(0.80 0.075 185); font-weight: 500;">Undo</span>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+const TEAL = "oklch(0.55 0.075 185)";
+
+const SOURCES = {
+  srd: { label: "5e SRD", bg: "oklch(0.90 0.030 185)", fg: "oklch(0.36 0.060 185)" },
+  ds: { label: "Draw Steel", bg: "oklch(0.90 0.045 145)", fg: "oklch(0.34 0.08 145)" },
+  foundry: { label: "Foundry world", bg: "oklch(0.90 0.035 260)", fg: "oklch(0.36 0.07 260)" },
+  mine: { label: "Mine", bg: "oklch(0.90 0.045 65)", fg: "oklch(0.38 0.09 65)" },
+  reskin: { label: "Reskin", bg: "oklch(0.90 0.045 300)", fg: "oklch(0.36 0.08 300)" }
+};
+
+const HABITATS = [
+  { id: "all", label: "Everything", depth: 0, glyph: "◈", blurb: "The whole catalogue — everything read out of Foundry, plus what you've written here." },
+  { id: "marches", label: "The Ashfen Marches", depth: 0, glyph: "▢", blurb: "Salt marsh and causeway. Tide-logged, cold, and thinly patrolled." },
+  { id: "causeway", label: "Ashfen Causeway", depth: 1, glyph: "▢", blurb: "The one road in. Whatever waits here waits in the open." },
+  { id: "city", label: "Threadbare City", depth: 0, glyph: "▢", blurb: "Built on the bones of the last city. Crowds, watch patrols, and whatever crawls up from below." },
+  { id: "market", label: "Threadbare Market", depth: 1, glyph: "▢", blurb: "Daylight trouble: cutpurses, enforcers, and the occasional thing wearing a person." },
+  { id: "vault", label: "The Drowned Vault", depth: 1, glyph: "▢", blurb: "Flooded reliquary, dry for six weeks. Everything here has been waiting a long time." },
+  { id: "unplaced", label: "Belongs nowhere yet", depth: 0, glyph: "◌", blurb: "Catalogue entries with no habitat. Drag one onto a place to say where it lives." }
+];
+
+const CREATURES = [
+  { id: "c_bully", name: "Bullywug Sentry", source: "srd", habitats: ["marches", "causeway"], kind: "Medium humanoid (bullywug), neutral evil",
+    ratingLabel: "CR", book: "1", mine: "1", line: "Croaking amphibian pickets. Fight in threes, flee alone.",
+    defenses: [["AC", "15"], ["HP", "22"], ["Speed", "20 ft, swim 40"], ["Init", "+1"]],
+    abilities: [["STR", "12 (+1)"], ["DEX", "12 (+1)"], ["CON", "13 (+1)"], ["INT", "7 (−2)"], ["WIS", "10 (+0)"], ["CHA", "7 (−2)"]],
+    lines: [["Senses", "passive Perception 10"], ["Languages", "Bullywug"], ["Skills", "Stealth +3"]],
+    sections: [
+      { label: "Traits", items: [["Amphibious.", "Can breathe air and water."], ["Standing Leap.", "Long jump up to 20 ft, high jump up to 10 ft, with or without a running start."], ["Swamp Camouflage.", "Advantage on Stealth checks made to hide in swampy terrain."]] },
+      { label: "Actions", items: [["Multiattack.", "Makes one bite attack and one spear attack."], ["Spear.", "Melee or ranged weapon attack: +3 to hit, reach 5 ft or range 20/60 ft. Hit: 4 (1d6+1) piercing damage."]] }
+    ],
+    appearances: [["Writ and Warning", "session 10"]], note: "" },
+
+  { id: "c_wisp", name: "Will-o'-Wisp", source: "srd", habitats: ["marches", "causeway"], kind: "Tiny undead, chaotic evil",
+    ratingLabel: "CR", book: "2", mine: "3", line: "Immune to almost everything the party swings. Frightens more than it hurts.",
+    defenses: [["AC", "19"], ["HP", "22"], ["Speed", "fly 50 ft"], ["Init", "+9"]],
+    abilities: [["STR", "1 (−5)"], ["DEX", "28 (+9)"], ["CON", "10 (+0)"], ["INT", "13 (+1)"], ["WIS", "14 (+2)"], ["CHA", "11 (+0)"]],
+    lines: [["Senses", "darkvision 120 ft, passive Perception 12"], ["Damage Immunities", "lightning, poison; bludgeoning, piercing, slashing from nonmagical attacks"], ["Languages", "the languages it knew in life"]],
+    sections: [
+      { label: "Traits", items: [["Consume Life.", "As a bonus action, can target a creature within 5 ft that has 0 hit points and is still alive."], ["Ephemeral.", "Can't wear or carry anything."], ["Variable Illumination.", "Sheds bright light in a 5–20 ft radius and can change it as a bonus action."]] },
+      { label: "Actions", items: [["Shock.", "Melee spell attack: +4 to hit, reach 5 ft. Hit: 9 (2d8) lightning damage."], ["Invisibility.", "Turns invisible until it attacks or uses Consume Life."]] }
+    ],
+    appearances: [], note: "Bumped to 3 at my table — nobody has magical damage until Sella's cleric hits 5." },
+
+  { id: "c_grubs", name: "Swarm of Rot Grubs", source: "srd", habitats: ["vault", "marches"], kind: "Medium swarm of Tiny beasts, unaligned",
+    ratingLabel: "CR", book: "1/2", mine: "1/2", line: "Terrain hazard with hit points. Good for punishing a careless search.",
+    defenses: [["AC", "8"], ["HP", "22"], ["Speed", "5 ft, climb 5 ft"], ["Init", "−1"]],
+    abilities: [["STR", "2 (−4)"], ["DEX", "8 (−1)"], ["CON", "11 (+0)"], ["INT", "1 (−5)"], ["WIS", "2 (−4)"], ["CHA", "1 (−5)"]],
+    lines: [["Senses", "blindsight 10 ft, passive Perception 6"], ["Condition Immunities", "charmed, frightened, paralyzed, petrified, prone, restrained, stunned"]],
+    sections: [
+      { label: "Actions", items: [["Bites.", "Melee weapon attack: +2 to hit, reach 0 ft, one creature in the swarm's space. Hit: 11 (4d4+1) piercing damage, or 5 (2d4) if the swarm is at half hit points or fewer."]] }
+    ],
+    appearances: [["The Antechamber", "session 11"]], note: "" },
+
+  { id: "c_weird", name: "Water Weird", source: "srd", habitats: ["vault"], kind: "Large elemental, neutral",
+    ratingLabel: "CR", book: "3", mine: "2", line: "Guards a pool it can't leave. Now the vault is dry — decide what that did to it.",
+    defenses: [["AC", "13"], ["HP", "58"], ["Speed", "0 ft, swim 60 ft"], ["Init", "+3"]],
+    abilities: [["STR", "17 (+3)"], ["DEX", "16 (+3)"], ["CON", "13 (+1)"], ["INT", "11 (+0)"], ["WIS", "10 (+0)"], ["CHA", "10 (+0)"]],
+    lines: [["Senses", "blindsight 30 ft, passive Perception 10"], ["Damage Resistances", "fire; bludgeoning, piercing, slashing from nonmagical attacks"], ["Languages", "understands Aquan but doesn't speak"]],
+    sections: [
+      { label: "Traits", items: [["Invisible in Water.", "Invisible while fully immersed."], ["Water Bound.", "Dies if it leaves the water it inhabits."]] },
+      { label: "Actions", items: [["Constrict.", "Melee weapon attack: +5 to hit, reach 5 ft. Hit: 13 (3d6+3) bludgeoning, and the target is grappled (escape DC 13) and pulled 5 ft toward the weird."]] }
+    ],
+    appearances: [], note: "Vault drained in the last advance — reskin as a Dust Weird or retire it." },
+
+  { id: "c_warden", name: "Drowned Warden", source: "mine", habitats: ["vault"], kind: "Medium undead, lawful neutral",
+    ratingLabel: "CR", book: "4", mine: "4", line: "Speaks only the oath-cant. Will not strike first if the party answers correctly.",
+    defenses: [["AC", "16"], ["HP", "68"], ["Speed", "30 ft, swim 30 ft"], ["Init", "+2"]],
+    abilities: [["STR", "16 (+3)"], ["DEX", "14 (+2)"], ["CON", "16 (+3)"], ["INT", "10 (+0)"], ["WIS", "15 (+2)"], ["CHA", "9 (−1)"]],
+    lines: [["Senses", "darkvision 60 ft, passive Perception 14"], ["Languages", "the oath-cant, Common (haltingly)"], ["Saving Throws", "Wis +4, Con +5"]],
+    sections: [
+      { label: "Traits", items: [["Oathbound.", "Cannot attack a creature that has spoken a correct verse of the oath-cant this round."], ["Waterlogged.", "Vulnerable to lightning; resistant to cold."]] },
+      { label: "Actions", items: [["Multiattack.", "Makes two halberd attacks."], ["Verdigris Halberd.", "Melee weapon attack: +6 to hit, reach 10 ft. Hit: 10 (1d10+3) slashing plus 3 (1d6) poison damage."]] }
+    ],
+    appearances: [["The Antechamber", "session 11"]], note: "Written by me. If they get the cant right twice, it should start talking." },
+
+  { id: "c_thug", name: "Compact Enforcer", source: "reskin", habitats: ["city", "market", "causeway"], kind: "Medium humanoid (any race), any alignment · reskin of Thug",
+    ratingLabel: "CR", book: "1/2", mine: "1/2", line: "Blockade muscle in Compact green. Numbers untouched from the SRD thug.",
+    defenses: [["AC", "11"], ["HP", "32"], ["Speed", "30 ft"], ["Init", "+0"]],
+    abilities: [["STR", "15 (+2)"], ["DEX", "11 (+0)"], ["CON", "14 (+2)"], ["INT", "10 (+0)"], ["WIS", "10 (+0)"], ["CHA", "11 (+0)"]],
+    lines: [["Senses", "passive Perception 10"], ["Languages", "any one language (usually Common)"]],
+    sections: [
+      { label: "Traits", items: [["Pack Tactics.", "Advantage on attack rolls against a creature if at least one ally is within 5 ft of it."]] },
+      { label: "Actions", items: [["Multiattack.", "Makes two melee attacks."], ["Mace.", "Melee weapon attack: +4 to hit, reach 5 ft. Hit: 5 (1d6+2) bludgeoning damage."], ["Heavy Crossbow.", "Ranged weapon attack: +2 to hit, range 100/400 ft. Hit: 5 (1d10) piercing damage."]] }
+    ],
+    appearances: [["Cold Iron, Warm Words", "session 11"]], note: "" },
+
+  { id: "c_giant", name: "Hill Giant", source: "srd", habitats: ["unplaced"], kind: "Huge giant, chaotic evil",
+    ratingLabel: "CR", book: "5", mine: "5", line: "Kept around mostly as a chassis — big numbers, simple turn.",
+    defenses: [["AC", "13"], ["HP", "105"], ["Speed", "40 ft"], ["Init", "−1"]],
+    abilities: [["STR", "21 (+5)"], ["DEX", "8 (−1)"], ["CON", "19 (+4)"], ["INT", "5 (−3)"], ["WIS", "9 (−1)"], ["CHA", "6 (−2)"]],
+    lines: [["Senses", "passive Perception 12"], ["Languages", "Giant"], ["Skills", "Perception +2"]],
+    sections: [
+      { label: "Actions", items: [["Multiattack.", "Makes two greatclub attacks."], ["Greatclub.", "Melee weapon attack: +8 to hit, reach 10 ft. Hit: 18 (3d8+5) bludgeoning damage."], ["Rock.", "Ranged weapon attack: +8 to hit, range 60/240 ft. Hit: 21 (3d10+5) bludgeoning damage."]] }
+    ],
+    appearances: [], note: "" },
+
+  { id: "c_grubskin", name: "Radenwight Grubskin", source: "ds", habitats: ["vault", "marches"], kind: "Level 1 Minion · Horde",
+    ratingLabel: "EV", book: "3", mine: "3", line: "Draw Steel minion. Squad of four costs the same as one standard creature.",
+    defenses: [["Stamina", "5"], ["Speed", "5"], ["Size", "1S"], ["Free Strike", "2"]],
+    abilities: [],
+    lines: [["Might", "+1"], ["Agility", "+2"], ["Reason", "−1"], ["Intuition", "+0"], ["Presence", "−1"], ["Immunity", "corruption 2"]],
+    sections: [
+      { label: "Features", items: [["Rusted Sickle (main action).", "1 + Agility damage. Melee 1. Effect: a target that is winded is also slowed (save ends)."], ["Scurry (maneuver).", "Shift up to 2 squares, ignoring difficult terrain."], ["Swarm.", "This creature's squad deals +1 damage for each other Grubskin adjacent to the target."]] }
+    ],
+    appearances: [], note: "Trying Draw Steel for the vault delve — EV budget instead of CR." },
+
+  { id: "c_dreadnought", name: "Vault Dreadnought", source: "ds", habitats: ["vault"], kind: "Level 4 Solo · Brute",
+    ratingLabel: "EV", book: "48", mine: "40", line: "Draw Steel solo. Built to hold the lower cells against a full party.",
+    defenses: [["Stamina", "220"], ["Speed", "6"], ["Size", "3"], ["Free Strike", "7"]],
+    abilities: [],
+    lines: [["Might", "+3"], ["Agility", "+0"], ["Reason", "−2"], ["Intuition", "+1"], ["Presence", "+2"], ["Traits", "Solo turns: acts twice per round"]],
+    sections: [
+      { label: "Features", items: [["Verdigris Fist (main action).", "2d6 + 3 damage, Melee 2, two targets. 12+: push 2. 17+: prone."], ["Tidewall (triggered).", "When damaged by a ranged attack, halve the damage and shift 2 toward the attacker."], ["End Effect.", "At the end of each of its turns, it can spend 10 Stamina to end one save-ends effect."]] }
+    ],
+    appearances: [], note: "" }
+];
+
+const PARTY = [
+  { id: "pc_sella", name: "Sella Vane", build: "Cleric 5 · Light · Rowan", source: "foundry", accent: "oklch(0.60 0.10 65)",
+    hp: [22, 38], ac: 18, passive: 14,
+    resources: [["Spell slots 3rd", 1, 3], ["Channel Divinity", 0, 1], ["Healing potions", 1, 2]],
+    saves: "Wis +7, Cha +5", conditions: "one level of exhaustion",
+    skills: [["Religion", 7, false], ["Insight", 7, false], ["Medicine", 4, false]], langs: ["Celestial"],
+    items: ["Wand of the war mage", "Holy symbol (Compact)", "2 × healing potion"],
+    note: "Only healer. Don't open with something that drops her." },
+  { id: "pc_gorm", name: "Gorm Stellik", build: "Barbarian 5 · Totem · Ade", source: "foundry", accent: "oklch(0.50 0.13 25)",
+    hp: [51, 58], ac: 15, passive: 16,
+    resources: [["Rages", 1, 3], ["Hit dice", 2, 5]],
+    saves: "Str +8, Con +7", conditions: "—",
+    skills: [["Athletics", 8, true], ["Survival", 6, false], ["Perception", 6, false]], langs: ["Giant"],
+    items: ["+1 greataxe", "Climber's kit", "Alchemist's fire ×2"],
+    note: "" },
+  { id: "pc_tarn", name: "Tarn Ashby", build: "Rogue 5 · Arcane Trickster · Bex", source: "foundry", accent: "oklch(0.52 0.08 300)",
+    hp: [33, 38], ac: 16, passive: 18,
+    resources: [["Spell slots 2nd", 2, 3], ["Uses of Cunning", 0, 0]],
+    saves: "Dex +8, Int +6", conditions: "—",
+    skills: [["Stealth", 11, true], ["Thieves' tools", 11, true], ["Investigation", 6, false], ["Perception", 8, false]], langs: ["Thieves' cant"],
+    items: ["Boots of elvenkind", "Thieves' tools", "Sella's brother's ring (claimed)"],
+    note: "Still says he has the ring." },
+  { id: "pc_ovid", name: "Brother Ovid", build: "Wizard 4 · Divination · one-shot guest", source: "mine", accent: "oklch(0.50 0.09 145)",
+    hp: [24, 26], ac: 12, passive: 13,
+    resources: [["Spell slots 2nd", 1, 3], ["Portent dice", 1, 2]],
+    saves: "Int +7, Wis +5", conditions: "—",
+    skills: [["Arcana", 7, false], ["History", 7, false], ["Perception", 3, false]], langs: ["Draconic", "Primordial"],
+    items: ["Spellbook", "Scroll of misty step"],
+    note: "Hand-typed — no Foundry actor, so nothing pushes for him." }
+];
+
+const SCENES = [
+  { id: "s_cells", name: "The Lower Cells", place: "The Drowned Vault", budget: 3400 },
+  { id: "s_toll", name: "Toll at the Causeway", place: "Ashfen Causeway", budget: 2200 },
+  { id: "s_forge", name: "Cold Iron, Warm Words", place: "Gorrim's Forge", budget: 1100 }
+];
+const CR_XP = { "0": 10, "1/8": 25, "1/4": 50, "1/2": 100, "1": 200, "2": 450, "3": 700, "4": 1100, "5": 1800, "6": 2300, "7": 2900, "8": 3900 };
+function evOf(c) {
+  if (!c) return 0;
+  if (c.ratingLabel === "EV") return Number(c.mine) * 40;
+  return CR_XP[String(c.mine)] || 0;
+}
+
+function notable(p) {
+  const out = p.skills
+    .filter((sk) => sk[2] || sk[1] >= 7)
+    .map((sk) => ({
+      label: sk[0] + " +" + sk[1] + (sk[2] ? " ✦" : ""),
+      bg: sk[2] ? "oklch(0.94 0.030 185)" : "oklch(0.975 0.006 85)",
+      fg: sk[2] ? "oklch(0.34 0.060 185)" : "oklch(0.40 0.014 65)",
+      border: sk[2] ? "oklch(0.80 0.045 185)" : "oklch(0.88 0.010 80)"
+    }));
+  p.langs.forEach((l) => out.push({ label: l, bg: "oklch(0.975 0.006 85)", fg: "oklch(0.52 0.014 65)", border: "oklch(0.90 0.010 80)" }));
+  return out;
+}
+
+const RESKINS = [
+  ["Sergeant Hurl Bannick", "A watch sergeant with a neck like a bollard and a mace he calls The Paperwork. Same numbers, same reach — he just tells you you're under arrest first."],
+  ["Ma Threnody", "Runs the causeway toll and does her own enforcement. The greatclub is a mooring post; the thrown rock is a crab pot full of shingle."],
+  ["The Quarryman", "Broad, patient, entirely silent. Locals assume he's simple. He is not — he is bored, and boredom is why he hits so hard."]
+];
+
+const KINDS = {
+  item:   { label: "Item",   glyph: "◈", accent: "oklch(0.55 0.075 185)" },
+  map:    { label: "Map",    glyph: "▦", accent: "oklch(0.50 0.09 145)" },
+  splash: { label: "Splash", glyph: "◐", accent: "oklch(0.58 0.10 65)" },
+  music:  { label: "Music",  glyph: "♪", accent: "oklch(0.52 0.09 300)" }
+};
+
+const ASSETS = [
+  { id: "a_seal", name: "Tidewarden's Seal", kind: "item", source: "foundry", meta: "wondrous item · attunement",
+    desc: "A palm-sized disc of green brass. While attuned, you can hold your breath twice as long and the Vault's grates open at a touch.", tags: ["vault", "quest", "verdigris"] },
+  { id: "a_ledger", name: "Waterlogged Ledger", kind: "item", source: "foundry", meta: "document",
+    desc: "Tolls collected at the Causeway for eleven years. Three pages are legible; two names appear on every one.", tags: ["clue", "causeway"] },
+  { id: "a_grate", name: "The Brass Grate", kind: "item", source: "local", meta: "set piece",
+    desc: "", tags: ["vault", "obstacle"] },
+  { id: "a_ring", name: "Sella's Brother's Ring", kind: "item", source: "local", meta: "trinket",
+    desc: "Plain iron, worn thin at the inside. Sella has not taken it off since session 3.", tags: ["party", "sella", "sentimental"] },
+  { id: "a_rot", name: "Rot Grub Jar", kind: "item", source: "foundry", meta: "consumable · 3 charges",
+    desc: "Sealed clay, faintly moving. Thrown: 2d6 piercing and the target is poisoned until it uses an action to dig them out.", tags: ["hazard", "vault"] },
+
+  { id: "a_map_vault", name: "The Drowned Vault — lower level", kind: "map", source: "foundry", meta: "40×30 grid · walls set",
+    desc: "Flooded to the knee, four cell doors, one collapsed stair. Lighting baked for torchlight.", tags: ["vault", "combat", "dark"] },
+  { id: "a_map_cause", name: "Ashfen Causeway", kind: "map", source: "foundry", meta: "30×20 grid",
+    desc: "Long approach with two toll posts. Good for a stand-off that turns into a chase.", tags: ["causeway", "outdoor", "social"] },
+  { id: "a_map_market", name: "Threadbare Market", kind: "map", source: "local", meta: "image ref · no grid",
+    desc: "", tags: ["city", "social", "crowd"] },
+
+  { id: "a_sp_vault", name: "Antechamber, first sight", kind: "splash", source: "local", meta: "1920×1080",
+    desc: "Ankle-deep water, rotted pews, the grate glinting at the far wall. Show this before anyone rolls anything.", tags: ["vault", "reveal"] },
+  { id: "a_sp_warden", name: "The Drowned Warden", kind: "splash", source: "local", meta: "1400×1400 · portrait",
+    desc: "", tags: ["npc", "vault", "reveal"] },
+  { id: "a_sp_compact", name: "The Verdigris Compact seal", kind: "splash", source: "local", meta: "900×900",
+    desc: "For the moment the party works out who has been paying the tolls.", tags: ["verdigris", "handout"] },
+
+  { id: "a_mu_vault", name: "Still Water, Long Hall", kind: "music", source: "local", meta: "4:12 · loops",
+    desc: "Low drone, dripping. Fine to leave running for a whole delve.", tags: ["vault", "ambience", "tense"] },
+  { id: "a_mu_fight", name: "Grate and Iron", kind: "music", source: "local", meta: "2:41 · loops",
+    desc: "", tags: ["combat", "vault"] },
+  { id: "a_mu_market", name: "Threadbare Reels", kind: "music", source: "local", meta: "3:08",
+    desc: "Fiddle and hand drum, a little out of tune. Market, tavern, anywhere with people.", tags: ["city", "ambience", "warm"] }
+];
+
+class Component extends DCLogic {
+  state = {
+    tab: "bestiary", habitat: "vault", query: "", sources: {},
+    shelfQuery: "", shelfKind: "all", tagFilter: [], addedTags: {}, hiddenTags: {}, tagFor: null, tagDraft: "",
+    selId: "c_warden", ratings: {}, notes: {},
+    reskinPrompt: "", reskinIdx: -1, reskinning: false,
+    layout: "cards", extras: [], pcNotes: {}, pushed: {},
+    rosters: { s_cells: [{ id: "c_grubs", n: 1, kind: "creature" }] },
+    dragId: null, dropOn: null, sceneQuery: "", toast: ""
+  };
+
+  toast(text) {
+    clearTimeout(this._t);
+    this.setState({ toast: text });
+    this._t = setTimeout(() => this.setState({ toast: "" }), 3600);
+  }
+
+  all() { return CREATURES.concat(this.state.extras); }
+
+  visible() {
+    const s = this.state;
+    const q = s.query.trim().toLowerCase();
+    const anySource = Object.keys(s.sources).some((k) => s.sources[k]);
+    return this.all().filter((c) => {
+      if (s.habitat !== "all" && c.habitats.indexOf(s.habitat) < 0) return false;
+      if (anySource && !s.sources[c.source]) return false;
+      if (q && c.name.toLowerCase().indexOf(q) < 0 && c.line.toLowerCase().indexOf(q) < 0) return false;
+      return true;
+    });
+  }
+
+  tagsOf(a) {
+    const added = this.state.addedTags[a.id] || [];
+    const hidden = this.state.hiddenTags[a.id] || [];
+    return a.tags.concat(added).filter((t) => hidden.indexOf(t) < 0);
+  }
+
+  shelfVals(s) {
+    const isReliquary = s.tab === "reliquary", isStage = s.tab === "stage";
+    const isShelf = isReliquary || isStage;
+    if (!isShelf) return { isShelf: false, isStage: false, shelfRows: [], tagFilters: [], hasTagFilter: false, shelfEmpty: false, shelfQuery: "", tagDraft: "" };
+
+    const pool = ASSETS.filter((a) => (isReliquary ? a.kind === "item" : a.kind !== "item"))
+      .filter((a) => (isStage && s.shelfKind !== "all" ? a.kind === s.shelfKind : true));
+
+    const q = s.shelfQuery.trim().toLowerCase();
+    const rows = pool.filter((a) => {
+      const tags = this.tagsOf(a);
+      if (s.tagFilter.some((t) => tags.indexOf(t) < 0)) return false;
+      if (!q) return true;
+      return (a.name + " " + a.desc + " " + tags.join(" ")).toLowerCase().includes(q);
+    });
+
+    const counts = {};
+    pool.forEach((a) => this.tagsOf(a).forEach((t) => { counts[t] = (counts[t] || 0) + 1; }));
+
+    return {
+      isShelf: true, isStage,
+      shelfQuery: s.shelfQuery,
+      setShelfQuery: (e) => this.setState({ shelfQuery: e.target.value }),
+      shelfPlaceholder: isReliquary ? "Find an item…" : "Find a map, image, or track…",
+      shelfTitle: isReliquary ? "The Reliquary" : "Stagecraft",
+      shelfMeta: rows.length + " of " + pool.length + (isReliquary ? " items" : " pieces"),
+      shelfBlurb: isReliquary
+        ? "Things the party can hold, read, or steal. Nothing here needs a place in the graph — tag it, find it, hand it to a scene."
+        : "Maps, splash art, and music. Kept as references — the files themselves stay in Foundry; this is how you find the right one mid-session.",
+      shelfSideBlurb: isReliquary
+        ? "Filter by tag. Add your own on any row — they stick and they search."
+        : "Filter by tag. Stack two to narrow (e.g. vault + combat).",
+      shelfFootnote: isReliquary ? "Descriptions come across from Foundry when the item has one." : "Files stay in Foundry; these are refs.",
+      pullShelfLabel: isReliquary ? "Pull items from Foundry" : "Pull scenes, art, and playlists from Foundry",
+      pullShelf: () => this.toast(isReliquary ? "Read 14 items from the world's item directory." : "Read 9 scenes, 12 images, and 2 playlists."),
+      shelfEmpty: rows.length === 0,
+
+      tagFilters: Object.keys(counts).sort().map((t) => {
+        const on = s.tagFilter.indexOf(t) >= 0;
+        return {
+          label: t, count: String(counts[t]),
+          border: on ? TEAL : "oklch(0.86 0.010 80)",
+          bg: on ? "oklch(0.93 0.030 185)" : "oklch(0.965 0.006 85)",
+          fg: on ? "oklch(0.30 0.060 185)" : "oklch(0.50 0.014 65)",
+          toggle: () => this.setState((st) => ({ tagFilter: on ? st.tagFilter.filter((x) => x !== t) : st.tagFilter.concat([t]) }))
+        };
+      }),
+      hasTagFilter: s.tagFilter.length > 0,
+      clearTags: () => this.setState({ tagFilter: [] }),
+
+      tagDraft: s.tagDraft,
+      setTagDraft: (e) => this.setState({ tagDraft: e.target.value }),
+      closeTag: () => this.setState({ tagFor: null, tagDraft: "" }),
+
+      shelfRows: rows.map((a) => {
+        const k = KINDS[a.kind];
+        return {
+          name: a.name, meta: k.label + " · " + a.meta, glyph: k.glyph, accent: k.accent,
+          source: a.source === "foundry" ? "foundry" : "mine",
+          srcBg: a.source === "foundry" ? "oklch(0.93 0.030 185)" : "oklch(0.93 0.020 65)",
+          srcFg: a.source === "foundry" ? "oklch(0.38 0.060 185)" : "oklch(0.42 0.07 65)",
+          desc: a.desc, hasDesc: !!a.desc, noDesc: !a.desc,
+          tags: this.tagsOf(a).map((t) => ({
+            label: t,
+            border: s.tagFilter.indexOf(t) >= 0 ? TEAL : "oklch(0.88 0.010 80)",
+            bg: s.tagFilter.indexOf(t) >= 0 ? "oklch(0.93 0.030 185)" : "oklch(0.955 0.006 85)",
+            fg: s.tagFilter.indexOf(t) >= 0 ? "oklch(0.30 0.060 185)" : "oklch(0.48 0.014 65)",
+            filter: () => this.setState((st) => ({ tagFilter: st.tagFilter.indexOf(t) >= 0 ? st.tagFilter.filter((x) => x !== t) : st.tagFilter.concat([t]) })),
+            remove: () => this.setState((st) => ({
+              hiddenTags: Object.assign({}, st.hiddenTags, { [a.id]: (st.hiddenTags[a.id] || []).concat([t]) }),
+              tagFilter: st.tagFilter.filter((x) => x !== t)
+            }))
+          })),
+          tagOpen: s.tagFor === a.id, tagClosed: s.tagFor !== a.id,
+          openTag: () => this.setState({ tagFor: a.id, tagDraft: "" }),
+          tagKey: (e) => {
+            if (e.key === "Escape") { this.setState({ tagFor: null, tagDraft: "" }); return; }
+            if (e.key !== "Enter") return;
+            const v = e.target.value.trim().toLowerCase();
+            if (!v) { this.setState({ tagFor: null, tagDraft: "" }); return; }
+            this.setState((st) => ({
+              addedTags: Object.assign({}, st.addedTags, { [a.id]: (st.addedTags[a.id] || []).concat([v]) }),
+              hiddenTags: Object.assign({}, st.hiddenTags, { [a.id]: (st.hiddenTags[a.id] || []).filter((x) => x !== v) }),
+              tagDraft: ""
+            }));
+          },
+          dragStart: (e) => { if (e.dataTransfer) e.dataTransfer.setData("text/plain", a.id); this.setState({ dragId: a.id }); },
+          dragEnd: () => this.setState({ dragId: null, dropOn: null })
+        };
+      }),
+
+      kindChips: [{ id: "all", label: "All" }, { id: "map", label: "Maps" }, { id: "splash", label: "Splash art" }, { id: "music", label: "Music" }].map((k) => ({
+        label: k.label,
+        bg: s.shelfKind === k.id ? TEAL : "transparent",
+        fg: s.shelfKind === k.id ? "oklch(0.99 0.005 185)" : "oklch(0.48 0.014 65)",
+        pick: () => this.setState({ shelfKind: k.id })
+      }))
+    };
+  }
+
+  renderVals() {
+    const s = this.state;
+    const list = this.visible();
+    const all = this.all();
+    const sel = all.find((c) => c.id === s.selId) || all[0];
+    const hab = HABITATS.find((h) => h.id === s.habitat) || HABITATS[0];
+    const src = (id) => SOURCES[id] || SOURCES.srd;
+    const rating = (c) => (s.ratings[c.id] !== undefined ? s.ratings[c.id] : c.mine);
+    const noteOf = (c) => (s.notes[c.id] !== undefined ? s.notes[c.id] : c.note);
+    const chip = (on) => on
+      ? { bg: "oklch(0.90 0.030 185)", fg: "oklch(0.33 0.060 185)", border: "oklch(0.72 0.055 185)" }
+      : { bg: "oklch(0.975 0.006 85)", fg: "oklch(0.50 0.014 65)", border: "oklch(0.86 0.010 80)" };
+
+    const bumped = (c) => String(rating(c)) !== String(c.book);
+    const ratingColor = (c) => (bumped(c) ? "oklch(0.50 0.10 65)" : "oklch(0.42 0.014 65)");
+
+    const linked = sel.source === "foundry" || sel.source === "srd" || s.pushed[sel.id];
+    const pushState = linked
+      ? { linked: true, actorId: "Actor." + sel.id.replace("c_", "").padEnd(8, "x").slice(0, 8) + " · token exists",
+          text: "Mirrored in Foundry", btn: "Push update",
+          bg: "oklch(0.968 0.014 150)", fg: "oklch(0.34 0.07 150)", dot: "●", dotColor: "oklch(0.55 0.10 150)" }
+      : { linked: false, actorId: "no actor yet · a token will be generated from the portrait",
+          text: "Not in Foundry", btn: "Push & make token",
+          bg: "oklch(0.970 0.020 65)", fg: "oklch(0.40 0.08 65)", dot: "○", dotColor: "oklch(0.60 0.10 65)" };
+
+    const habCount = (h) => (h.id === "all" ? all.length : all.filter((c) => c.habitats.indexOf(h.id) >= 0).length);
+
+    return {
+      tabs: [
+        { id: "bestiary", label: "Bestiary", glyph: "✦", count: all.length },
+        { id: "hall", label: "Hero's Hall", glyph: "◉", count: PARTY.length },
+        { id: "reliquary", label: "Reliquary", glyph: "◈", count: ASSETS.filter((a) => a.kind === "item").length },
+        { id: "stage", label: "Stagecraft", glyph: "▦", count: ASSETS.filter((a) => a.kind !== "item").length }
+      ].map((t) => ({
+        label: t.label, glyph: t.glyph, count: t.count,
+        bg: s.tab === t.id ? TEAL : "transparent",
+        fg: s.tab === t.id ? "oklch(0.99 0.005 185)" : "oklch(0.48 0.014 65)",
+        pick: () => this.setState({ tab: t.id })
+      })),
+      isBestiary: s.tab === "bestiary",
+      isHall: s.tab === "hall",
+      ...this.shelfVals(s),
+
+      query: s.query,
+      setQuery: (e) => this.setState({ query: e.target.value }),
+      sourceChips: ["srd", "ds", "foundry", "mine", "reskin"].map((id) => Object.assign({
+        label: SOURCES[id].label,
+        toggle: () => this.setState((st) => ({ sources: Object.assign({}, st.sources, { [id]: !st.sources[id] }) }))
+      }, chip(!!s.sources[id]))),
+
+      habitatRows: HABITATS.map((h) => ({
+        label: h.label, glyph: h.glyph, indent: 9 + h.depth * 16 + "px",
+        count: habCount(h),
+        glyphColor: h.id === "unplaced" ? "oklch(0.60 0.03 260)" : TEAL,
+        color: s.habitat === h.id ? "oklch(0.24 0.020 185)" : "oklch(0.40 0.014 65)",
+        bg: s.habitat === h.id ? "oklch(0.90 0.020 185)" : "transparent",
+        pick: () => this.setState({ habitat: h.id })
+      })),
+      habitatTitle: hab.label,
+      habitatBlurb: hab.blurb,
+      habitatMeta: list.length + (list.length === 1 ? " creature" : " creatures"),
+
+      creatures: list.map((c) => ({
+        name: c.name, kind: c.kind, line: c.line,
+        rating: c.ratingLabel + " " + rating(c),
+        ratingColor: ratingColor(c),
+        source: src(c.source).label, srcBg: src(c.source).bg, srcFg: src(c.source).fg,
+        accent: c.id === s.selId ? TEAL : "oklch(0.88 0.010 80)",
+        border: c.id === s.selId ? "oklch(0.72 0.055 185)" : "oklch(0.88 0.010 80)",
+        bg: c.id === s.selId ? "oklch(0.975 0.012 185)" : "oklch(0.985 0.005 85)",
+        hasNote: !!noteOf(c), note: noteOf(c),
+        select: () => this.setState({ selId: c.id, reskinIdx: -1 }),
+        dragStart: (e) => {
+          if (e.dataTransfer) { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", c.id); }
+          this.setState({ dragId: c.id });
+        },
+        dragEnd: () => this.setState({ dragId: null, dropOn: null })
+      })),
+      sceneQuery: s.sceneQuery,
+      setSceneQuery: (e) => this.setState({ sceneQuery: e.target.value }),
+      trayHint: s.dragId ? "drop it on a scene" : "creatures, heroes, props",
+      trayHintColor: s.dragId ? "oklch(0.45 0.075 185)" : "oklch(0.60 0.012 70)",
+      sceneTargets: SCENES.filter((sc) => {
+        const q = s.sceneQuery.trim().toLowerCase();
+        return !q || sc.name.toLowerCase().indexOf(q) >= 0 || sc.place.toLowerCase().indexOf(q) >= 0;
+      }).map((sc) => {
+        const roster = s.rosters[sc.id] || [];
+        const ev = roster.reduce((n, r) => n + (r.kind === "creature" ? r.n * evOf(all.find((c) => c.id === r.id)) : 0), 0);
+        const mobs = roster.filter((r) => r.kind === "creature").reduce((n, r) => n + r.n, 0);
+        const heroes = roster.filter((r) => r.kind === "hero").length;
+        const props = roster.filter((r) => r.kind === "asset").length;
+        const over = ev > sc.budget;
+        return {
+          name: sc.name,
+          meta: sc.place + " · " + (mobs || heroes || props
+            ? [mobs ? mobs + (mobs === 1 ? " creature" : " creatures") : "", heroes ? heroes + (heroes === 1 ? " hero" : " heroes") : "", props ? props + (props === 1 ? " prop" : " props") : ""].filter(Boolean).join(" · ")
+            : "empty"),
+          budget: ev + " / " + sc.budget + " xp",
+          budgetColor: over ? "oklch(0.52 0.13 25)" : ev > sc.budget * 0.6 ? "oklch(0.55 0.10 65)" : "oklch(0.48 0.09 150)",
+          border: s.dropOn === sc.id ? "oklch(0.60 0.075 185)" : "oklch(0.86 0.010 80)",
+          bg: s.dropOn === sc.id ? "oklch(0.93 0.020 185)" : "oklch(0.965 0.006 85)",
+          hasRoster: roster.length > 0,
+          roster: roster.map((r, i) => {
+            const isHero = r.kind === "hero", isAsset = r.kind === "asset";
+            const asset = isAsset ? ASSETS.find((a) => a.id === r.id) : null;
+            const cr = isHero ? PARTY.find((p) => p.id === r.id) : (asset || all.find((c) => c.id === r.id));
+            const glyph = isHero ? "◉ " : isAsset ? KINDS[asset ? asset.kind : "item"].glyph + " " : "";
+            return {
+              label: glyph + (cr ? cr.name : "?") + (r.n > 1 ? " ×" + r.n : ""),
+              bg: isHero ? "oklch(0.955 0.020 65)" : isAsset ? "oklch(0.965 0.006 85)" : "oklch(0.955 0.014 185)",
+              fg: isHero ? "oklch(0.38 0.07 65)" : isAsset ? "oklch(0.42 0.014 65)" : "oklch(0.36 0.050 185)",
+              border: isHero ? "oklch(0.86 0.040 65)" : isAsset ? "oklch(0.86 0.010 80)" : "oklch(0.86 0.030 185)",
+              remove: () => this.setState((st) => {
+                const next = (st.rosters[sc.id] || []).slice();
+                next.splice(i, 1);
+                return { rosters: Object.assign({}, st.rosters, { [sc.id]: next }) };
+              })
+            };
+          }),
+          dragOver: (e) => { e.preventDefault(); if (s.dropOn !== sc.id) this.setState({ dropOn: sc.id }); },
+          dragLeave: () => { if (s.dropOn === sc.id) this.setState({ dropOn: null }); },
+          drop: (e) => {
+            e.preventDefault();
+            const id = (e.dataTransfer && e.dataTransfer.getData("text/plain")) || s.dragId;
+            const hero = PARTY.find((p) => p.id === id);
+            const asset = !hero && ASSETS.find((a) => a.id === id);
+            const cr = hero || asset || all.find((c) => c.id === id);
+            if (!cr) return;
+            this.setState((st) => {
+              const cur = (st.rosters[sc.id] || []).slice();
+              const at = cur.findIndex((r) => r.id === id);
+              const kind = hero ? "hero" : asset ? "asset" : "creature";
+              if (at >= 0) cur[at] = { id, n: kind === "creature" ? cur[at].n + 1 : 1, kind };
+              else cur.push({ id, n: 1, kind });
+              return { rosters: Object.assign({}, st.rosters, { [sc.id]: cur }), dragId: null, dropOn: null };
+            });
+            this.toast(cr.name + " added to " + sc.name + ".");
+          }
+        };
+      }),
+      addCreature: () => this.toast("New blank creature — opens in the stat block pane."),
+
+      sel: {
+        name: sel.name, kind: sel.kind,
+        source: src(sel.source).label, srcBg: src(sel.source).bg, srcFg: src(sel.source).fg,
+        ratingLabel: sel.ratingLabel === "EV" ? "encounter value" : "challenge",
+        ratingBook: sel.ratingLabel + " " + sel.book,
+        ratingMine: String(rating(sel)),
+        ratingColor: ratingColor(sel),
+        ratingUp: () => this.setState((st) => ({ ratings: Object.assign({}, st.ratings, { [sel.id]: bump(rating(sel), 1, sel.ratingLabel) }) })),
+        ratingDown: () => this.setState((st) => ({ ratings: Object.assign({}, st.ratings, { [sel.id]: bump(rating(sel), -1, sel.ratingLabel) }) })),
+        defenses: sel.defenses.map((d) => ({ label: d[0], value: d[1] })),
+        defenseCols: sel.defenses.length,
+        hasAbilities: sel.abilities.length > 0,
+        abilities: sel.abilities.map((a) => ({ k: a[0], v: a[1] })),
+        lines: sel.lines.map((l) => ({ k: l[0], v: l[1] })),
+        sections: sel.sections.map((sec) => ({ label: sec.label, items: sec.items.map((i) => ({ name: i[0], text: i[1] })) })),
+        note: noteOf(sel),
+        appearances: sel.appearances.map((a) => ({ name: a[0], when: a[1] })),
+        neverUsed: sel.appearances.length === 0,
+        actorId: pushState.actorId,
+        pushState: pushState.text,
+        pushLabel: pushState.btn,
+        pushBg: pushState.bg,
+        pushFg: pushState.fg,
+        pushDot: pushState.dot,
+        pushDotColor: pushState.dotColor
+      },
+      push: () => {
+        this.setState((st) => ({ pushed: Object.assign({}, st.pushed, { [sel.id]: true }) }));
+        this.toast(pushState.linked
+          ? sel.name + " updated in Foundry."
+          : sel.name + " created in Foundry with a token.");
+      },
+      importFoundry: () => this.toast("Compendium browser — pick creatures to mirror into the bestiary."),
+      pullParty: () => this.toast("Re-read 4 player actors from Foundry."),
+      saveNote: (e) => {
+        const v = e.target.innerText.trim();
+        this.setState((st) => ({ notes: Object.assign({}, st.notes, { [sel.id]: v }) }));
+      },
+      promote: () => this.toast(sel.name + " promoted — a named node now carries this stat block."),
+
+      keyState: "image + text keys present",
+      reskinPrompt: s.reskinPrompt,
+      setReskinPrompt: (e) => this.setState({ reskinPrompt: e.target.value }),
+      reskinBorder: s.reskinIdx >= 0 ? "oklch(0.80 0.050 300)" : "oklch(0.88 0.010 80)",
+      reskinBg: s.reskinIdx >= 0 ? "oklch(0.975 0.012 300)" : "oklch(0.965 0.006 85)",
+      reskinBtnBg: s.reskinning ? "oklch(0.72 0.040 300)" : "oklch(0.52 0.10 300)",
+      reskinBtnLabel: s.reskinning ? "Thinking…" : s.reskinIdx >= 0 ? "Suggest another" : "Suggest a skin",
+      reskin: () => {
+        if (s.reskinning) return;
+        this.setState({ reskinning: true });
+        setTimeout(() => this.setState((st) => ({ reskinning: false, reskinIdx: (st.reskinIdx + 1) % RESKINS.length })), 900);
+      },
+      hasReskinResult: s.reskinIdx >= 0 && !s.reskinning,
+      reskinName: s.reskinIdx >= 0 ? RESKINS[s.reskinIdx][0] : "",
+      reskinBlurb: s.reskinIdx >= 0 ? RESKINS[s.reskinIdx][1] : "",
+      keepReskin: () => {
+        const r = RESKINS[Math.max(0, s.reskinIdx)];
+        const clone = Object.assign({}, sel, { id: "x" + Date.now(), name: r[0], source: "reskin", line: r[1], note: "Reskin of " + sel.name + ".", appearances: [] });
+        this.setState((st) => ({ extras: st.extras.concat([clone]), selId: clone.id, reskinIdx: -1 }));
+        this.toast(r[0] + " saved beside " + sel.name + ".");
+      },
+
+      layouts: [{ id: "cards", label: "Cards" }, { id: "table", label: "Side by side" }].map((l) => ({
+        label: l.label,
+        bg: s.layout === l.id ? TEAL : "transparent",
+        fg: s.layout === l.id ? "oklch(0.99 0.005 185)" : "oklch(0.48 0.014 65)",
+        pick: () => this.setState({ layout: l.id })
+      })),
+      isCards: s.layout === "cards",
+      isTable: s.layout === "table",
+      hallMeta: PARTY.length + " characters · read from Foundry 4m ago",
+      restMeta: "no long rest since session 10",
+
+      party: PARTY.map((p) => {
+        const pct = Math.round((p.hp[0] / p.hp[1]) * 100);
+        const hpColor = pct > 66 ? "oklch(0.48 0.09 150)" : pct > 33 ? "oklch(0.55 0.10 65)" : "oklch(0.52 0.13 25)";
+        return {
+          name: p.name, build: p.build, accent: p.accent,
+          source: src(p.source).label, srcBg: src(p.source).bg, srcFg: src(p.source).fg,
+          hpText: p.hp[0] + " / " + p.hp[1], hpPct: pct + "%", hpColor,
+          acText: String(p.ac), passiveText: String(p.passive),
+          defenses: [{ label: "AC", value: p.ac }, { label: "Passive", value: p.passive }],
+          resources: p.resources.map((r) => ({
+            label: r[0],
+            text: r[1] + " / " + r[2],
+            pips: Array.from({ length: Math.max(r[2], 1) }, (_, i) => (i < r[1]
+              ? { bg: "oklch(0.60 0.075 185)", border: "oklch(0.55 0.075 185)" }
+              : { bg: "oklch(0.94 0.008 85)", border: "oklch(0.87 0.010 80)" }))
+          })),
+          rows: [
+            { label: "Saves", items: p.saves.split(", ").map((l) => ({ label: l, bg: "oklch(0.975 0.006 85)", fg: "oklch(0.36 0.014 65)", border: "oklch(0.88 0.010 80)" })) },
+            { label: "Notable", items: notable(p) },
+            { label: "State", items: [{ label: p.conditions, bg: "oklch(0.975 0.006 85)", fg: "oklch(0.50 0.014 65)", border: "oklch(0.88 0.010 80)" }] }
+          ],
+          resourceChips: p.resources.map((r) => ({
+            label: r[0] + " " + r[1] + "/" + r[2],
+            bg: r[1] === 0 ? "oklch(0.94 0.020 25)" : "oklch(0.975 0.006 85)",
+            fg: r[1] === 0 ? "oklch(0.44 0.10 25)" : "oklch(0.42 0.014 65)",
+            border: r[1] === 0 ? "oklch(0.84 0.050 25)" : "oklch(0.88 0.010 80)"
+          })),
+          saveChips: p.saves.split(", ").map((l) => ({ label: l })),
+          notableChips: notable(p),
+          note: s.pcNotes[p.id] !== undefined ? s.pcNotes[p.id] : p.note,
+          saveNote: (e) => {
+            const v = e.target.innerText.trim();
+            this.setState((st) => ({ pcNotes: Object.assign({}, st.pcNotes, { [p.id]: v }) }));
+          },
+          dragStart: (e) => {
+            if (e.dataTransfer) { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", p.id); }
+            this.setState({ dragId: p.id });
+          },
+          dragEnd: () => this.setState({ dragId: null, dropOn: null })
+        };
+      }),
+      tableHead: ["Character", "HP", "AC", "Passive", "Spent", "Saves", "Notable", "My note"].map((label) => ({ label })),
+      partyReadout: [
+        { label: "Party level", value: "5 × 4", color: "oklch(0.31 0.015 60)" },
+        { label: "Health", value: "70%", color: "oklch(0.55 0.10 65)" },
+        { label: "Healing left", value: "1 slot · 2 potions", color: "oklch(0.52 0.13 25)" },
+        { label: "Daily budget spent", value: "~60%", color: "oklch(0.55 0.10 65)" }
+      ],
+      partyAdvice: "One more medium fight before a rest is fair. A hard one lands on Sella, who is out of third-level slots and carrying exhaustion.",
+      addPc: () => this.toast("Blank character sheet added — hand-typed, no Foundry actor."),
+
+      hasToast: !!s.toast,
+      toastText: s.toast,
+      undoToast: () => this.setState({ toast: "" })
+    };
+  }
+}
+
+const CR_LADDER = ["0", "1/8", "1/4", "1/2", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
+function bump(value, dir, label) {
+  if (label === "EV") return String(Math.max(1, Number(value) + dir * 2));
+  const i = CR_LADDER.indexOf(String(value));
+  if (i < 0) return value;
+  return CR_LADDER[Math.min(CR_LADDER.length - 1, Math.max(0, i + dir))];
+}
+
+</script>
+</body>
+</html>

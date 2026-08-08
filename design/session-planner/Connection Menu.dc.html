@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<div style="position: relative; font-family: 'IBM Plex Sans', system-ui, sans-serif; color: oklch(0.27 0.015 60);">
+  <div onClick="{{ toggle }}" title="Connection, intake and campaign settings" style="display: flex; align-items: center; gap: 8px; padding: 4px 10px 4px 8px; border: 1px solid {{ chipBorder }}; border-radius: 20px; cursor: pointer; background: {{ chipBg }};" style-hover="filter: brightness(0.985);">
+    <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: {{ chipAccent }};">⚙</span>
+    <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; white-space: nowrap; color: {{ chipFg }};">{{ chipText }}</span>
+    <span style="font-family: 'IBM Plex Mono', monospace; font-size: 8px; color: {{ chipAccent }};">{{ chevron }}</span>
+  </div>
+
+  <sc-if value="{{ open }}" hint-placeholder-val="{{ false }}">
+    <div style="position: absolute; top: 36px; right: 0; width: 560px; max-height: 78vh; overflow-y: auto; border: 1px solid oklch(0.84 0.010 80); border-radius: 7px; background: oklch(0.955 0.008 85); box-shadow: 0 18px 44px oklch(0.26 0.015 60 / 0.22); z-index: 60;">
+
+      <div style="display: flex; align-items: center; gap: 10px; padding: 11px 15px; border-bottom: 1px solid oklch(0.88 0.010 80); background: oklch(0.925 0.009 85);">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: oklch(0.53 0.012 70);">Where the world comes from</span>
+        <span style="flex: 1;"></span>
+        <span onClick="{{ toggle }}" style="font-size: 11px; color: oklch(0.58 0.012 70); cursor: pointer;" style-hover="color: oklch(0.42 0.075 185);">✕</span>
+      </div>
+
+      <div style="padding: 14px 15px;">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.53 0.012 70); margin-bottom: 8px;">Foundry</div>
+
+        <sc-if value="{{ connected }}" hint-placeholder-val="{{ true }}">
+          <div style="border: 1px solid oklch(0.86 0.030 185); border-radius: 5px; background: oklch(0.968 0.012 185); padding: 11px 12px;">
+            <div style="display: flex; align-items: center; gap: 9px;">
+              <span style="width: 7px; height: 7px; border-radius: 50%; background: {{ liveDot }};"></span>
+              <span style="font-size: 13px; font-weight: 500; color: oklch(0.30 0.050 185);">{{ worldName }}</span>
+              <span onClick="{{ toggleWorlds }}" style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.48 0.060 185); cursor: pointer;" style-hover="text-decoration: underline;">switch world</span>
+              <span style="flex: 1;"></span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.44 0.050 185);">{{ liveText }}</span>
+            </div>
+            <sc-if value="{{ worldsOpen }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 9px; padding: 7px; border: 1px solid oklch(0.86 0.020 185); border-radius: 4px; background: oklch(1 0 0);">
+                <sc-for list="{{ worlds }}" as="w" hint-placeholder-count="3">
+                  <div onClick="{{ w.pick }}" style="display: flex; align-items: baseline; gap: 9px; padding: 5px 8px; border-radius: 3px; cursor: pointer; background: {{ w.bg }};" style-hover="background: oklch(0.93 0.014 185);">
+                    <span style="font-size: 12.5px; color: oklch(0.28 0.015 60);">{{ w.name }}</span>
+                    <span style="flex: 1;"></span>
+                    <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70);">{{ w.meta }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 11px;">
+              <sc-for list="{{ counts }}" as="c" hint-placeholder-count="4">
+                <div style="padding: 7px 8px; border: 1px solid oklch(0.88 0.020 185); border-radius: 3px; background: oklch(1 0 0); text-align: center;">
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.07em; text-transform: uppercase; color: oklch(0.58 0.012 70);">{{ c.label }}</div>
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: oklch(0.30 0.015 60); margin-top: 3px;">{{ c.value }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; margin-top: 11px;">
+              <div onClick="{{ sync }}" style="padding: 5px 12px; border: 1px solid oklch(0.80 0.040 185); border-radius: 4px; cursor: pointer; font-size: 12px; background: oklch(1 0 0); color: oklch(0.38 0.060 185);" style-hover="border-color: oklch(0.62 0.060 185);">{{ syncLabel }}</div>
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.55 0.012 70);">live connection · changes in Foundry land here as they happen</div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ disconnected }}" hint-placeholder-val="{{ false }}">
+          <div style="border: 1px dashed oklch(0.82 0.040 65); border-radius: 5px; background: oklch(0.970 0.020 65); padding: 12px 13px;">
+            <div style="font-size: 13px; font-weight: 500; color: oklch(0.38 0.08 65);">No Foundry yet</div>
+            <div style="font-size: 12px; line-height: 1.5; color: oklch(0.48 0.030 65); margin-top: 5px;">Connect and pick a world, and the bestiary and Hero's Hall fill themselves. You can also start from lore alone — stat blocks can come later.</div>
+            <div onClick="{{ connect }}" style="display: inline-flex; margin-top: 10px; padding: 6px 13px; border-radius: 4px; cursor: pointer; font-size: 12.5px; background: oklch(0.55 0.075 185); color: oklch(0.99 0.005 185);" style-hover="filter: brightness(1.06);">Connect to Foundry</div>
+          </div>
+        </sc-if>
+      </div>
+
+      <div style="padding: 4px 15px 14px;">
+        <div style="display: flex; align-items: baseline; gap: 9px; margin-bottom: 8px;">
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.53 0.012 70);">Bring in lore</div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.64 0.012 70);">read once, reviewed in the Chronicle</div>
+        </div>
+
+        <div style="display: flex; gap: 4px; padding: 2px; border: 1px solid oklch(0.86 0.010 80); border-radius: 6px; background: oklch(0.965 0.006 85); margin-bottom: 9px;">
+          <sc-for list="{{ sourceTabs }}" as="t" hint-placeholder-count="2">
+            <div onClick="{{ t.pick }}" style="padding: 4px 11px; border-radius: 4px; font-size: 11.5px; cursor: pointer; background: {{ t.bg }}; color: {{ t.fg }};">{{ t.label }}</div>
+          </sc-for>
+        </div>
+
+        <sc-if value="{{ isPaste }}" hint-placeholder-val="{{ true }}">
+          <textarea value="{{ pasteText }}" onChange="{{ setPasteText }}" placeholder="Paste your framing doc, session-zero notes, or a pile of half-finished worldbuilding. It reads names, places and who is inside what." style="width: 100%; min-height: 92px; padding: 11px 12px; border: 1px solid oklch(0.85 0.010 80); border-radius: 5px; font-family: inherit; font-size: 12.5px; line-height: 1.5; background: oklch(1 0 0); color: inherit; resize: vertical;"></textarea>
+        </sc-if>
+
+        <sc-if value="{{ isUrl }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <input value="{{ url }}" onChange="{{ setUrl }}" placeholder="https://www.worldanvil.com/w/…" style="width: 100%; padding: 8px 11px; border: 1px solid oklch(0.85 0.010 80); border-radius: 5px; font-family: inherit; font-size: 12.5px; background: oklch(1 0 0); color: inherit;" />
+            <sc-if value="{{ seenBefore }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; gap: 9px; margin-top: 8px; padding: 8px 10px; border: 1px solid oklch(0.86 0.030 185); border-radius: 4px; background: oklch(0.968 0.012 185);">
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.45 0.060 185);">↻</span>
+                <span style="font-size: 11.5px; line-height: 1.45; color: oklch(0.38 0.040 185);">Read before, on {{ seenWhen }}. This run diffs against that — matched articles merge into the nodes you already have, and your own edits win unless you say otherwise.</span>
+              </div>
+            </sc-if>
+          </div>
+        </sc-if>
+
+        <div style="display: flex; align-items: center; gap: 12px; margin-top: 10px;">
+          <div onClick="{{ read }}" style="display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 5px; cursor: pointer; font-size: 12.5px; background: {{ readBg }}; color: oklch(0.99 0.005 185);" style-hover="filter: brightness(1.06);">
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px;">✦</span><span>{{ readLabel }}</span>
+          </div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.58 0.012 70);">{{ readMeta }}</div>
+        </div>
+
+        <sc-if value="{{ hasResult }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top: 11px; border: 1px solid oklch(0.78 0.070 150); border-radius: 5px; background: oklch(0.968 0.020 150); padding: 11px 12px;">
+            <div style="display: flex; align-items: baseline; gap: 9px;">
+              <span style="font-family: Spectral, serif; font-size: 16px; font-weight: 500; color: oklch(0.30 0.06 150);">{{ resultHeadline }}</span>
+              <span style="flex: 1;"></span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.40 0.06 150);">{{ resultMeta }}</span>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px;">
+              <sc-for list="{{ resultBreakdown }}" as="b" hint-placeholder-count="4">
+                <span style="padding: 2px 8px; border: 1px solid oklch(0.84 0.030 150); border-radius: 20px; font-family: 'IBM Plex Mono', monospace; font-size: 10px; background: oklch(1 0 0); color: oklch(0.36 0.05 150);">{{ b.label }}</span>
+              </sc-for>
+            </div>
+            <div style="font-size: 11.5px; line-height: 1.45; color: oklch(0.42 0.030 150); margin-top: 9px;">Grouped by where things sit inside each other, so you can accept a whole branch at once. Nothing is in your graph yet.</div>
+            <div style="display: flex; align-items: center; gap: 10px; margin-top: 10px;">
+              <a href="Chronicle.dc.html" style="padding: 5px 12px; border-radius: 4px; font-size: 12px; background: oklch(0.48 0.09 150); color: oklch(0.99 0.005 150);" style-hover="filter: brightness(1.06); text-decoration: none;">Review in the Chronicle</a>
+              <span onClick="{{ acceptAll }}" style="font-size: 12px; color: oklch(0.42 0.06 150); cursor: pointer;" style-hover="text-decoration: underline;">Accept all {{ resultCount }} without reading</span>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+
+      <div style="padding: 4px 15px 14px;">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.53 0.012 70); margin-bottom: 8px;">Read so far</div>
+        <div style="display: flex; flex-direction: column; gap: 5px;">
+          <sc-for list="{{ intakes }}" as="i" hint-placeholder-count="3">
+            <div style="display: flex; align-items: baseline; gap: 9px; padding: 8px 10px; border: 1px solid oklch(0.89 0.010 80); border-radius: 4px; background: oklch(0.975 0.006 85);">
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: {{ i.kindColor }};">{{ i.kind }}</span>
+              <span style="flex: 1; min-width: 0; font-size: 12.5px; color: oklch(0.30 0.015 60); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ i.name }}</span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70);">{{ i.meta }}</span>
+              <span onClick="{{ i.reread }}" style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.50 0.075 185); cursor: pointer;" style-hover="text-decoration: underline;">re-read</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="padding: 4px 15px 16px;">
+        <div onClick="{{ toggleSettings }}" style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 8px;">
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.58 0.012 70);">{{ settingsChevron }}</span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.53 0.012 70);">Campaign & keys</span>
+        </div>
+        <sc-if value="{{ settingsOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="border: 1px solid oklch(0.89 0.010 80); border-radius: 5px; background: oklch(0.975 0.006 85); padding: 12px 13px;">
+            <div style="display: flex; flex-direction: column; gap: 9px;">
+              <sc-for list="{{ settings }}" as="st" hint-placeholder-count="4">
+                <div style="display: grid; grid-template-columns: 118px 1fr; gap: 11px; align-items: baseline;">
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.60 0.012 70); text-align: right;">{{ st.label }}</div>
+                  <div contentEditable="true" suppressContentEditableWarning="{{ true }}" style="font-size: 12.5px; color: oklch(0.36 0.014 65); min-height: 18px;">{{ st.value }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display: flex; align-items: center; gap: 14px; margin-top: 12px; padding-top: 11px; border-top: 1px solid oklch(0.91 0.010 80);">
+              <span onClick="{{ exportGraph }}" style="font-size: 12px; color: oklch(0.50 0.075 185); cursor: pointer;" style-hover="text-decoration: underline;">Export the whole graph</span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70);">json · nodes, edges, scenes, notes</span>
+            </div>
+            <div style="font-size: 11.5px; line-height: 1.45; color: oklch(0.56 0.012 70); margin-top: 10px; padding-top: 10px; border-top: 1px solid oklch(0.91 0.010 80);">Map and splash art stays in Foundry — this side keeps only the name, a thumbnail and the scene it belongs to.</div>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:620,&quot;height&quot;:720},&quot;compact&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;}}">
+const WORLDS = [
+  { id: "w1", name: "The Verdigris Compact", meta: "312 actors · active" },
+  { id: "w2", name: "Coldharbour (paused)", meta: "88 actors · last opened Rime" },
+  { id: "w3", name: "One-shot sandbox", meta: "12 actors" }
+];
+
+const INTAKES = [
+  { kind: "worldanvil", name: "worldanvil.com/w/verdigris — 22 articles", meta: "1 Rime · 64 nodes", color: "oklch(0.50 0.08 300)" },
+  { kind: "text", name: "Session-zero framing doc", meta: "1 Rime · 19 nodes", color: "oklch(0.50 0.075 185)" },
+  { kind: "foundry", name: "Compendium mirror — 5e SRD + Draw Steel", meta: "3 Frost · 212 stat blocks", color: "oklch(0.50 0.09 145)" }
+];
+
+class Component extends DCLogic {
+  state = {
+    open: false, worldsOpen: false, settingsOpen: false,
+    connected: true, worldId: "w1", syncing: false,
+    source: "paste", pasteText: "", url: "", reading: false, result: null
+  };
+
+  renderVals() {
+    const s = this.state;
+    const world = WORLDS.find((w) => w.id === s.worldId) || WORLDS[0];
+    const seen = s.url.indexOf("verdigris") >= 0;
+    const compact = !!this.props.compact;
+    const chipText = s.connected
+      ? (compact
+          ? "Foundry · live · " + world.meta.split(" ")[0]
+          : "Foundry · " + world.name + " · live · " + world.meta.split(" ")[0] + " actors")
+      : compact ? "Not connected" : "Not connected — set up";
+
+    return {
+      open: s.open,
+      toggle: () => this.setState({ open: !s.open }),
+      chevron: s.open ? "▲" : "▼",
+      chipText,
+      chipBg: s.connected ? "oklch(0.965 0.014 185)" : "oklch(0.970 0.020 65)",
+      chipBorder: s.connected ? "oklch(0.86 0.030 185)" : "oklch(0.84 0.045 65)",
+      chipFg: s.connected ? "oklch(0.42 0.060 185)" : "oklch(0.40 0.08 65)",
+      chipAccent: s.connected ? "oklch(0.50 0.060 185)" : "oklch(0.52 0.10 65)",
+
+      connected: s.connected,
+      disconnected: !s.connected,
+      connect: () => this.setState({ connected: true, worldsOpen: true }),
+      worldName: world.name,
+      worlds: WORLDS.map((w) => ({
+        name: w.name, meta: w.meta,
+        bg: w.id === s.worldId ? "oklch(0.93 0.020 185)" : "transparent",
+        pick: () => this.setState({ worldId: w.id, worldsOpen: false })
+      })),
+      worldsOpen: s.worldsOpen,
+      toggleWorlds: () => this.setState({ worldsOpen: !s.worldsOpen }),
+      liveDot: s.syncing ? "oklch(0.62 0.10 65)" : "oklch(0.60 0.10 150)",
+      liveText: s.syncing ? "reading…" : "live · read 4m ago",
+      counts: [
+        { label: "Actors", value: "312" },
+        { label: "Items", value: "1,204" },
+        { label: "Scenes", value: "18" },
+        { label: "Journals", value: "46" }
+      ],
+      syncLabel: s.syncing ? "Syncing…" : "Sync now",
+      sync: () => {
+        if (s.syncing) return;
+        this.setState({ syncing: true });
+        setTimeout(() => this.setState({ syncing: false }), 1100);
+      },
+
+      sourceTabs: [{ id: "paste", label: "Paste text" }, { id: "url", label: "World Anvil" }].map((t) => ({
+        label: t.label,
+        bg: s.source === t.id ? "oklch(0.55 0.075 185)" : "transparent",
+        fg: s.source === t.id ? "oklch(0.99 0.005 185)" : "oklch(0.48 0.014 65)",
+        pick: () => this.setState({ source: t.id, result: null })
+      })),
+      isPaste: s.source === "paste",
+      isUrl: s.source === "url",
+      pasteText: s.pasteText,
+      setPasteText: (e) => this.setState({ pasteText: e.target.value }),
+      url: s.url,
+      setUrl: (e) => this.setState({ url: e.target.value }),
+      seenBefore: s.source === "url" && seen,
+      seenWhen: "1 Rime",
+
+      readBg: s.reading ? "oklch(0.72 0.030 185)" : "oklch(0.55 0.075 185)",
+      readLabel: s.reading ? "Reading…" : seen && s.source === "url" ? "Re-read and diff" : "Read it in",
+      readMeta: s.source === "paste" ? "one call · names, places, and what sits inside what" : "one call per article · merges by title",
+      read: () => {
+        if (s.reading) return;
+        this.setState({ reading: true, result: null });
+        setTimeout(() => this.setState({ reading: false, result: true }), 1200);
+      },
+      hasResult: !!s.result && !s.reading,
+      resultHeadline: seen && s.source === "url" ? "22 articles re-read" : "64 nodes proposed",
+      resultMeta: seen && s.source === "url" ? "9 changed · 4 new · 51 untouched" : "31 edges · 6 look uncertain",
+      resultCount: seen && s.source === "url" ? "13" : "64",
+      resultBreakdown: [
+        { label: "places 28" }, { label: "people 17" }, { label: "factions 6" }, { label: "objects 9" }, { label: "events 4" }
+      ],
+      acceptAll: () => this.setState({ result: null, open: false }),
+
+      intakes: INTAKES.map((i) => ({
+        kind: i.kind, name: i.name, meta: i.meta, kindColor: i.color,
+        reread: () => this.setState({ source: i.kind === "worldanvil" ? "url" : "paste", url: i.kind === "worldanvil" ? "https://www.worldanvil.com/w/verdigris" : s.url, result: null })
+      })),
+
+      settingsOpen: s.settingsOpen,
+      settingsChevron: s.settingsOpen ? "▾" : "▸",
+      toggleSettings: () => this.setState({ settingsOpen: !s.settingsOpen }),
+      settings: [
+        { label: "Campaign", value: "The Verdigris Compact" },
+        { label: "Game system", value: "D&D 5e · Draw Steel entries allowed" },
+        { label: "Calendar", value: "Marrow, Rime, Frost, Thaw · 1104 AR · day 14" },
+        { label: "Prose model", value: "claude-sonnet · graph mutation, lore intake, reskins" },
+        { label: "Image model", value: "gemini-image · splash art only" }
+      ],
+      exportGraph: () => this.setState({ open: false })
+    };
+  }
+}
+
+</script>
+</body>
+</html>

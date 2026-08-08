@@ -1,78 +1,64 @@
 // Phase 33 task 33.0 -- QE-first e2e contract for Part B of the design record
-// (`.claude/plans/ok-i-m-back-with-dazzling-newt.md` -- read that first): a
-// "Remove from graph" action in the World node inspector, recycling the
-// dead `wv-inspector-openfull` span slot (`world-view.js:760`, currently an
-// inert `<span>Open full page →</span>`, no handler/cursor -- de-advertised
-// in Phase 31, never wired).
-//
-// DECISIONS LOCKED (Russell, 2026-08-06/07): guarded delete
-// (`deleteNodeOp`, `wf-mcp-server/lib/manual-edit-ops.mjs:465`) --
-// warn-and-leave-references by DEFAULT, with an explicit opt-in checkbox
-// "also remove it from all N scenes" (unchecked by default).
+// (`.claude/plans/ok-i-m-back-with-dazzling-newt.md`): a "Remove from graph"
+// action in the World node inspector, recycling the dead `wv-inspector-
+// openfull` span slot (`world-view.js:760`).
 //
 // ===========================================================================
-// CONTRACT THIS FILE LOCKS (33.2 implements to match -- exact testids/shapes
-// chosen here per this task's own charter: "pick + document"):
-// ===========================================================================
-//   - `[data-testid="world-remove-from-graph-btn"][data-entity-id]` --
-//     occupies the `.wv-inspector-openfull` slot in the inspector header
-//     (`world-view.js:760`). Click opens the confirm panel below.
-//   - `[data-testid="world-remove-from-graph-confirm-panel"][data-entity-id]
-//     [data-cascade-edge-count]` -- the guarded confirm. Unlike the
-//     beyond-room-drawer precedent this mirrors the NAMING of
-//     (`data-cascade-edge-count`, `session-planner-view.js`'s
-//     `buildBeyondRoomDrawer`, which only learns the count AFTER the
-//     destructive DELETE call completes), THIS panel shows the cascade-edge
-//     count BEFORE the delete: `deleteNodeOp`'s cascade set is simply "every
-//     edge where entityId is source or target"
-//     (`manual-edit-ops.mjs:470`) -- data the World surface's OWN already-
-//     loaded graph cache can compute client-side with zero extra route call,
-//     so warning with the real number pre-delete is strictly better UX than
-//     the beyond-room drawer's post-hoc reveal, and is what "warns with a
-//     cascade-edge count" (this task's own charter text) calls for. Its
-//     `textContent` must also read "used in N scene(s)" (N from the
-//     ALREADY-LOADED `scenesForEntity` appearances the inspector's own
-//     "Appears in" section already fetches -- `world-view.js:814`).
-//   - `[data-testid="world-remove-from-graph-confirm-btn"]` (danger) /
-//     `[data-testid="world-remove-from-graph-cancel-btn"]` -- mirrors the
-//     beyond-room-drawer's confirm/cancel pair naming.
-//   - `[data-testid="world-remove-from-all-scenes-checkbox"]` -- the opt-in,
-//     UNCHECKED by default (warn-and-leave-references is the default per the
-//     locked decision).
-//   - Confirming (checkbox OFF): `DELETE /api/graph/nodes/:entityId` fires;
-//     the node's row disappears from `[data-testid="world-tree"]` via a
-//     FRESH render (not a stale DOM snapshot -- polled via
-//     `page.waitForFunction`); a scene that referenced it via a `kind:
-//     "graph"` element still exists, and that element's row still renders on
-//     the Planner scene page (dangling `graphEntityId` tolerated per
-//     `session-planner-view.js:1181/2761`).
-//   - Confirming (checkbox ON): additionally strips the node's `kind:"graph"`
-//     elements from every scene that referenced it (asserted via a fresh
-//     `GET .../elements` on the seeded scene) BEFORE/around the same delete.
-//     The NEW backend piece this needs (`removeEntityFromAllScenes` + a
-//     route) does not exist yet -- pinned below as a dedicated route-level
-//     test asserting today's real 404 (server.mjs's generic
-//     "No route: METHOD path" fallback), per this task's own charter ("a
-//     real 404 IS acceptable red"). Chosen route shape for 33.2 to match:
-//     `POST /api/graph/nodes/:entityId/remove-from-scenes { world }`.
+// RETIRED-AS-SUPERSEDED (Phase 34 task 34.0): the five UI-level tests this
+// file originally carried are REMOVED here, in the same commit as
+// phase34-delta-fixes.e2e.mjs's own D5-D8 tests, which are their direct
+// replacement -- NOT a coverage gap. What was retired and why:
 //
-// EXPECTED-RED reasons (today's build): NONE of `world-remove-from-graph-
-// btn` / `-confirm-panel` / `-confirm-btn` / `-cancel-btn` / `-checkbox`
-// exist anywhere -- `world-view.js:760` renders only the inert
-// `wv-inspector-openfull` span. Every UI-level test below times out locating
-// the button (a clean, specific selector-not-found reason, not a fixture
-// error) -- confirmed by direct run, quoted in this task's own completion
-// report.
+//   1. '...renders a "Remove from graph" button...' -- superseded VERBATIM
+//      (the button/testid/slot are UNCHANGED by the hybrid; phase34-delta-
+//      fixes.e2e.mjs's own D5-D8 tests re-locate the SAME
+//      `[data-testid="world-remove-from-graph-btn"]` and exercise it, so
+//      re-asserting bare presence here would be pure duplication).
+//   2. '...opens a guarded confirm panel warning the REAL cascade-edge
+//      count...' -- superseded BEHAVIORALLY. Russell's locked HYBRID
+//      decision (plans/phase-34-tasks.md's "Settled decisions") replaces the
+//      SEPARATE `[data-testid="world-remove-from-graph-confirm-panel"]` this
+//      test asserted with an IN-PLACE two-click arm (no second panel
+//      element at all) -- the panel testid this test locates no longer
+//      exists in the new contract, so keeping this test would either fail
+//      forever (a copy of "the old spec was true") or need to be gutted into
+//      the new one, which is exactly what phase34-delta-fixes.e2e.mjs's
+//      "nonzero case" test now does, asserting the NEW consequence-line
+//      contract instead.
+//   3. '"Cancel" in the confirm panel closes it...' -- superseded. There is
+//      no separate confirm panel/Cancel button in the hybrid design; its
+//      replacement is phase34-delta-fixes.e2e.mjs's "clicking elsewhere...
+//      DISARMS" test (click-elsewhere is the hybrid's own disarm gesture,
+//      per Russell's locked decision text).
+//   4. '...checkbox OFF deletes the node... children become roots...' --
+//      superseded BEHAVIORALLY, and the OLD assertion is now actively WRONG:
+//      Phase 33's `deleteNodeOp` made every child of the deleted node a NEW
+//      ROOT (no reparent). The Phase 34 hybrid's entire point is that
+//      children REPARENT UP to the grandparent instead -- a real behavior
+//      CHANGE, not just a UI reskin. Replacement:
+//      phase34-delta-fixes.e2e.mjs's "second click EXECUTES -- children
+//      reparent to the GRANDPARENT" test, which asserts the NEW (correct)
+//      topology.
+//   5. '...checkbox ON... strips... from all N scenes...' -- superseded
+//      UI-path only (the opt-in cleanup call itself -- `POST .../
+//      remove-from-scenes`, test 6 below -- is UNCHANGED and still tested).
+//      Replacement: phase34-delta-fixes.e2e.mjs's "checkbox ON also strips
+//      the node's scene references" test, driving the SAME route through the
+//      NEW in-place-arm UI path instead of the old confirm panel.
+//
+// Test 6 below (route-level, `POST /api/graph/nodes/:entityId/
+// remove-from-scenes`) is KEPT UNCHANGED -- per plans/phase-34-tasks.md's own
+// pre-specified route contract, "The existing remove-from-scenes route is
+// reused unchanged for the opt-in," so its own pin has no reason to move.
+//
+// See phase34-fixture.mjs §6 for the full NEW hybrid contract these tests
+// were replaced by, and phase-34-adoption.md for the design-record grounding
+// (the HYBRID decision itself).
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
-import { chromium } from "playwright";
 import {
   setupPhase30Env,
-  cleanupScratchEnv,
-  createSceneViaRoute,
-  primeWorldSelection,
-  fetchGraphViaRoute,
-  DESKTOP_VIEWPORT
+  cleanupScratchEnv
 } from "./phase30-fixture.mjs";
 
 const { scratchDir, dataDir } = setupPhase30Env("gm-tools-e2e-p33b-");
@@ -87,221 +73,28 @@ const snapPath = snapshotFilePath(dataDir, WORLD);
 bootstrapSnapshot(snapPath, { worldId: WORLD });
 applyHeadless(snapPath, [
   { op: "upsert_entity", data: { id: "p33b-root", name: "The Salt Cistern", type: "place", importance: 0.6 } },
-  // p33b-node: used by the button-presence + confirm-panel + cancel tests
-  // (never deleted, so it's safe to select repeatedly across tests).
   { op: "upsert_entity", data: { id: "p33b-node", name: "Corwin Ashgrave", type: "person", importance: 0.4 } },
   { op: "upsert_entity", data: { id: "p33b-friend", name: "Wren Voss", type: "person", importance: 0.3 } },
   { op: "upsert_edge", data: { id: "p33b-e-node-root", sourceId: "p33b-node", targetId: "p33b-root", relationshipType: "containment" } },
-  { op: "upsert_edge", data: { id: "p33b-e-node-friend", sourceId: "p33b-node", targetId: "p33b-friend", relationshipType: "ally" } },
-  // p33b-nodeA: dedicated to the checkbox-OFF delete test (destructive).
-  { op: "upsert_entity", data: { id: "p33b-nodeA", name: "Hale Duskmere", type: "person", importance: 0.3 } },
-  { op: "upsert_edge", data: { id: "p33b-e-nodeA-root", sourceId: "p33b-nodeA", targetId: "p33b-root", relationshipType: "containment" } },
-  // p33b-nodeB: dedicated to the checkbox-ON delete test (destructive).
-  { op: "upsert_entity", data: { id: "p33b-nodeB", name: "Ione Marrow", type: "person", importance: 0.3 } },
-  { op: "upsert_edge", data: { id: "p33b-e-nodeB-root", sourceId: "p33b-nodeB", targetId: "p33b-root", relationshipType: "containment" } }
+  { op: "upsert_edge", data: { id: "p33b-e-node-friend", sourceId: "p33b-node", targetId: "p33b-friend", relationshipType: "ally" } }
 ]);
 
-let server, base, browser;
+let server, base;
 
 before(async () => {
   server = createReviewServer({ port: 0 });
   await new Promise((resolve) => server.once("listening", resolve));
   base = `http://localhost:${server.address().port}`;
-  browser = await chromium.launch();
 });
 
 after(async () => {
-  await browser?.close();
   await new Promise((resolve) => server.close(resolve));
   cleanupScratchEnv(scratchDir);
 });
 
-async function attachNodeAsElement(sceneId, entityId) {
-  const res = await fetch(`${base}/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/elements/from-graph`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ world: WORLD, entityId })
-  });
-  const body = await res.json().catch(() => null);
-  assert.equal(res.status, 200, `fixture setup: attaching a graph element must succeed (existing, shipped route) -- got ${res.status}: ${JSON.stringify(body)}`);
-  return body.element;
-}
-
-async function fetchSceneElements(sceneId) {
-  const res = await fetch(`${base}/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/elements?world=${encodeURIComponent(WORLD)}`);
-  const body = await res.json();
-  return body.elements || [];
-}
-
 // ---------------------------------------------------------------------------
-// 1. The recycled slot: a "Remove from graph" button, not the dead span.
-// ---------------------------------------------------------------------------
-test('World inspector: selecting a node renders a "Remove from graph" button in the recycled "Open full page" slot', async () => {
-  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
-  await primeWorldSelection(page, base, WORLD);
-  await page.goto(`${base}/#world/p33b-node`);
-  const inspector = page.locator('[data-testid="world-inspector"][data-entity-id="p33b-node"]');
-  await inspector.waitFor({ state: "visible", timeout: 15000 });
-
-  await inspector
-    .locator('[data-testid="world-remove-from-graph-btn"][data-entity-id="p33b-node"]')
-    .waitFor({ state: "visible", timeout: 10000 });
-  await page.close();
-});
-
-// ---------------------------------------------------------------------------
-// 2. Guarded confirm: cascade-edge-count + used-in-N-scenes + opt-in
-//    checkbox, unchecked by default.
-// ---------------------------------------------------------------------------
-test('clicking "Remove from graph" opens a guarded confirm panel warning the REAL cascade-edge count and used-in-N-scenes count, with an opt-in "remove from all scenes" checkbox that defaults UNCHECKED', async () => {
-  const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "p33b-root" });
-  await attachNodeAsElement(scene.id, "p33b-node");
-
-  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
-  await primeWorldSelection(page, base, WORLD);
-  await page.goto(`${base}/#world/p33b-node`);
-  const inspector = page.locator('[data-testid="world-inspector"][data-entity-id="p33b-node"]');
-  await inspector.waitFor({ state: "visible", timeout: 15000 });
-
-  await inspector.locator('[data-testid="world-remove-from-graph-btn"]').click();
-
-  const panel = page.locator('[data-testid="world-remove-from-graph-confirm-panel"][data-entity-id="p33b-node"]');
-  await panel.waitFor({ state: "visible", timeout: 10000 });
-
-  // p33b-node has exactly 2 edges touching it (containment -> root, ally ->
-  // friend) -- the SAME edge set deleteNodeOp will cascade
-  // (manual-edit-ops.mjs:470's `e.sourceId === entityId || e.targetId ===
-  // entityId` filter), so the panel's warning must read 2, not a placeholder.
-  assert.equal(
-    await panel.getAttribute("data-cascade-edge-count"),
-    "2",
-    `the confirm panel must warn with the REAL cascade-edge count (2 edges touch p33b-node) -- got ${await panel.getAttribute("data-cascade-edge-count")}`
-  );
-  assert.match(
-    (await panel.textContent()) || "",
-    /used in 1 scene/i,
-    'the confirm panel must warn how many scenes reference this node ("used in 1 scene(s)"), sourced from the already-loaded scenesForEntity appearances'
-  );
-
-  await page.locator('[data-testid="world-remove-from-graph-confirm-btn"]').waitFor({ state: "visible", timeout: 5000 });
-  await page.locator('[data-testid="world-remove-from-graph-cancel-btn"]').waitFor({ state: "visible", timeout: 5000 });
-
-  const checkbox = page.locator('[data-testid="world-remove-from-all-scenes-checkbox"]');
-  await checkbox.waitFor({ state: "visible", timeout: 5000 });
-  assert.equal(
-    await checkbox.isChecked(),
-    false,
-    'the opt-in "remove from all scenes" checkbox must default UNCHECKED (warn-and-leave-references is the locked default)'
-  );
-  await page.close();
-});
-
-// ---------------------------------------------------------------------------
-// 3. Cancel closes the panel and performs NO delete.
-// ---------------------------------------------------------------------------
-test('"Cancel" in the confirm panel closes it without deleting the node', async () => {
-  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
-  await primeWorldSelection(page, base, WORLD);
-  await page.goto(`${base}/#world/p33b-node`);
-  const inspector = page.locator('[data-testid="world-inspector"][data-entity-id="p33b-node"]');
-  await inspector.waitFor({ state: "visible", timeout: 15000 });
-
-  await inspector.locator('[data-testid="world-remove-from-graph-btn"]').click();
-  const panel = page.locator('[data-testid="world-remove-from-graph-confirm-panel"][data-entity-id="p33b-node"]');
-  await panel.waitFor({ state: "visible", timeout: 10000 });
-
-  await page.locator('[data-testid="world-remove-from-graph-cancel-btn"]').click();
-  await panel.waitFor({ state: "hidden", timeout: 5000 }).catch(async () => {
-    assert.equal(await panel.count(), 0, "Cancel must close (remove or hide) the confirm panel");
-  });
-
-  const graph = await fetchGraphViaRoute(base, WORLD);
-  assert.ok(graph.nodes.some((n) => n.id === "p33b-node"), "Cancel must NOT delete the node -- it must still be a real graph node");
-  await page.close();
-});
-
-// ---------------------------------------------------------------------------
-// 4. Confirm, checkbox OFF: guarded delete, warn-and-leave-references.
-// ---------------------------------------------------------------------------
-test("confirming with the opt-in checkbox OFF deletes the node via DELETE /api/graph/nodes/:entityId -- it disappears from the World tree (fresh render), and a scene that referenced it still renders the now-dangling element (warn-and-leave-references default)", async () => {
-  const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "p33b-root" });
-  const element = await attachNodeAsElement(scene.id, "p33b-nodeA");
-
-  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
-  await primeWorldSelection(page, base, WORLD);
-  await page.goto(`${base}/#world/p33b-nodeA`);
-  const inspector = page.locator('[data-testid="world-inspector"][data-entity-id="p33b-nodeA"]');
-  await inspector.waitFor({ state: "visible", timeout: 15000 });
-
-  await inspector.locator('[data-testid="world-remove-from-graph-btn"]').click();
-  await page.locator('[data-testid="world-remove-from-graph-confirm-panel"][data-entity-id="p33b-nodeA"]').waitFor({ state: "visible", timeout: 10000 });
-
-  // Checkbox left OFF (default) -- straight confirm.
-  await page.locator('[data-testid="world-remove-from-graph-confirm-btn"]').click();
-
-  // The tree re-renders and the row is REALLY gone (polled, not a stale snapshot).
-  await page.waitForFunction(
-    () => !document.querySelector('[data-testid="world-tree-row"][data-entity-id="p33b-nodeA"]'),
-    null,
-    { timeout: 10000 }
-  );
-
-  const graph = await fetchGraphViaRoute(base, WORLD);
-  assert.ok(!graph.nodes.some((n) => n.id === "p33b-nodeA"), "the node must be REALLY deleted from the graph (DELETE /api/graph/nodes/:entityId), not just hidden client-side");
-
-  // The scene that referenced it still exists, and its element row still
-  // renders -- checkbox was OFF, so the dangling reference is left alone
-  // (session-planner-view.js already tolerates a graphEntityId with no node).
-  await page.goto(`${base}/#planner/scene/${scene.id}`);
-  await page.locator(`[data-testid="planner-scene-view"][data-scene-id="${scene.id}"]`).waitFor({ state: "visible", timeout: 15000 });
-  await page.locator(`[data-testid="scene-element-row"][data-element-id="${element.id}"]`).waitFor({ state: "visible", timeout: 10000 });
-  await page.close();
-});
-
-// ---------------------------------------------------------------------------
-// 5. Confirm, checkbox ON: guarded delete PLUS scene-reference cleanup.
-// ---------------------------------------------------------------------------
-test('confirming with the opt-in "also remove from all N scenes" checkbox ON deletes the node AND strips its kind:"graph" elements from every scene that referenced it', async () => {
-  const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "p33b-root" });
-  await attachNodeAsElement(scene.id, "p33b-nodeB");
-
-  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
-  await primeWorldSelection(page, base, WORLD);
-  await page.goto(`${base}/#world/p33b-nodeB`);
-  const inspector = page.locator('[data-testid="world-inspector"][data-entity-id="p33b-nodeB"]');
-  await inspector.waitFor({ state: "visible", timeout: 15000 });
-
-  await inspector.locator('[data-testid="world-remove-from-graph-btn"]').click();
-  await page.locator('[data-testid="world-remove-from-graph-confirm-panel"][data-entity-id="p33b-nodeB"]').waitFor({ state: "visible", timeout: 10000 });
-
-  await page.locator('[data-testid="world-remove-from-all-scenes-checkbox"]').check();
-  await page.locator('[data-testid="world-remove-from-graph-confirm-btn"]').click();
-
-  await page.waitForFunction(
-    () => !document.querySelector('[data-testid="world-tree-row"][data-entity-id="p33b-nodeB"]'),
-    null,
-    { timeout: 10000 }
-  );
-
-  const graph = await fetchGraphViaRoute(base, WORLD);
-  assert.ok(!graph.nodes.some((n) => n.id === "p33b-nodeB"), "the node must be REALLY deleted from the graph");
-
-  const elements = await fetchSceneElements(scene.id);
-  assert.ok(
-    !elements.some((e) => e.kind === "graph" && e.graphEntityId === "p33b-nodeB"),
-    'opting in to "remove from all scenes" must ALSO strip the node\'s kind:"graph" elements from every scene that referenced it -- a fresh GET .../elements must no longer contain one'
-  );
-  await page.close();
-});
-
-// ---------------------------------------------------------------------------
-// 6. Route-level: pins the NEW route the opt-in cleanup needs.
-//    UPDATED (33.2 reconcile): this pin was authored (33.0) to assert today's
-//    404 while the route was un-built; 33.2 builds it, so the pin now asserts
-//    the BUILT reality -- the route exists (not the generic "No route" 404) and
-//    returns removeEntityFromAllScenes's `{removedElements, unanchoredScenes}`
-//    summary. (This is the orchestrator reconciling a QE-first route-absence
-//    pin once its route lands, same as Phase 28.4's wrap pin.)
+// 6. Route-level: pins the route the opt-in cleanup needs -- UNCHANGED by
+//    Phase 34 (reused verbatim by the new hybrid's checkbox-ON path).
 // ---------------------------------------------------------------------------
 test("route-level: POST /api/graph/nodes/:entityId/remove-from-scenes (the removeEntityFromAllScenes op) is genuinely wired -- returns the {removedElements, unanchoredScenes} summary, not a 404 'no route'", async () => {
   const res = await fetch(`${base}/api/graph/nodes/${encodeURIComponent("p33b-node")}/remove-from-scenes`, {
@@ -310,7 +103,7 @@ test("route-level: POST /api/graph/nodes/:entityId/remove-from-scenes (the remov
     body: JSON.stringify({ world: WORLD })
   });
   const body = await res.json().catch(() => null);
-  assert.notEqual(res.status, 404, `the remove-from-scenes route must now be wired (33.2) -- a 404 would mean it was never built. Got ${res.status}: ${JSON.stringify(body)}`);
+  assert.notEqual(res.status, 404, `the remove-from-scenes route must still be wired -- a 404 would mean it regressed. Got ${res.status}: ${JSON.stringify(body)}`);
   assert.equal(res.status, 200, `expected 200 from the wired removeEntityFromAllScenes route, got ${res.status}: ${JSON.stringify(body)}`);
   assert.equal(typeof body?.removedElements, "number", "the route returns removeEntityFromAllScenes's summary with a numeric removedElements");
   assert.equal(typeof body?.unanchoredScenes, "number", "the route returns removeEntityFromAllScenes's summary with a numeric unanchoredScenes");
