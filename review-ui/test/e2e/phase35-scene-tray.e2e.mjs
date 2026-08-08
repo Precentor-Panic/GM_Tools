@@ -129,6 +129,31 @@ test("dropping a Bestiary creature card onto the scene tray creates a roster ent
   await page.close();
 });
 
+// Orchestrator hardening (35.2 verification, intermittent ~1-in-7): drop,
+// then WAIT for the tray to SETTLE before reading the route or navigating
+// away. The component's drop handler fire-and-forgets its POST and repaints
+// the scene rows only after it resolves (scene-tray.js doDrop -> refreshTray
+// -> paintScenes, which rebuilds every row element via list.innerHTML="").
+// The test below originally dropped twice back-to-back, fetched immediately,
+// then page.goto'd -- intermittently reading BEFORE a POST landed, and the
+// goto could abort an in-flight POST outright, so "hero roster entry must
+// exist" failed on fast runs. Test 1 above already settles via its roster-
+// chip waits; a hero/asset REPEAT drop has no DOM delta to await (n stays 1),
+// so the settle signal here is: mark the target row's dataset BEFORE the
+// drop -- only the post-POST repaint replaces the row element and clears the
+// mark (dragover/dragleave restyle the SAME element in place).
+async function dropAndSettle(page, srcSel, rowSel) {
+  await page.evaluate((sel) => {
+    const row = document.querySelector(sel);
+    if (row) row.dataset.p35Settle = "1";
+  }, rowSel);
+  await nativeDnD(page, srcSel, rowSel);
+  await page.waitForFunction((sel) => {
+    const row = document.querySelector(sel);
+    return row != null && !row.dataset.p35Settle;
+  }, rowSel, { timeout: 10000 });
+}
+
 test("dropping a hero card resets to n:1 on a repeat drop (never stacks); dropping a Stagecraft asset also lands at n:1", async () => {
   const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
   await primeWorldSelection(page, base, WORLD);
@@ -139,8 +164,8 @@ test("dropping a hero card resets to n:1 on a repeat drop (never stacks); droppi
   const heroCardSel = `[data-testid="library-hero-card"][data-member-id="${kestrelId}"]`;
   await page.locator(heroCardSel).waitFor({ state: "visible", timeout: 10000 });
   await page.locator(rowSel).waitFor({ state: "visible", timeout: 10000 });
-  await nativeDnD(page, heroCardSel, rowSel);
-  await nativeDnD(page, heroCardSel, rowSel); // repeat -- must NOT stack
+  await dropAndSettle(page, heroCardSel, rowSel);
+  await dropAndSettle(page, heroCardSel, rowSel); // repeat -- must NOT stack
 
   let tray = await fetchSceneTrayViaRoute(base, WORLD, scene.id);
   const heroEntry = tray.body.roster.find((r) => r.kind === "hero" && r.id === kestrelId);
@@ -152,7 +177,7 @@ test("dropping a hero card resets to n:1 on a repeat drop (never stacks); droppi
   const assetRowSel = '[data-testid="tagged-shelf-row"][data-item-id="sc_lantern_prop"]';
   await page.locator(assetRowSel).waitFor({ state: "visible", timeout: 10000 });
   await page.locator(rowSel).waitFor({ state: "visible", timeout: 10000 });
-  await nativeDnD(page, assetRowSel, rowSel);
+  await dropAndSettle(page, assetRowSel, rowSel);
 
   tray = await fetchSceneTrayViaRoute(base, WORLD, scene.id);
   const assetEntry = tray.body.roster.find((r) => r.kind === "asset" && r.id === "sc_lantern_prop");
@@ -174,6 +199,9 @@ test("the roster set from a drop on the Bestiary tab is IMMEDIATELY visible in t
   await page.locator('[data-testid="library-bestiary-root"]').waitFor({ state: "visible", timeout: 15000 });
   const cardSel = `[data-testid="library-creature-card"][data-entry-id="${ogrekinId}"]`;
   await page.locator(cardSel).waitFor({ state: "visible", timeout: 10000 });
+  // Orchestrator hardening: wait for the tray's own async scene-row paint
+  // before dropping (see the identical note on the XP-meter test below).
+  await page.locator(rowSel).waitFor({ state: "visible", timeout: 10000 });
   await nativeDnD(page, cardSel, rowSel);
   await page.waitForFunction(
     (rowSel) => document.querySelector(rowSel)?.querySelector('[data-testid="scene-tray-roster-chip"]') != null,
@@ -201,6 +229,11 @@ test('XP meter renders literally "N / budget xp" for a scene with a set budget a
   await page.locator('[data-testid="library-bestiary-root"]').waitFor({ state: "visible", timeout: 15000 });
   const cardSel = `[data-testid="library-creature-card"][data-entry-id="${ogrekinId}"]`;
   await page.locator(cardSel).waitFor({ state: "visible", timeout: 10000 });
+  // Orchestrator hardening: the tray paints its scene rows from its OWN async
+  // loadAll (5 parallel fetches) after the bestiary root is already visible --
+  // dropping without waiting for the row intermittently threw "drop TARGET
+  // not found" (~200ms fast-failure runs). Same wait tests 1/2 already do.
+  await page.locator(rowSel).waitFor({ state: "visible", timeout: 10000 });
   await nativeDnD(page, cardSel, rowSel);
 
   const meter = page.locator(`${rowSel} [data-testid="scene-tray-xp-meter"]`);
@@ -230,6 +263,9 @@ test("clicking a roster chip's ✕ removes that row entirely (a real persisted r
   await page.locator('[data-testid="library-bestiary-root"]').waitFor({ state: "visible", timeout: 15000 });
   const cardSel = `[data-testid="library-creature-card"][data-entry-id="${ogrekinId}"]`;
   await page.locator(cardSel).waitFor({ state: "visible", timeout: 10000 });
+  // Orchestrator hardening: wait for the tray's own async scene-row paint
+  // before dropping (see the identical note on the XP-meter test above).
+  await page.locator(rowSel).waitFor({ state: "visible", timeout: 10000 });
   await nativeDnD(page, cardSel, rowSel);
 
   const chip = page.locator(`${rowSel} [data-testid="scene-tray-roster-chip"][data-kind="creature"][data-source-id="${ogrekinId}"]`);
