@@ -957,6 +957,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .scene-breadcrumb-prev-btn:hover, .scene-breadcrumb-next-btn:hover, .scene-breadcrumb-back-btn:hover { color: var(--accent); text-decoration: none; }
 .scene-breadcrumb-prev-btn::before { content: "· "; color: var(--border); }
 .scene-breadcrumb-next-btn::before { content: "· "; color: var(--border); }
+.scene-breadcrumb-prev-btn:disabled, .scene-breadcrumb-next-btn:disabled { opacity: 0.45; cursor: default; }
 .scene-wrap-toggle-btn { flex-shrink: 0; }
 
 /* §A -- Wrap panel: an inline slide-down, not a modal. Sits ON the
@@ -1801,6 +1802,14 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 :is(#view-session-planner, #app-shell) .scene-breadcrumb-next-btn:hover { color: var(--sp-accent-teal); }
 :is(#view-session-planner, #app-shell) .scene-breadcrumb-prev-btn::before,
 :is(#view-session-planner, #app-shell) .scene-breadcrumb-next-btn::before { color: var(--sp-border-control); }
+/* D4 (Phase 34 task 34.3): "Start of plan"/"End of plan" render as real
+   disabled controls at the plan's ends, not omitted. */
+:is(#view-session-planner, #app-shell) .scene-breadcrumb-prev-btn:disabled,
+:is(#view-session-planner, #app-shell) .scene-breadcrumb-next-btn:disabled {
+  opacity: 0.45; cursor: default;
+}
+:is(#view-session-planner, #app-shell) .scene-breadcrumb-prev-btn:disabled:hover,
+:is(#view-session-planner, #app-shell) .scene-breadcrumb-next-btn:disabled:hover { color: var(--sp-ink-muted); }
 :is(#view-session-planner, #app-shell) .scene-wrap-toggle-btn {
   flex-shrink: 0;
   border: 1px solid var(--sp-wrap-btn-border); background: transparent;
@@ -2767,15 +2776,19 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 #app-shell .shell-world-topbar-slot { display: flex; align-items: center; }
 #app-shell .wv-topbar { display: flex; align-items: center; gap: 10px; }
 #app-shell .wv-search {
-  width: 240px; font: inherit; font-size: 13px; padding: 6px 11px;
+  /* D10 (Phase 34 task 34.3): 220px, down from 240px -- `World Graph.dc.html:45`. */
+  width: 220px; font: inherit; font-size: 13px; padding: 6px 11px;
   border: 1px solid var(--sp-border-control); border-radius: var(--sp-radius-lg);
   background: var(--sp-surface-input); color: var(--sp-ink-primary);
 }
 #app-shell .wv-chips { display: flex; gap: 4px; }
+/* D9 (Phase 34 task 34.3): icon-only, 27px round chips -- the glyph is the
+   chip's sole child now (label text dropped, moved into the title tooltip). */
 #app-shell .wv-chip {
-  display: flex; align-items: center; gap: 6px; padding: 4px 9px;
-  border: 1px solid var(--sp-border-control); border-radius: var(--sp-radius-pill);
-  cursor: pointer; font-size: 11.5px; color: var(--sp-ink-muted); background: transparent;
+  display: flex; align-items: center; justify-content: center;
+  width: 27px; height: 27px; padding: 0;
+  border: 1px solid var(--sp-border-control); border-radius: 50%;
+  cursor: pointer; font-size: 12px; color: var(--sp-ink-muted); background: transparent;
 }
 #app-shell .wv-chip:hover { border-color: oklch(0.65 0.045 185); }
 #app-shell .wv-chip--on { background: var(--sp-badge-teal-bg); color: var(--sp-ink-heading); border-color: var(--sp-accent-teal); }
@@ -2959,7 +2972,10 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 /* Phase 33 task 33.2: the dead "Open full page →" span slot, recycled into a
    guarded "Remove from graph" button. Danger-tinted via the existing
    --sp-accent-danger token; occupies the same right-aligned header slot, no
-   layout change. */
+   layout change. D5-D8 (Phase 34 task 34.3): the HYBRID's in-place two-click
+   arm -- `--armed` deepens the danger tint per the prototype's own
+   `removeColor` (`World Graph.dc.html:595`), replacing Phase 33's separate
+   confirm panel. */
 #app-shell .wv-inspector-remove {
   font-family: var(--sp-font-mono); font-size: 10px; cursor: pointer;
   color: var(--sp-accent-danger); background: transparent;
@@ -2967,26 +2983,20 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   padding: 3px 8px; line-height: 1.2;
 }
 #app-shell .wv-inspector-remove:hover { background: var(--sp-accent-danger); color: var(--sp-surface-card); }
-#app-shell .wv-inspector-remove-host:empty { display: none; }
-#app-shell .wv-remove-confirm {
-  margin: 0 14px 4px; padding: 10px 12px;
-  background: var(--sp-surface-card); border: 1px solid var(--sp-accent-danger); border-radius: 6px;
-  display: flex; flex-direction: column; gap: 8px;
+#app-shell .wv-inspector-remove--armed { background: var(--sp-accent-danger); color: var(--sp-surface-card); }
+/* The armed state's consequence line + opt-in checkbox -- an amber hint
+   band (`World Graph.dc.html:207-209`'s own `removeHint` styling), reusing
+   the SAME banner tokens the "nowhere in particular" hint above uses. Empty
+   (bare-arm / disarmed) collapses to nothing, no leftover gap. */
+#app-shell .wv-remove-consequence-host:empty { display: none; }
+#app-shell .wv-remove-consequence-line {
+  margin: 0 14px 8px; padding: 8px 12px;
+  background: var(--sp-banner-bg); border: 1px solid var(--sp-banner-border); border-radius: 6px;
+  font-size: 11.5px; line-height: 1.45; color: var(--sp-accent-amber);
 }
-#app-shell .wv-remove-confirm-warn { font-size: 12px; color: var(--sp-ink-body, var(--sp-ink-heading)); line-height: 1.4; }
-#app-shell .wv-remove-confirm-opt {
-  display: flex; align-items: center; gap: 7px;
+#app-shell .wv-remove-checkbox-row {
+  display: flex; align-items: center; gap: 7px; margin: -2px 14px 8px;
   font-size: 12px; color: var(--sp-ink-muted); cursor: pointer;
-}
-#app-shell .wv-remove-confirm-actions { display: flex; gap: 8px; }
-#app-shell .wv-remove-confirm-yes {
-  font-size: 12px; cursor: pointer; padding: 4px 12px; border-radius: 4px;
-  background: var(--sp-accent-danger); color: var(--sp-surface-card); border: 1px solid var(--sp-accent-danger);
-}
-#app-shell .wv-remove-confirm-yes:disabled { opacity: 0.6; cursor: default; }
-#app-shell .wv-remove-confirm-cancel {
-  font-size: 12px; cursor: pointer; padding: 4px 12px; border-radius: 4px;
-  background: transparent; color: var(--sp-ink-muted); border: 1px solid var(--sp-border-control);
 }
 #app-shell .wv-inspector-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
 #app-shell .wv-inspector-label { margin: 16px 0 7px; }

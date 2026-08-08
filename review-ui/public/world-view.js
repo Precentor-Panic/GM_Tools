@@ -103,6 +103,15 @@ let selectedId = null;
 let mountToken = 0;
 let descSaver = null;
 let descSaverForId = null;
+// D5-D8 (Phase 34 task 34.3): the HYBRID remove-from-graph's in-place
+// two-click arm state -- which entity id (if any) is currently armed. Reset
+// whenever the selection changes (a different node, or navigating away) so
+// arming never survives a selection swap; Esc/click-elsewhere clear it too
+// (wired in renderInspector). `appearsCache` shares the SAME "Appears in"
+// fetch between the inspector's own display and the arm's consequence-line
+// N count -- no second route call for the same data.
+let removeArmedId = null;
+let appearsCache = { id: null, promise: null };
 
 function resetForWorld(world) {
   ui.world = world;
@@ -118,6 +127,8 @@ function resetForWorld(world) {
   cache.derived = null;
   cache.scenes = null;
   cache.usedInScene = null;
+  removeArmedId = null;
+  appearsCache = { id: null, promise: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +235,16 @@ function buildSkeleton() {
   return { tree, expandToggle, detailHost, looseHost, inspectorPane };
 }
 
+// D5-D8 (Phase 34 task 34.3): Esc disarms a pending remove, module-wide --
+// registered ONCE at import time (this module is a singleton ES module, so
+// there is exactly one such listener for the life of the page) rather than
+// re-added on every renderInspector() call.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || removeArmedId === null) return;
+  removeArmedId = null;
+  renderInspector();
+});
+
 // ===========================================================================
 // Topbar (World-only): search box + six type-filter chips, mounted into the
 // shell topbar's world slot. Built once per mount; chip states patched in
@@ -251,11 +272,15 @@ function mountWorldTopbar() {
   const chips = el("div", { class: "wv-chips" });
   for (const t of TYPE_ORDER) {
     const meta = TYPES[t];
-    const chip = el("div", { class: "wv-chip", "data-type": t, title: `Filter to ${meta.label.toLowerCase()}s` });
-    chip.append(
-      el("span", { class: "wv-chip-glyph", style: `color:${meta.accent}` }, meta.glyph),
-      el("span", null, meta.label)
-    );
+    // D9/D11 (Phase 34 task 34.3): icon-only 27px round chips -- the glyph is
+    // the chip's ONLY child now (no label span); the dropped label text moves
+    // into the tooltip, refreshed copy per the new prototype's own title
+    // binding (`World Graph.dc.html:518`, "<Label> — filter to <label>s").
+    const chip = el("div", {
+      class: "wv-chip", "data-type": t,
+      title: `${meta.label} — filter to ${meta.label.toLowerCase()}s`
+    });
+    chip.appendChild(el("span", { class: "wv-chip-glyph", style: `color:${meta.accent}` }, meta.glyph));
     chip.addEventListener("click", () => {
       if (ui.types.has(t)) ui.types.delete(t); else ui.types.add(t);
       syncChipStates(chips);
@@ -757,24 +782,45 @@ function renderInspector() {
 
   const header = el("div", { class: "wv-inspector-header" });
   header.appendChild(el("span", { class: "wv-inspector-title" }, sel.name || sel.id));
-  // Phase 33 task 33.2: the inert "Open full page →" span (de-advertised in
-  // Phase 31, never wired) is recycled here into a guarded "Remove from graph"
-  // button, in the SAME right-aligned header slot -- no layout change.
+  // D5-D8 (Phase 34 task 34.3): the HYBRID remove-from-graph -- the design's
+  // inline two-click ARM (`World Graph.dc.html`'s own `armRemove`/
+  // `removeLabel`), replacing Phase 33's separate confirm panel. First click
+  // arms in place (button's own label flips); second click executes. Same
+  // right-aligned header slot, same testid, no layout change.
+  const armed = removeArmedId === sel.id;
   const removeBtn = el("button", {
     type: "button",
-    class: "wv-inspector-remove",
+    class: "wv-inspector-remove" + (armed ? " wv-inspector-remove--armed" : ""),
     "data-testid": "world-remove-from-graph-btn",
     "data-entity-id": sel.id
-  }, "Remove from graph");
+  }, armed ? "remove — sure?" : "Remove from graph");
   header.append(el("span", { style: "flex:1" }), removeBtn);
   insp.appendChild(header);
 
-  // Host for the inline confirm panel (mirrors the beyond-room drawer's
-  // per-item confirm host, one panel at a time). Sits directly under the
-  // header so the guarded confirm reads as part of this node's inspector.
-  const confirmHost = el("div", { class: "wv-inspector-remove-host" });
-  insp.appendChild(confirmHost);
-  removeBtn.addEventListener("click", () => openRemoveFromGraphConfirm(sel, confirmHost));
+  // Host for the armed state's consequence line + opt-in checkbox (Russell's
+  // locked HYBRID rule: rendered only when K/M/N aren't all zero). Sits
+  // directly under the header, same slot the old confirm panel occupied.
+  const consequenceHost = el("div", { class: "wv-remove-consequence-host" });
+  insp.appendChild(consequenceHost);
+  removeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    handleRemoveClick(sel, removeBtn, consequenceHost);
+  });
+  // Disarm gestures: clicking anywhere ELSE in the inspector, or Esc
+  // (wired once at module scope below). Excluded from "elsewhere": the
+  // remove button's own click (so the SAME click that just armed it doesn't
+  // immediately disarm it again via bubbling), and anything inside the
+  // consequence host (the opt-in checkbox/label ARE part of the armed UI,
+  // not "elsewhere" -- checking the box must not itself disarm and yank the
+  // checkbox out of the DOM mid-click).
+  insp.addEventListener("click", (e) => {
+    if (e.target === removeBtn || removeBtn.contains(e.target)) return;
+    if (consequenceHost.contains(e.target)) return;
+    if (removeArmedId !== null) {
+      removeArmedId = null;
+      renderInspector();
+    }
+  });
 
   const body = el("div", { class: "wv-inspector-body" });
 
@@ -825,133 +871,124 @@ function renderInspector() {
 
   pane.appendChild(insp);
   fillAppearsIn(sel.id, appears);
+  renderRemoveConsequence(sel, consequenceHost);
+}
+
+// Shared "used in" fetch -- the SAME `scenesForEntity` appearances both the
+// "Appears in" section AND the armed remove-consequence line's N count read,
+// cached per entity id so arming never triggers a second route call for data
+// the inspector already fetched for its own render (D5-D8's own "zero extra
+// route call" contract).
+function fetchAppearances(id) {
+  if (appearsCache.id === id) return appearsCache.promise;
+  const promise = wApi(`/api/scene-planning/entities/${encodeURIComponent(id)}/scenes${withWorld()}`)
+    .then((r) => (r && r.appearances) || [])
+    .catch(() => []);
+  appearsCache = { id, promise };
+  return promise;
 }
 
 async function fillAppearsIn(id, target) {
   const captured = id;
-  try {
-    const { appearances } = await wApi(`/api/scene-planning/entities/${encodeURIComponent(id)}/scenes${withWorld()}`);
-    if (captured !== selectedId) return;
-    target.innerHTML = "";
-    if (!appearances || !appearances.length) {
-      target.textContent = "No scene has used this yet.";
-      return;
-    }
-    for (const a of appearances) {
-      const nm = sceneDisplayName(a.scene);
-      const isAnchor = (a.roles || []).includes("anchor");
-      const line = el("div", { class: "wv-appears-line" }, nm + (isAnchor ? " (anchor place)" : ""));
-      target.appendChild(line);
-    }
-  } catch {
-    if (captured === selectedId) target.textContent = "No scene has used this yet.";
+  const appearances = await fetchAppearances(id);
+  if (captured !== selectedId) return;
+  target.innerHTML = "";
+  if (!appearances.length) {
+    target.textContent = "No scene has used this yet.";
+    return;
+  }
+  for (const a of appearances) {
+    const nm = sceneDisplayName(a.scene);
+    const isAnchor = (a.roles || []).includes("anchor");
+    const line = el("div", { class: "wv-appears-line" }, nm + (isAnchor ? " (anchor place)" : ""));
+    target.appendChild(line);
   }
 }
 
-// Phase 33 task 33.2: the guarded "Remove from graph" confirm panel. Mirrors
-// the scene page's beyond-room drawer (session-planner-view.js:1469-1577) --
-// an inline confirm with a cascade-edge warning and danger/cancel buttons --
-// but shows the REAL cascade-edge count BEFORE the delete (computed
-// client-side from the already-loaded graph cache -- the SAME edge set
-// deleteNodeOp cascades: every edge touching this node) rather than after,
-// plus a "used in N scene(s)" line from scenesForEntity and an opt-in "also
-// remove from all N scenes" checkbox (unchecked = the locked default,
-// warn-and-leave-references).
-async function openRemoveFromGraphConfirm(sel, confirmHost) {
-  if (confirmHost.childElementCount) return; // already open -- one panel at a time
+// ---------------------------------------------------------------------------
+// D5-D8: the armed state's consequence line + opt-in checkbox. K =
+// containment children (they reparent up), M = non-containment edges
+// touching the node (dropped), N = scenesForEntity appearances (used-in).
+// ALL zero -> the flipped button label IS the entire armed UI (Russell's own
+// locked HYBRID rule) -- no line, no checkbox.
+// ---------------------------------------------------------------------------
+async function renderRemoveConsequence(sel, host) {
+  host.innerHTML = "";
+  if (removeArmedId !== sel.id) return;
+  const appearances = await fetchAppearances(sel.id);
+  if (removeArmedId !== sel.id) return; // disarmed (or selection changed) while awaiting
 
-  // Cascade-edge count, client-side, from the already-loaded graph: every
-  // edge where this node is source or target (deleteNodeOp's own cascade set,
-  // manual-edit-ops.mjs's `e.sourceId === id || e.targetId === id`).
-  const edges = (cache.graph && cache.graph.edges) || [];
-  const cascadeCount = edges.filter((e) => e.sourceId === sel.id || e.targetId === sel.id).length;
+  const K = childIdsOf(sel.id).length;
+  const M = nonContainmentEdgesFor(sel.id).length;
+  const N = appearances.length;
+  if (K === 0 && M === 0 && N === 0) return;
 
-  // "used in N scene(s)" -- the same scenesForEntity appearances the inspector
-  // already fetches for its "Appears in" section (fetched fresh here so the
-  // panel is populated before it becomes visible).
-  let sceneCount = 0;
-  try {
-    const { appearances } = await wApi(`/api/scene-planning/entities/${encodeURIComponent(sel.id)}/scenes${withWorld()}`);
-    sceneCount = (appearances || []).length;
-  } catch { /* leave 0 -- worst case the warning under-counts, delete still guarded */ }
+  host.appendChild(el("div", {
+    class: "wv-remove-consequence-line",
+    "data-testid": "world-remove-consequence-line",
+    "data-entity-id": sel.id
+  }, `reparents ${K} inside · drops ${M} link${M === 1 ? "" : "s"} · used in ${N} scene${N === 1 ? "" : "s"}`));
 
-  const panel = el("div", {
-    class: "wv-remove-confirm",
-    "data-testid": "world-remove-from-graph-confirm-panel",
-    "data-entity-id": sel.id,
-    "data-cascade-edge-count": String(cascadeCount)
-  });
-
-  panel.appendChild(el("div", { class: "wv-remove-confirm-warn" },
-    `Delete “${sel.name || sel.id}” from the graph? ${cascadeCount} connected edge${cascadeCount === 1 ? "" : "s"} removed · used in ${sceneCount} scene${sceneCount === 1 ? "" : "s"}.`));
-
-  const optLabel = el("label", { class: "wv-remove-confirm-opt" });
+  const optLabel = el("label", { class: "wv-remove-checkbox-row" });
   const checkbox = el("input", { type: "checkbox", "data-testid": "world-remove-from-all-scenes-checkbox" });
-  optLabel.append(checkbox, el("span", {}, `also remove it from all ${sceneCount} scene${sceneCount === 1 ? "" : "s"}`));
-  panel.appendChild(optLabel);
+  optLabel.append(checkbox, el("span", {}, `also remove from all ${N} scene${N === 1 ? "" : "s"}`));
+  host.appendChild(optLabel);
+}
 
-  const btnRow = el("div", { class: "wv-remove-confirm-actions" });
-  const confirmBtn = el("button", {
-    type: "button",
-    class: "wv-remove-confirm-yes",
-    "data-testid": "world-remove-from-graph-confirm-btn"
-  }, "Delete node");
-  const cancelBtn = el("button", {
-    type: "button",
-    class: "wv-remove-confirm-cancel",
-    "data-testid": "world-remove-from-graph-cancel-btn"
-  }, "Cancel");
-  btnRow.append(confirmBtn, cancelBtn);
-  panel.appendChild(btnRow);
+// ---------------------------------------------------------------------------
+// D5-D8: first click ARMS (re-render only), second click EXECUTES --
+// POST .../remove-reparent-up (§4, always) preceded by POST
+// .../remove-from-scenes (Phase 33, unchanged) only when the opt-in checkbox
+// is checked. ONE atomic undo slot covers the node+edges+reparent topology;
+// the opt-in scene cleanup is a deliberate separate action NOT reversed by
+// that same undo -- surfaced honestly in the toast, same convention Phase
+// 33's own confirm panel used.
+// ---------------------------------------------------------------------------
+async function handleRemoveClick(sel, btn, consequenceHost) {
+  if (removeArmedId !== sel.id) {
+    removeArmedId = sel.id;
+    renderInspector();
+    return;
+  }
 
-  cancelBtn.addEventListener("click", () => { confirmHost.innerHTML = ""; });
-
-  confirmBtn.addEventListener("click", async () => {
-    confirmBtn.disabled = true;
-    cancelBtn.disabled = true;
-    const name = sel.name || sel.id;
-    const alsoScenes = checkbox.checked;
-    try {
-      // Opt-in scene-reference cleanup FIRST (not covered by the node's undo).
-      if (alsoScenes) {
-        await wApi(`/api/graph/nodes/${encodeURIComponent(sel.id)}/remove-from-scenes`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ world: currentWorld() })
-        });
-      }
-      // Then always the guarded delete (deleteNodeOp -- cascades edges, atomic
-      // single-slot undo).
-      await wApi(`/api/graph/nodes/${encodeURIComponent(sel.id)}`, {
-        method: "DELETE",
+  btn.disabled = true;
+  const name = sel.name || sel.id;
+  const checkbox = consequenceHost.querySelector('[data-testid="world-remove-from-all-scenes-checkbox"]');
+  const alsoScenes = !!(checkbox && checkbox.checked);
+  try {
+    // Opt-in scene-reference cleanup FIRST (not covered by the node's undo).
+    if (alsoScenes) {
+      await wApi(`/api/graph/nodes/${encodeURIComponent(sel.id)}/remove-from-scenes`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ world: currentWorld() })
       });
-      confirmHost.innerHTML = "";
-      // The node is gone -- reload re-fetches the graph and re-renders; the
-      // stale selection self-clears to the empty inspector (renderInspector's
-      // own `if (!sel)` path).
-      await reload();
-      // Undo restores the graph node + edges via the existing atomic manual-
-      // undo slot. The opt-in scene cleanup is a deliberate, separate action
-      // NOT reversed by this undo -- surfaced honestly.
-      const undoNote = alsoScenes ? " (not the scene cleanup)" : "";
-      showUndoToast(`Removed “${name}” from the graph. Undo restores the node${undoNote}.`, async () => {
-        await wApi("/api/manual-undo", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ world: currentWorld() })
-        });
-        await reload();
-      });
-    } catch (err) {
-      confirmBtn.disabled = false;
-      cancelBtn.disabled = false;
-      panel.querySelector(".wv-remove-confirm-warn").textContent = `Could not remove: ${err.message}`;
     }
-  });
-
-  confirmHost.appendChild(panel);
+    // Then the guarded hybrid delete: reparent children up one level, THEN
+    // delete the node cascading its remaining edges -- one atomic undo slot.
+    await wApi(`/api/graph/nodes/${encodeURIComponent(sel.id)}/remove-reparent-up`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld() })
+    });
+    removeArmedId = null;
+    // The node is gone -- reload re-fetches the graph and re-renders; the
+    // stale selection self-clears to the empty inspector (renderInspector's
+    // own `if (!sel)` path).
+    await reload();
+    const undoNote = alsoScenes ? " (not the scene cleanup)" : "";
+    showUndoToast(`Removed “${name}” from the graph. Undo restores the node${undoNote}.`, async () => {
+      await wApi("/api/manual-undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      });
+      await reload();
+    });
+  } catch (err) {
+    btn.disabled = false;
+    showUndoToast(`Could not remove: ${err.message}`, () => {});
+  }
 }
 
 function sceneDisplayName(scene) {
@@ -967,9 +1004,11 @@ function buildSceneTray(sel) {
   head.append(
     el("div", { class: "wv-mono-label" }, "Drop into a scene"),
     el("div", { style: "flex:1" }),
-    // §3.2(b): label the gesture so the scene-add tray reads distinctly from a
-    // tree-row reparent drop. Text-only, in the existing hint slot.
-    el("div", { class: "wv-mono wv-scene-tray-hint" }, "drag a node here → in the scene")
+    // §3.2(b) / D12 (Phase 34 task 34.3): label the gesture so the scene-add
+    // tray reads distinctly from a tree-row reparent drop -- copy + testid
+    // per the new prototype (`World Graph.dc.html:241`'s own "Drop into a
+    // scene" section label, reused verbatim for the hint per the fixture).
+    el("div", { class: "wv-mono wv-scene-tray-hint", "data-testid": "world-scene-tray-hint" }, "Drop into a scene")
   );
   const search = el("input", { class: "wv-scene-tray-search", type: "text", placeholder: "Find a scene…", value: ui.sceneQuery });
   const list = el("div", { class: "wv-scene-tray-list" });
@@ -1182,6 +1221,10 @@ function select(id) {
   }
 }
 function applySelection(id) {
+  // Selecting a different node always disarms a pending remove (D5-D8's own
+  // "selecting another node disarms" rule) -- do this BEFORE reassigning
+  // selectedId so the comparison is against the outgoing selection.
+  if (selectedId !== id) removeArmedId = null;
   selectedId = id || null;
   if (!cache.derived) return;
   if (selectedId) for (const a of ancestorChain(selectedId)) ui.expanded.add(a);

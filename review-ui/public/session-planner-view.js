@@ -1399,7 +1399,7 @@ async function renderSceneElementsList(scene, listHost, nodeMap) {
 // breadcrumb chrome (app-shell.js) owns the "‹ Plan / Plans" back link, so the
 // in-page back button is suppressed (`showBack:false`) -- only the designer
 // sub-bar's ← prev / next → survive here.
-function buildSceneBreadcrumb(scene, plans, nav = {}) {
+async function buildSceneBreadcrumb(scene, plans, nav = {}) {
   const sceneHash = nav.sceneHash || ((id) => `session-planner/${id}`);
   const plansHash = nav.plansHash || ((plan) => (plan ? `plans/${plan.id}` : "plans"));
   const showBack = nav.showBack !== false;
@@ -1429,24 +1429,51 @@ function buildSceneBreadcrumb(scene, plans, nav = {}) {
     if (idx >= 0 && idx < ids.length - 1) nextId = ids[idx + 1];
   }
 
+  // D4 (Phase 34 task 34.3): named prev/next -- `← <prevSceneName>` /
+  // `<nextSceneName> →` (`Session Planner.dc.html`'s own `prevLabel`/
+  // `nextLabel` binding), replacing the old generic "‹ Prev"/"Next ›". A
+  // Plan's own `sceneIds` are ids only (`session-planner/plans.mjs`), so the
+  // neighbor's real name needs its own fetch -- resolveSceneDisplayName's
+  // same "bespoke name wins, else anchor name, else objective note" rule
+  // applied to the fetched neighbor record. At either end of the plan the
+  // control STILL RENDERS (not omitted, unlike before), real `disabled`,
+  // reading "Start of plan" / "End of plan".
+  async function neighborSceneName(id) {
+    if (!id) return null;
+    try {
+      const { scene: s } = await spApi(`/api/session-planner/scenes/${encodeURIComponent(id)}${spWithWorld()}`);
+      return resolveSceneDisplayName(s);
+    } catch {
+      return id;
+    }
+  }
+  const [prevName, nextName] = await Promise.all([neighborSceneName(prevId), neighborSceneName(nextId)]);
+
+  const prevBtn = document.createElement("button");
+  prevBtn.type = "button";
+  prevBtn.className = "link-btn scene-breadcrumb-prev-btn";
+  prevBtn.setAttribute("data-testid", "scene-breadcrumb-prev-btn");
   if (prevId) {
-    const prevBtn = document.createElement("button");
-    prevBtn.type = "button";
-    prevBtn.className = "link-btn scene-breadcrumb-prev-btn";
-    prevBtn.setAttribute("data-testid", "scene-breadcrumb-prev-btn");
-    prevBtn.textContent = "‹ Prev";
+    prevBtn.textContent = `← ${prevName}`;
     prevBtn.addEventListener("click", () => { location.hash = sceneHash(prevId); });
-    bc.appendChild(prevBtn);
+  } else {
+    prevBtn.textContent = "Start of plan";
+    prevBtn.disabled = true;
   }
+  bc.appendChild(prevBtn);
+
+  const nextBtn = document.createElement("button");
+  nextBtn.type = "button";
+  nextBtn.className = "link-btn scene-breadcrumb-next-btn";
+  nextBtn.setAttribute("data-testid", "scene-breadcrumb-next-btn");
   if (nextId) {
-    const nextBtn = document.createElement("button");
-    nextBtn.type = "button";
-    nextBtn.className = "link-btn scene-breadcrumb-next-btn";
-    nextBtn.setAttribute("data-testid", "scene-breadcrumb-next-btn");
-    nextBtn.textContent = "Next ›";
+    nextBtn.textContent = `${nextName} →`;
     nextBtn.addEventListener("click", () => { location.hash = sceneHash(nextId); });
-    bc.appendChild(nextBtn);
+  } else {
+    nextBtn.textContent = "End of plan";
+    nextBtn.disabled = true;
   }
+  bc.appendChild(nextBtn);
 
   return { bc, firstPlan, prevId, nextId };
 }
@@ -2704,9 +2731,10 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   topBar.className = "scene-top-bar";
   // In the shell, the persistent breadcrumb chrome owns the "‹ Plan/Plans" back
   // link -- suppress the in-page one there and route prev/next to shell hashes.
-  const { bc, firstPlan, prevId, nextId } = buildSceneBreadcrumb(scene, plans, {
+  const { bc, firstPlan, prevId, nextId } = await buildSceneBreadcrumb(scene, plans, {
     sceneHash, plansHash, showBack: !designer
   });
+  if (stale()) return;
   topBar.appendChild(bc);
 
   // Right-hand cluster: the two segmented controls, then the Wrap button. Wrap
