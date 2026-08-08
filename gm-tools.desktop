@@ -1,0 +1,20 @@
+[Desktop Entry]
+Type=Application
+Name=GM Tools
+Comment=Launch the GM_Tools session-planning app (single-instance; opens in your browser)
+# NOTE: this Exec line is machine-specific. `node` is not on this machine's
+# default PATH -- the real binary lives at /home/russell/.local/node/bin/node
+# (see .claude/skills/gm-tools-verification/SKILL.md). Update this path if
+# node moves, or if this file is copied to a machine with a different node
+# location (or one where `node` IS on PATH, in which case `Exec=node
+# /opt/dev/GM_Tools/bin/gm-tools` would also work).
+Exec=/home/russell/.local/node/bin/node /opt/dev/GM_Tools/bin/gm-tools
+Path=/opt/dev/GM_Tools
+# Terminal=true: bin/gm-tools inherits the spawned server's stdio straight
+# through (there's no separate log file -- see RUN.md), and the launcher
+# stays attached to the server it starts (Ctrl-C stops both). A visible
+# terminal is where those logs land and is how you stop the app from this
+# entry; Terminal=false would run it invisibly with nowhere to see output
+# or send Ctrl-C.
+Terminal=true
+Categories=Game;Utility;

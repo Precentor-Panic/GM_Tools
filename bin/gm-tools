@@ -1,0 +1,249 @@
+#!/usr/bin/env node
+// bin/gm-tools -- the front door (Phase 34 task 34.4).
+//
+// A single-command launcher for GM_Tools' review-ui server: health-checks
+// the fixed port first (never port-hops, never starts a second instance),
+// spawns review-ui/server.mjs if nothing answered, waits for it to come up,
+// then opens the browser at the right starting URL.
+//
+// Invocation paths this script is actually exercised by:
+//   npm run app                 (root package.json "app" script -- has a
+//                                real `node` on PATH via npm's own resolution)
+//   bin/gm-tools                (direct -- requires `node` on YOUR PATH;
+//                                the shebang above is a convenience, not
+//                                load-bearing for the other two paths)
+//   gm-tools.desktop's Exec=    (uses an absolute node path explicitly,
+//                                since `node` is not on this machine's
+//                                default PATH -- see that file)
+//
+// This script itself never assumes `node` is on PATH: where it needs to
+// spawn a second node process (the server), it uses `process.execPath`
+// (the exact binary currently running this script), not the bare "node"
+// command.
+//
+// Testing: set GM_TOOLS_NO_BROWSER=1 to skip the real browser-open call
+// (the URL is still printed) -- used by this task's own shell tests so
+// they don't pop a real browser window on a dev box.
+
+import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = dirname(SCRIPT_DIR); // bin/ -> repo root
+const REVIEW_UI_DIR = join(REPO_ROOT, "review-ui");
+const ENV_PATH = join(REPO_ROOT, ".env");
+
+const HEALTH_TIMEOUT_MS = 1000;
+const SPAWN_TIMEOUT_MS = 15000;
+const POLL_INTERVAL_MS = 300;
+
+// ---------------------------------------------------------------------
+// Step 1: load .env if present.
+//
+// A minimal KEY=VALUE parse -- deliberately not a dependency. This
+// mirrors what review-ui/package.json's own "start" script gets for free
+// from node's `--env-file-if-exists=../.env` flag, but this launcher needs
+// the values itself *before* spawning (to decide the missing-API-key
+// notice, and to know REVIEW_UI_PORT before the first health check), so it
+// re-does the parse rather than relying on that flag.
+// ---------------------------------------------------------------------
+function loadDotEnv(path) {
+  if (!existsSync(path)) return {};
+  const out = {};
+  const text = readFileSync(path, "utf8");
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq === -1) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (key) out[key] = value;
+  }
+  return out;
+}
+
+const dotEnv = loadDotEnv(ENV_PATH);
+// Real process env wins over .env -- same precedence node's own
+// --env-file-if-exists uses.
+for (const [k, v] of Object.entries(dotEnv)) {
+  if (process.env[k] === undefined) process.env[k] = v;
+}
+
+const PORT = process.env.REVIEW_UI_PORT ? Number(process.env.REVIEW_UI_PORT) : 8787;
+const BASE_URL = `http://localhost:${PORT}`;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ---------------------------------------------------------------------
+// Step 2: health check. GET /api/worlds, expected shape:
+//   { dataDir: string, worlds: string[] }
+// (review-ui/server.mjs's GET /api/worlds handler, backed by
+// wf-mcp-server/lib/data-dir.mjs's listWorlds() -- read-only lookup done
+// per this task's "only if required for first-run detection" allowance;
+// nothing in server.mjs is edited here.)
+// ---------------------------------------------------------------------
+async function checkHealth() {
+  let res;
+  try {
+    res = await fetch(`${BASE_URL}/api/worlds`, {
+      signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+    });
+  } catch {
+    // Connection refused / DNS failure / our own timeout firing all read
+    // the same here: nothing answered in time, safe to try spawning our
+    // own. (A real-but-slow foreign service on the port is an edge case
+    // this would misread as "down" -- it gets caught a moment later
+    // instead, when our own spawn's post-start poll sees a "foreign"
+    // shape and bails with the clear error.)
+    return { status: "down" };
+  }
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    return { status: "foreign" };
+  }
+  if (body && typeof body.dataDir === "string" && Array.isArray(body.worlds)) {
+    return { status: "ours", body };
+  }
+  return { status: "foreign" };
+}
+
+// ---------------------------------------------------------------------
+// Step 4/5: pick the URL (first-run no-worlds vs. normal) and open it.
+// ---------------------------------------------------------------------
+function urlFor(worlds) {
+  if (Array.isArray(worlds) && worlds.length === 0) {
+    // No worlds yet: land on Create-World. That panel is hosted at
+    // #settings TODAY (review-ui/public/app.js). NOTE: Phase 34 task 34.2
+    // folds settings/create-world into the new Connection Menu panel --
+    // re-point this hash when that lands. Not building new UI here.
+    return `${BASE_URL}/#settings`;
+  }
+  // app.js itself defaults to #planner/plans when the hash is empty, so
+  // the bare root is enough once at least one world exists.
+  return BASE_URL;
+}
+
+async function openBrowser(url) {
+  console.log(`Opening ${url}`);
+  if (process.env.GM_TOOLS_NO_BROWSER === "1") {
+    console.log("(GM_TOOLS_NO_BROWSER=1 -- skipping the actual browser launch)");
+    return;
+  }
+  try {
+    const opener = spawn("xdg-open", [url], { stdio: "ignore", detached: true });
+    opener.on("error", () => {
+      console.log(`Could not launch a browser automatically. Open this URL manually: ${url}`);
+    });
+    opener.unref();
+  } catch {
+    console.log(`Could not launch a browser automatically. Open this URL manually: ${url}`);
+  }
+}
+
+// ---------------------------------------------------------------------
+// Main decision tree.
+// ---------------------------------------------------------------------
+async function main() {
+  const initial = await checkHealth();
+
+  if (initial.status === "ours") {
+    console.log("Already running -- opening browser");
+    await openBrowser(urlFor(initial.body.worlds));
+    process.exit(0);
+  }
+
+  if (initial.status === "foreign") {
+    console.error(
+      `Port ${PORT} is in use by something else (it answered, but not with ` +
+        `GM_Tools' expected /api/worlds shape). Not starting a server here -- ` +
+        `set REVIEW_UI_PORT and retry, e.g.:\n` +
+        `  REVIEW_UI_PORT=8788 npm run app`
+    );
+    process.exit(1);
+  }
+
+  // status === "down": nothing here yet, spawn our own.
+  console.log(`Starting GM_Tools review-ui server on port ${PORT}...`);
+  const child = spawn(process.execPath, ["server.mjs"], {
+    cwd: REVIEW_UI_DIR,
+    env: process.env, // includes the .env values merged in above
+    stdio: "inherit",
+    detached: false, // launcher stays attached: see RUN.md's Ctrl-C note
+  });
+
+  let childExited = false;
+  let childExitCode = 0;
+  child.on("exit", (code) => {
+    childExited = true;
+    childExitCode = code ?? 1;
+  });
+
+  const deadline = Date.now() + SPAWN_TIMEOUT_MS;
+  let started = null;
+  while (Date.now() < deadline) {
+    if (childExited) {
+      console.error(`review-ui server exited before it came up (code ${childExitCode}). See output above.`);
+      process.exit(childExitCode || 1);
+    }
+    const check = await checkHealth();
+    if (check.status === "ours") {
+      started = check;
+      break;
+    }
+    if (check.status === "foreign") {
+      console.error(
+        `Port ${PORT} was claimed by something else while starting up. ` +
+          `Set REVIEW_UI_PORT and retry.`
+      );
+      child.kill();
+      process.exit(1);
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+
+  if (!started) {
+    console.error(`review-ui server did not come up on port ${PORT} within ${SPAWN_TIMEOUT_MS}ms.`);
+    child.kill();
+    process.exit(1);
+  }
+
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.log("LLM features disabled until ANTHROPIC_API_KEY is set in .env");
+  }
+
+  await openBrowser(urlFor(started.body.worlds));
+
+  // The launcher stays attached to the server it spawned: Ctrl-C (or
+  // closing the terminal window) stops both. Ctrl-C's SIGINT already
+  // reaches the whole foreground process group under a normal shell since
+  // the child is not detached and shares stdio; the explicit forwarding
+  // below is a defensive backstop for launch contexts where that group
+  // delivery doesn't happen (e.g. started directly by another process).
+  const forward = (sig) => () => {
+    if (!childExited) child.kill(sig);
+  };
+  process.on("SIGINT", forward("SIGINT"));
+  process.on("SIGTERM", forward("SIGTERM"));
+
+  child.on("exit", (code) => {
+    process.exit(code ?? 0);
+  });
+}
+
+main().catch((err) => {
+  console.error("gm-tools launcher failed:", err);
+  process.exit(1);
+});
