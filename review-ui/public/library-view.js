@@ -654,7 +654,15 @@ function buildHall(ctx) {
     // resources (real combat readouts — see file header note)
     const resChips = el("div", { style: "display: flex; flex-wrap: wrap; gap: 4px;" });
     if (cr.attackBonus != null) resChips.appendChild(miniChip(`Atk +${cr.attackBonus}`));
-    for (const [k, v] of Object.entries(cr.saveDCs || {})) resChips.appendChild(miniChip(`${k.toUpperCase()} ${v >= 0 ? "+" : ""}${v}`));
+    for (const [k, v] of Object.entries(cr.saveDCs || {})) {
+      // saveDCs is an opaque pass-through of dnd5e `system.saves` (mapper's
+      // documented tolerance) -- real 5.3.3 data wraps each save as
+      // `{roll, value}` where `value` is the modifier, older/fixture shapes
+      // are bare numbers. Unwrap; skip entries with no numeric to show.
+      const mod = (v && typeof v === "object") ? v.value : v;
+      if (typeof mod !== "number") continue;
+      resChips.appendChild(miniChip(`${k.toUpperCase()} ${mod >= 0 ? "+" : ""}${mod}`));
+    }
     for (const feat of cr.notableAbilities || []) resChips.appendChild(miniChip(feat));
     if (!resChips.children.length) resChips.appendChild(el("span", { text: "No tracked resources", style: "font-size: 11px; color: oklch(0.60 0.012 70);" }));
     card.appendChild(el("div", { testid: "library-hero-resources", style: "margin-top: 12px;" }, [

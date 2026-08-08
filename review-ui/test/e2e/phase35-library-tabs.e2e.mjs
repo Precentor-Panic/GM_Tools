@@ -213,6 +213,14 @@ test("Hero's Hall: hero card renders with an ALWAYS-VISIBLE (no extra disclosure
   const expertiseMarkers = card.locator('[data-testid="library-hero-expertise-marker"]');
   assert.ok(await expertiseMarkers.count() >= 1, "at least one expertise (✦) marker must render for Kestrel's proficient-2 skills");
 
+  // Orchestrator hardening (35.4): Kestrel's fixture saves now carry the REAL
+  // dnd5e 5.3.3 `{roll, value}` object shape -- rendering the entry raw
+  // produced "STR [object Object]" chips against the live wf-test-5e pull.
+  // The card must render the unwrapped modifier and NEVER the object.
+  const cardText = (await card.textContent()) ?? "";
+  assert.doesNotMatch(cardText, /\[object Object\]/, "hero card must unwrap dnd5e {roll,value} save objects, not render them raw");
+  assert.match(cardText, /WIS \+4/, "Kestrel's WIS save modifier (+4, from the {roll,value} wrapped shape) must render as a chip");
+
   await page.close();
 });
 

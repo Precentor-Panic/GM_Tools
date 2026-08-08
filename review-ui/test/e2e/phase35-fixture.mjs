@@ -732,7 +732,21 @@ export function writeFoundryIndexFixture(dataDir, world) {
             con: { value: 14, mod: 2, save: 2 }, int: { value: 10, mod: 0, save: 0 },
             wis: { value: 15, mod: 2, save: 4 }, cha: { value: 8, mod: -1, save: -1 }
           },
-          saves: { str: 1, dex: 3, con: 2, int: 0, wis: 4, cha: -1 },
+          // Orchestrator hardening (35.4 real-content acceptance): real dnd5e
+          // 5.3.3 wraps each save as `{roll:{...}, value:<mod>}` -- NOT a bare
+          // number. The bare-number shape here let a real rendering bug ship
+          // (Hero's Hall chips read "STR [object Object]" against the live
+          // wf-test-5e pull). Kestrel now carries the REAL shape so the hall
+          // e2e exercises the unwrap; other actors keep bare numbers on
+          // purpose -- the view must tolerate BOTH.
+          saves: {
+            str: { roll: { min: null, max: null, mode: 0 }, value: 1 },
+            dex: { roll: { min: null, max: null, mode: 0 }, value: 3 },
+            con: { roll: { min: null, max: null, mode: 0 }, value: 2 },
+            int: { roll: { min: null, max: null, mode: 0 }, value: 0 },
+            wis: { roll: { min: null, max: null, mode: 0 }, value: 4 },
+            cha: { roll: { min: null, max: null, mode: 0 }, value: -1 }
+          },
           skills: {
             prc: { value: 2, proficient: 2, passive: 18 },
             sur: { value: 1, proficient: 1, passive: 14 },
