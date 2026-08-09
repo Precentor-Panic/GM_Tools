@@ -820,7 +820,7 @@ const SCENE_FIELD_LABELS = {
  *
  * @returns {{el:HTMLElement, enterEdit:()=>void, setValue:(v:string)=>void}}
  */
-function makeClickToEditField({ tag = "div", className = "", testid, dataAttrs = {}, inputTestid, inputDataAttrs = {}, value = "", placeholder = "", emptyText = "", save }) {
+function makeClickToEditField({ tag = "div", className = "", testid, dataAttrs = {}, inputTestid, inputDataAttrs = {}, value = "", placeholder = "", emptyText = "", save, onSaved }) {
   const el = document.createElement(tag);
   if (className) el.className = className;
   el.setAttribute("data-testid", testid);
@@ -847,7 +847,14 @@ function makeClickToEditField({ tag = "div", className = "", testid, dataAttrs =
     ta.value = currentValue;
     ta.rows = 1;
 
-    const debounce = createFlushableDebounce((v) => { Promise.resolve(save(v)).catch(() => {}); }, { debounceMs: 500 });
+    // Phase 36 task 36.4a -- optional `onSaved` fires only after a save
+    // actually resolves (never on rejection), letting the scene page's
+    // "in Foundry" status-line poll restart itself after a real mutation.
+    // Every OTHER caller of this shared field simply omits `onSaved` --
+    // zero behavior change for them.
+    const debounce = createFlushableDebounce((v) => {
+      Promise.resolve(save(v)).then(() => onSaved?.(v), () => {});
+    }, { debounceMs: 500 });
     sceneEditDebounces.add(debounce);
 
     function autoGrow() {
@@ -3068,7 +3075,11 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ world: currentWorld(), objectiveNote: v })
       });
-    }
+    },
+    // Phase 36 task 36.4a -- this save touches the scene RECORD itself
+    // (server-side maybeScheduleFlush trigger), so it's one of the mutations
+    // that should restart the "in Foundry" self-refresh poll while staged.
+    onSaved: () => restartStagePollIfStaged()
   });
   header.appendChild(objectiveField.el);
 
@@ -3105,6 +3116,49 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     stageStatusLine.textContent = ago ? `in Foundry · updated ${ago}` : "in Foundry · not yet live";
     stageRow.appendChild(stageStatusLine);
   };
+
+  // Phase 36 task 36.4a -- the status line SELF-REFRESHES: a bounded client
+  // poll of the scene record (never an unbounded interval), started after
+  // any mutation on a STAGED scene (the toggle itself, this scene's own
+  // objective/narration edits, and structural element changes -- see their
+  // own `restartStagePollIfStaged()` call sites below) so the line catches
+  // the quiet server-side flush landing (§7's "in Foundry · updated Xm ago")
+  // without the user reloading. Ticks at ~3s/8s/15s; stops the moment
+  // `lastPushedAt` visibly advances (or the scene becomes unstaged), or the
+  // page navigates away (`stale()`) -- whichever comes first. No visible
+  // spinner -- the line just updates in place, e.g. to "updated just now".
+  let stagePollTimer = null;
+  function stopStagePoll() {
+    if (stagePollTimer) { clearTimeout(stagePollTimer); stagePollTimer = null; }
+  }
+  function restartStagePollIfStaged() {
+    stopStagePoll();
+    if (!scene.stagedForFoundry) return;
+    const knownLastPushedAt = scene.lastPushedAt;
+    const ticks = [3000, 8000, 15000];
+    const tick = (idx) => {
+      if (idx >= ticks.length) return;
+      stagePollTimer = setTimeout(async () => {
+        if (stale() || !scene.stagedForFoundry) return;
+        try {
+          const { scene: fresh } = await spApi(`/api/session-planner/scenes/${encodeURIComponent(scene.id)}${spWithWorld()}`);
+          if (stale()) return;
+          if (fresh && (fresh.lastPushedAt !== knownLastPushedAt || fresh.stagedForFoundry !== scene.stagedForFoundry)) {
+            scene.stagedForFoundry = fresh.stagedForFoundry;
+            scene.lastPushedAt = fresh.lastPushedAt;
+            renderStageStatus();
+            return; // advanced (or unstaged elsewhere) -- stop early, no further ticks
+          }
+        } catch {
+          // Best-effort -- a transient fetch error just skips this tick, the
+          // chain still ends at the same bound.
+        }
+        tick(idx + 1);
+      }, ticks[idx]);
+    };
+    tick(0);
+  }
+
   stageToggle.addEventListener("change", async () => {
     const staged = stageToggle.checked;
     stageToggle.disabled = true;
@@ -3122,10 +3176,13 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
       stageToggle.disabled = false;
       stageToggle.setAttribute("data-staged", scene.stagedForFoundry ? "true" : "false");
       renderStageStatus();
+      if (scene.stagedForFoundry) restartStagePollIfStaged();
+      else stopStagePoll();
     }
   });
   stageRow.appendChild(stageToggleLabel);
   renderStageStatus();
+  if (scene.stagedForFoundry) restartStagePollIfStaged(); // a fresh load of an already-staged scene watches too, not just a just-flipped toggle
   header.appendChild(stageRow);
 
   // §C.4/§C.5 -- "The place" description grid OR the missing-description
@@ -3156,7 +3213,10 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ world: currentWorld(), text: v })
-    })
+    }),
+    // Phase 36 task 36.4a -- same "content write bumps scene recency" flush
+    // trigger as the objective field above.
+    onSaved: () => restartStagePollIfStaged()
   });
   readAloudSection.appendChild(narrationField.el);
 
@@ -3180,7 +3240,15 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   elementsHeading.textContent = "Elements";
   elementsSection.appendChild(elementsHeading);
   const listHost = document.createElement("div");
-  const refreshElements = () => renderSceneElementsList(scene, listHost, nodeMap);
+  const refreshElements = async () => {
+    await renderSceneElementsList(scene, listHost, nodeMap);
+    // Phase 36 task 36.4a -- every structural element op (add/remove/promote/
+    // demote/reorder/from-graph) routes through this SAME re-render choke
+    // point and touches the scene server-side (touchSceneSafely) -- restart
+    // the status-line poll here too, alongside the objective/narration fields
+    // above and the toggle itself.
+    if (scene.stagedForFoundry) restartStagePollIfStaged();
+  };
   // §C: a quiet, scene-level `✦` ghost link to propose elements for this room
   // (additive/interruptible; the room is fully runnable without it).
   elementsSection.appendChild(buildProposeElementsGhostLink(scene, refreshElements));

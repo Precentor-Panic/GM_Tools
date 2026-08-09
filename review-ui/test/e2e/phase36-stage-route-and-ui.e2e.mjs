@@ -32,6 +32,7 @@ process.env.WF_DEFAULT_WORLD = WORLD;
 const { snapshotFilePath } = await import("../../../wf-mcp-server/lib/snapshot.mjs");
 const { bootstrapSnapshot } = await import("../../../graph-import/headless-apply.mjs");
 const { createReviewServer } = await import("../../server.mjs");
+const { markScenePushed } = await import("../../../session-planner/scenes.mjs");
 
 bootstrapSnapshot(snapshotFilePath(dataDir, WORLD), { worldId: WORLD });
 
@@ -153,6 +154,48 @@ test("scene page's 'in Foundry' status line is absent while unstaged, appears on
   const text = (await line.textContent()) ?? "";
   assert.match(text, /in Foundry/i);
   assert.doesNotMatch(text.toLowerCase(), /push|sync now/, "the status line must never contain a push/sync-now verb -- it's a quiet line, not an action");
+
+  await page.close();
+});
+
+// ---------------------------------------------------------------------------
+// UI-level: the status line SELF-REFRESHES (Phase 36 task 36.4a, Russell's
+// pass finding #1 -- "the update seemed slow"). markScenePushed advances
+// lastPushedAt SERVER-SIDE (the real store function the quiet flush itself
+// calls on a confirmed apply -- exactly what "the flush landed while you
+// were looking at the page" looks like from the store's point of view); the
+// test asserts the already-open page's status line reflects it WITHOUT a
+// page.reload(), inside the bounded client poll window (~3s/8s/15s ticks --
+// a generous timeout per this repo's own e2e discipline).
+// ---------------------------------------------------------------------------
+
+test("scene page's 'in Foundry' status line self-refreshes: markScenePushed advances lastPushedAt server-side, the already-open page's line updates within the poll window WITHOUT a reload", async () => {
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+  const staged = await createSceneViaRoute(base, WORLD, { objectiveNote: "Self-refresh target." });
+  await stageSceneViaRoute(base, WORLD, staged.id, true);
+
+  await page.goto(`${base}/#planner/scene/${staged.id}`);
+  const root = page.locator(`[data-testid="planner-scene-view"][data-scene-id="${staged.id}"]`);
+  await root.waitFor({ state: "visible", timeout: 15000 });
+  const line = page.locator('[data-testid="scene-stage-status-line"]');
+  await line.waitFor({ state: "visible", timeout: 15000 });
+  assert.match((await line.textContent()) ?? "", /not yet live/, "starts never-pushed");
+
+  // The server-side confirm the quiet flush itself performs on an ok:true
+  // apply -- no route call, no reload, just the store record changing under
+  // the already-open page.
+  markScenePushed(WORLD, staged.id, { foundrySceneRef: "Scene.selfRefresh1", lastPushedAt: new Date().toISOString() });
+
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector('[data-testid="scene-stage-status-line"]');
+      return !!el && /updated/i.test(el.textContent || "") && !/not yet live/i.test(el.textContent || "");
+    },
+    { timeout: 20000 }
+  );
+  const updatedText = (await line.textContent()) ?? "";
+  assert.match(updatedText, /in Foundry · updated/i);
 
   await page.close();
 });

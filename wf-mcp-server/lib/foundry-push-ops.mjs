@@ -149,6 +149,16 @@ export const DEFAULT_CANVAS = { width: 4000, height: 3000 };
 export const DEFAULT_GRID_SIZE = 100;
 
 /**
+ * Phase 36 task 36.4a -- the quiet flush's own default poll budget (see
+ * `flushDirtyStagedScenes`'s doc comment for the full "why"). Exported
+ * (same precedent as `DEFAULT_CANVAS`/`DEFAULT_GRID_SIZE` just above) so a
+ * deterministic test can pin the exact values without waiting out a real
+ * 7-second timeout.
+ */
+export const DEFAULT_FLUSH_POLL_MS = 500;
+export const DEFAULT_FLUSH_TIMEOUT_MS = 7000;
+
+/**
  * @param {number} count
  * @param {{center?:{x:number,y:number}, gridSize?:number}} [opts]
  * @returns {{x:number,y:number}[]}
@@ -429,12 +439,25 @@ export function reconcilePendingResults(dataDir, world) {
  * (stays dirty, retried next trigger), matching §5's "ok:false/no-result
  * leaves the scene untouched" rule.
  *
- * Default poll budget is intentionally SHORTER than `writeFoundryOps`'s own
- * 500ms/7000ms default (pushSceneToFoundry's manual, user-clicked-a-button
- * defaults) -- this is a QUIET, often-background flush (debounced
- * auto-trigger, or a synchronously-awaited sync-now call); overridable via
- * opts, same as every other pollMs/timeoutMs-accepting function in this
- * project.
+ * Default poll budget (Phase 36 task 36.4a, Russell's pass finding #1 --
+ * "the update seemed slow"): `DEFAULT_FLUSH_POLL_MS`/`DEFAULT_FLUSH_TIMEOUT_MS`
+ * below, 500ms/7000ms -- MATCHES `writeFoundryOps`'s own default now (it was
+ * previously a deliberately SHORTER 250ms/1500ms, "a QUIET, often-background
+ * flush"). Root cause: Foundry's watcher only ticks every ~5s, so the
+ * original budget was consistently shorter than one full tick -- nearly
+ * every quiet push missed its own poll window and fell through to the
+ * pending-ledger + server-side follow-up chain (worst case ~8-20s before the
+ * UI could reflect it), even when Foundry was open and would have confirmed
+ * within a few seconds. The new budget spans one full watcher tick plus
+ * FilePicker upload time, so most cycles now confirm results IN this same
+ * call and never touch the ledger at all -- the ledger/reconcile/follow-up
+ * chain above is UNCHANGED and stays the safety net for the genuinely-slow
+ * or Foundry-closed case. This is still a background/server-side await --
+ * nothing user-facing blocks on it; `sync-now` (a manual, user-clicked
+ * action) inherits the same budget, which is an acceptable wait for a
+ * button. Overridable via opts, same as every other pollMs/timeoutMs-
+ * accepting function in this project -- deterministic tests keep their own
+ * tiny budgets.
  *
  * @param {string} dataDir
  * @param {string} world
@@ -469,7 +492,7 @@ export async function flushDirtyStagedScenes(dataDir, world, opts = {}) {
     perScene.push({ scene, sceneOpId: sceneOp.opId, snapshotUpdatedAt });
   }
 
-  const writeOpts = { pollMs: 250, timeoutMs: 1500, ...opts };
+  const writeOpts = { pollMs: DEFAULT_FLUSH_POLL_MS, timeoutMs: DEFAULT_FLUSH_TIMEOUT_MS, ...opts };
   let outcome;
   try {
     outcome = await writeFoundryOps(dataDir, world, ops, writeOpts);

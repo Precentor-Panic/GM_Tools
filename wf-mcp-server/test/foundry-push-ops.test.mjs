@@ -41,7 +41,8 @@ const localFilesDir = join(scratchDir, "local-files"); // a hand-added 'local' a
 
 const {
   pushSceneToFoundry, composeSceneOps, flushDirtyStagedScenes, isSceneDirty,
-  clusterTokenPositions, DEFAULT_CANVAS, DEFAULT_GRID_SIZE
+  clusterTokenPositions, DEFAULT_CANVAS, DEFAULT_GRID_SIZE,
+  DEFAULT_FLUSH_POLL_MS, DEFAULT_FLUSH_TIMEOUT_MS
 } = await import("../lib/foundry-push-ops.mjs");
 const { foundryOpsPath, foundryResultsPath } = await import("../lib/snapshot.mjs");
 const { createScene, getScene, updateScene, markScenePushed } = await import("../../session-planner/scenes.mjs");
@@ -400,6 +401,37 @@ await test("flushDirtyStagedScenes: one flush cycle batches EVERY dirty staged s
   const ops = JSON.parse(readFileSync(foundryOpsPath(dataDir, WORLD), "utf8"));
   const names = ops.filter((o) => o.kind === "create_scene").map((o) => o.data.name);
   assert.deepEqual(names, ["Newer", "Older"], "listScenesByRecency order -- most-recently-touched first");
+});
+
+// --- 36.4a: the in-cycle quiet-flush poll budget --------------------------
+
+await test("flushDirtyStagedScenes: default poll budget is pinned at 500ms/7000ms (36.4a -- bumped from 250/1500 to span one full ~5s Foundry watcher tick)", () => {
+  assert.equal(DEFAULT_FLUSH_POLL_MS, 500);
+  assert.equal(DEFAULT_FLUSH_TIMEOUT_MS, 7000);
+});
+
+await test("flushDirtyStagedScenes: with NO opts.pollMs/opts.timeoutMs given, the default budget is actually FORWARDED to writeFoundryOps -- a watcher that applies at ~2s (well past the OLD 1500ms budget, comfortably inside the NEW 7000ms one) is confirmed IN-CYCLE, not left queued/pending", async () => {
+  const WORLD = "flush-default-budget-world";
+  const scene = createScene(WORLD, { objectiveNote: "Slow-ish watcher, still in-cycle" });
+  updateScene(WORLD, scene.id, { stagedForFoundry: true });
+  const opId = "op_default_budget";
+
+  armFakeWatcher(WORLD, { opId, ok: true, foundryUuid: "Scene.defaultBudget1" }, 2000);
+  // Deliberately no pollMs/timeoutMs override -- only makeOpId, to keep the
+  // result deterministic. This test really does wait out ~2s of real time
+  // (the only way to observe the forwarded default without mocking the
+  // module) -- short enough to keep the suite fast, long enough to prove the
+  // OLD 250/1500 budget would have missed this and gone queued/pending.
+  const result = await flushDirtyStagedScenes(dataDir, WORLD, { makeOpId: () => opId });
+
+  assert.equal(result.flushed, 1);
+  assert.equal(result.queued, undefined, "must confirm IN-CYCLE under the new budget, not fall through to queued");
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0].ok, true);
+  const reread = getScene(WORLD, scene.id);
+  assert.equal(reread.foundrySceneRef, "Scene.defaultBudget1");
+  assert.ok(reread.lastPushedAt, "lastPushedAt must be stamped -- the in-cycle confirm marked it pushed directly, no ledger entry needed");
+  assert.ok(!reread.pendingPush, "no pending-ledger entry was needed -- confirmed within the same call");
 });
 
 // --- pending-push ledger + reconcile (36.3 live-smoke fix) ----------------
