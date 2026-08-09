@@ -76,6 +76,10 @@ import { colorForType } from "./graph-view.js";
 // custom per-field click-to-edit body don't fit that helper's fixed
 // body+controls shape -- see this file's scene-page section header.
 import { showUndoToast } from "./plans-view.js";
+// Phase 36 task 36.4b: the scene page's own "Stage" chip row reuses the
+// shared tray's kind-glyph convention verbatim (◈ item / ▦ map / ◐ splash /
+// ♪ music) rather than re-deriving a second copy.
+import { KIND_GLYPH } from "./scene-tray.js";
 
 // ---------------------------------------------------------------------------
 // local api/world helpers (see file header -- deliberately not imported
@@ -2912,6 +2916,51 @@ function buildSegmentedControl(sceneId, options) {
   return { group, buttons, setActive };
 }
 
+// ---------------------------------------------------------------------------
+// Phase 36 task 36.4b -- the "Stage" chip row: one small, quiet chip per
+// tray-roster `kind:'asset'` row (map/splash/music/item), near the
+// stage-toggle area, entirely absent when the roster has no asset rows.
+// Name resolution matches scene-tray.js's own `nameFor` exactly
+// (item-store-first-then-stagecraft); glyph resolution matches its
+// `glyphFor` (an id present in the stagecraft lookup uses that asset's own
+// `kind` glyph; otherwise it's a reliquary item -- the default glyph).
+// Click navigates to the asset's Library shelf: `#library/stagecraft` for
+// map/splash/music, `#library/reliquary` for an item. Pure read of already-
+// fetched tray + item/stagecraft lookups -- no new store or route.
+// ---------------------------------------------------------------------------
+function stageDressingKindFor(id, lookups) {
+  const asset = lookups.stagecraft.get(id);
+  return asset ? asset.kind : "item"; // 'map'|'splash'|'music' from the real asset, else a reliquary item
+}
+
+function stageDressingNameFor(id, lookups) {
+  return lookups.items.get(id)?.name ?? lookups.stagecraft.get(id)?.name ?? "?";
+}
+
+function buildStageDressingRow(scene, assetRoster, lookups) {
+  if (!assetRoster.length) return null;
+  const row = document.createElement("div");
+  row.className = "scene-stage-dressing-row";
+  row.setAttribute("data-testid", "scene-stage-dressing-row");
+  row.setAttribute("data-scene-id", scene.id);
+  for (const r of assetRoster) {
+    const kind = stageDressingKindFor(r.id, lookups);
+    const glyph = KIND_GLYPH[kind] || KIND_GLYPH.item;
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "scene-stage-dressing-chip";
+    chip.setAttribute("data-testid", "scene-stage-dressing-chip");
+    chip.setAttribute("data-kind", kind);
+    chip.setAttribute("data-asset-id", r.id);
+    chip.textContent = `${glyph} ${stageDressingNameFor(r.id, lookups)}`;
+    chip.addEventListener("click", () => {
+      location.hash = kind === "item" ? "#library/reliquary" : "#library/stagecraft";
+    });
+    row.appendChild(chip);
+  }
+  return row;
+}
+
 async function renderScenePage(container, sceneId, token, opts = {}) {
   // Phase 30 task 30.3: `opts` lets the SAME scene-page render serve both the
   // legacy `#session-planner/<id>` chrome (default) and the new designer shell
@@ -2955,6 +3004,21 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   const nodeMap = new Map((graph.nodes || []).map((n) => [n.id, n]));
   narration = (await spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/narration${spWithWorld()}`).catch(() => ({ narration: null }))).narration;
   plans = (await spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/plans${spWithWorld()}`).catch(() => ({ plans: [] }))).plans ?? [];
+  // Phase 36 task 36.4b -- the "Stage" chip row's data: the SAME tray roster
+  // + item/stagecraft lookups the shared scene-tray component already reads
+  // (no new store/route). Only fetches the lookups when the roster actually
+  // carries an asset row, since the row is entirely absent otherwise.
+  const trayRoster = (await spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/tray${spWithWorld()}`).catch(() => ({ roster: [] }))).roster ?? [];
+  const assetRoster = trayRoster.filter((r) => r.kind === "asset");
+  const stageDressingLookups = { items: new Map(), stagecraft: new Map() };
+  if (assetRoster.length) {
+    const [itemsRes, stagecraftRes] = await Promise.all([
+      spApi(`/api/combat-planning/items${spWithWorld()}`).catch(() => ({ items: [] })),
+      spApi(`/api/session-planner/stagecraft${spWithWorld()}`).catch(() => ({ assets: [] }))
+    ]);
+    stageDressingLookups.items = new Map((itemsRes.items || []).map((i) => [i.id, i]));
+    stageDressingLookups.stagecraft = new Map((stagecraftRes.assets || []).map((a) => [a.id, a]));
+  }
   if (stale()) return;
 
   container.innerHTML = "";
@@ -3184,6 +3248,10 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   renderStageStatus();
   if (scene.stagedForFoundry) restartStagePollIfStaged(); // a fresh load of an already-staged scene watches too, not just a just-flipped toggle
   header.appendChild(stageRow);
+
+  // Phase 36 task 36.4b -- the "Stage" chip row, near the toggle above.
+  const dressingRow = buildStageDressingRow(scene, assetRoster, stageDressingLookups);
+  if (dressingRow) header.appendChild(dressingRow);
 
   // §C.4/§C.5 -- "The place" description grid OR the missing-description
   // banner. Editing writes back to the graph NODE, not the scene.

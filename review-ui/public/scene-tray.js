@@ -68,7 +68,10 @@ const CR_XP = {
   "26": 90000, "27": 105000, "28": 120000, "29": 135000, "30": 155000
 };
 
-const KIND_GLYPH = { item: "◈", map: "▦", splash: "◐", music: "♪" };
+// Exported (Phase 36 task 36.4b) -- the scene page's own "Stage" chip row
+// reuses this SAME kind-glyph convention for its asset-row chips, rather
+// than re-deriving a second copy.
+export const KIND_GLYPH = { item: "◈", map: "▦", splash: "◐", music: "♪" };
 
 /** Normalize a Foundry-numeric fractional CR (0.125/0.25/0.5) to the CR_XP key form. */
 function crKey(value) {

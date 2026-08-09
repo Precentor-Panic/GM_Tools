@@ -2240,6 +2240,25 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   color: var(--sp-ink-muted); font-size: 12px;
 }
 
+/* Phase 36 task 36.4b — the "Stage" chip row: one quiet pill per tray-roster
+   asset (map/splash/music/item), matching the Connection panel's own
+   `.conn-setting-tag` pill treatment (mono, muted, hairline border) rather
+   than inventing a new visual language. Absent entirely when the roster has
+   no asset rows (built conditionally in JS, no CSS hiding needed here). */
+:is(#view-session-planner, #app-shell) .scene-stage-dressing-row {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin: 0 0 18px;
+}
+:is(#view-session-planner, #app-shell) .scene-stage-dressing-chip {
+  font-family: var(--sp-font-mono); font-size: 10.5px; letter-spacing: 0.02em;
+  color: var(--sp-ink-muted); background: transparent;
+  border: 1px solid var(--sp-border-hairline); border-radius: 20px; padding: 2px 9px;
+  cursor: pointer; transition: box-shadow 0.1s ease, background-color 0.1s ease;
+}
+:is(#view-session-planner, #app-shell) .scene-stage-dressing-chip:hover {
+  background: var(--sp-hover-halo); color: var(--sp-ink-secondary);
+}
+
 /* "The place" — a 76px mono-label / editable-value grid, bounded top+bottom
    by 1px hairlines. Editing writes to the graph NODE, not the scene. */
 :is(#view-session-planner, #app-shell) .scene-place-desc-host { margin: 0 0 24px; }
