@@ -46,13 +46,18 @@ work, diff:
 cd /opt/dev/foundry_worldFabric && git status --short && git rev-parse --short HEAD
 ```
 
-**Current baseline (as of Phase 32 task 32.4):**
-- `HEAD` = `da0f249` ("Phase 32 task 32.1: Foundry-module bridge (foundry-index export + doc-ops watcher)") —
-  the committed bridge. If `HEAD` has moved past this without a corresponding GM_Tools phase task that says so,
+**Current baseline (as of Phase 36 task 36.1):**
+- `HEAD` = `f18902e` ("Phase 36 task 36.1: bridge v2 ops (Level-doc background, update_scene/create_token/create_journal_image, playlists, token-uuid fix)")
+  — the sanctioned Phase-36 module wave, committed on top of `da0f249`. It extends the bridge with the v2 push
+  ops (background/foreground via the embedded Level doc, update_scene/create_token/create_journal_image), adds a
+  top-level `playlists[]` to the pull index, fixes `extractToken` to emit the base `Actor.<id>` uuid, and
+  SOURCE-serializes `extractItem`'s `system` so dnd5e-v4 `activities` (carrying `activation.type`) stop
+  collapsing to `{}`. If `HEAD` has moved past this without a corresponding GM_Tools phase task that says so,
   investigate before proceeding.
 - Working tree: `package.json` and `scripts/apps/cockpit-app.mjs` modified, `setup-test.mjs` and
-  `test/e2e-m13a.mjs` untracked — the SAME pre-existing, unrelated-to-GM_Tools state this baseline already
-  carried before Phase 32 (32.1 didn't touch any of these four; they're still just sitting there).
+  `test/e2e-m13a.mjs` untracked — the SAME pre-existing, unrelated-to-GM_Tools four-item state this baseline has
+  carried since before Phase 32 (36.1 did not touch any of these four; the regenerated `world-fabric-v0.1.0.zip`
+  is gitignored and never appears in status).
 
 The check going forward is **"no UNEXPECTED changes beyond the committed bridge (`da0f249`) plus this
 pre-existing four-item working-tree state"** — not "zero diff at all." If the diff grows beyond exactly those
