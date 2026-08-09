@@ -37,6 +37,12 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 import { addTag, removeTag } from "./tags.mjs";
+// Phase 35.5a (task #44) -- "promote a Reliquary item to a graph node." Same
+// cross-directory reuse precedent session-planner/scene-elements.mjs's
+// promoteElement / session-planner/transit-entity.mjs's createTransitEntity
+// already established (both import addNodeOp from here) -- no second
+// manual-entity-creation mechanism.
+import { addNodeOp } from "../wf-mcp-server/lib/manual-edit-ops.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "items");
@@ -109,6 +115,12 @@ export function saveItem(
     ownerPartyMemberId,
     sourceText,
     status,
+    // Phase 35.5a: additive-optional back-link to a promoted graph node --
+    // per bestiary-store.mjs's own documented "additive field needs no
+    // SCHEMA bump" convention. null until promoteItemToGraph sets it; a
+    // pre-Phase-35.5a item on disk simply has this key absent, which reads
+    // the same as null everywhere it's checked (`item.graphEntityId`).
+    graphEntityId: null,
     createdAt: now
   };
   const items = readItems(world);
@@ -231,6 +243,79 @@ export function removeItemTag(world, itemId, tag) {
   const next = removeTag(items, itemId, tag);
   writeItems(world, next);
   return next.find((i) => i.id === itemId);
+}
+
+/**
+ * Phase 35.5a (task #44) -- "I'd like to be able to promote items of
+ * interest from the reliquary to the graph as nodes, if the party deems
+ * them important." Creates a real World Fabric graph entity from this item
+ * (`name` verbatim, `description` when the item has one) and back-links the
+ * ItemRecord via `graphEntityId`. The item keeps living in the Reliquary --
+ * this only adds a back-link, never mutates/removes the ItemRecord's own
+ * catalogue fields.
+ *
+ * ENTITY TYPE: `"object"` -- this project's graph has no dedicated "item"
+ * entity type (confirmed by direct read of the global entity-type enum,
+ * wf-mcp-server/index.mjs's `z.enum(["person","place","faction","object",
+ * "event","concept"])` / mutation-engine/prep-content.mjs's identical
+ * `PrepEntityType`); `"object"` is also the EXACT default
+ * session-planner/scene-elements.mjs's own `promoteElement` already uses
+ * for this same "promote something into the graph" action one layer over
+ * (a scene element, not a Reliquary item) -- matched, not invented.
+ *
+ * MECHANISM: the SAME manual-entity-creation route every other manual
+ * node-add in this project already uses
+ * (wf-mcp-server/lib/manual-edit-ops.mjs's addNodeOp) -- no second
+ * entity-creation mechanism, per session-planner/transit-entity.mjs's own
+ * precedent for this exact cross-directory reuse.
+ *
+ * IDEMPOTENT: an item that already carries a `graphEntityId` returns the
+ * EXISTING node's id verbatim, `created:false`, and writes nothing -- this
+ * mirrors scene-elements.mjs's `promoteElement`/`attachExistingNodeAsElement`
+ * own "return the existing one, don't duplicate" precedent, this codebase's
+ * established idempotency convention for a promote/attach action (a plain
+ * 200 re-describing current state, not a 409 conflict -- promoting twice is
+ * not an error condition from the GM's point of view, it's "yes, still
+ * true").
+ *
+ * @param {string} dir       resolved data dir (resolveDir()'s return value)
+ * @param {string} world
+ * @param {string} itemId
+ * @returns {Promise<{item:object, entityId:string, created:boolean}>}
+ */
+export async function promoteItemToGraph(dir, world, itemId) {
+  const existing = getItem(world, itemId); // throws "No item found" -- statusForError's regex doesn't special-case this message (same as every sibling store's own getX), so this currently 400s like accept/discard on an unknown id already do; not this task's scope to change
+
+  if (existing.graphEntityId) {
+    return { item: existing, entityId: existing.graphEntityId, created: false };
+  }
+
+  const { entityId } = await addNodeOp(dir, world, {
+    name: existing.name,
+    type: "object",
+    ...(existing.description ? { description: existing.description } : {})
+  });
+
+  const item = setItemGraphEntityId(world, itemId, entityId);
+  return { item, entityId, created: true };
+}
+
+/**
+ * Status-independent patch (mirrors updateBestiaryEntryNote/Rating's own
+ * "no status check" convention -- a promote is an ongoing table-use action,
+ * not a proposed-content edit) that writes the back-link `promoteItemToGraph`
+ * computes. Not exposed as its own route; promoteItemToGraph is the only
+ * caller.
+ * @returns {object}   the updated ItemRecord
+ */
+function setItemGraphEntityId(world, itemId, graphEntityId) {
+  const items = readItems(world);
+  const idx = findItemIndex(world, itemId, items);
+  const updated = { ...items[idx], graphEntityId };
+  const next = [...items];
+  next[idx] = updated;
+  writeItems(world, next);
+  return updated;
 }
 
 export { ConcurrentWriteError };

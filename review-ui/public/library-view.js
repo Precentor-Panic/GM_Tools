@@ -949,12 +949,25 @@ function buildShelf(ctx, which) {
     row.appendChild(el("span", { text: k.glyph, style: `font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: ${k.accent}; padding-top: 2px; flex: none;` }));
 
     const bodyCol = el("div", { style: "flex: 1; min-width: 0;" });
-    bodyCol.appendChild(el("div", { style: "display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap;" }, [
+    const topRowChildren = [
       el("span", { text: r.name, style: "font-family: Spectral, serif; font-size: 16px; font-weight: 500;" }),
       el("span", { text: k.label + (r.meta ? " · " + r.meta : ""), style: "font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70);" }),
       el("span", { style: "flex: 1;" }),
       sourcePill(r.source)
-    ]));
+    ];
+    // Phase 35.5a: Reliquary-only (Stagecraft rows never carry graphEntityId).
+    if (r.kind === "item") {
+      topRowChildren.push(graphPromoteAffordance(r, async (btn) => {
+        btn.style.opacity = "0.6";
+        try {
+          await api(`/api/combat-planning/items/${encodeURIComponent(r.id)}/promote-to-graph`, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ world })
+          });
+        } catch { /* leave the affordance clickable to retry */ }
+        await reload();
+      }));
+    }
+    bodyCol.appendChild(el("div", { style: "display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap;" }, topRowChildren));
     if (r.desc) bodyCol.appendChild(el("div", { text: r.desc, style: "font-size: 12px; color: oklch(0.48 0.014 65); line-height: 1.45; margin-top: 5px; max-width: 78ch;" }));
     else bodyCol.appendChild(el("div", { text: "No description came across from Foundry.", style: "font-size: 11.5px; color: oklch(0.64 0.012 70); font-style: italic; margin-top: 5px;" }));
 
@@ -1008,13 +1021,52 @@ function normalizeShelf(list, isReliquary) {
           id: r.id, kind: "item", name: r.name,
           meta: [r.type, r.quantity > 1 ? `×${r.quantity}` : null].filter(Boolean).join(" · "),
           desc: r.description, tags: r.tags || [],
-          source: r.foundryItemRef ? "foundry" : "mine"
+          source: r.foundryItemRef ? "foundry" : "mine",
+          // Phase 35.5a: carried through so shelfRow can render the
+          // promote-to-graph affordance / "in the graph" marker. Absent on
+          // Stagecraft rows (undefined -- falsy, same as null).
+          graphEntityId: r.graphEntityId ?? null
         }
       : {
           id: r.id, kind: r.kind, name: r.name, meta: r.meta,
           desc: r.desc, tags: r.tags || [],
           source: r.source === "foundry" ? "foundry" : "mine"
         });
+}
+
+// ---------------------------------------------------------------------------
+// Phase 35.5a (task #44) -- "promote items of interest from the reliquary to
+// the graph as nodes." Reliquary-only (r.kind === "item"; Stagecraft rows
+// never carry this) -- the BESTIARY "Promote to a named world figure"
+// affordance stays a stub (Russell asked for items only this pass). Quiet,
+// small: a dashed pill next to the source pill that swaps to a quiet
+// "in the graph" marker after promotion, reusing the SAME "⛓ graph" glyph
+// convention session-planner-view.js's scene-element-graph-badge already
+// established for "this thing carries a real graph link."
+// ---------------------------------------------------------------------------
+function graphPromoteAffordance(r, onPromote) {
+  if (r.graphEntityId) {
+    return el("span", {
+      testid: "tagged-shelf-row-graph-badge",
+      "data-item-id": r.id,
+      "data-graph-entity-id": r.graphEntityId,
+      text: "⛓ in the graph",
+      title: "This item is linked to a graph node",
+      style: "padding: 2px 8px; border-radius: 20px; font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.04em; color: oklch(0.44 0.050 185); background: oklch(0.94 0.020 185); border: 1px solid oklch(0.80 0.035 185); white-space: nowrap;"
+    });
+  }
+  const btn = el("span", {
+    testid: "tagged-shelf-row-promote-btn",
+    "data-item-id": r.id,
+    text: "→ graph",
+    title: "Promote this item to a graph node",
+    style: "padding: 2px 8px; border: 1px dashed oklch(0.72 0.045 185); border-radius: 20px; font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.04em; color: oklch(0.44 0.050 185); cursor: pointer; white-space: nowrap;"
+  });
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    onPromote(btn);
+  });
+  return btn;
 }
 
 function kindChipStyle(active) {

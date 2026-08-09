@@ -180,7 +180,7 @@ import {
 } from "../combat-planning/party-roster-store.mjs";
 // Phase 35 task 35.1, §1/§4/§8 -- item store (Reliquary) + the shared tags
 // helper API. Thin route wrappers only, per gm-tools-conventions.
-import { listItems, getItem, acceptItem, discardItem, addItemTag, removeItemTag } from "../combat-planning/item-store.mjs";
+import { listItems, getItem, acceptItem, discardItem, addItemTag, removeItemTag, promoteItemToGraph } from "../combat-planning/item-store.mjs";
 // Phase 35 task 35.1, §2/§8 -- stagecraft asset store (map/splash/music).
 import {
   listStagecraftAssets,
@@ -2509,6 +2509,19 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world ?? q.get("world"));
     const item = removeItemTag(w, parts[3], decodeURIComponent(parts[5]));
     return sendJson(res, 200, { item });
+  }
+
+  // POST /api/combat-planning/items/:id/promote-to-graph   {world}   -> {item, entityId, created}
+  // Phase 35.5a (task #44) -- promote a Reliquary item into a real graph
+  // node. Idempotent (see item-store.mjs's promoteItemToGraph doc comment):
+  // a second promote on an already-linked item returns created:false and
+  // writes nothing, rather than a 409 or a duplicate node.
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "items" && parts[4] === "promote-to-graph") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const result = await promoteItemToGraph(dir, w, parts[3]);
+    return sendJson(res, 200, result);
   }
 
   // -----------------------------------------------------------------------
