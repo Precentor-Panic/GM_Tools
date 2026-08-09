@@ -452,7 +452,11 @@ export async function flushDirtyStagedScenes(dataDir, world, opts = {}) {
   const reconciled = reconcilePendingResults(dataDir, world);
   const dirtyScenes = listScenesByRecency(world).filter((s) => isSceneDirty(s) && !s.pendingPush);
   if (dirtyScenes.length === 0) {
-    return { flushed: 0, results: [], skipped: [], reconciled };
+    // Sparse pendingCount here too -- a too-early follow-up (results not
+    // landed yet) takes THIS return, and the server's bounded chain needs
+    // the signal to schedule its second, longer follow-up.
+    const stillPending = listScenesByRecency(world).filter((s) => s.pendingPush?.opId).length;
+    return { flushed: 0, results: [], skipped: [], reconciled, ...(stillPending > 0 ? { pendingCount: stillPending } : {}) };
   }
 
   const ops = [];
@@ -495,11 +499,19 @@ export async function flushDirtyStagedScenes(dataDir, world, opts = {}) {
     }
   }
 
+  // Sparse key (mirrors `queued`): how many of this world's scenes hold an
+  // unreconciled pendingPush ledger entry AFTER this cycle -- the server's
+  // bounded follow-up chain keys on it (a late watcher apply lands ~5-9s
+  // after the ops write; one 8s follow-up sometimes fires just early, so a
+  // second, longer follow-up closes the loop without waiting for the next
+  // user mutation or Sync now).
+  const pendingCount = listScenesByRecency(world).filter((s) => s.pendingPush?.opId).length;
   return {
     flushed: perScene.length,
     results,
     skipped,
     reconciled,
+    ...(pendingCount > 0 ? { pendingCount } : {}),
     ...(outcome.status === "queued" ? { queued: true, note: outcome.note } : {})
   };
 }

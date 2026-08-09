@@ -480,7 +480,14 @@ function scheduleFlush(world, delayMs = 0) {
       // without waiting for the next user mutation or Sync now. delayMs > 0
       // marks a follow-up, so a still-queued follow-up (Foundry genuinely
       // closed) ends the chain instead of looping forever.
-      if (outcome?.queued && delayMs === 0) scheduleFlush(world, 8000);
+      if (outcome?.queued && delayMs === 0) {
+        scheduleFlush(world, 8000);
+      } else if (delayMs > 0 && delayMs < 20000 && outcome?.pendingCount > 0) {
+        // The follow-up fired before the watcher's results landed -- chain
+        // ONE more, longer follow-up (8s -> 16s, then the < 20000 guard ends
+        // the chain). Bounded: at most two follow-ups per queued outcome.
+        scheduleFlush(world, delayMs * 2);
+      }
     }).catch((err) => {
       console.error(`[foundry-flush] background flush for world "${world}" failed:`, err.message);
     });
