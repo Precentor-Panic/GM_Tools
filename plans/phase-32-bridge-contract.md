@@ -1,9 +1,15 @@
 # Phase 32 task 32.0 — The Foundry Bridge File-Format Contract
 
-**Status: authoritative.** This is the contract 32.1 (Foundry-module producer, `foundry_worldFabric`) and
-32.2/32.3 (GM_Tools consumers/producers) implement TO. Neither side may deviate from a field name/shape here
-without a follow-up edit to this file — if a task hits a shape question this doc doesn't answer, that's a bug
-in this doc, not a license to guess.
+**Status: authoritative, v2** (amended Phase 36 task 36.0 — the QUIET staged scene push. v1 sections below are
+UNCHANGED except where this v2 amendment explicitly overrides them; new/changed material is marked **(v2)**
+inline rather than rewriting the whole document, so a reader can see exactly what task 36.1/36.2 add on top of
+the already-shipped v1 baseline). This is the contract 32.1/36.1 (Foundry-module producer, `foundry_worldFabric`)
+and 32.2/32.3/36.2 (GM_Tools consumers/producers) implement TO. Neither side may deviate from a field name/shape
+here without a follow-up edit to this file — if a task hits a shape question this doc doesn't answer, that's a
+bug in this doc, not a license to guess. See this file's own "Changelog" section (bottom) for the v1→v2 diff
+summary, and `plans/phase-36-tasks.md` / `review-ui/test/e2e/phase36-fixture.mjs` for the quiet-push spec that
+consumes these shapes (the bridge-contract file stays scoped to the WIRE FORMAT only — GM_Tools-side store
+fields/routes/flush semantics are specified in phase36-fixture.mjs, not duplicated here).
 
 Design record: `/home/russell/.claude/plans/ok-i-m-back-with-dazzling-newt.md` (§Architecture). Task list:
 `plans/phase-32-tasks.md`. Grounded against real code — see "Grounding" at the bottom of this file for exact
@@ -66,13 +72,17 @@ convention needed (nothing to signal "done" about — it's informational, read a
 
 ```
 {
-  version: 1,                 // FOUNDRY_INDEX_VERSION
+  version: 1,                 // FOUNDRY_INDEX_VERSION — see the (v2) note below: still 1, not bumped.
   worldId: string,             // game.world.id
   exportedAt: string,          // ISO 8601
   actors: Actor[],
   users: User[],
   scenes: Scene[],
-  tokens: Token[]              // flat convenience index — see §1.4
+  tokens: Token[],              // flat convenience index — see §1.4
+  playlists: Playlist[]         // (v2, Phase 36) — see §1.5. Additive-optional per the "additive-only
+                                 // versioning" rule below (a pre-36.1 exporter simply omits this key; every
+                                 // 32.2-era consumer already tolerates unknown/missing top-level keys), so
+                                 // FOUNDRY_INDEX_VERSION stays 1 — this is NOT a breaking shape change.
 }
 ```
 
@@ -222,6 +232,17 @@ without it in an early cut, and 32.2's mapper must treat `effects: null`/absent 
 PlacedToken = { name: string, x: number, y: number, actorUuid: string | null, img: string | null }
 ```
 
+**(v2, Phase 36) `actorUuid` corrective note — NOT a shape change, a bugfix.** `actorUuid` was ALWAYS specified
+as the base `"Actor.<id>"` form (this is what `Actor.uuid` means everywhere else in this contract — §1.1's own
+`actors[].uuid`). 32.1's shipped `extractToken` (`foundry-bridge.mjs:~262`) had a real defect: it emitted the
+COMPOUND embedded-document uuid instead (`Scene.<id>.Token.<id>.Actor.<id>`, Foundry's own `TokenDocument#actor`
+resolution path leaking into the export), which never actually matches any `actors[].uuid`/`foundryActorRef`
+join key anywhere downstream — silently breaking the join for every consumer that ever tried it (token-store's
+`actorUuid` field, §2's `create_token` op). 36.1 fixes `extractToken` to emit the base `Actor.<id>` form the
+contract always specified. **No version bump** — the documented shape here is unchanged; only a
+implementation defect that violated it is being corrected. A GM_Tools-side consumer written strictly to THIS
+document's `actorUuid` shape was always correct; it just never actually matched real pre-36.1 export data.
+
 ### 1.4 `tokens[]` — flat convenience index
 
 **Decision:** fold BOTH ways, not one or the other. `scenes[].tokens` (§1.3) is the canonical per-scene
@@ -234,6 +255,28 @@ two can't drift apart within one export:
 ```
 { sceneUuid: string, name: string, x: number, y: number, actorUuid: string | null, img: string | null }
 ```
+
+### 1.5 `playlists[]` (v2, Phase 36) — top-level, alongside `actors`/`users`/`scenes`/`tokens`
+
+```
+{
+  id: string,           // "Playlist.<id>" — game.playlists.get(id).uuid
+  name: string,
+  tracks: Track[]
+}
+
+Track = { name: string, path?: string }   // path is OPTIONAL — a track's own sound.path, when 32.1/36.1 can
+                                            // cheaply resolve it; a consumer must tolerate a name-only track
+                                            // (e.g. Stagecraft's music rows link by name/description, not by
+                                            // a resolved file path this phase — plans/phase-35-tasks.md's own
+                                            // "music rows are hand-added only this phase" decision means
+                                            // nothing downstream requires `path` to be present yet).
+```
+
+Same "always a full replace" semantics as the rest of the index (§1's own top-level rule) — every export
+overwrites `playlists[]` wholesale, never a diff. Additive-optional (see the top-level shape note above):
+absent entirely on a pre-36.1 index, and every consumer (32.2-era or later) must treat a missing `playlists`
+key identically to `playlists: []`.
 
 ---
 
@@ -265,14 +308,32 @@ The Foundry-side watcher (consumer, 32.1) applies every op in the array, writes 
 (`graph-service.mjs:296-298`), and same ordering (write result before clearing the request) so a crash between
 the two steps never loses a result silently.
 
-### `kind: "create_scene"` — defined now, the one implemented push slice (32.3)
+### `kind: "create_scene"` — the push slice; extended (v2, Phase 36) with grid/tokens/foreground
 
 ```
 data: {
   name: string,
-  background: { src: string },   // map image path/URL, required — this op exists to get a map into Foundry
+  background: { src: string },   // map image path/URL, required — this op exists to get a map into Foundry.
+                                  // SEE "Background write semantics" below — background does NOT actually land
+                                  // via Scene.create's own field on v14; the module writes it via a follow-up
+                                  // embedded Level-doc update. The WIRE shape (this field, here) is unchanged —
+                                  // only 36.1's module-side IMPLEMENTATION of how it lands in Foundry changes.
   width?: number,
-  height?: number
+  height?: number,
+  grid?: { size: number, distance: number, units: string },   // (v2) mirrors index §1.3's own Scene.grid shape
+                                                                // verbatim — deliberately the SAME shape pulled
+                                                                // and pushed, no reshaping either direction.
+  tokens?: { actorUuid: string, x: number, y: number, img?: string }[],  // (v2) batch-place tokens at
+                                                                // scene-creation time — same per-token shape as
+                                                                // create_token's `data` below, minus `sceneUuid`
+                                                                // (implicit: the scene just created). `actorUuid`
+                                                                // here is the base `Actor.<id>` form (§1.1),
+                                                                // NOT a fully-qualified compound uuid — see
+                                                                // create_token's own v14 actorId note below,
+                                                                // which applies identically to this batch form.
+  foreground?: { src: string }   // (v2) v14 Scene#foreground — an image layer ABOVE tokens (splash-on-top-of-
+                                  // map), distinct from `background` which sits below. Also written via a
+                                  // follow-up doc call, NOT Scene.create's own field directly — see below.
 }
 ```
 
@@ -280,14 +341,111 @@ On success, the Foundry watcher creates a `Scene` document (`getDocumentClass("S
 per the design record's own note — NOT `globalThis.Scene.create`, `cockpit-app.mjs:835`'s older habit) and
 reports back `foundryUuid` in the matching result (§3).
 
-### Reserved kinds — documented, NOT implemented this phase (32.4 designs these fully; sketch only, shape may change)
+**Background write semantics — v14 SHOWSTOPPER, load-bearing for BOTH create and update (v2, Phase 36).**
+Proven live (`plans/wf-test-setup.md:124`): on Foundry v14, `Scene#background` is a DEPRECATED getter — setting
+`scene.background.src` (or passing `background:{src}` into `Scene.create(...)`'s creation data) is **silently
+ignored**. The actual background image lives on the scene's embedded **Level** document (`defaultLevel0000`).
+The fix, which 36.1 must apply on **BOTH** `create_scene` (right after the `Scene.create` call, using the newly
+created scene's own embedded Level doc) **AND** `update_scene` (whenever `patch.background` is present):
+
+```js
+await scene.updateEmbeddedDocuments("Level", [{ _id: "defaultLevel0000", "background.src": data.background.src }]);
+```
+
+The deprecated `scene.background.src` GETTER still reflects the Level doc's value (Foundry's own back-compat
+shim) — this is why §1.3's PULL-side `extractScene` (which reads `scene.background?.src`) already works
+correctly with ZERO module changes; only the two WRITE paths (create, update) needed the fix. `foreground`
+follows the analogous v14 field if/when Foundry deprecates it the same way — 36.1's own task is to verify at
+implementation time and use whichever write path (direct `Scene#foreground` field vs. an embedded-doc call)
+actually persists on the target Foundry version, documenting whichever turns out true; this contract does not
+presume `foreground` shares the exact same Level-doc quirk as `background`, only that a naive
+`Scene.create({foreground:{src}})`/`scene.update({foreground:{src}})` must be VERIFIED to actually work, not
+assumed, given `background`'s own proof that Foundry v14 silently drops fields exactly this shape.
+
+### `kind: "update_scene"` — (v2, Phase 36, implemented; was "reserved, shape may change" in v1)
+
+```
+data: {
+  sceneUuid: string,   // required — the target scene, typically a prior create_scene result's `foundryUuid`
+  patch: {
+    name?: string,
+    background?: { src: string },   // see "Background write semantics" above — Level-doc write, not a plain
+                                      // `scene.update()` field-set, when present.
+    width?: number,
+    height?: number,
+    grid?: { size: number, distance: number, units: string },
+    foreground?: { src: string }
+  }
+}
+```
+
+Module-side: `fromUuid(data.sceneUuid)` → `scene.update(patch)` for every key EXCEPT `background` (routed
+through the Level-doc `updateEmbeddedDocuments` call above instead, run alongside/after the plain `update()`
+call for the remaining keys). Returns the same `foundryUuid` back (identity round-trip) in the result. An
+unresolvable `sceneUuid` is a per-op failure (`ok:false`, §3), not a thrown/aborted batch.
+
+### `kind: "create_token"` — (v2, Phase 36, implemented; was "reserved, shape may change" in v1)
+
+```
+data: {
+  sceneUuid: string,   // required — must be a Foundry Scene the ops watcher can fromUuid() resolve
+  actorUuid: string,   // required — the base "Actor.<id>" form (§1.1) — see the v14 gotcha below
+  x: number,
+  y: number,
+  img?: string          // optional texture override; defaults to the actor's own img if omitted
+}
+```
+
+**v14 gotcha (module-side, load-bearing — deferred §2's own finding, reused verbatim):** `TokenDocument`'s
+embedded-creation data wants the actor's bare **`id`**, not its fully-qualified `uuid` string, in its own
+`actorId` field:
+
+```js
+const scene = await fromUuid(data.sceneUuid);
+const actor = data.actorUuid ? await fromUuid(data.actorUuid) : null;
+const [doc] = await scene.createEmbeddedDocuments("Token", [{
+  name: actor?.name, x: data.x, y: data.y,
+  actorId: actor?.id,                          // NOT data.actorUuid verbatim — v14 wants the bare id
+  texture: { src: data.img ?? actor?.img }
+}]);
+```
+
+Copying `data.actorUuid` (the `"Actor.<id>"` string) directly into `actorId` produces a silently-unlinked token
+(no thrown error, just a token with no working actor link) — this is exactly the class of easy-to-miss v14 API
+detail this note exists to prevent a future implementer from re-discovering the hard way.
+
+### `kind: "create_journal_image"` — (v2, Phase 36, implemented; was "reserved, shape may change" in v1)
+
+```
+data: {
+  imageSrc: string,       // required — same "already-a-path-in-Foundry's-data-dir" assumption as background.src
+  journalName?: string,   // defaults to a generic "Splash Art" name if omitted
+  pageName?: string,      // defaults to journalName
+  folder?: string         // optional JournalEntry folder id/name to file it under
+}
+```
+
+Module-side, following `cockpit-app.mjs:835-910`'s existing journal-push pattern for the envelope
+(`getDocumentClass("JournalEntry").create(...)`) but an **`"image"`-type** page, not that file's `"text"`-type:
+
+```js
+const doc = await getDocumentClass("JournalEntry").create({
+  name: data.journalName ?? "Splash Art",
+  folder: data.folder,
+  pages: [{ name: data.pageName ?? data.journalName ?? "Splash Art", type: "image", src: data.imageSrc }]
+});
+return doc?.uuid;
+```
+
+### Reserved kinds — still NOT implemented (unchanged from v1; no phase has claimed these yet)
 
 | `kind` | Indicative `data` shape | Notes |
 |---|---|---|
-| `update_scene` | `{ sceneUuid: string, patch: { name?, background?: {src}, width?, height? } }` | Patch an existing pushed scene |
-| `create_actor` | `{ name: string, type: string, img?: string, system?: object }` | Push a bestiary/roster entry back INTO Foundry |
-| `create_token` | `{ sceneUuid: string, actorUuid: string, x: number, y: number, img?: string }` | Place a token on an existing scene |
-| `create_journal_image` | `{ imageSrc: string, journalName?: string, pageName?: string, folder?: string }` | Splash art as a journal image page (phase-32-deferred) |
+| `create_actor` | `{ name: string, type: string, img?: string, system?: object }` | Push a bestiary/roster entry back INTO Foundry — not part of Phase 36's scope (36 pushes scenes/tokens/art, not actors) |
+
+`walls`/`lighting` on `create_scene` (sketched in `plans/phase-32-deferred.md` §3a) and ambient-light
+*placement* remain explicitly undesigned/out of scope — Phase 36 does not adopt them; a future phase that wants
+them amends this contract then.
 
 A producer or consumer encountering an unrecognized `kind` string in a future version MUST skip that one op
 (record it as a failed result with a clear `error`, per §3) rather than aborting the whole batch — one bad/future
@@ -352,8 +510,25 @@ oversight** — 32.1/32.2/32.3 should not "fix" it into consistency.
 
 ## Changelog
 
-- **v1** (this document, Phase 32 task 32.0) — initial contract. `FOUNDRY_INDEX_VERSION = 1`,
+- **v1** (Phase 32 task 32.0) — initial contract. `FOUNDRY_INDEX_VERSION = 1`,
   `FOUNDRY_OPS_SCHEMA_VERSION = 1`, `FOUNDRY_RESULTS_SCHEMA_VERSION = 1`.
+- **v2** (Phase 36 task 36.0, this amendment) — all additive/corrective, **no `*_VERSION` constant bumped**
+  anywhere (every change below qualifies as "additive-only" per this doc's own cross-cutting convention):
+  - `create_scene.data` grows `grid?`/`tokens?`/`foreground?` (§2).
+  - NEW implemented op kinds: `update_scene`, `create_token`, `create_journal_image` (all three were "reserved,
+    shape may change" in v1 — now implemented per 36.1, shapes finalized as documented in §2).
+  - **Background write semantics pinned as a documented v14 showstopper**: `background`/`foreground` on
+    `create_scene`/`update_scene` write via the embedded Level doc (`updateEmbeddedDocuments("Level",
+    [{_id:"defaultLevel0000","background.src":...}])`), NOT `Scene.create`'s/`scene.update()`'s own field —
+    that field is silently ignored on v14. Applies to BOTH create and update.
+  - `create_token`'s v14 `actorId`-not-`actorUuid` gotcha documented explicitly (deferred §2, reused verbatim).
+  - Index gains top-level `playlists: Playlist[]` (§1.5), additive-optional.
+  - `PlacedToken.actorUuid` corrective note: the contract's shape was always base `"Actor.<id>"`; 32.1's shipped
+    `extractToken` had a real defect emitting a compound uuid instead — 36.1 fixes the implementation to match
+    the ALREADY-DOCUMENTED shape (not a shape change, a bugfix — see §1.4's own note).
+  - GM_Tools-side quiet-push spec (Scene additive fields, stage route, flush semantics, map-src resolution,
+    local-copy path) lives in `review-ui/test/e2e/phase36-fixture.mjs`, not in this file — this file stays
+    scoped to the wire format only, per its own "Scope and non-goals" section at the top.
 
 ---
 
@@ -370,6 +545,13 @@ the 32.2/32.3 code that will consume it, without colliding with either existing 
 | `foundry-index.minimal.json` | Valid but sparse: one non-dnd5e-ish actor missing `system.cr`/`abilities`/`skills` etc., no users, one scene with no background/tokens. Exercises the "every `system.*` field optional, mapper must tolerate absence" rule. |
 | `foundry-ops.create-scene.sample.json` | One `create_scene` op. |
 | `foundry-results.sample.json` | The matching result for that op (`ok:true`, `foundryUuid`). |
+
+**(v2, Phase 36)** No new fixture files are added to this directory by task 36.0 — the v2 op-shape fixtures
+(`update_scene`/`create_token`/`create_journal_image`/the extended `create_scene`) live as inline constants in
+`review-ui/test/e2e/phase36-fixture.mjs` instead (36.2's flush-engine composer and 36.1's pure-fn module tests
+both consume THOSE shapes directly, per that file's own header — the "shared-fixture discipline" this project
+established in Phase 32 continues, just anchored in the newer e2e-fixture convention rather than growing this
+older `wf-mcp-server/test/fixtures/` directory further).
 
 ## Grounding (file:line used while writing this contract)
 
