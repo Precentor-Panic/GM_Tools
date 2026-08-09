@@ -127,7 +127,7 @@ async function api(path, opts) {
 // ---------------------------------------------------------------------------
 export function mountSceneTray(host, opts = {}) {
   const world = opts.world || currentWorld();
-  const state = { query: "", scenes: [], trays: {}, lookups: null };
+  const state = { query: "", scenes: [], trays: {}, lookups: null, entityNames: new Map() };
 
   host.innerHTML = "";
   const root = el("div", {
@@ -187,7 +187,16 @@ export function mountSceneTray(host, opts = {}) {
   }
 
   function sceneName(scene) {
-    return scene.name || scene.objectiveNote || "Ad-hoc scene";
+    // Same resolution as app-shell's resolveSceneDisplayName: an explicit
+    // name wins, else the anchor PLACE's graph-node name (scenes are usually
+    // unnamed and known by their place -- every real scene rendered as an
+    // indistinguishable "Ad-hoc scene" before this, Russell's pass bug).
+    if (scene.name) return scene.name;
+    if (scene.locationEntityId) {
+      const place = state.entityNames.get(scene.locationEntityId);
+      if (place) return place;
+    }
+    return scene.objectiveNote || "Ad-hoc scene";
   }
 
   function metaFor(roster) {
@@ -352,13 +361,17 @@ export function mountSceneTray(host, opts = {}) {
   async function loadAll() {
     if (!world) { paintScenes(); return; }
     // Lookups for name/XP resolution. Bestiary is library-wide (no world).
-    const [bestiary, party, items, stagecraft, scenesRes] = await Promise.all([
+    const [bestiary, party, items, stagecraft, scenesRes, graph] = await Promise.all([
       api(`/api/combat-planning/bestiary`).catch(() => ({ entries: [] })),
       api(`/api/combat-planning/party-roster?world=${encodeURIComponent(world)}`).catch(() => ({ members: [] })),
       api(`/api/combat-planning/items?world=${encodeURIComponent(world)}`).catch(() => ({ items: [] })),
       api(`/api/session-planner/stagecraft?world=${encodeURIComponent(world)}`).catch(() => ({ assets: [] })),
-      api(`/api/scene-planning/scenes?world=${encodeURIComponent(world)}&sort=recency`).catch(() => ({ scenes: [] }))
+      api(`/api/scene-planning/scenes?world=${encodeURIComponent(world)}&sort=recency`).catch(() => ({ scenes: [] })),
+      // Graph node names for sceneName's place resolution (scenes are mostly
+      // unnamed; their display name IS their anchor place's name).
+      api(`/api/graph?world=${encodeURIComponent(world)}&filter=all`).catch(() => ({ nodes: [] }))
     ]);
+    state.entityNames = new Map((graph.nodes || []).map((n) => [n.id, n.name]));
     state.lookups = {
       bestiary: new Map((bestiary.entries || []).map((e) => [e.id, e])),
       party: new Map((party.members || []).map((m) => [m.id, m])),

@@ -29,12 +29,18 @@ const WORLD = "e2e-p35-scene-tray";
 process.env.WF_DEFAULT_WORLD = WORLD;
 
 const { snapshotFilePath } = await import("../../../wf-mcp-server/lib/snapshot.mjs");
-const { bootstrapSnapshot } = await import("../../../graph-import/headless-apply.mjs");
+const { bootstrapSnapshot, applyHeadless } = await import("../../../graph-import/headless-apply.mjs");
 const { createReviewServer } = await import("../../server.mjs");
 const { acceptBestiaryEntry } = await import("../../../combat-planning/bestiary-store.mjs");
 const { acceptPartyMember } = await import("../../../combat-planning/party-roster-store.mjs");
 
-bootstrapSnapshot(snapshotFilePath(dataDir, WORLD), { worldId: WORLD });
+const snapPath = snapshotFilePath(dataDir, WORLD);
+bootstrapSnapshot(snapPath, { worldId: WORLD });
+// A graph PLACE for the scene-name resolution test below (Russell's pass
+// bug: real scenes are usually unnamed and known by their anchor place).
+applyHeadless(snapPath, [
+  { op: "upsert_entity", data: { id: "p35tray-cistern", name: "The Salt Cistern", type: "place", importance: 0.5 } }
+]);
 writeFoundryIndexFixture(dataDir, WORLD);
 
 const LANTERN = makeStagecraftAsset({
@@ -43,7 +49,7 @@ const LANTERN = makeStagecraftAsset({
 });
 seedStagecraftAssets(WORLD, [LANTERN]);
 
-let server, base, browser, scene, ogrekinId, kestrelId;
+let server, base, browser, scene, placeScene, ogrekinId, kestrelId;
 
 before(async () => {
   server = createReviewServer({ port: 0 });
@@ -61,6 +67,10 @@ before(async () => {
 
   scene = await createSceneViaRoute(base, WORLD, { objectiveNote: "Clear the lower cells." });
   await setSceneTrayBudgetViaRoute(base, WORLD, scene.id, 1800); // no-op today (404) -- harmless when red
+
+  // A REAL-shaped scene: no name, no objectiveNote, only an anchor place --
+  // the common case in Russell's worlds (orchestrator hardening, pass bug).
+  placeScene = await createSceneViaRoute(base, WORLD, { locationEntityId: "p35tray-cistern" });
 });
 
 after(async () => {
@@ -275,6 +285,29 @@ test("clicking a roster chip's ✕ removes that row entirely (a real persisted r
 
   const tray = await fetchSceneTrayViaRoute(base, WORLD, scene.id);
   assert.ok(!tray.body.roster.some((r) => r.kind === "creature" && r.id === ogrekinId), "removed row must be gone from the persisted roster, not just hidden client-side");
+
+  await page.close();
+});
+
+// ---------------------------------------------------------------------------
+// 5. SCENE NAMES RESOLVE LIKE THE PLANNER'S (orchestrator hardening --
+//    Russell's pass bug 2026-08-08: real scenes usually carry NO name and NO
+//    objectiveNote, only a locationEntityId anchor; the tray rendered every
+//    one as an identical "Ad-hoc scene" row, making planned scenes
+//    un-targetable. The tray must resolve the anchor place's graph name,
+//    same as app-shell's resolveSceneDisplayName.)
+// ---------------------------------------------------------------------------
+test("a scene with no name/objective but an anchor place renders under the PLACE's graph name in the tray, not 'Ad-hoc scene'", async () => {
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+  await page.goto(`${base}/#library`);
+  await page.locator('[data-testid="library-bestiary-root"]').waitFor({ state: "visible", timeout: 15000 });
+
+  const rowSel = `[data-testid="scene-tray-scene-row"][data-scene-id="${placeScene.id}"]`;
+  await page.locator(rowSel).waitFor({ state: "visible", timeout: 10000 });
+  const rowText = (await page.locator(rowSel).textContent()) ?? "";
+  assert.match(rowText, /The Salt Cistern/, "the tray row must carry the anchor place's graph-node name");
+  assert.doesNotMatch(rowText, /Ad-hoc scene/, "a place-anchored scene must NOT fall back to the 'Ad-hoc scene' label");
 
   await page.close();
 });
