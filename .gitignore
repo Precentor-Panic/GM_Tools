@@ -130,6 +130,12 @@ tokens/*
 scene-tray/*
 !scene-tray/.gitkeep
 
+# Phase 34's foundry-connection sync-log (per-world JSON, written by the
+# sync-now route) -- missed at 34.1 spec time, surfaced by Russell's first
+# real "Sync now" click during his Phase-35 pass (the recurring new-store
+# gitignore gap, one more time).
+foundry-sync-log/
+
 node_modules/
 
 # never commit API keys / secrets
