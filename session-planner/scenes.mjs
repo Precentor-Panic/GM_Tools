@@ -46,6 +46,19 @@
  * `SCHEMA_VERSION`-bump reasoning as `updatedAt` above: a scene persisted
  * before this change simply has no `foundrySceneRef` key, which every
  * reader must treat identically to an explicit `null` (never pushed yet).
+ *
+ * ADDITIVE CHANGE (Phase 36 task 36.2): the Scene record gained
+ * `stagedForFoundry` (boolean, default `false`) and `lastPushedAt`
+ * (string|null, default `null`) -- review-ui/test/e2e/phase36-fixture.mjs
+ * §1, THE WRITTEN CONTRACT. Neither is inherited by forkScene (same
+ * reasoning as `name`/`foundrySceneRef` immediately above -- a fork is a
+ * materially different scene instance). `stagedForFoundry` joins
+ * `updateScene`'s ordinary patch vocabulary (its own unconditional
+ * `updatedAt` re-stamp is correct here -- toggling staged-ness IS a "this
+ * scene was touched" event). `lastPushedAt` is deliberately NOT part of
+ * `updateScene`'s vocabulary -- see the new, narrow `markScenePushed` below
+ * for why a push write-back must never go through `updateScene` (it would
+ * race-clobber a concurrent edit's own `updatedAt` bump).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -105,6 +118,9 @@ export function createScene(world, { locationEntityId = null, objectiveNote = nu
     objectiveNote: objectiveNote ?? null,
     name: name ?? null,
     foundrySceneRef: null,
+    // Phase 36 task 36.2, §1 -- see this module's own header note.
+    stagedForFoundry: false,
+    lastPushedAt: null,
     createdAt: now,
     updatedAt: now
   };
@@ -147,6 +163,9 @@ export function forkScene(world, parentSceneId, { locationEntityId, objectiveNot
     // `name` immediately above -- see this module's own Phase 32 task 32.3
     // header note.
     foundrySceneRef: null,
+    // Phase 36 task 36.2, §1 -- also NOT inherited, same reasoning.
+    stagedForFoundry: false,
+    lastPushedAt: null,
     createdAt: now,
     updatedAt: now
   };
@@ -218,7 +237,7 @@ export function renameScene(world, sceneId, name, opts = {}) {
  *
  * @param {string} world
  * @param {string} sceneId
- * @param {{name?:string|null, objectiveNote?:string|null, foundrySceneRef?:string|null, locationEntityId?:string|null}} patch
+ * @param {{name?:string|null, objectiveNote?:string|null, foundrySceneRef?:string|null, locationEntityId?:string|null, stagedForFoundry?:boolean}} patch
  * @param {object} [opts]
  * @param {string} [opts.now]   injectable ISO timestamp, for deterministic tests
  * @returns {object}   the updated Scene
@@ -229,8 +248,15 @@ export function renameScene(world, sceneId, name, opts = {}) {
  * pointed at is deleted -- the scene then renders "Unplaced", which the scene
  * page already tolerates (session-planner-view.js:2761). Purely additive,
  * same undefined-means-leave-untouched merge semantics as every other key.
+ *
+ * Phase 36 task 36.2, §2: `stagedForFoundry` joined the patch vocabulary --
+ * the backing op for `POST /api/session-planner/scenes/:id/stage`. This
+ * function's own unconditional `updatedAt` re-stamp below is CORRECT for
+ * this key (toggling staged-ness is itself a "this scene was touched"
+ * event) -- see phase36-fixture.mjs §1/§5. Do NOT add `lastPushedAt` here --
+ * that field is written ONLY by the new, narrower `markScenePushed` below.
  */
-export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneRef, locationEntityId } = {}, opts = {}) {
+export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneRef, locationEntityId, stagedForFoundry } = {}, opts = {}) {
   const scenes = readScenes(world);
   const scene = scenes.find((s) => s.id === sceneId);
   if (!scene) {
@@ -240,7 +266,42 @@ export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneR
   if (objectiveNote !== undefined) scene.objectiveNote = objectiveNote;
   if (foundrySceneRef !== undefined) scene.foundrySceneRef = foundrySceneRef;
   if (locationEntityId !== undefined) scene.locationEntityId = locationEntityId;
+  if (stagedForFoundry !== undefined) scene.stagedForFoundry = stagedForFoundry;
   scene.updatedAt = opts.now ?? new Date().toISOString();
+  writeScenes(world, scenes);
+  return scene;
+}
+
+/**
+ * Phase 36 task 36.2, §1/§5 -- the quiet-push write-back. Writes ONLY
+ * `foundrySceneRef`/`lastPushedAt`, DELIBERATELY never touching `updatedAt`
+ * (unlike every other mutator in this module) -- the pinned race-avoidance
+ * rule from phase36-fixture.mjs §5 "Write-back must not race-clobber a
+ * concurrent edit": a push is asynchronous (compose ops -> write -> poll up
+ * to several seconds -> read results), so if the scene is edited AGAIN while
+ * that push is still in flight, `updateScene`'s own unconditional
+ * `updatedAt` re-stamp would race against this write-back -- whichever lands
+ * last would clobber the other's signal. Stamping `lastPushedAt` to the
+ * COMPOSE-TIME `updatedAt` snapshot the caller captured (not this call's own
+ * wall-clock `now`) means a later edit's strictly-greater `updatedAt`
+ * correctly keeps the scene dirty for the next flush, never silently
+ * dropped. `foundrySceneRef` is independently optional (a sub-op-only-status
+ * flush cycle, or an update-path push, may call this with `lastPushedAt`
+ * only, leaving an already-set `foundrySceneRef` untouched).
+ *
+ * @param {string} world
+ * @param {string} sceneId
+ * @param {{foundrySceneRef?:string|null, lastPushedAt:string|null}} fields
+ * @returns {object}   the updated Scene
+ */
+export function markScenePushed(world, sceneId, { foundrySceneRef, lastPushedAt } = {}) {
+  const scenes = readScenes(world);
+  const scene = scenes.find((s) => s.id === sceneId);
+  if (!scene) {
+    throw new Error(`No scene found: world="${world}" sceneId="${sceneId}"`);
+  }
+  if (foundrySceneRef !== undefined) scene.foundrySceneRef = foundrySceneRef;
+  scene.lastPushedAt = lastPushedAt ?? null;
   writeScenes(world, scenes);
   return scene;
 }

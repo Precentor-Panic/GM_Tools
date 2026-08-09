@@ -2222,6 +2222,24 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   color: var(--sp-ink-muted); font-style: italic;
 }
 
+/* Phase 36 task 36.2, §7 — the "stage it" toggle + subtle "in Foundry ·
+   updated Xm ago" status line. Deliberately quiet: no button, no accent
+   color, sized/typeset like the objective line's own muted secondary text. */
+:is(#view-session-planner, #app-shell) .scene-stage-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 18px; font-family: var(--sp-font-ui); font-size: 13px;
+}
+:is(#view-session-planner, #app-shell) .scene-stage-toggle-label {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--sp-ink-secondary); cursor: pointer; user-select: none;
+}
+:is(#view-session-planner, #app-shell) .scene-stage-toggle {
+  cursor: pointer;
+}
+:is(#view-session-planner, #app-shell) .scene-stage-status-line {
+  color: var(--sp-ink-muted); font-size: 12px;
+}
+
 /* "The place" — a 76px mono-label / editable-value grid, bounded top+bottom
    by 1px hairlines. Editing writes to the graph NODE, not the scene. */
 :is(#view-session-planner, #app-shell) .scene-place-desc-host { margin: 0 0 24px; }
@@ -3233,6 +3251,8 @@ main[hidden] { display: none !important; }
 #app-shell .conn-sync-btn:hover:not([disabled]) { border-color: oklch(0.62 0.060 185); }
 #app-shell .conn-sync-btn[disabled] { opacity: 0.6; cursor: default; }
 #app-shell .conn-sync-note { font-family: var(--sp-font-mono); font-size: 9.5px; color: var(--sp-ink-muted); flex: 1; min-width: 0; }
+/* Phase 36 task 36.2, §7 -- quiet "N staged · last push Xm ago" row, same idiom as .conn-sync-note. */
+#app-shell .conn-staged-summary { font-family: var(--sp-font-mono); font-size: 9.5px; color: var(--sp-ink-muted); margin-top: 6px; }
 
 #app-shell .conn-noconn-card {
   margin-top: 8px; padding: 12px 13px;

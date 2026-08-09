@@ -56,7 +56,7 @@ function writeIndexFixture(world, fixtureName) {
 }
 
 const SAMPLE_WORLD = "pull-ops-sample-world";
-writeIndexFixture(SAMPLE_WORLD, "foundry-index.sample.json");
+const sampleFixture = writeIndexFixture(SAMPLE_WORLD, "foundry-index.sample.json");
 
 test("pullFoundryActorsToStores: no index file yet -- indexFound:false, empty results, never throws", () => {
   const result = pullFoundryActorsToStores(dataDir, "never-indexed-world");
@@ -106,6 +106,10 @@ test("pullFoundryActorsToStores: the sample fixture's one scene (background+dims
   assert.match(map.meta ?? "", /4000/);
   assert.match(map.meta ?? "", /3000/);
   assert.match(map.meta ?? "", /grid 100\/5ft/);
+  // Phase 36 task 36.2, §4 -- foundryRef.imagePath captured from
+  // scenes[].background.src (previously discarded -- only sceneUuid was set).
+  const sampleScene = sampleFixture.scenes.find((s) => s.uuid === "Scene.camp001");
+  assert.equal(map.foundryRef?.imagePath, sampleScene.background.src);
 
   const onDisk = listStagecraftAssets(SAMPLE_WORLD);
   assert.equal(onDisk.length, 1, "the map asset landed in the REAL store too");

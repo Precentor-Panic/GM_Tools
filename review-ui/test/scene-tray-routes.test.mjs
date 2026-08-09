@@ -40,7 +40,7 @@ process.env.WF_DEFAULT_WORLD = WORLD;
 const { snapshotFilePath } = await import("../../wf-mcp-server/lib/snapshot.mjs");
 const { bootstrapSnapshot } = await import("../../graph-import/headless-apply.mjs");
 const { createReviewServer } = await import("../server.mjs");
-const { createScene } = await import("../../session-planner/scenes.mjs");
+const { createScene, getScene } = await import("../../session-planner/scenes.mjs");
 const { saveBestiaryEntry } = await import("../../combat-planning/bestiary-store.mjs");
 const { savePartyMember } = await import("../../combat-planning/party-roster-store.mjs");
 const { saveItem } = await import("../../combat-planning/item-store.mjs");
@@ -183,6 +183,89 @@ test("DELETE .../tray/:kind/:id is idempotent -- removing an already-absent row 
   const { status, body } = await deleteJson(`/api/scene-planning/scenes/${scene.id}/tray/creature/never-dropped`, { world: WORLD });
   assert.equal(status, 200);
   assert.ok(Array.isArray(body.roster));
+});
+
+// ===========================================================================
+// Phase 36 task 36.2, §3 -- touchSceneSafely additions: every tray mutation
+// (drop of every kind, including a creature's stacking 2nd+ drop / remove /
+// budget) bumps the scene's own updatedAt, and stagecraft-accept fans out a
+// touch to every scene whose tray roster references the just-accepted
+// asset. Uses a FRESH scene per test (not the shared `scene` above, whose
+// updatedAt has already been bumped many times by earlier tests) so each
+// assertion has an unambiguous "before" baseline.
+// ===========================================================================
+
+test("POST .../tray/drop {kind:'creature'}: bumps the scene's updatedAt, including on the SECOND (stacking-only) drop", async () => {
+  const touchScene1 = createScene(WORLD, {}, { makeId: () => "scene-touch-drop-creature", now: "2026-08-07T00:00:00.000Z" });
+  const entry = saveBestiaryEntry({ rawFields: { name: "Touch Test Creature" } }, { makeId: () => "bst-touch-1" });
+
+  await postJson(`/api/scene-planning/scenes/${touchScene1.id}/tray/drop`, { world: WORLD, kind: "creature", id: entry.id });
+  const afterFirst = getScene(WORLD, touchScene1.id).updatedAt;
+  assert.notEqual(afterFirst, "2026-08-07T00:00:00.000Z", "the first drop (new element) must bump updatedAt");
+
+  await new Promise((r) => setTimeout(r, 2));
+  await postJson(`/api/scene-planning/scenes/${touchScene1.id}/tray/drop`, { world: WORLD, kind: "creature", id: entry.id });
+  const afterSecond = getScene(WORLD, touchScene1.id).updatedAt;
+  assert.ok(afterSecond > afterFirst, "the SECOND drop (roster-stacking only, no new element) must ALSO bump updatedAt -- unconditional, per §3");
+});
+
+test("POST .../tray/drop {kind:'hero'} and {kind:'asset'}: both bump the scene's updatedAt", async () => {
+  const touchScene2 = createScene(WORLD, {}, { makeId: () => "scene-touch-drop-hero-asset" });
+  const before = getScene(WORLD, touchScene2.id).updatedAt;
+  const member = savePartyMember(WORLD, { name: "Touch Test Hero", combatRelevant: {}, buildRelevant: {} }, { makeId: () => "pm-touch-1" });
+
+  await new Promise((r) => setTimeout(r, 2));
+  await postJson(`/api/scene-planning/scenes/${touchScene2.id}/tray/drop`, { world: WORLD, kind: "hero", id: member.id });
+  const afterHero = getScene(WORLD, touchScene2.id).updatedAt;
+  assert.ok(afterHero > before, "a hero drop must bump updatedAt even though it touches no scene element");
+
+  const item = saveItem(WORLD, { name: "Touch Test Item", type: "equipment" }, { makeId: () => "it-touch-1" });
+  await new Promise((r) => setTimeout(r, 2));
+  await postJson(`/api/scene-planning/scenes/${touchScene2.id}/tray/drop`, { world: WORLD, kind: "asset", id: item.id });
+  const afterAsset = getScene(WORLD, touchScene2.id).updatedAt;
+  assert.ok(afterAsset > afterHero, "an asset drop must ALSO bump updatedAt");
+});
+
+test("DELETE .../tray/:kind/:id: bumps the scene's updatedAt on a successful removal", async () => {
+  const touchScene3 = createScene(WORLD, {}, { makeId: () => "scene-touch-remove" });
+  const item = saveItem(WORLD, { name: "Touch Test Removable", type: "equipment" }, { makeId: () => "it-touch-2" });
+  await postJson(`/api/scene-planning/scenes/${touchScene3.id}/tray/drop`, { world: WORLD, kind: "asset", id: item.id });
+  const before = getScene(WORLD, touchScene3.id).updatedAt;
+
+  await new Promise((r) => setTimeout(r, 2));
+  await deleteJson(`/api/scene-planning/scenes/${touchScene3.id}/tray/asset/${item.id}`, { world: WORLD });
+  const after = getScene(WORLD, touchScene3.id).updatedAt;
+  assert.ok(after > before, "a tray removal must bump updatedAt");
+});
+
+test("POST .../tray/budget: bumps the scene's updatedAt on every call, uniformly with every other tray mutation", async () => {
+  const touchScene4 = createScene(WORLD, {}, { makeId: () => "scene-touch-budget" });
+  const before = getScene(WORLD, touchScene4.id).updatedAt;
+
+  await new Promise((r) => setTimeout(r, 2));
+  await postJson(`/api/scene-planning/scenes/${touchScene4.id}/tray/budget`, { world: WORLD, xpBudget: 500 });
+  const after = getScene(WORLD, touchScene4.id).updatedAt;
+  assert.ok(after > before, "a budget set must bump updatedAt, same as every other tray mutation (§3's own uniform-touch reasoning)");
+});
+
+test("POST /api/session-planner/stagecraft/:id/accept: FAN-OUT touch -- every scene whose tray roster references the just-accepted asset gets touched, an unrelated scene does not", async () => {
+  const referencingScene = createScene(WORLD, {}, { makeId: () => "scene-touch-fanout-referencing" });
+  const unrelatedScene = createScene(WORLD, {}, { makeId: () => "scene-touch-fanout-unrelated" });
+  const asset = saveStagecraftAsset(WORLD, { kind: "map", name: "Fan-Out Map", status: "proposed" }, { makeId: () => "sc-touch-fanout-1" });
+
+  await postJson(`/api/scene-planning/scenes/${referencingScene.id}/tray/drop`, { world: WORLD, kind: "asset", id: asset.id });
+  const referencingBefore = getScene(WORLD, referencingScene.id).updatedAt;
+  const unrelatedBefore = getScene(WORLD, unrelatedScene.id).updatedAt;
+
+  await new Promise((r) => setTimeout(r, 2));
+  const accepted = await postJson(`/api/session-planner/stagecraft/${asset.id}/accept`, { world: WORLD });
+  assert.equal(accepted.status, 200);
+  assert.equal(accepted.body.asset.status, "accepted");
+
+  const referencingAfter = getScene(WORLD, referencingScene.id).updatedAt;
+  const unrelatedAfter = getScene(WORLD, unrelatedScene.id).updatedAt;
+  assert.ok(referencingAfter > referencingBefore, "the scene whose roster references the accepted asset must be touched");
+  assert.equal(unrelatedAfter, unrelatedBefore, "an unrelated scene (no reference to this asset) must NOT be touched");
 });
 
 void __dirname;

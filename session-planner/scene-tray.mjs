@@ -158,4 +158,20 @@ export function setSceneTrayXpBudget(world, sceneId, xpBudget, opts = {}) {
   return projectPublic(rec);
 }
 
+/**
+ * Phase 36 task 36.2, §3 -- every raw tray record for `world` (full shape,
+ * including `sceneId`/`roster`, not the projected `{roster,xpBudget}` shape
+ * `getSceneTray` returns). Backs two call sites: the stagecraft-accept
+ * fan-out touch (scan every scene's roster for a just-accepted assetId,
+ * server.mjs) and the flush composer's own roster reads
+ * (wf-mcp-server/lib/foundry-push-ops.mjs uses `getSceneTray` per-scene
+ * instead, but this whole-world enumeration is what the fan-out needs and
+ * nothing else in this store previously exposed).
+ * @param {string} world
+ * @returns {object[]}
+ */
+export function listSceneTrayRecordsForWorld(world) {
+  return readTray(world);
+}
+
 export { ConcurrentWriteError };

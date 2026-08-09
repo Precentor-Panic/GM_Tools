@@ -196,7 +196,7 @@ import { listTokens } from "../session-planner/token-store.mjs";
 // bookkeeping only (the creature-drop "create/reuse a stat-carrying scene
 // element" composition lives at THIS file's own route handler below, per
 // §7's own explicit instruction).
-import { getSceneTray, addToSceneTray, removeFromSceneTray, setSceneTrayXpBudget } from "../session-planner/scene-tray.mjs";
+import { getSceneTray, addToSceneTray, removeFromSceneTray, setSceneTrayXpBudget, listSceneTrayRecordsForWorld } from "../session-planner/scene-tray.mjs";
 import { proposeThematicTags } from "../combat-planning/thematic-filter.mjs";
 import { suggestEncounter, scoreCombination } from "../combat-planning/encounter-heuristic.mjs";
 // Phase 32 task 32.2 -- Foundry actor PULL ingest (bestiary + party roster,
@@ -206,7 +206,9 @@ import { pullFoundryActorsToStores } from "../wf-mcp-server/lib/foundry-pull-ops
 // Phase 32 task 32.3 -- the thin PUSH slice (a GM_Tools scene -> a Foundry
 // Scene seeded with a map, via the ops channel). Sibling module to
 // foundry-pull-ops.mjs above -- see its own header comment.
-import { pushSceneToFoundry } from "../wf-mcp-server/lib/foundry-push-ops.mjs";
+// Phase 36 task 36.2 -- `flushDirtyStagedScenes`, the quiet-push flush
+// engine (same file, extended -- see that module's own header note).
+import { pushSceneToFoundry, flushDirtyStagedScenes } from "../wf-mcp-server/lib/foundry-push-ops.mjs";
 
 // Phase 34 task 34.1 -- Connection-Menu backend glue: connection-state
 // derivation + sync-now (foundry-connection.mjs composes readFoundryIndex
@@ -432,10 +434,52 @@ function serveStatic(res, filePath) {
  */
 function touchSceneSafely(w, sceneId) {
   try {
-    touchScene(w, sceneId);
+    const scene = touchScene(w, sceneId);
+    maybeScheduleFlush(w, scene); // Phase 36 task 36.2, §3 -- the trigger choke point
   } catch {
     // Best-effort only -- see this function's own doc comment.
   }
+}
+
+/**
+ * Phase 36 task 36.2, §5 -- the quiet-push flush engine's FIRST trigger:
+ * staged-scene mutation, debounced ONE TICK (a single `setTimeout(...,0)`
+ * macrotask, per world). `touchSceneSafely` above is the single choke point
+ * that fires this for every tray/element/narration write; the `/stage`
+ * route (§2) and every direct `updateScene`/`renameScene` call on a scene
+ * RECORD call `maybeScheduleFlush` themselves right after their own write
+ * succeeds. Every trigger that fires within the same macrotask window before
+ * the scheduled flush actually runs coalesces into that ONE flush call,
+ * which re-reads "which scenes are dirty right now" fresh at fire time (via
+ * `flushDirtyStagedScenes`'s own `listScenesByRecency` scan) -- NOT a
+ * snapshot taken at schedule time. `flushScheduled` is cleared BEFORE
+ * `flushDirtyStagedScenes` runs (not after), so a mutation arriving WHILE a
+ * flush is actively in flight (e.g. blocked on the ops-channel poll)
+ * schedules a genuine follow-up flush rather than being silently absorbed
+ * into the in-flight one.
+ */
+const flushScheduled = new Set();
+function scheduleFlush(world) {
+  if (flushScheduled.has(world)) return;
+  flushScheduled.add(world);
+  setTimeout(() => {
+    flushScheduled.delete(world);
+    let dir;
+    try {
+      dir = resolveDir();
+    } catch (err) {
+      console.error(`[foundry-flush] world "${world}": could not resolve the Foundry data dir -- ${err.message}`);
+      return;
+    }
+    flushDirtyStagedScenes(dir, world).catch((err) => {
+      console.error(`[foundry-flush] background flush for world "${world}" failed:`, err.message);
+    });
+  }, 0);
+}
+
+/** Schedules a flush iff the just-written scene is currently staged (an unstaged scene's own dirty predicate is false anyway -- see foundry-push-ops.mjs's isSceneDirty). Best-effort: `scene` may be null/undefined from a caller that doesn't have one handy. */
+function maybeScheduleFlush(world, scene) {
+  if (scene?.stagedForFoundry === true) scheduleFlush(world);
 }
 
 /**
@@ -1655,6 +1699,7 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     const scene = updateScene(w, parts[3], { name: body.name, objectiveNote: body.objectiveNote });
+    maybeScheduleFlush(w, scene); // Phase 36 task 36.2, §3 -- a direct scene-RECORD edit is a flush trigger too
     return sendJson(res, 200, { scene });
   }
 
@@ -1663,6 +1708,22 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     const scene = renameScene(w, parts[3], body.name ?? null);
+    maybeScheduleFlush(w, scene); // Phase 36 task 36.2, §3
+    return sendJson(res, 200, { scene });
+  }
+
+  // POST /api/session-planner/scenes/:id/stage  { world, staged:boolean }  -> {scene}
+  // Phase 36 task 36.2, §2 -- thin wrapper: updateScene(w, id, {stagedForFoundry:!!body.staged}).
+  // Unknown id -> the same "No scene found" 404 every other scene route
+  // already produces (statusForError's /not found/i rule). Toggling `staged`
+  // to true is one of the two flush TRIGGERS (§5); toggling it false
+  // schedules nothing (maybeScheduleFlush is a no-op when the resulting
+  // scene isn't staged).
+  if (method === "POST" && parts.length === 5 && parts[1] === "session-planner" && parts[2] === "scenes" && parts[4] === "stage") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const scene = updateScene(w, parts[3], { stagedForFoundry: !!body.staged });
+    maybeScheduleFlush(w, scene);
     return sendJson(res, 200, { scene });
   }
 
@@ -1872,7 +1933,7 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const dir = resolveDir();
     const w = resolveWorld(body.world);
-    return sendJson(res, 200, syncNow(dir, w));
+    return sendJson(res, 200, await syncNow(dir, w));
   }
 
   // GET /api/settings?world=...  -> the full stored AppSettings object (session-planner/app-settings.mjs)
@@ -2536,10 +2597,24 @@ async function handleApi(req, res, url, parts) {
   }
 
   // POST /api/session-planner/stagecraft/:id/accept   {world}   -> {asset}
+  // Phase 36 task 36.2, §3 -- FAN-OUT touch: an asset's proposed->accepted
+  // transition doesn't change any Scene record, but changes whether the
+  // flush composer may legally use it (only ACCEPTED stagecraft assets are
+  // eligible for background/foreground/create_journal_image inclusion, §5),
+  // so every staged scene whose tray roster references this asset needs
+  // re-evaluation on the next flush -- scan every scene-tray record in this
+  // world for a matching `{kind:'asset', id: asset.id}` roster row and touch
+  // each matching scene (touchSceneSafely itself fires scheduleFlush when
+  // that scene is staged).
   if (method === "POST" && parts.length === 5 && parts[1] === "session-planner" && parts[2] === "stagecraft" && parts[4] === "accept") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     const asset = acceptStagecraftAsset(w, parts[3]);
+    for (const rec of listSceneTrayRecordsForWorld(w)) {
+      if ((rec.roster ?? []).some((r) => r.kind === "asset" && r.id === asset.id)) {
+        touchSceneSafely(w, rec.sceneId);
+      }
+    }
     return sendJson(res, 200, { asset });
   }
 
@@ -2591,7 +2666,9 @@ async function handleApi(req, res, url, parts) {
   if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "tray" && parts[5] === "budget") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
-    return sendJson(res, 200, setSceneTrayXpBudget(w, parts[3], body.xpBudget));
+    const result = setSceneTrayXpBudget(w, parts[3], body.xpBudget);
+    touchSceneSafely(w, parts[3]); // Phase 36 task 36.2, §3 -- unconditional, every tray mutation touches its scene
+    return sendJson(res, 200, result);
   }
 
   // POST /api/scene-planning/scenes/:sceneId/tray/drop   {world, kind, id}   -> {roster, xpBudget, element}
@@ -2625,16 +2702,21 @@ async function handleApi(req, res, url, parts) {
             fields: { bestiaryEntryId: id },
             stat: statFromBestiaryRawFields(entry)
           });
-          touchSceneSafely(w, sceneId);
         }
       }
       const result = addToSceneTray(w, sceneId, { id, kind }, {});
+      // Phase 36 task 36.2, §3 -- UNCONDITIONAL on every successful drop of
+      // every kind, including a creature's SECOND+ drop (roster-stacking
+      // only, no new element) -- any tray-roster change is itself a
+      // "this scene's ready-to-run content changed" event.
+      touchSceneSafely(w, sceneId);
       return sendJson(res, 200, { ...result, element });
     }
 
     if (kind === "hero") {
       getPartyMember(w, id); // throws "No party member found" -> 404
       const result = addToSceneTray(w, sceneId, { id, kind }, {});
+      touchSceneSafely(w, sceneId); // Phase 36 task 36.2, §3
       return sendJson(res, 200, { ...result, element: null });
     }
 
@@ -2655,6 +2737,7 @@ async function handleApi(req, res, url, parts) {
         throw new Error(`No asset found: world="${w}" id="${id}"`);
       }
       const result = addToSceneTray(w, sceneId, { id, kind }, {});
+      touchSceneSafely(w, sceneId); // Phase 36 task 36.2, §3
       return sendJson(res, 200, { ...result, element: null });
     }
 
@@ -2665,7 +2748,9 @@ async function handleApi(req, res, url, parts) {
   if (method === "DELETE" && parts.length === 7 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "tray") {
     const body = await readBody(req);
     const w = resolveWorld(body.world ?? q.get("world"));
-    return sendJson(res, 200, removeFromSceneTray(w, parts[3], parts[5], decodeURIComponent(parts[6])));
+    const result = removeFromSceneTray(w, parts[3], parts[5], decodeURIComponent(parts[6]));
+    touchSceneSafely(w, parts[3]); // Phase 36 task 36.2, §3 -- unconditional on a successful removal
+    return sendJson(res, 200, result);
   }
 
   // -----------------------------------------------------------------------

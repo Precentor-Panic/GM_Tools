@@ -129,7 +129,7 @@ const WORLD = "session-planner-scenes-test-world";
 (async () => {
   const {
     createScene, forkScene, getScene, listScenesForWorld, listScenesByRecency,
-    renameScene, updateScene, touchScene, deleteScene, sessionScenesRoot
+    renameScene, updateScene, touchScene, deleteScene, sessionScenesRoot, markScenePushed
   } = await import("../../session-planner/scenes.mjs");
   const { createPlan, getPlan, addSceneToPlan } = await import("../../session-planner/plans.mjs");
 
@@ -412,6 +412,82 @@ const WORLD = "session-planner-scenes-test-world";
     void fresh;
     const byRecency = listScenesByRecency(w);
     assert.deepEqual(byRecency.map((s) => s.id), ["recency-fresh", "recency-legacy"], "the legacy no-updatedAt scene must sort as oldest");
+  });
+
+  // ------------------------------------------------- Phase 36 task 36.2, §1/§5
+
+  test("createScene: stagedForFoundry defaults false, lastPushedAt defaults null", () => {
+    const scene = createScene(WORLD, { objectiveNote: "Ferry landing" }, { makeId: () => "scene-stage-create-1" });
+    assert.equal(scene.stagedForFoundry, false);
+    assert.equal(scene.lastPushedAt, null);
+  });
+
+  test("forkScene: does NOT inherit the parent's stagedForFoundry/lastPushedAt -- a fork always starts unstaged/never-pushed", () => {
+    const parent = createScene(WORLD, {}, { makeId: () => "scene-stage-fork-parent" });
+    updateScene(WORLD, "scene-stage-fork-parent", { stagedForFoundry: true });
+    markScenePushed(WORLD, "scene-stage-fork-parent", { foundrySceneRef: "Scene.parent123", lastPushedAt: "2026-08-01T00:00:00.000Z" });
+
+    const child = forkScene(WORLD, parent.id, {}, { makeId: () => "scene-stage-fork-child" });
+    assert.equal(child.stagedForFoundry, false, "a fork must not silently inherit the parent's live-in-Foundry status");
+    assert.equal(child.lastPushedAt, null);
+    assert.equal(child.foundrySceneRef, null, "sanity: foundrySceneRef also not inherited (Phase 32's own precedent)");
+  });
+
+  test("updateScene: stagedForFoundry joins the patch vocabulary, independent of name/objectiveNote, and still bumps updatedAt (toggling staged-ness IS a touch event)", () => {
+    createScene(WORLD, { objectiveNote: "Original" }, { makeId: () => "scene-stage-update-1", now: "2026-08-05T10:00:00.000Z" });
+    const staged = updateScene(WORLD, "scene-stage-update-1", { stagedForFoundry: true }, { now: "2026-08-05T11:00:00.000Z" });
+    assert.equal(staged.stagedForFoundry, true);
+    assert.equal(staged.objectiveNote, "Original", "objectiveNote untouched by a patch that never mentions it");
+    assert.equal(staged.updatedAt, "2026-08-05T11:00:00.000Z");
+
+    const unstaged = updateScene(WORLD, "scene-stage-update-1", { stagedForFoundry: false }, { now: "2026-08-05T12:00:00.000Z" });
+    assert.equal(unstaged.stagedForFoundry, false);
+    assert.equal(unstaged.updatedAt, "2026-08-05T12:00:00.000Z");
+  });
+
+  test("markScenePushed: writes ONLY foundrySceneRef/lastPushedAt, leaves updatedAt COMPLETELY untouched (the pinned race-avoidance rule, §5)", () => {
+    const scene = createScene(WORLD, { objectiveNote: "Race test" }, { makeId: () => "scene-mark-pushed-1", now: "2026-08-06T09:00:00.000Z" });
+    updateScene(WORLD, "scene-mark-pushed-1", { stagedForFoundry: true }, { now: "2026-08-06T09:05:00.000Z" });
+    assert.equal(getScene(WORLD, "scene-mark-pushed-1").updatedAt, "2026-08-06T09:05:00.000Z");
+
+    const pushed = markScenePushed(WORLD, "scene-mark-pushed-1", { foundrySceneRef: "Scene.abc123", lastPushedAt: "2026-08-06T09:05:00.000Z" });
+    assert.equal(pushed.foundrySceneRef, "Scene.abc123");
+    assert.equal(pushed.lastPushedAt, "2026-08-06T09:05:00.000Z");
+    assert.equal(pushed.updatedAt, "2026-08-06T09:05:00.000Z", "updatedAt must be EXACTLY what it was before -- markScenePushed never re-stamps it (unlike every other mutator in this module)");
+
+    const reread = getScene(WORLD, "scene-mark-pushed-1");
+    assert.equal(reread.foundrySceneRef, "Scene.abc123", "must genuinely persist");
+    assert.equal(reread.lastPushedAt, "2026-08-06T09:05:00.000Z");
+  });
+
+  test("markScenePushed: THE RACE TEST -- a concurrent edit that lands AFTER compose-time but BEFORE the write-back correctly stays dirty (updatedAt > lastPushedAt), never silently dropped", () => {
+    createScene(WORLD, { objectiveNote: "v1" }, { makeId: () => "scene-mark-pushed-race", now: "2026-08-06T10:00:00.000Z" });
+    updateScene(WORLD, "scene-mark-pushed-race", { stagedForFoundry: true }, { now: "2026-08-06T10:01:00.000Z" });
+    // Flush composes ops for the scene AS OF updatedAt=10:01:00 (the "compose-time snapshot").
+    const composeTimeSnapshot = getScene(WORLD, "scene-mark-pushed-race").updatedAt;
+
+    // ...but a genuine edit lands WHILE that push is still in flight (e.g. polling the ops channel).
+    updateScene(WORLD, "scene-mark-pushed-race", { objectiveNote: "v2 -- edited mid-flight" }, { now: "2026-08-06T10:01:30.000Z" });
+
+    // The push's result finally comes back -- write-back stamps the COMPOSE-TIME snapshot, not wall-clock now.
+    const pushed = markScenePushed(WORLD, "scene-mark-pushed-race", { foundrySceneRef: "Scene.race1", lastPushedAt: composeTimeSnapshot });
+    assert.equal(pushed.lastPushedAt, "2026-08-06T10:01:00.000Z");
+    assert.equal(pushed.updatedAt, "2026-08-06T10:01:30.000Z", "the mid-flight edit's updatedAt must survive markScenePushed untouched");
+
+    // dirty(scene) = staged && (lastPushedAt===null || updatedAt > lastPushedAt) -- must be TRUE here, or v2 is silently lost forever.
+    assert.ok(pushed.updatedAt > pushed.lastPushedAt, "updatedAt must be strictly greater than the stale lastPushedAt -- the scene stays dirty, v2 gets picked up next flush");
+  });
+
+  test("markScenePushed: foundrySceneRef is independently optional -- a call with only lastPushedAt leaves an already-set ref untouched", () => {
+    createScene(WORLD, {}, { makeId: () => "scene-mark-pushed-refonly" });
+    markScenePushed(WORLD, "scene-mark-pushed-refonly", { foundrySceneRef: "Scene.first", lastPushedAt: "2026-08-06T00:00:00.000Z" });
+    const second = markScenePushed(WORLD, "scene-mark-pushed-refonly", { lastPushedAt: "2026-08-06T01:00:00.000Z" });
+    assert.equal(second.foundrySceneRef, "Scene.first", "an update-path push (no NEW foundryUuid) must not clobber the existing ref");
+    assert.equal(second.lastPushedAt, "2026-08-06T01:00:00.000Z");
+  });
+
+  test("markScenePushed: throws a clear error for an unknown sceneId, same convention as every other mutator", () => {
+    assert.throws(() => markScenePushed(WORLD, "does-not-exist-mark-pushed", { lastPushedAt: null }), /does-not-exist-mark-pushed/);
   });
 
   test("no Foundry-facing import anywhere in scenes.mjs -- a scene is explicitly NOT a World Fabric graph entity (design record §2.2)", async () => {

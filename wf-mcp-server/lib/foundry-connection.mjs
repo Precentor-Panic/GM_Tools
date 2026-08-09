@@ -48,6 +48,11 @@ import { fileURLToPath } from "node:url";
 import { withLock, ConcurrentWriteError } from "../../mutation-engine/review-state.mjs";
 import { readFoundryIndex } from "./foundry-index.mjs";
 import { pullFoundryActorsToStores } from "./foundry-pull-ops.mjs";
+// Phase 36 task 36.2, §5 -- the quiet-push flush engine's own entry point.
+// sync-now is the SECOND of its two flush triggers, run UNCONDITIONALLY
+// (independent of the pull half's own `state:'off'` early return below) --
+// see syncNow's own updated doc comment.
+import { flushDirtyStagedScenes } from "./foundry-push-ops.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_SYNC_LOG_ROOT = join(__dirname, "..", "..", "foundry-sync-log");
@@ -160,14 +165,29 @@ export function deriveConnectionState(dataDir, world, opts = {}) {
  * yet -- that's an ordinary, expected "never reindexed" state, reported as
  * `{state:'off', message}` (200, not 4xx/5xx).
  *
+ * Phase 36 task 36.2, §5: gained a `pushed` key, additive alongside the
+ * existing `pulled`/`indexAgeMs`/`state` (and alongside `message` on the
+ * `state:'off'` branch). The push half (`flushDirtyStagedScenes`) runs
+ * UNCONDITIONALLY, independent of the pull half's own `state:'off'`-when-
+ * no-index early return above -- a world with staged scenes but no Foundry
+ * index yet must still attempt to flush them (push and pull are independent
+ * concerns; gating push on pull's own precondition would silently block
+ * "ready to run" for a world that's never been pulled FROM). This is why
+ * `syncNow` is now `async` (it wasn't before) -- `flushDirtyStagedScenes`
+ * itself awaits `writeFoundryOps`'s poll.
+ *
  * @param {string} dataDir
  * @param {string} world
  * @param {object} [opts]
  * @param {object} [opts.pullOpts]  forwarded to pullFoundryActorsToStores (makeId/now — test-injectable determinism)
+ * @param {object} [opts.pushOpts]  forwarded to flushDirtyStagedScenes (makeOpId/pollMs/timeoutMs — test-injectable determinism)
  * @param {string} [opts.now]       injectable ISO timestamp for the sync-log entry AND deriveConnectionState's freshness calc
- * @returns {{state:'off', message:string} | {pulled:object, indexAgeMs:number, state:'live'|'stale'}}
+ * @returns {Promise<
+ *   {state:'off', message:string, pushed:object} |
+ *   {pulled:object, indexAgeMs:number, state:'live'|'stale', pushed:object}
+ * >}
  */
-export function syncNow(dataDir, world, opts = {}) {
+export async function syncNow(dataDir, world, opts = {}) {
   let index;
   try {
     index = readFoundryIndex(dataDir, world);
@@ -176,12 +196,15 @@ export function syncNow(dataDir, world, opts = {}) {
     throw err;
   }
 
+  const pushed = await flushDirtyStagedScenes(dataDir, world, opts.pushOpts ?? {});
+
   if (!index || !index.exportedAt) {
     return {
       state: "off",
       message:
         `No Foundry index found for world "${world}" yet -- open this world in Foundry with the World Fabric ` +
-        `module active and run a reindex (api.reindexForGmTools()) first.`
+        `module active and run a reindex (api.reindexForGmTools()) first.`,
+      pushed
     };
   }
 
@@ -205,7 +228,7 @@ export function syncNow(dataDir, world, opts = {}) {
   );
 
   const { state, ageMs } = deriveConnectionState(dataDir, world, opts);
-  return { pulled, indexAgeMs: ageMs, state };
+  return { pulled, indexAgeMs: ageMs, state, pushed };
 }
 
 export { ConcurrentWriteError };

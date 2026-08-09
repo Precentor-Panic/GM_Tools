@@ -202,11 +202,17 @@ function upsertStagecraftMap(world, scene, opts) {
   const acceptedMatch = matches.find((a) => a.status === "accepted");
   if (acceptedMatch) return { record: acceptedMatch, action: "already-linked" };
 
+  // Phase 36 task 36.2, §4 -- capture `background.src` as `foundryRef.imagePath`
+  // whenever usable (hasUsableBackground, below, already computes exactly
+  // this condition -- this just threads the value through, where before it
+  // was discarded after the guard check). Additive-optional key on
+  // foundryRef -- absent when `hasUsableBackground` is false, but that case
+  // never reaches here (the caller loop below skips the scene entirely).
   const mapped = {
     name: typeof scene?.name === "string" && scene.name ? scene.name : "Unnamed Scene",
     source: "foundry",
     meta: sceneMetaString(scene),
-    foundryRef: { sceneUuid: scene.uuid }
+    foundryRef: { sceneUuid: scene.uuid, imagePath: scene.background.src }
   };
 
   const proposedMatch = matches.find((a) => a.status === "proposed");

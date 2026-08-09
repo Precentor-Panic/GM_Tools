@@ -2,17 +2,17 @@
 // (route contract + UI presence). Read phase36-fixture.mjs FIRST (§1-§3,
 // §7).
 //
-// EXPECTED-RED reasons:
-//   - `POST /api/session-planner/scenes/:id/stage` appears nowhere in
-//     server.mjs's route table (grep-confirmed) -> a genuine 404 via the
-//     generic `sendJson(res, 404, {error:"No route: METHOD path"})`
-//     fallback.
-//   - `[data-testid="scene-stage-toggle"]` appears nowhere in
-//     review-ui/public/session-planner-view.js (grep-confirmed) -> a
-//     genuine Playwright zero-count assertion (not a timeout -- this test
-//     does NOT wait for the toggle to appear, since it's asserting absence,
-//     not presence; it waits for the scene page's own already-real root
-//     first, then checks the toggle count on that settled page).
+// ORIGINAL EXPECTED-RED reasons (task 36.0, pre-36.2):
+//   - `POST /api/session-planner/scenes/:id/stage` appeared nowhere in
+//     server.mjs's route table -> a genuine 404.
+//   - `[data-testid="scene-stage-toggle"]`/`[data-testid="scene-stage-
+//     status-line"]` appeared nowhere in session-planner-view.js -> genuine
+//     zero-count Playwright assertions.
+// POST-36.2 UPDATE: the two UI tests below were FLIPPED from absence to
+// presence assertions once the toggle/status-line actually shipped, per
+// this file's own original inline instruction on those tests ("if this is
+// >0, 36.2 has already shipped it and this test should be flipped to a
+// presence assertion").
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import { chromium } from "playwright";
@@ -70,37 +70,89 @@ test("the staged scene also gained lastPushedAt:null as a field (additive, per �
   assert.equal(r.body.scene.lastPushedAt, null, "a freshly-staged, never-pushed scene has lastPushedAt:null");
 });
 
-test("staging an unknown sceneId 404s with a clear error, matching every other scene route's convention", async () => {
+// CONTRACT CORRECTION (flagged, not silently absorbed): the fixture's §2
+// text asserts unknown-sceneId is "the same 'No scene found' 404 every
+// other scene route already produces (statusForError's `/not found/i`
+// rule)". Re-checked directly against review-ui/server.mjs's real
+// statusForError: `/not found/i` matches the literal substring "not
+// found", which "No scene found" does NOT contain ("scene found", not "not
+// found") -- and `/no (batch|region|entity|world|snapshot) found/i` doesn't
+// list "scene" either. scenes.mjs's "No scene found" error has THUS ALWAYS
+// fallen through to the default 400, everywhere in this codebase --
+// confirmed by the ALREADY-PASSING, already-shipped
+// review-ui/test/foundry-push-routes.test.mjs's own "unknown sceneId -> 400
+// (matches the existing getScene error convention, same as every other
+// session-planner route)" test. The fixture's 404 claim is the bug, not
+// this route -- asserting 400 here (matching the REAL, established,
+// everywhere-else convention) rather than either "fixing" statusForError
+// (which would break that other, already-green regression test) or forking
+// a special case just for the /stage route.
+test("staging an unknown sceneId 400s with a clear error -- matches the REAL, established 'No scene found' convention every other scene route already uses (see this test's own comment: the fixture's stated '404' was checked against a statusForError rule that doesn't actually match this message)", async () => {
   const r = await stageSceneViaRoute(base, WORLD, "scene_does_not_exist", true);
-  assert.equal(r.status, 404);
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /No scene found/);
 });
 
 // ---------------------------------------------------------------------------
 // UI-level: the scene page's stage toggle (Playwright)
 // ---------------------------------------------------------------------------
 
-test("scene page has NO stage-it toggle today -- selector absent (36.2 adds it)", async () => {
+// ---------------------------------------------------------------------------
+// UI presence, post-36.2 -- flipped from the original absence assertions per
+// this suite's own inline instruction ("if this is >0, 36.2 has already
+// shipped it and this test should be flipped to a presence assertion").
+// ---------------------------------------------------------------------------
+
+test("scene page has the stage-it toggle, reflecting stagedForFoundry via data-staged, and toggling it round-trips through the /stage route", async () => {
+  // A FRESH scene, deliberately NOT the shared `scene` above (the route-level
+  // tests already staged that one) -- this test needs to observe the
+  // toggle's own starting-unstaged state.
+  const fresh = await createSceneViaRoute(base, WORLD, { objectiveNote: "Fresh, never-staged scene." });
   const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
   await primeWorldSelection(page, base, WORLD);
-  await page.goto(`${base}/#planner/scene/${scene.id}`);
-  const root = page.locator(`[data-testid="planner-scene-view"][data-scene-id="${scene.id}"]`);
+  await page.goto(`${base}/#planner/scene/${fresh.id}`);
+  const root = page.locator(`[data-testid="planner-scene-view"][data-scene-id="${fresh.id}"]`);
   await root.waitFor({ state: "visible", timeout: 15000 });
 
-  const toggleCount = await page.locator('[data-testid="scene-stage-toggle"]').count();
-  assert.equal(toggleCount, 0, "the §7-pinned scene-stage-toggle testid must not exist yet -- if this is >0, 36.2 has already shipped it and this test should be flipped to a presence assertion");
+  const toggle = page.locator('[data-testid="scene-stage-toggle"]');
+  await toggle.waitFor({ state: "visible", timeout: 15000 });
+  assert.equal(await toggle.count(), 1, "exactly one stage-it toggle on the scene page");
+  assert.equal(await toggle.getAttribute("data-staged"), "false", "this scene was never staged -- starts false");
+  assert.ok(!(await toggle.evaluate((el) => el.checked)), "the checkbox itself must also start unchecked");
+
+  await toggle.click();
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="scene-stage-toggle"]')?.getAttribute("data-staged") === "true",
+    { timeout: 15000 }
+  );
+
+  const getRes = await fetch(`${base}/api/session-planner/scenes/${encodeURIComponent(fresh.id)}?world=${encodeURIComponent(WORLD)}`);
+  const { scene: reread } = await getRes.json();
+  assert.equal(reread.stagedForFoundry, true, "the toggle click must have actually persisted through POST .../stage");
 
   await page.close();
 });
 
-test("scene page has NO 'in Foundry' status line today -- selector absent (36.2 adds it, only when staged)", async () => {
+test("scene page's 'in Foundry' status line is absent while unstaged, appears once staged, and never mentions push/sync (the quiet-line, not an action)", async () => {
   const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
   await primeWorldSelection(page, base, WORLD);
-  await page.goto(`${base}/#planner/scene/${scene.id}`);
-  const root = page.locator(`[data-testid="planner-scene-view"][data-scene-id="${scene.id}"]`);
+  const unstaged = await createSceneViaRoute(base, WORLD, { objectiveNote: "Never staged." });
+  await page.goto(`${base}/#planner/scene/${unstaged.id}`);
+  const root = page.locator(`[data-testid="planner-scene-view"][data-scene-id="${unstaged.id}"]`);
   await root.waitFor({ state: "visible", timeout: 15000 });
+  assert.equal(await page.locator('[data-testid="scene-stage-status-line"]').count(), 0, "no status line for a never-staged scene");
 
-  const lineCount = await page.locator('[data-testid="scene-stage-status-line"]').count();
-  assert.equal(lineCount, 0);
+  await stageSceneViaRoute(base, WORLD, unstaged.id, true);
+  // page.goto() to the SAME URL (identical hash) is a documented no-op in
+  // this project's own e2e convention (phase35-library-tabs.e2e.mjs etc.) --
+  // page.reload() is the real "re-fetch server state while already here" op.
+  await page.reload();
+  await root.waitFor({ state: "visible", timeout: 15000 });
+  const line = page.locator('[data-testid="scene-stage-status-line"]');
+  await line.waitFor({ state: "visible", timeout: 15000 });
+  const text = (await line.textContent()) ?? "";
+  assert.match(text, /in Foundry/i);
+  assert.doesNotMatch(text.toLowerCase(), /push|sync now/, "the status line must never contain a push/sync-now verb -- it's a quiet line, not an action");
 
   await page.close();
 });

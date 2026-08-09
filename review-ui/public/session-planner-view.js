@@ -107,6 +107,24 @@ function spWithWorld(params) {
   return qs ? `?${qs}` : "";
 }
 
+/**
+ * Phase 36 task 36.2, §7 -- the quiet "in Foundry · updated Xm ago" line's
+ * relative-time formatting. Coarse on purpose (minutes/hours/days), no
+ * seconds granularity -- this is a subtle status line, not a live clock.
+ */
+function formatRelativeAgo(iso) {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return null;
+  const diffMs = Date.now() - then;
+  const minutes = Math.max(0, Math.round(diffMs / 60000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
 // ---------------------------------------------------------------------------
 // Task 17.3: inline-expand note autosave. A single small helper module
 // (debounced-save.mjs) provides the pure timer logic; this file owns the
@@ -3053,6 +3071,62 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     }
   });
   header.appendChild(objectiveField.el);
+
+  // Phase 36 task 36.2, §7 -- the "stage it" toggle + subtle "in Foundry ·
+  // updated Xm ago" status line. Locked decision: NO push button -- staged
+  // scenes mirror to Foundry quietly, live on change (server-side debounced
+  // flush) plus Sync now as catch-up. This is the ONE small affordance;
+  // nothing modal, nothing loud.
+  const stageRow = document.createElement("div");
+  stageRow.className = "scene-stage-row";
+  const stageToggleLabel = document.createElement("label");
+  stageToggleLabel.className = "scene-stage-toggle-label";
+  const stageToggle = document.createElement("input");
+  stageToggle.type = "checkbox";
+  stageToggle.className = "scene-stage-toggle";
+  stageToggle.setAttribute("data-testid", "scene-stage-toggle");
+  stageToggle.setAttribute("data-scene-id", scene.id);
+  stageToggle.setAttribute("data-staged", scene.stagedForFoundry ? "true" : "false");
+  stageToggle.checked = !!scene.stagedForFoundry;
+  stageToggleLabel.append(stageToggle, document.createTextNode(" Stage for Foundry"));
+  const stageStatusLine = document.createElement("div");
+  stageStatusLine.className = "scene-stage-status-line";
+  stageStatusLine.setAttribute("data-testid", "scene-stage-status-line");
+  stageStatusLine.setAttribute("data-scene-id", scene.id);
+  const renderStageStatus = () => {
+    stageStatusLine.remove();
+    if (!scene.stagedForFoundry) return;
+    // Copy deliberately avoids the words "push"/"sync now" (phase36-fixture.mjs
+    // §7's own contract text illustrates "not yet pushed" as example copy,
+    // but its own e2e assertion literally forbids that substring -- a real
+    // contradiction in the written contract, flagged in this task's report;
+    // "not yet live" satisfies both the quiet-line intent and the actual test).
+    const ago = scene.lastPushedAt ? formatRelativeAgo(scene.lastPushedAt) : null;
+    stageStatusLine.textContent = ago ? `in Foundry · updated ${ago}` : "in Foundry · not yet live";
+    stageRow.appendChild(stageStatusLine);
+  };
+  stageToggle.addEventListener("change", async () => {
+    const staged = stageToggle.checked;
+    stageToggle.disabled = true;
+    try {
+      const { scene: updated } = await spApi(`/api/session-planner/scenes/${encodeURIComponent(scene.id)}/stage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), staged })
+      });
+      scene.stagedForFoundry = updated.stagedForFoundry;
+      scene.lastPushedAt = updated.lastPushedAt;
+    } catch {
+      stageToggle.checked = !staged; // revert on a failed write
+    } finally {
+      stageToggle.disabled = false;
+      stageToggle.setAttribute("data-staged", scene.stagedForFoundry ? "true" : "false");
+      renderStageStatus();
+    }
+  });
+  stageRow.appendChild(stageToggleLabel);
+  renderStageStatus();
+  header.appendChild(stageRow);
 
   // §C.4/§C.5 -- "The place" description grid OR the missing-description
   // banner. Editing writes back to the graph NODE, not the scene.

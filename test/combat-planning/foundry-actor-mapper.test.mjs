@@ -125,6 +125,86 @@ test("mapActorToBestiary: legendaryActions/lairEffects are omitted (undefined) w
   assert.equal(raw.lairEffects, undefined);
 });
 
+// ------------------------------------------------------------------------
+// Phase 36 task 36.2 addendum (orchestrator-flagged scope addition, folded
+// in mid-task): dnd5e v4's ActivitiesField shape,
+// `item.system.activities.<activityId>.activation.type`, distinct from the
+// legacy `item.system.activation.type` the 32.0 fixtures above exercise --
+// modeled directly here (not via a regenerated fixture file) on the real
+// shape the 36.1 module wave confirmed post-export-fix.
+// ------------------------------------------------------------------------
+
+function activitiesShapedFeat(name, activationType) {
+  return {
+    name,
+    type: "feat",
+    system: {
+      activities: {
+        dnd5eactivity000: { type: "attack", activation: { type: activationType, cost: 1 } }
+      }
+    }
+  };
+}
+
+test("mapActorToBestiary: legendaryActions derives correctly from dnd5e v4's activities-shaped activation (NOT the legacy system.activation.type path)", () => {
+  const actor = {
+    name: "Activities-Shaped Dracolich",
+    type: "npc",
+    system: { hp: { value: 200 }, ac: 19, cr: 15 },
+    items: [
+      activitiesShapedFeat("Detect", "legendary"),
+      activitiesShapedFeat("Tail Attack", "legendary"),
+      activitiesShapedFeat("Wing Attack", "legendary")
+    ]
+  };
+  const raw = mapActorToBestiary(actor);
+  assert.ok(raw.legendaryActions, "must derive legendaryActions from the activities shape, not just the legacy shape");
+  assert.equal(raw.legendaryActions.count, 3);
+  assert.equal(raw.legendaryActions.costPerAction, 1);
+});
+
+test("mapActorToBestiary: lairEffects derives correctly from the activities-shaped activation too", () => {
+  const actor = {
+    name: "Activities-Shaped Lair Boss",
+    type: "npc",
+    system: { hp: { value: 150 }, ac: 17, cr: 10 },
+    items: [activitiesShapedFeat("Tremor", "lair")]
+  };
+  const raw = mapActorToBestiary(actor);
+  assert.equal(raw.lairEffects, true);
+});
+
+test("mapActorToBestiary: the legacy system.activation.type path STILL works unchanged (back-compat, spells) -- legacy checked first when BOTH shapes are somehow present on the same item", () => {
+  const legacyOnly = {
+    name: "Legacy-Shaped Boss",
+    type: "npc",
+    system: { hp: { value: 100 }, ac: 16, cr: 8 },
+    items: [{ name: "Roar", type: "feat", system: { activation: { type: "legendary", cost: 2 } } }]
+  };
+  const raw = mapActorToBestiary(legacyOnly);
+  assert.ok(raw.legendaryActions);
+  assert.equal(raw.legendaryActions.count, 1);
+  assert.equal(raw.legendaryActions.costPerAction, 2);
+
+  const bothShapes = {
+    name: "Both-Shapes Boss",
+    type: "npc",
+    system: { hp: { value: 100 }, ac: 16, cr: 8 },
+    items: [{
+      name: "Roar",
+      type: "feat",
+      system: {
+        activation: { type: "legendary", cost: 9 }, // legacy -- must win
+        activities: { a1: { activation: { type: "lair", cost: 1 } } } // present but must be ignored
+      }
+    }]
+  };
+  const rawBoth = mapActorToBestiary(bothShapes);
+  assert.equal(rawBoth.legendaryActions.count, 1, "legacy shape wins when both are present -- activities shape ignored");
+  assert.equal(rawBoth.legendaryActions.costPerAction, 9);
+  assert.equal(rawBoth.lairEffects, undefined, "the item's EFFECTIVE type is legendary (legacy wins) -- must not also count as lair");
+});
+
 test("mapActorToBestiary: NEVER THROWS on the minimal fixture's sparse actor -- null system.ac stays null (not coerced to 0), no items -> empty attacks[]", () => {
   const raw = mapActorToBestiary(sparseSpirit);
   assert.equal(raw.name, "Wandering Spirit");

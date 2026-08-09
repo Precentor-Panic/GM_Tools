@@ -52,6 +52,18 @@ function el(tag, attrs = {}, text) {
   return node;
 }
 
+/** Phase 36 task 36.2 -- same coarse relative-time formatting as session-planner-view.js's formatRelativeAgo (a standalone module, per this file's own header, so a small deliberate duplication rather than a cross-import). */
+function formatRelativeAgo(iso) {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return null;
+  const minutes = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
 // ---------------------------------------------------------------------------
 // module state
 // ---------------------------------------------------------------------------
@@ -293,6 +305,25 @@ function renderFoundrySection() {
       panelState.syncMessage || "reads the current Foundry index — new actors arrive as proposals");
     syncRow.append(syncBtn, syncNote);
     card.appendChild(syncRow);
+
+    // Phase 36 task 36.2, §7 -- the quiet "N staged · last push Xm ago" row.
+    // Matches the panel's existing row idiom (a plain muted text row, no new
+    // visual language) -- present only when at least one scene in this world
+    // is currently staged; fetched async (GET /api/session-planner/scenes),
+    // same "fetch then populate" pattern as renderWorldSwitchList above.
+    const stagedRow = el("div", { class: "conn-staged-summary", "data-testid": "conn-panel-staged-summary" });
+    stagedRow.style.display = "none";
+    card.appendChild(stagedRow);
+    cmApi(`/api/session-planner/scenes?world=${encodeURIComponent(currentWorld() || "")}`)
+      .then(({ scenes }) => {
+        const staged = (scenes || []).filter((s) => s.stagedForFoundry);
+        if (staged.length === 0) { stagedRow.remove(); return; }
+        const lastPush = staged.map((s) => s.lastPushedAt).filter(Boolean).sort().pop();
+        const ago = lastPush ? formatRelativeAgo(lastPush) : null;
+        stagedRow.textContent = `${staged.length} staged · ${ago ? `last push ${ago}` : "not yet pushed"}`;
+        stagedRow.style.display = "";
+      })
+      .catch(() => stagedRow.remove());
 
     sec.appendChild(card);
   } else {

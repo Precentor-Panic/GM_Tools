@@ -24,6 +24,16 @@
  * that (it's a caller-side convention, same as every other status-gate
  * convention in this project); it's simply never exercised by the pull path
  * this phase.
+ *
+ * ADDITIVE CHANGE (Phase 36 task 36.2, §4): `localFilePath: string|null`
+ * (default `null`) joins the StagecraftAsset shape — a hand-added
+ * `source:'local'` asset's real filesystem path, OUTSIDE Foundry's data dir.
+ * NOT populated by the pull path (a Foundry-sourced map already carries
+ * `foundryRef.imagePath`, which needs no copy) and NOT yet writable through
+ * any route this phase (no UI/route writes it yet, per phase36-fixture.mjs's
+ * own header note) — it exists purely so the flush composer's src-resolution
+ * order (wf-mcp-server/lib/foundry-push-ops.mjs) has a field to read once
+ * something eventually populates it.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -72,7 +82,7 @@ export function makeStagecraftAssetId() {
  */
 export function saveStagecraftAsset(
   world,
-  { kind, name, source = "local", meta = null, desc = null, tags = [], foundryRef = null, status = "accepted" },
+  { kind, name, source = "local", meta = null, desc = null, tags = [], foundryRef = null, status = "accepted", localFilePath = null },
   opts = {}
 ) {
   const makeId = opts.makeId ?? makeStagecraftAssetId;
@@ -88,6 +98,7 @@ export function saveStagecraftAsset(
     tags: Array.isArray(tags) ? tags : [],
     foundryRef,
     status,
+    localFilePath,
     createdAt: now
   };
   const assets = readAssets(world);

@@ -142,25 +142,67 @@ function deriveRechargeAbilities(items) {
 }
 
 /**
- * Feat items whose dnd5e `system.activation.type` is "legendary" →
- * RawLegendaryActions ({count, costPerAction?}). None of the 32.0 fixtures
- * exercise this (no legendary-actioned monster in the sample set) — this is
- * exercised only by the general fail-soft/no-throw guarantee, documented
- * here as a real gap only a live pull (or a future fixture) can exercise
- * end-to-end.
+ * dnd5e activation lookup, BOTH shapes -- Phase 36 task 36.2 addendum
+ * (orchestrator-flagged scope addition, evidence from the 36.1
+ * foundry_worldFabric module wave): dnd5e v3 stores an item's activation
+ * directly at `item.system.activation` (legacy shape -- SPELLS still carry
+ * this shape in practice). dnd5e v4+ moved action-economy data under an
+ * `ActivitiesField`, `item.system.activities.<activityId>.activation` (an
+ * object KEYED by an opaque per-activity id, e.g. `"dnd5eactivity000"`) --
+ * monster feats/weapons carry this new shape. Before 36.1's module fix, the
+ * activities field's non-source `toObject()` collapsed to `{}` on export
+ * (silently losing this data entirely); the module now source-serializes it,
+ * so the new shape is real, live data as of this wave, not a bug to route
+ * around.
+ *
+ * Checks the legacy path FIRST (back-compat + spells), then falls through to
+ * the first activity entry (in whatever key order Object.values yields --
+ * dnd5e doesn't document an ordering guarantee here, and a feat with
+ * multiple differently-typed activities is not a case this project's
+ * derivation needs to disambiguate) that carries an `activation.type`.
+ * @returns {{type?:string, cost?:number}}   {} if neither shape has one.
+ */
+function activationOf(item) {
+  const legacy = item?.system?.activation;
+  if (legacy && typeof legacy.type === "string" && legacy.type) {
+    return { type: legacy.type, cost: typeof legacy.cost === "number" ? legacy.cost : undefined };
+  }
+  const activities = item?.system?.activities;
+  if (activities && typeof activities === "object") {
+    for (const activity of Object.values(activities)) {
+      const type = activity?.activation?.type;
+      if (typeof type === "string" && type) {
+        const cost = activity.activation.cost;
+        return { type, cost: typeof cost === "number" ? cost : undefined };
+      }
+    }
+  }
+  return {};
+}
+
+/**
+ * Feat items whose dnd5e activation type (legacy OR activities-shaped, see
+ * `activationOf` above) is "legendary" → RawLegendaryActions ({count,
+ * costPerAction?}). None of the 32.0 fixtures exercise this (no
+ * legendary-actioned monster in the sample set) — this is exercised only by
+ * the general fail-soft/no-throw guarantee against those fixtures; a real
+ * legendary-actioned monster is covered by this file's own activities-shaped
+ * unit-test fixture (Phase 36 task 36.2) and by the orchestrator's live
+ * wf-test-5e re-pull at 36.3.
  */
 function deriveLegendaryActions(items) {
   if (!Array.isArray(items)) return undefined;
-  const legendaryItems = items.filter((it) => it?.system?.activation?.type === "legendary");
+  const legendaryItems = items.filter((it) => activationOf(it).type === "legendary");
   if (legendaryItems.length === 0) return undefined;
-  const cost = legendaryItems.find((it) => typeof it?.system?.activation?.cost === "number")?.system?.activation?.cost;
+  const withCost = legendaryItems.find((it) => typeof activationOf(it).cost === "number");
+  const cost = withCost ? activationOf(withCost).cost : undefined;
   return { count: legendaryItems.length, costPerAction: typeof cost === "number" ? cost : undefined };
 }
 
-/** Any feat item with dnd5e's `system.activation.type === "lair"` → lairEffects:true. */
+/** Any feat item whose activation type (legacy OR activities-shaped) is "lair" → lairEffects:true. */
 function deriveLairEffects(items) {
   if (!Array.isArray(items)) return undefined;
-  return items.some((it) => it?.system?.activation?.type === "lair") ? true : undefined;
+  return items.some((it) => activationOf(it).type === "lair") ? true : undefined;
 }
 
 /**
