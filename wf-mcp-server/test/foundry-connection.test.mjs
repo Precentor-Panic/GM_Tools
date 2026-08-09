@@ -143,7 +143,7 @@ await test("syncNow: no index yet -- returns {state:'off', message}, 200-shaped 
   // Phase 36 task 36.2, §5 -- the push half runs UNCONDITIONALLY, even on
   // the state:'off' (no index) branch. No scene was ever staged for this
   // world, so nothing to flush -- {flushed:0, results:[], skipped:[]}.
-  assert.deepEqual(result.pushed, { flushed: 0, results: [], skipped: [] });
+  assert.deepEqual(result.pushed, { flushed: 0, results: [], skipped: [], reconciled: 0 });
 });
 
 await test("syncNow: real fixture -- pulls actors, appends a sync-log entry, reports state/indexAgeMs", async () => {
@@ -157,7 +157,7 @@ await test("syncNow: real fixture -- pulls actors, appends a sync-log entry, rep
   // Phase 35 task 35.1, §6: alreadyLinked gains a THIRD key, `items` (foundry-pull-ops.mjs's own additive response-shape change) -- passed through here unmodified by syncNow's own `pulled` composition.
   assert.deepEqual(result.pulled.alreadyLinked, { bestiary: [], party: [], items: [] });
   // Phase 36 task 36.2, §5 -- pushed key present, no staged scenes this world.
-  assert.deepEqual(result.pushed, { flushed: 0, results: [], skipped: [] });
+  assert.deepEqual(result.pushed, { flushed: 0, results: [], skipped: [], reconciled: 0 });
 
   const log = readSyncLog(world);
   assert.equal(log.length, 1);

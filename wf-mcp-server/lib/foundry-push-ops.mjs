@@ -35,14 +35,14 @@
  * separate `POST /api/foundry/push-scene` manual route; the flush engine
  * below is a second, independent producer onto the SAME ops-channel writer.
  */
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { getScene, updateScene, listScenesByRecency, markScenePushed } from "../../session-planner/scenes.mjs";
+import { getScene, updateScene, listScenesByRecency, markScenePushed, setScenePendingPush } from "../../session-planner/scenes.mjs";
 import { getSceneTray } from "../../session-planner/scene-tray.mjs";
 import { getStagecraftAsset } from "../../session-planner/stagecraft-store.mjs";
 import { getBestiaryEntry } from "../../combat-planning/bestiary-store.mjs";
 import { getPartyMember } from "../../combat-planning/party-roster-store.mjs";
-import { loadSnapshot } from "./snapshot.mjs";
+import { loadSnapshot, foundryResultsPath } from "./snapshot.mjs";
 import { writeFoundryOps, makeOpId, FoundryOpsInFlightError } from "./foundry-ops.mjs";
 
 /**
@@ -315,26 +315,20 @@ export function composeSceneOps(dataDir, world, scene, opts = {}) {
         center: { x: (data.width ?? DEFAULT_CANVAS.width) / 2, y: (data.height ?? DEFAULT_CANVAS.height) / 2 },
         gridSize: data.grid?.size ?? DEFAULT_GRID_SIZE
       });
-      tokenOps = actors.map((actor, i) => ({
-        opId: nextOpId(),
-        kind: "create_token",
-        data: {
-          // The scene doesn't have a real Foundry sceneUuid yet on its
-          // FIRST-EVER push (that's exactly the CREATE-path condition
-          // gating this whole block) -- §5 itself flags this: token ops
-          // "tie to the SAME batch as their scene op via ordering/grouping,
-          // not a resolved sceneUuid." The contract text describes the
-          // limitation but does not pin a literal placeholder value; this
-          // composer's own resolution (FLAGGED as an explicit assumption,
-          // not silently guessed) is the paired create_scene op's own
-          // `opId` -- a same-batch correlation token a Foundry-side watcher
-          // can resolve via adjacency ("the scene I just created earlier in
-          // THIS apply pass"), not a `fromUuid()`-resolvable uuid.
-          sceneUuid: sceneOpId,
-          actorUuid: actor.actorUuid,
-          x: positions[i].x,
-          y: positions[i].y
-        }
+      // Orchestrator reconcile (36.3 live-smoke finding): the original
+      // composition emitted separate create_token ops correlated to the
+      // create_scene op by its opId -- but the MODULE's create_token creator
+      // resolves sceneUuid via fromUuid() and rejected the correlation token
+      // ('create_token: unresolvable sceneUuid "op_..."'). The contract's
+      // create_scene.data ALREADY grew an inline `tokens[]` for exactly this
+      // create-path case (36.1 implemented it: batch-placed via
+      // createEmbeddedDocuments after Scene.create) -- so create-path tokens
+      // ride INSIDE the scene op, and standalone create_token stays reserved
+      // for a future update-path that has a real sceneUuid to give it.
+      data.tokens = actors.map((actor, i) => ({
+        actorUuid: actor.actorUuid,
+        x: positions[i].x,
+        y: positions[i].y
       }));
     }
     if (splashAsset && data.foreground) {
@@ -347,6 +341,70 @@ export function composeSceneOps(dataDir, world, scene, opts = {}) {
   }
 
   return { sceneOp, tokenOps, journalOp, skipped, snapshotUpdatedAt: scene.updatedAt };
+}
+
+/**
+ * Orchestrator reconcile (36.3 live-smoke finding) -- consumes LATE results
+ * for scenes a previous flush cycle left in the pending-push ledger
+ * (scenes.mjs `pendingPush`, recorded when ops were written but the poll
+ * window closed before Foundry's watcher applied them). For each pending
+ * scene whose opId appears in world-fabric-foundry-results.json:
+ *   ok:true  -> markScenePushed (foundryUuid + the COMPOSE-TIME
+ *               snapshotUpdatedAt from the ledger -- same race rule as a
+ *               same-cycle write-back) and clear the ledger entry.
+ *   ok:false -> clear the ledger entry only (no Foundry doc was created;
+ *               the scene is dirty again and safely re-composable).
+ * Consumed entries are REMOVED from the results file (rewritten in place;
+ * "[]" when empty) -- GM_Tools is the results consumer per the bridge
+ * contract §3, but ONLY for opIds it recognizes: entries belonging to some
+ * other in-flight poll (e.g. a manual push-scene call) are left untouched.
+ * A pending scene whose opId has NOT appeared yet stays pending (and stays
+ * excluded from recomposition) -- a lost-forever op (client died mid-apply)
+ * self-heals when Foundry's watcher eventually clears the ops channel and
+ * a results entry lands, or can be manually unstuck by re-staging.
+ *
+ * @param {string} dataDir
+ * @param {string} world
+ * @returns {number}   how many pending scenes were reconciled this call
+ */
+export function reconcilePendingResults(dataDir, world) {
+  const pendingScenes = listScenesByRecency(world).filter((s) => s.pendingPush?.opId);
+  if (pendingScenes.length === 0) return 0;
+
+  const resultsPath = foundryResultsPath(dataDir, world);
+  if (!existsSync(resultsPath)) return 0;
+  let allResults;
+  try {
+    const raw = readFileSync(resultsPath, "utf8").trim();
+    const parsed = raw ? JSON.parse(raw) : [];
+    allResults = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return 0; // unreadable mid-write -- try again next cycle
+  }
+  if (allResults.length === 0) return 0;
+
+  const consumedOpIds = new Set();
+  let reconciled = 0;
+  for (const scene of pendingScenes) {
+    const { opId, snapshotUpdatedAt } = scene.pendingPush;
+    const result = allResults.find((r) => r.opId === opId);
+    if (!result) continue;
+    if (result.ok) {
+      markScenePushed(world, scene.id, {
+        foundrySceneRef: result.foundryUuid ?? scene.foundrySceneRef ?? null,
+        lastPushedAt: snapshotUpdatedAt
+      });
+    }
+    setScenePendingPush(world, scene.id, null);
+    consumedOpIds.add(opId);
+    reconciled++;
+  }
+
+  if (consumedOpIds.size > 0) {
+    const remaining = allResults.filter((r) => !consumedOpIds.has(r.opId));
+    writeFileSync(resultsPath, remaining.length ? JSON.stringify(remaining, null, 2) : "[]", "utf8");
+  }
+  return reconciled;
 }
 
 /**
@@ -384,9 +442,17 @@ export function composeSceneOps(dataDir, world, scene, opts = {}) {
  * @returns {Promise<{flushed:number, results:object[], skipped:object[], queued?:true, note?:string}>}
  */
 export async function flushDirtyStagedScenes(dataDir, world, opts = {}) {
-  const dirtyScenes = listScenesByRecency(world).filter(isSceneDirty);
+  // Orchestrator reconcile (36.3 live-smoke finding): FIRST consume any
+  // late-arriving results for scenes a previous cycle left pending (see
+  // reconcilePendingResults' doc comment), and EXCLUDE still-pending scenes
+  // from recomposition -- without this, the quiet flush's short poll window
+  // (routinely shorter than Foundry's 5s watcher tick) left applied results
+  // unconsumed and the "stays dirty, retried next trigger" rule re-created
+  // the same scene in Foundry on every retry.
+  const reconciled = reconcilePendingResults(dataDir, world);
+  const dirtyScenes = listScenesByRecency(world).filter((s) => isSceneDirty(s) && !s.pendingPush);
   if (dirtyScenes.length === 0) {
-    return { flushed: 0, results: [], skipped: [] };
+    return { flushed: 0, results: [], skipped: [], reconciled };
   }
 
   const ops = [];
@@ -418,14 +484,22 @@ export async function flushDirtyStagedScenes(dataDir, world, opts = {}) {
         foundrySceneRef: result.foundryUuid ?? scene.foundrySceneRef ?? null,
         lastPushedAt: snapshotUpdatedAt
       });
+    } else if (outcome.status === "queued") {
+      // Ops WERE written but no result landed inside the poll window (the
+      // common case for the quiet auto-flush -- its budget is shorter than
+      // Foundry's watcher tick). Record the pending ledger entry so the
+      // NEXT cycle reconciles the late result instead of composing a
+      // duplicate create (36.3 live-smoke fix). A genuine ok:false result
+      // (Foundry-side failure) records nothing -- stays dirty, retried.
+      setScenePendingPush(world, scene.id, { opId: sceneOpId, snapshotUpdatedAt });
     }
-    // ok:false, or no result at all (queued/timeout) -- scene stays dirty, retried next trigger (§5).
   }
 
   return {
     flushed: perScene.length,
     results,
     skipped,
+    reconciled,
     ...(outcome.status === "queued" ? { queued: true, note: outcome.note } : {})
   };
 }

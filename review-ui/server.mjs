@@ -459,7 +459,7 @@ function touchSceneSafely(w, sceneId) {
  * into the in-flight one.
  */
 const flushScheduled = new Set();
-function scheduleFlush(world) {
+function scheduleFlush(world, delayMs = 0) {
   if (flushScheduled.has(world)) return;
   flushScheduled.add(world);
   setTimeout(() => {
@@ -471,10 +471,20 @@ function scheduleFlush(world) {
       console.error(`[foundry-flush] world "${world}": could not resolve the Foundry data dir -- ${err.message}`);
       return;
     }
-    flushDirtyStagedScenes(dir, world).catch((err) => {
+    flushDirtyStagedScenes(dir, world).then((outcome) => {
+      // Orchestrator reconcile (36.3 live-smoke finding): a queued outcome
+      // means ops were written (pending ledger recorded) or the channel was
+      // busy -- the loop closes only when a LATER cycle reconciles the late
+      // results (Foundry's watcher ticks every 5s, well past the quiet
+      // flush's own poll window). ONE delayed follow-up (~8s) consumes them
+      // without waiting for the next user mutation or Sync now. delayMs > 0
+      // marks a follow-up, so a still-queued follow-up (Foundry genuinely
+      // closed) ends the chain instead of looping forever.
+      if (outcome?.queued && delayMs === 0) scheduleFlush(world, 8000);
+    }).catch((err) => {
       console.error(`[foundry-flush] background flush for world "${world}" failed:`, err.message);
     });
-  }, 0);
+  }, delayMs);
 }
 
 /** Schedules a flush iff the just-written scene is currently staged (an unstaged scene's own dirty predicate is false anyway -- see foundry-push-ops.mjs's isSceneDirty). Best-effort: `scene` may be null/undefined from a caller that doesn't have one handy. */

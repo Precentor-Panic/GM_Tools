@@ -406,6 +406,37 @@
 // is introduced this phase (every additive field lives on an ALREADY-
 // gitignored store directory).
 // ---------------------------------------------------------------------------
+// ===========================================================================
+// ADDENDUM — 36.3 live-smoke reconcile (orchestrator, 2026-08-09). The first
+// LIVE run of this contract against a real Foundry client surfaced two
+// defects in the contract itself; both amended here, in the shape tests, and
+// in plans/phase-32-bridge-contract.md, with the implementation updated in
+// the same commit:
+//   1. CREATE-PATH TOKENS ARE INLINE. §5's original "create_token ops tie to
+//      the same batch via ordering/grouping, not a resolved sceneUuid" was
+//      unimplementable: the module's create_token creator resolves sceneUuid
+//      via fromUuid() and rejected the opId correlation token live
+//      ('unresolvable sceneUuid "op_..."'). create_scene.data.tokens[] (which
+//      the module ALREADY batch-places post-create) is the create-path
+//      carrier; standalone create_token is reserved for a future update path
+//      holding a real sceneUuid.
+//   2. THE PENDING-PUSH LEDGER. The quiet flush's short poll window
+//      (~1.5s default) routinely closes before Foundry's 5s watcher applies
+//      the batch, so §5's "no result -> stays dirty, retried next trigger"
+//      rule DUPLICATED the scene on retry (the create applied late; its
+//      result sat unconsumed; foundrySceneRef stayed null; the retry
+//      composed a second create_scene). Amended flow: a queued-after-write
+//      cycle records `scene.pendingPush = {opId, snapshotUpdatedAt}` (narrow
+//      writer setScenePendingPush, no updatedAt restamp); every flush cycle
+//      FIRST reconciles pending scenes against the results file
+//      (reconcilePendingResults: ok:true -> markScenePushed with the
+//      LEDGER's snapshotUpdatedAt + clear; ok:false -> clear only; consumed
+//      entries removed from the results file, unknown entries left for their
+//      own poller) and EXCLUDES still-pending scenes from recomposition;
+//      the server chains ONE delayed (~8s) follow-up flush after a queued
+//      outcome so the loop closes without user action (a still-queued
+//      follow-up ends the chain -- no infinite loop when Foundry is closed).
+// ===========================================================================
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import {

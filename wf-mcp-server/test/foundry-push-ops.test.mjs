@@ -237,10 +237,20 @@ await test("composeSceneOps: CREATE path -- map asset resolved via foundryRef.im
 
   const { sceneOp, tokenOps, journalOp, skipped } = composeSceneOps(dataDir, WORLD, getScene(WORLD, scene.id));
   assert.equal(sceneOp.kind, "create_scene");
-  assert.deepEqual(sceneOp.data, { name: "Ambush prep", background: { src: "scenes/ferry.webp" } });
-  assert.equal(tokenOps.length, 3, "2 stacked Ogrekin + 1 Kestrel");
-  assert.deepEqual(tokenOps.map((o) => o.data.actorUuid), ["Actor.ogrekin", "Actor.ogrekin", "Actor.kestrel"], "creatures before heroes");
-  assert.ok(tokenOps.every((o) => o.data.sceneUuid === sceneOp.opId), "create-path token ops correlate to their scene op via opId (no real sceneUuid exists yet)");
+  // 36.3 live-smoke fix: create-path tokens are INLINE in create_scene.data
+  // (the opId-correlation scheme for standalone create_token ops failed
+  // against the real module -- see phase36-fixture.mjs's ADDENDUM).
+  const expectedPositions = clusterTokenPositions(3, { center: { x: DEFAULT_CANVAS.width / 2, y: DEFAULT_CANVAS.height / 2 } });
+  assert.deepEqual(sceneOp.data, {
+    name: "Ambush prep",
+    background: { src: "scenes/ferry.webp" },
+    tokens: [
+      { actorUuid: "Actor.ogrekin", ...expectedPositions[0] },
+      { actorUuid: "Actor.ogrekin", ...expectedPositions[1] },
+      { actorUuid: "Actor.kestrel", ...expectedPositions[2] }
+    ]
+  });
+  assert.deepEqual(tokenOps, [], "no standalone create_token ops on the create path (36.3 fix)");
   assert.equal(journalOp, null, "no splash asset in this roster");
   assert.deepEqual(skipped, []);
 });
@@ -320,7 +330,7 @@ await test("flushDirtyStagedScenes: no dirty staged scenes -- {flushed:0, result
   const WORLD = "flush-nothing-dirty-world";
   createScene(WORLD, { objectiveNote: "Never staged" });
   const result = await flushDirtyStagedScenes(dataDir, WORLD, { pollMs: 5, timeoutMs: 20 });
-  assert.deepEqual(result, { flushed: 0, results: [], skipped: [] });
+  assert.deepEqual(result, { flushed: 0, results: [], skipped: [], reconciled: 0 });
 });
 
 await test("flushDirtyStagedScenes: applied ok:true -> markScenePushed lands (foundrySceneRef + lastPushedAt), scene no longer dirty on the NEXT flush", async () => {
@@ -340,7 +350,7 @@ await test("flushDirtyStagedScenes: applied ok:true -> markScenePushed lands (fo
 
   // A second flush call finds NOTHING dirty (the scene hasn't been touched since).
   const second = await flushDirtyStagedScenes(dataDir, WORLD, { pollMs: 5, timeoutMs: 20 });
-  assert.deepEqual(second, { flushed: 0, results: [], skipped: [] });
+  assert.deepEqual(second, { flushed: 0, results: [], skipped: [], reconciled: 0 });
 });
 
 await test("flushDirtyStagedScenes: applied ok:false -> scene stays dirty (untouched), retried next cycle", async () => {
@@ -390,6 +400,100 @@ await test("flushDirtyStagedScenes: one flush cycle batches EVERY dirty staged s
   const ops = JSON.parse(readFileSync(foundryOpsPath(dataDir, WORLD), "utf8"));
   const names = ops.filter((o) => o.kind === "create_scene").map((o) => o.data.name);
   assert.deepEqual(names, ["Newer", "Older"], "listScenesByRecency order -- most-recently-touched first");
+});
+
+// --- pending-push ledger + reconcile (36.3 live-smoke fix) ----------------
+
+await test("flushDirtyStagedScenes: queued-after-write records the pendingPush ledger entry (opId + compose-time snapshot), and the NEXT cycle EXCLUDES the pending scene (no duplicate create)", async () => {
+  const WORLD = "flush-pending-record-world";
+  const scene = createScene(WORLD, { objectiveNote: "Slow watcher" });
+  updateScene(WORLD, scene.id, { stagedForFoundry: true });
+  const opId = "op_pending_record";
+
+  // No fake watcher -- the poll window closes with the ops written but unapplied.
+  const result = await flushDirtyStagedScenes(dataDir, WORLD, { pollMs: 5, timeoutMs: 20, makeOpId: () => opId });
+  assert.equal(result.flushed, 1);
+  assert.equal(result.queued, true);
+  const reread = getScene(WORLD, scene.id);
+  assert.deepEqual(reread.pendingPush, { opId, snapshotUpdatedAt: reread.updatedAt }, "queued-after-write must record the ledger entry with the compose-time updatedAt snapshot");
+  assert.equal(reread.lastPushedAt, null, "not marked pushed yet -- the result hasn't arrived");
+
+  // Next cycle: ops file still stuck (409 path), but the CRITICAL assertion
+  // is the pending scene is excluded -- flushed stays 0 even though the
+  // scene's dirty predicate alone would match.
+  const second = await flushDirtyStagedScenes(dataDir, WORLD, { pollMs: 5, timeoutMs: 20 });
+  assert.equal(second.flushed, 0, "a pending scene must never be recomposed -- that is exactly the duplicate-create bug the live smoke caught");
+});
+
+await test("reconcile: a LATE ok:true result is consumed on the next flush -- markScenePushed (foundryUuid + LEDGER snapshot), ledger cleared, consumed entry removed from the results file", async () => {
+  const WORLD = "flush-reconcile-ok-world";
+  const scene = createScene(WORLD, { objectiveNote: "Late apply" });
+  updateScene(WORLD, scene.id, { stagedForFoundry: true });
+  const opId = "op_reconcile_ok";
+
+  const first = await flushDirtyStagedScenes(dataDir, WORLD, { pollMs: 5, timeoutMs: 20, makeOpId: () => opId });
+  assert.equal(first.queued, true);
+  const snapshot = getScene(WORLD, scene.id).pendingPush.snapshotUpdatedAt;
+
+  // The watcher applies LATE: results land, ops clear -- after the poll window.
+  seedFile(foundryResultsPath(dataDir, WORLD), [
+    { opId, ok: true, foundryUuid: "Scene.lateApplied1" },
+    { opId: "op_someone_elses", ok: true, foundryUuid: "Scene.other" }
+  ]);
+  writeFileSync(foundryOpsPath(dataDir, WORLD), "[]", "utf8");
+
+  const second = await flushDirtyStagedScenes(dataDir, WORLD, { pollMs: 5, timeoutMs: 20 });
+  assert.equal(second.reconciled, 1, "the late result must be reconciled");
+  const reread = getScene(WORLD, scene.id);
+  assert.equal(reread.foundrySceneRef, "Scene.lateApplied1");
+  assert.equal(reread.lastPushedAt, snapshot, "lastPushedAt must be the LEDGER's compose-time snapshot, not reconcile-time now");
+  assert.equal(reread.pendingPush, null, "ledger entry cleared");
+  const remaining = JSON.parse(readFileSync(foundryResultsPath(dataDir, WORLD), "utf8"));
+  assert.deepEqual(remaining, [{ opId: "op_someone_elses", ok: true, foundryUuid: "Scene.other" }], "only the CONSUMED entry is removed -- unknown entries stay for their own poller");
+  // And with nothing else dirty, nothing is recomposed.
+  assert.equal(second.flushed, 0);
+});
+
+await test("reconcile: a LATE ok:false result clears the ledger WITHOUT marking pushed -- the scene is dirty again and safely re-composable", async () => {
+  const WORLD = "flush-reconcile-fail-world";
+  const scene = createScene(WORLD, { objectiveNote: "Late failure" });
+  updateScene(WORLD, scene.id, { stagedForFoundry: true });
+  const opId = "op_reconcile_fail";
+
+  const first = await flushDirtyStagedScenes(dataDir, WORLD, { pollMs: 5, timeoutMs: 20, makeOpId: () => opId });
+  assert.equal(first.queued, true);
+
+  seedFile(foundryResultsPath(dataDir, WORLD), [{ opId, ok: false, error: "Scene.create threw late" }]);
+  writeFileSync(foundryOpsPath(dataDir, WORLD), "[]", "utf8");
+
+  const second = await flushDirtyStagedScenes(dataDir, WORLD, { pollMs: 5, timeoutMs: 20, makeOpId: () => "op_reconcile_fail_retry" });
+  assert.equal(second.reconciled, 1);
+  const reread = getScene(WORLD, scene.id);
+  assert.equal(reread.foundrySceneRef, null, "a failed create must never set foundrySceneRef");
+  assert.equal(reread.lastPushedAt, null);
+  // The SAME cycle recomposes it (dirty again, no longer pending): a fresh
+  // create was written -- and since this test arms no watcher, THAT write is
+  // itself queued-after-write, correctly recording a NEW ledger entry for
+  // the retry op (the old failed entry is gone).
+  assert.equal(second.flushed, 1, "after clearing a failed pending entry the scene is immediately re-composable");
+  assert.equal(reread.pendingPush?.opId, "op_reconcile_fail_retry", "the retry write records its own fresh ledger entry");
+});
+
+await test("composeSceneOps: create-path roster tokens are INLINE in create_scene.data.tokens (no standalone create_token ops) -- the live-smoke correlation fix", async () => {
+  const WORLD = "compose-inline-tokens-world";
+  const scene = createScene(WORLD, { objectiveNote: "Inline tokens" });
+  const entry = acceptBestiaryEntry(saveBestiaryEntry({ rawFields: { name: "Inline Ogrekin" }, foundryActorRef: "Actor.inlineOgrekin" }).id);
+  addToSceneTray(WORLD, scene.id, { id: entry.id, kind: "creature" });
+  addToSceneTray(WORLD, scene.id, { id: entry.id, kind: "creature" }); // stack to n:2
+
+  const { sceneOp, tokenOps } = composeSceneOps(dataDir, WORLD, getScene(WORLD, scene.id));
+  assert.equal(sceneOp.kind, "create_scene");
+  const expected = clusterTokenPositions(2, { center: { x: DEFAULT_CANVAS.width / 2, y: DEFAULT_CANVAS.height / 2 } });
+  assert.deepEqual(sceneOp.data.tokens, [
+    { actorUuid: "Actor.inlineOgrekin", ...expected[0] },
+    { actorUuid: "Actor.inlineOgrekin", ...expected[1] }
+  ]);
+  assert.deepEqual(tokenOps, [], "standalone create_token ops must not be composed on the create path");
 });
 
 console.log(`\n${passed} passed`);

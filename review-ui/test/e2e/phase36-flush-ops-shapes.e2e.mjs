@@ -102,29 +102,34 @@ test("POST /api/foundry/sync-now response gains a pushed:{flushed,results,skippe
 // Scene A (map + tokens, CREATE path) -- exact v2 op shapes
 // ---------------------------------------------------------------------------
 
-test("flush composes a create_scene op for the map scene with background.src = the accepted map asset's foundryRef.imagePath", async () => {
+// Orchestrator reconcile (36.3 live-smoke finding): create-path tokens ride
+// INSIDE create_scene.data.tokens (the module batch-places them post-create),
+// NOT as standalone create_token ops -- the original opId-correlation scheme
+// failed live ('create_token: unresolvable sceneUuid "op_..."'; the module's
+// creator resolves sceneUuid via fromUuid()). create_token stays reserved
+// for a future update-path with a real sceneUuid.
+test("flush composes a create_scene op for the map scene with background.src = the map asset's imagePath AND the 3 roster tokens INLINE (2 stacked Ogrekin + 1 Kestrel, clustered at scene center)", async () => {
   await syncNowViaRoute(base, WORLD);
   const ops = readFoundryOpsFileSync(dataDir, WORLD);
   const sceneOp = ops.find((o) => o.kind === "create_scene" && o.data?.name === sceneMap.objectiveNote);
   assert.ok(sceneOp, `expected a create_scene op for the map scene -- ops on disk: ${JSON.stringify(ops)}`);
-  assert.deepEqual(sceneOp.data, expectedCreateSceneOpData({ name: sceneMap.objectiveNote, backgroundSrc: "scenes/ferry-landing.webp" }));
+  const expectedPositions = clusterTokenPositions(3, { center: { x: DEFAULT_CANVAS.width / 2, y: DEFAULT_CANVAS.height / 2 } });
+  assert.deepEqual(sceneOp.data, expectedCreateSceneOpData({
+    name: sceneMap.objectiveNote,
+    backgroundSrc: "scenes/ferry-landing.webp",
+    tokens: [
+      { actorUuid: "Actor.ogrekinSkirmisher", ...expectedPositions[0] },
+      { actorUuid: "Actor.ogrekinSkirmisher", ...expectedPositions[1] },
+      { actorUuid: "Actor.kestrelWindrider", ...expectedPositions[2] }
+    ]
+  }));
 });
 
-test("flush composes 3 create_token ops for the map scene (2 stacked Ogrekin + 1 Kestrel), clustered at scene center", async () => {
+test("flush composes NO standalone create_token ops on the create path (tokens are inline in create_scene.data -- the live-smoke fix)", async () => {
   await syncNowViaRoute(base, WORLD);
   const ops = readFoundryOpsFileSync(dataDir, WORLD);
   const tokenOps = ops.filter((o) => o.kind === "create_token");
-  // Scope to this scene's own token batch by actorUuid membership (sceneUuid isn't known client-side pre-push
-  // for the CREATE path -- the composer's own contract, §5, ties tokens to the SAME batch as their scene op via
-  // ordering/grouping, not a resolved sceneUuid, since the scene doesn't have one yet on its first-ever push).
-  const ogrekinTokens = tokenOps.filter((o) => o.data.actorUuid === "Actor.ogrekinSkirmisher");
-  const kestrelTokens = tokenOps.filter((o) => o.data.actorUuid === "Actor.kestrelWindrider");
-  assert.equal(ogrekinTokens.length, 2, `expected 2 stacked Ogrekin tokens -- got ${JSON.stringify(tokenOps)}`);
-  assert.equal(kestrelTokens.length, 1, `expected 1 Kestrel token -- got ${JSON.stringify(tokenOps)}`);
-
-  const expectedPositions = clusterTokenPositions(3, { center: { x: DEFAULT_CANVAS.width / 2, y: DEFAULT_CANVAS.height / 2 } });
-  const actualPositions = [...ogrekinTokens, ...kestrelTokens].map((o) => ({ x: o.data.x, y: o.data.y }));
-  assert.deepEqual(actualPositions, expectedPositions, "roster order (creature(s) first, then heroes) must match clusterTokenPositions' own deterministic ordering");
+  assert.equal(tokenOps.length, 0, `standalone create_token must not appear in a create-path batch -- got ${JSON.stringify(tokenOps)}`);
 });
 
 // ---------------------------------------------------------------------------

@@ -307,6 +307,38 @@ export function markScenePushed(world, sceneId, { foundrySceneRef, lastPushedAt 
 }
 
 /**
+ * Phase 36 task 36.3 (orchestrator reconcile, live-smoke finding) -- the
+ * pending-push ledger's narrow writer. The quiet flush's poll window
+ * (deliberately short, ~1.5s) routinely closes BEFORE Foundry's 5s doc-ops
+ * watcher applies the batch, so the live smoke proved the original "stays
+ * dirty, retried next trigger" rule wrong for the CREATE path: the results
+ * arrive late and unconsumed, the scene still has no `foundrySceneRef`, and
+ * the retry composes a SECOND create_scene -- a duplicate Foundry scene.
+ * Fix: when a flush cycle writes ops but times out waiting, it records
+ * `{opId, snapshotUpdatedAt}` here; every later flush cycle FIRST reconciles
+ * pending scenes against the results file (consuming late results into
+ * `markScenePushed`) and EXCLUDES pending scenes from recomposition. Same
+ * no-`updatedAt`-restamp discipline as `markScenePushed` (same race
+ * reasoning). `pendingPush` is additive-optional -- pre-existing scene
+ * records read as undefined == null == no pending push.
+ *
+ * @param {string} world
+ * @param {string} sceneId
+ * @param {{opId:string, snapshotUpdatedAt:string}|null} pending
+ * @returns {object}   the updated Scene
+ */
+export function setScenePendingPush(world, sceneId, pending) {
+  const scenes = readScenes(world);
+  const scene = scenes.find((s) => s.id === sceneId);
+  if (!scene) {
+    throw new Error(`No scene found: world="${world}" sceneId="${sceneId}"`);
+  }
+  scene.pendingPush = pending ?? null;
+  writeScenes(world, scenes);
+  return scene;
+}
+
+/**
  * Phase 30 task 30.1: bumps ONLY `updatedAt`, for callers that change a
  * scene's CONTENT (an element, its narration) rather than the Scene record's
  * own fields -- the "most recently touched" signal the World scene-tray
