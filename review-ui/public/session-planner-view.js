@@ -2465,6 +2465,202 @@ function buildFromGraphPicker(scene, refreshElements, close) {
   return picker;
 }
 
+// Kind labels for the "From library" picker (task #45) -- mirrors the
+// Library tabs' own naming (library-view.js's TABS), one small deviation:
+// Reliquary/Stagecraft are shown as their own filter kinds ("Item"/
+// "Stagecraft") since the GM still thinks in those two buckets while
+// browsing, even though both collapse to the SAME tray-drop kind ("asset")
+// once attached -- §7's own "reader tries item-store first, falls back to
+// stagecraft-store" roster convention, unchanged here.
+const FROM_LIBRARY_KIND_LABELS = { creature: "Creature", hero: "Hero", item: "Item", stagecraft: "Stagecraft" };
+const FROM_LIBRARY_DROP_KIND = { creature: "creature", hero: "hero", item: "asset", stagecraft: "asset" };
+
+/**
+ * Task #45 -- "From library" attach. Russell's words: "I'm missing 'from
+ * library'. The library, while not indexed, is still a source for the
+ * scenes." Lists accepted+proposed Bestiary/Hero's Hall/Reliquary/Stagecraft
+ * content (the SAME four routes library-view.js's fetchLibraryData already
+ * reads), filterable by kind, free-text search over name. Modeled DIRECTLY
+ * on buildFromGraphPicker above (same bar/search/results/footer shell,
+ * same option row shape) plus one addition this picker's own multi-source
+ * nature calls for -- a small kind-filter chip row (flagged in this task's
+ * own completion report as an invented detail beyond the from-graph
+ * pattern, kept quiet/minimal for Russell's judgment).
+ *
+ * Picking an option reuses the EXISTING tray-drop composition route
+ * (POST .../tray/drop) VERBATIM -- one semantic, no new persistence path:
+ * a creature drop's first occurrence creates a KEY-like element with a
+ * stat block (the route's own dedup, unchanged), a hero/asset drop is a
+ * roster entry only. The scene page reflects the result the same way a
+ * real tray drop does: `refreshElements()` re-renders the elements list
+ * (visible for a creature's first attach; a harmless no-op re-render
+ * otherwise), and a toast confirms the attach with an undo that calls the
+ * SAME `DELETE .../tray/:kind/:id` route the tray's own roster-chip ✕
+ * uses (removes the roster row; never touches a creature's already-created
+ * element, matching the tray's own remove-chip behavior exactly).
+ */
+function buildFromLibraryPicker(scene, refreshElements, close) {
+  const picker = document.createElement("div");
+  picker.className = "from-library-picker from-graph-picker";
+  picker.setAttribute("data-testid", "from-library-picker");
+  picker.setAttribute("data-scene-id", scene.id);
+
+  const bar = document.createElement("div");
+  bar.className = "from-graph-picker-bar";
+  const kicker = document.createElement("span");
+  kicker.className = "from-graph-picker-kicker";
+  kicker.textContent = "Pull in something from the Library";
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "icon-btn from-graph-picker-close-btn";
+  closeBtn.textContent = "✕";
+  closeBtn.title = "Close";
+  closeBtn.addEventListener("click", () => close());
+  bar.append(kicker, closeBtn);
+  picker.appendChild(bar);
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "from-graph-search-input";
+  input.setAttribute("data-testid", "from-library-search-input");
+  input.placeholder = "Search the Library by name…";
+  picker.appendChild(input);
+
+  const kindFilter = document.createElement("div");
+  kindFilter.className = "from-library-kind-filter";
+  let activeKind = "all";
+  const kindChips = {};
+  for (const k of ["all", "creature", "hero", "item", "stagecraft"]) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "link-btn from-library-kind-chip";
+    chip.setAttribute("data-testid", "from-library-kind-chip");
+    chip.setAttribute("data-kind", k);
+    chip.setAttribute("data-active", "false");
+    chip.textContent = k === "all" ? "All" : FROM_LIBRARY_KIND_LABELS[k];
+    chip.addEventListener("click", () => {
+      activeKind = k;
+      for (const [ck, cchip] of Object.entries(kindChips)) cchip.setAttribute("data-active", String(ck === k));
+      renderResults();
+    });
+    kindChips[k] = chip;
+    kindFilter.appendChild(chip);
+  }
+  kindChips.all.setAttribute("data-active", "true");
+  picker.appendChild(kindFilter);
+
+  const results = document.createElement("div");
+  results.className = "from-graph-results";
+  results.setAttribute("data-testid", "from-library-results");
+  picker.appendChild(results);
+
+  const footer = document.createElement("div");
+  footer.className = "from-graph-picker-footer hint";
+  footer.textContent = "Attaching reuses this scene's tray: a creature gets a KEY element with a stat block, a hero or item/asset lands as a roster entry only. Attaching the same thing twice never duplicates it.";
+  picker.appendChild(footer);
+
+  let candidates = [];
+
+  function renderResults() {
+    const q = input.value.trim().toLowerCase();
+    const matches = candidates
+      .filter((c) => activeKind === "all" || c.kind === activeKind)
+      .filter((c) => !q || c.name.toLowerCase().includes(q))
+      .slice(0, 40);
+    results.innerHTML = "";
+    if (!matches.length) {
+      const empty = document.createElement("div");
+      empty.className = "from-graph-no-results hint";
+      empty.textContent = "Nothing in the Library matches. Try a different search or kind.";
+      results.appendChild(empty);
+      return;
+    }
+    for (const c of matches) {
+      const opt = document.createElement("button");
+      opt.type = "button";
+      opt.className = "from-graph-option";
+      opt.setAttribute("data-testid", "from-library-option");
+      opt.setAttribute("data-kind", c.kind);
+      opt.setAttribute("data-source-id", c.id);
+
+      const name = document.createElement("span");
+      name.className = "from-graph-option-name";
+      name.textContent = c.name;
+      const type = document.createElement("span");
+      type.className = "from-graph-option-type";
+      type.textContent = FROM_LIBRARY_KIND_LABELS[c.kind];
+      const hint = document.createElement("span");
+      hint.className = "from-graph-option-hint";
+      hint.textContent = c.hint || "";
+      opt.append(name, type, hint);
+
+      opt.addEventListener("click", async () => {
+        opt.disabled = true;
+        const dropKind = FROM_LIBRARY_DROP_KIND[c.kind];
+        try {
+          await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/tray/drop`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ world: currentWorld(), kind: dropKind, id: c.id })
+          });
+        } catch {
+          opt.disabled = false;
+          return;
+        }
+        close();
+        await refreshElements();
+        showUndoToast(`"${c.name}" added to this scene.`, async () => {
+          await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/tray/${encodeURIComponent(dropKind)}/${encodeURIComponent(c.id)}`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ world: currentWorld() })
+          }).catch(() => {});
+          await refreshElements();
+        }, { testid: "from-library-toast" });
+      });
+      results.appendChild(opt);
+    }
+  }
+
+  async function load() {
+    results.innerHTML = "";
+    const loading = document.createElement("div");
+    loading.className = "hint";
+    loading.textContent = "Loading the Library…";
+    results.appendChild(loading);
+    try {
+      const [bestiaryRes, partyRes, itemsRes, stagecraftRes] = await Promise.all([
+        spApi(`/api/combat-planning/bestiary`),
+        spApi(`/api/combat-planning/party-roster${spWithWorld()}`),
+        spApi(`/api/combat-planning/items${spWithWorld()}`),
+        spApi(`/api/session-planner/stagecraft${spWithWorld()}`)
+      ]);
+      const notDiscarded = (r) => r.status !== "discarded";
+      candidates = [
+        ...(bestiaryRes.entries || []).filter(notDiscarded).map((e) => ({
+          kind: "creature", id: e.id, name: e.rawFields?.name || "Unnamed",
+          hint: e.rawFields?.challengeRating != null ? `CR ${e.rawFields.challengeRating}` : ""
+        })),
+        ...(partyRes.members || []).filter(notDiscarded).map((m) => ({ kind: "hero", id: m.id, name: m.name, hint: "" })),
+        ...(itemsRes.items || []).filter(notDiscarded).map((i) => ({ kind: "item", id: i.id, name: i.name, hint: i.type || "" })),
+        ...(stagecraftRes.assets || []).filter(notDiscarded).map((a) => ({ kind: "stagecraft", id: a.id, name: a.name, hint: a.kind || "" }))
+      ];
+      renderResults();
+    } catch (err) {
+      results.innerHTML = "";
+      const errEl = document.createElement("div");
+      errEl.className = "hint";
+      errEl.textContent = `Could not load the Library: ${err.message}`;
+      results.appendChild(errEl);
+    }
+  }
+
+  input.addEventListener("input", renderResults);
+  load();
+  setTimeout(() => input.focus(), 0);
+  return picker;
+}
+
 /**
  * §6 -- Suggest dressing. Matches `(place.name + " " + place.description)`
  * against the reproduced DRESSING map, appends up to 3 MUNDANE (kind:'local')
@@ -2576,8 +2772,9 @@ async function addNpcCreature(scene, refreshElements, btn) {
 /**
  * The action row below the elements list -- `▣ NPC or creature` (creates a
  * scene-local element with an open stat block), `◇ From graph` (with its
- * inline picker) and `✦ Suggest dressing`. `+ Add element` already lives as
- * the ghost row inside the list.
+ * inline picker), `✦ Suggest dressing`, and `▤ From library` (task #45, with
+ * its own inline picker -- see buildFromLibraryPicker above). `+ Add
+ * element` already lives as the ghost row inside the list.
  */
 function buildSceneActionsRow(scene, refreshElements, place) {
   const wrap = document.createElement("div");
@@ -2626,8 +2823,29 @@ function buildSceneActionsRow(scene, refreshElements, place) {
   dressBtn.append(dsGlyph, " Suggest dressing");
   dressBtn.addEventListener("click", () => suggestDressing(scene, place, refreshElements, dressBtn));
 
-  row.append(npcBtn, fromGraphBtn, dressBtn);
-  wrap.append(row, pickerHost);
+  // Task #45 -- own picker host, deliberately SEPARATE from `pickerHost`
+  // above (the from-graph picker's), so this button's toggle can't collide
+  // with from-graph's existing toggle logic -- zero risk to the
+  // already-established from-graph-btn behavior.
+  const libraryPickerHost = document.createElement("div");
+  libraryPickerHost.className = "scene-actions-picker-host";
+
+  const libraryBtn = document.createElement("button");
+  libraryBtn.type = "button";
+  libraryBtn.className = "btn scene-action-dashed-btn from-library-btn";
+  libraryBtn.setAttribute("data-testid", "from-library-btn");
+  libraryBtn.setAttribute("data-scene-id", scene.id);
+  const libGlyph = document.createElement("span");
+  libGlyph.className = "scene-action-glyph scene-action-glyph--teal";
+  libGlyph.textContent = "▤";
+  libraryBtn.append(libGlyph, " From library");
+  libraryBtn.addEventListener("click", () => {
+    if (libraryPickerHost.firstChild) { libraryPickerHost.innerHTML = ""; return; }
+    libraryPickerHost.appendChild(buildFromLibraryPicker(scene, refreshElements, () => { libraryPickerHost.innerHTML = ""; }));
+  });
+
+  row.append(npcBtn, fromGraphBtn, dressBtn, libraryBtn);
+  wrap.append(row, pickerHost, libraryPickerHost);
   return wrap;
 }
 
