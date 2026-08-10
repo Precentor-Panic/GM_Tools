@@ -63,6 +63,7 @@
  * value here, e.g. switching worlds from the UI's own dropdown).
  */
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
 import { join, extname, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,12 +72,12 @@ import { listWorlds } from "../wf-mcp-server/lib/data-dir.mjs";
 import { loadSnapshot, snapshotFilePath } from "../wf-mcp-server/lib/snapshot.mjs";
 import { resolveWorld, resolveDir } from "../wf-mcp-server/lib/resolve.mjs";
 import { findEntity, neighborhood } from "../wf-mcp-server/lib/graph.mjs";
-import { bootstrapSnapshot } from "../graph-import/headless-apply.mjs";
+import { bootstrapSnapshot, applyHeadless } from "../graph-import/headless-apply.mjs";
 
 import { loadBatch, listBatches } from "../mutation-engine/review-state.mjs";
 import { summarizeBatch, renderHeadline } from "../mutation-engine/grain.mjs";
 import { findUnreviewedEntities, markHumanReviewed, DEFAULT_MAX_AGE_DAYS, DEFAULT_MAX_UNREVIEWED_ACCEPTS } from "../mutation-engine/human-review.mjs";
-import { listPendingEntities, readAvailablePending } from "../mutation-engine/pending-ledger.mjs";
+import { listPendingEntities, readAvailablePending, writePending } from "../mutation-engine/pending-ledger.mjs";
 import { resolvePending } from "../time-skip/resolve-pending.mjs";
 import { getUserSettings, setRubberDuckMode } from "../mutation-engine/user-settings.mjs";
 
@@ -711,6 +712,33 @@ function pendingEntitiesPayload(w, dir) {
  * created via Chronicle's own composer, a real valid state, never a thrown
  * error or a guessed value. ZERO new persisted history of its own.
  */
+/**
+ * OFFLINE DETERMINISTIC texture client (see POST /api/chronicle/run). An
+ * Anthropic-SDK-shaped stub used ONLY when no ANTHROPIC_API_KEY is set, so a
+ * key-less dev/demo environment (and the Chronicle e2e) still produces a real,
+ * reviewable proposal instead of crashing on client construction. It reads the
+ * region's own entity id straight out of the textureRegion prompt (which
+ * embeds `[id=…]` per renderRegionContext) and returns a single honest,
+ * clearly-labelled placeholder field-edit for that entity -- never pretending
+ * to be model-authored prose. With a key present it is never constructed.
+ */
+function offlineTextureClient(fortuneLabel) {
+  return {
+    messages: {
+      create: async ({ messages } = {}) => {
+        const prompt = messages?.[0]?.content ?? "";
+        const m = /\[id=([^\]]+)\]/.exec(String(prompt));
+        const id = m ? m[1] : null;
+        const desc = `Time passed under a ${fortuneLabel} fortune. (Offline pass — no model configured; edit or reject before applying.)`;
+        const mutation = id
+          ? { op: "upsert_entity", id, data: { description: desc }, rationale: "Deferred thread carried into this passage (offline deterministic pass — set ANTHROPIC_API_KEY for real texturing)." }
+          : { op: "upsert_entity", data: { name: "An unnamed consequence", type: "concept", description: desc }, rationale: "Offline deterministic pass — set ANTHROPIC_API_KEY for real texturing." };
+        return { content: [{ type: "text", text: JSON.stringify([mutation]) }], stop_reason: "end_turn" };
+      }
+    }
+  };
+}
+
 function chronicleLogPayload(w) {
   const batches = listBatches(w);
   const flaggedEntityIds = flaggedEntityIdSet(w);
@@ -1427,10 +1455,31 @@ async function handleApi(req, res, url, parts) {
         }
       }
       scopeSpec = { mode: "seed", seeds, elapsedSessions: clock.elapsedSessions };
-      // scope.mjs's own seed-mode resolution throws on an EMPTY seeds[] --
-      // bypass it entirely for the valid "nothing queued/carried" case
-      // rather than letting that throw surface as a spurious 400.
-      if (seeds.length === 0) precomputedDeltas = [];
+      // The deferred thread ITSELF is the primary thing a queued-intents pass
+      // must answer -- so each carried entity gets its OWN delta. candidateDeltas'
+      // seed-propagation deliberately skips the epicenter (correct for "an event
+      // ripples outward from here", wrong for "resolve this queued question ABOUT
+      // this entity"), which left an isolated intent producing zero mutations.
+      // We therefore precompute the deltas directly: one seed-propagated delta
+      // per carried entity, clamped to at least the headline-importance floor so
+      // it always earns a real, reviewable proposal. (Folding each intent's own
+      // neighbourhood ripples in on top is a straightforward future addition.)
+      // scope.mjs's own seed-mode resolution throws on an EMPTY seeds[] -- the
+      // empty precomputed array below is the valid "nothing queued/carried" no-op.
+      const byId = new Map();
+      for (const s of seeds) {
+        const ent = findEntity(entities, s.entityId);
+        if (!byId.has(s.entityId)) {
+          byId.set(s.entityId, {
+            kind: "seed-propagated",
+            entityId: s.entityId,
+            impactScore: Math.max(s.magnitude, 0.5),
+            importance: Math.max(0, Math.min(1, ent?.importance ?? 0.3)),
+            needsLLM: true
+          });
+        }
+      }
+      precomputedDeltas = [...byId.values()];
     } else if (scopeKind === "branches") {
       const branchIds = Array.isArray(body.branchIds) ? body.branchIds : [];
       if (!branchIds.length) {
@@ -1449,7 +1498,16 @@ async function handleApi(req, res, url, parts) {
       ...(precomputedDeltas !== undefined ? { precomputedDeltas } : {}),
       fortuneBias: fortune.bias,
       fortuneLabel: fortune.stopId,
-      nudgeTags: Array.isArray(body.tags) ? body.tags : []
+      nudgeTags: Array.isArray(body.tags) ? body.tags : [],
+      // OFFLINE DETERMINISTIC MODE: with no ANTHROPIC_API_KEY configured, the
+      // texture pass would otherwise throw the moment it tried to construct an
+      // Anthropic client. Rather than making the Chronicle unusable (and its
+      // e2e untestable) without a key, inject a deterministic client that
+      // emits ONE honest, clearly-labelled placeholder edit per region -- a
+      // real, reviewable proposal the GM can accept or reject. With a key
+      // present this branch never fires and the real orchestrator (37.1's
+      // path) runs byte-for-byte unchanged.
+      ...(process.env.ANTHROPIC_API_KEY ? {} : { textureOpts: { client: offlineTextureClient(fortune.stopId) } })
     });
 
     recordChronicleRun(w, result.batchId, { span: body.span, fortuneAtRun: fortune.stopId, elapsedSessions: clock.elapsedSessions });
@@ -1461,6 +1519,60 @@ async function handleApi(req, res, url, parts) {
       clock: { currentDate: clock.currentDate, sessionNumber: clock.sessionNumber, elapsedSessions: clock.elapsedSessions },
       fortuneAtRun: fortune.stopId,
       scopeKind
+    });
+  }
+
+  // POST /api/chronicle/intents  { world, name, note?, tags? }
+  //   -> { entityId, name, type, entries: [...] }  (one pendingEntitiesPayload row)
+  //
+  // The "add a manual intent by hand" flow (phase37-fixture.mjs §5, the piece
+  // 37.1 deferred): resolve a free-typed NAME into an entityId (dedup against
+  // the live graph by case-insensitive exact name match, else create ONE
+  // minimal `concept`-typed entity via the existing headless-apply path,
+  // mirroring writeup-import's dedup-or-create convention), then writePending
+  // with the pinned `sourceBatchId:"manual"` sentinel + `cycleDescriptor:
+  // "Manual"` so the deferred lane renders it exactly like a wrap-up intent.
+  // No new store: pending-ledger.mjs's EXISTING writePending does the work.
+  if (method === "POST" && parts.length === 3 && parts[1] === "chronicle" && parts[2] === "intents") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const dir = resolveDir();
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) throw new Error("POST /api/chronicle/intents: `name` is required (the intent's subject).");
+
+    const snapPath = snapshotFilePath(dir, w);
+    const { entities } = loadSnapshot(dir, w).snapshot;
+    // Dedup: case-insensitive exact name match (v1 -- a deliberately simple
+    // matcher, flagged; a fuzzier match like scan-mentions' nameSimilarity is
+    // a future refinement, not needed to hang a hand-typed intent on a graph
+    // anchor). No match -> create one minimal concept entity headlessly.
+    const lower = name.toLowerCase();
+    let match = entities.find((e) => typeof e.name === "string" && e.name.toLowerCase() === lower);
+    let entityId;
+    let entityType;
+    if (match) {
+      entityId = match.id;
+      entityType = match.type ?? "concept";
+    } else {
+      entityId = `intent-${randomUUID()}`;
+      entityType = "concept";
+      applyHeadless(snapPath, [{ op: "upsert_entity", data: { id: entityId, name, type: "concept", importance: 0.4 } }]);
+    }
+
+    writePending(w, entityId, {
+      causeTag: typeof body.note === "string" && body.note.trim() ? body.note.trim() : "Added by hand.",
+      impactScore: 0.4,
+      sourceBatchId: "manual",
+      cycleDescriptor: "Manual",
+      status: "pending",
+      ...(Array.isArray(body.tags) ? { tags: body.tags } : {})
+    });
+
+    return sendJson(res, 200, {
+      entityId,
+      name,
+      type: entityType,
+      entries: readAvailablePending(w, entityId)
     });
   }
 

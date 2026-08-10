@@ -22,6 +22,7 @@ import { renderPlannerScenePage } from "./session-planner-view.js";
 import { renderWorldSurface as renderWorldSurfaceView, clearWorldTopbar } from "./world-view.js";
 import { mountConnectionChip } from "./connection-menu.js";
 import { renderLibrarySurface } from "./library-view.js";
+import { renderChronicleSurface } from "./chronicle-view.js";
 
 // ---------------------------------------------------------------------------
 // local api/world helpers (same standalone convention as plans-view.js)
@@ -1016,12 +1017,12 @@ export function renderShell(view, arg) {
     clearWorldTopbar();
     renderBreadcrumb(null);
     renderRail(null);
-    // Phase 35 task 35.2: the Library is now a real four-tab surface
-    // (library-view.js), which owns #shell-main itself and reads the `arg`
-    // hash segment as its active tab (#library => bestiary). Chronicle stays
-    // the Phase-34 placeholder scaffold until Phase 37.
+    // Phase 35 task 35.2: the Library is a real four-tab surface
+    // (library-view.js). Phase 37 task 37.2: the Chronicle is now the real
+    // page (chronicle-view.js) -- both own #shell-main themselves (a single
+    // root child, per the phase34 "sole occupant" e2e).
     if (view === "library") renderLibrarySurface(arg);
-    else renderScaffoldSurface(view);
+    else renderChronicleSurface(arg);
     return;
   }
 

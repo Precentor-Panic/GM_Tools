@@ -351,3 +351,40 @@ test("POST /api/batches/:id/narrate on a batch with zero mutations is also rejec
   assert.equal(status, 409);
   assert.equal(body.name, "NarrationGateError");
 });
+
+// ---------------------------------------------------------------------------
+// Phase 37 task 37.2: the "add an intent by hand" flow (phase37-fixture.mjs
+// §5, the piece 37.1 deferred). POST /api/chronicle/intents resolves a
+// free-typed name into an entityId (dedup-or-create) then writePending with
+// the pinned sentinels. Deterministic -- no LLM anywhere on this path.
+// ---------------------------------------------------------------------------
+test("POST /api/chronicle/intents creates a minimal concept entity for a brand-new name and queues it as a Manual pending entry", async () => {
+  const name = "Sella's brother's ring — who has it now?";
+  const { status, body } = await postJson("/api/chronicle/intents", { world: WORLD, name });
+  assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+  assert.equal(body.name, name);
+  assert.equal(body.type, "concept", "a hand-typed intent with no graph match becomes a minimal concept entity");
+  assert.ok(body.entityId && body.entityId.length > 0);
+  assert.equal(body.entries.length, 1);
+  assert.equal(body.entries[0].sourceBatchId, "manual", "the pinned sentinel");
+  assert.equal(body.entries[0].cycleDescriptor, "Manual", "matches the prototype's own Manual source label");
+
+  // Surfaces through the EXISTING deferred-lane route the same as any wrap-up intent.
+  const pending = await getJson(`/api/pending-entities?world=${encodeURIComponent(WORLD)}`);
+  assert.ok(pending.body.entities.some((e) => e.entityId === body.entityId), "the hand-added intent must appear in /api/pending-entities");
+});
+
+test("POST /api/chronicle/intents dedups onto an existing entity by case-insensitive name match instead of creating a duplicate", async () => {
+  applyHeadless(snapPath, [{ op: "upsert_entity", data: { id: "intent-existing-forge", name: "Gorrim's Forge", type: "place", importance: 0.5 } }]);
+  const { status, body } = await postJson("/api/chronicle/intents", { world: WORLD, name: "gorrim's forge", tags: ["livelihood"] });
+  assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+  assert.equal(body.entityId, "intent-existing-forge", "a name match must reuse the existing entity id, not mint a new one");
+  assert.equal(body.type, "place", "the matched entity's real type is returned, not 'concept'");
+  assert.deepEqual(body.entries[0].tags, ["livelihood"], "tags are forwarded onto the pending entry");
+});
+
+test("POST /api/chronicle/intents rejects a blank name cleanly (no silent no-op)", async () => {
+  const { status, body } = await postJson("/api/chronicle/intents", { world: WORLD, name: "   " });
+  assert.equal(status, 400);
+  assert.ok(body.error && /name/i.test(body.error));
+});

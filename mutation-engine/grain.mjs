@@ -98,6 +98,12 @@ export function summarizeBatch(batch, opts = {}) {
       flaggedUnreviewed: isFlaggedUnreviewed(m, flaggedEntityIds),
       collapsed: isCollapsed(m, flaggedEntityIds),
       data: m.data ?? null,
+      // Phase 37 task 37.2: the shared proposal-card (review-ui/public/proposal-card.js)
+      // reads these off batchDetailPayload's region entities to paint data-type /
+      // data-risk. Stamped by attachDiffs (schema.mjs SCHEMA_VERSION 5); null on
+      // any pre-Phase-37 batch, a real valid "unclassified" state.
+      type: m.type ?? null,
+      risk: m.risk ?? null,
       diff: m.diff ?? null, // populated by a caller that ran diff.mjs against a live snapshot, if any
       // Phase 12 task 12.5: graph-import/scan-mentions.mjs's LINK-vs-PROPOSE-NEW
       // discriminator, surfaced so review-ui can render the mandatory badge +
