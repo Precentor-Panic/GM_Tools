@@ -1,0 +1,36 @@
+# GM_Tools — Phase 37 Task Plan: Chronicle (the between-session ritual + THE graph review engine)
+
+**Status:** approved (original roadmap; Russell greenlit 2026-08-10 — "the chronicle also contains the review engine for the graph, which is why we need it next, before any cli cooperation"). Design record: `/home/russell/.claude/plans/ok-i-m-back-with-dazzling-newt.md` (Phase 37 section + the persona adoptions in the Context section — **read both first**). `design/session-planner/Chronicle.dc.html` is the pixel authority. This file is the execution checklist.
+
+**Prerequisite reading:** `CLAUDE.md` → `PLAN.md` (Phase 36/38/37 rows) → the design record → `design/session-planner/README.md` (§Chronicle + "ONE proposal/diff card" reuse discipline) + `Chronicle.dc.html` → `.claude/skills/gm-tools-conventions/SKILL.md` → `.claude/skills/gm-tools-verification/SKILL.md` (module baseline `ce93851`).
+
+## Settled decisions (locked long ago — persona round + Russell; do not relitigate)
+- **Chronicle entry point rides Wrap-up**: "N threads waiting — pass time now?" → Composer pre-checked (37.3).
+- **Default scope = queued intents ONLY**; branch scope = the existing `contained-in` mode; whole-world = ambient. ("Everywhere-except-party" = noted-not-adopted future.)
+- **Duration is ONE source of truth**: the span control drives BOTH the calendar advance AND the `elapsedSessions` decay math. Never two inputs.
+- **One global fortune track now** (per-branch fortune = future flag).
+- **"What changed" = THE shared proposal/diff card** — one component (adds `type` + `risk` triage buckets), adopted by Chronicle batch review (37.2), then Wrap rail + Connection-Menu lore intake (37.3). This card is the graph review engine an agent-proposed batch will flow through later — build it as the ONE reusable surface, not a Chronicle-local widget.
+- **Run mode hides the Chronicle route** + collapses the connection chip to state-only (Phase-34 adoption — verify it still holds once Chronicle is real).
+- **Retire-as-hit (37.3)**: `#queue`/`#review` SCREENS retire once Chronicle's review subsumes them (batch ROUTES stay); `#debt` → the deferred lane. Keep-by-hash redirects per the standing convention.
+- Backend reuse is the point: time-skip orchestrators (`time-skip/run.mjs`/`run-cycle.mjs` — resumable, status-file, emit review batches), `scope.mjs` (5 modes), `pending-ledger.mjs` (= the deferred-intents lane), `attachDiffs` + `review-state.mjs` (accept/reject plumbing) ALL EXIST (~65–70% of Chronicle). NEW: fortune track, world clock/calendar + advance writer (`sessionNumber` is read-only today), chronicle-log layer over `listBatches`.
+
+## Tasks
+- **37.0 (Sonnet) — QE + stores (contract-first: stores are net-new).** `phase37-fixture.mjs` header pins + red e2e for: **calendar/world-clock store** (per-world; calendar string from settings; current date + `sessionNumber`; an **advance writer** where ONE span input `{days|weeks|…}` atomically advances the calendar AND increments the elapsed-sessions basis the decay math reads — find where `elapsedSessions` is consumed today and pin the single-source contract); **fortune store** (one global track per world: position/bias value + bounds per `Chronicle.dc.html`'s own control); **chronicle-log** (a read layer OVER `listBatches` + the time-skip status files — no duplicate event store; each log entry = batch ref + span + scope + fortune-at-run); routes for all three; the shared-card DOM contract (`chronicle-card` testids + `type`/`risk` bucket attributes per the prototype's seed shapes) pinned for 37.2/37.3 to share. Red for the right reasons; suites stay green (baseline: e2e 169/169, det 218/218, wf-mcp 19/19, root 71/72 known, module 34/34).
+- **37.1 (Sonnet) — fortune → engine + scope wiring.** Fortune bias plumbed into the texture prompts (`orchestrateBatch` opts — additive param, existing callers unaffected) + nudge tags on emitted mutations; the Composer's scope options wired to `scope.mjs`'s real modes (default **queued intents** via `pending-ledger`; branches = `contained-in`; whole-world = ambient); the advance writer invoked by the run composition so a completed time-pass moves the clock exactly once. Deterministic tests incl. a fortune-bias prompt-snapshot test and an advance-atomicity test.
+- **37.2 (Opus) — Chronicle UI.** `review-ui/public/chronicle-view.js` replacing the scaffold, per `Chronicle.dc.html` (pixel authority): the **deferred lane** over `pending-ledger` (queued intents, defer/promote); the **Composer** (span control = the one duration input; scope; fortune track control; run → the resumable time-skip orchestrator with its status-file progress surfaced quietly); **Timeline/scrubber + history rail** over the chronicle-log; **"What changed"** = the ONE shared proposal/diff card component (`review-ui/public/proposal-card.js` — exported, not Chronicle-local) over batch detail with `type` + `risk` triage buckets and accept/reject wired to the existing review-state routes. Design fidelity rules as ever: port, don't re-skin; flag anything the prototype seeded that real data can't fill.
+- **37.3 (Opus) — review unification + retire-as-hit.** Wrap rail + the Connection-Menu lore-intake "Review" handoff adopt the SAME `proposal-card.js` (delete the Wrap rail's local card rendering — one card, per the README's "implement once"); **Wrap-up gains "N threads waiting — pass time now?"** → navigates to Chronicle with the Composer pre-checked (queued-intents scope preselected); retire the `#queue` + `#review` screens (hash-redirect into Chronicle's review; batch ROUTES untouched — the e2e reconciliation follows the phase33 retire-as-superseded header convention); `#debt` → the deferred lane redirect. Full e2e green incl. the phase37 contract.
+- **37.4 (orchestrator + Russell) — verify + a REAL time-pass + gallery.** Independent suites; then live: queue 2–3 intents against wf-test-5e's world content → Composer → "2 weeks pass" with fortune tilted → the batch lands → review it card-by-card in Chronicle → accept a couple → verify graph/narration updates + the calendar advanced + the log entry. Gallery + PLAN flip. **Russell's pass is the gate** (he expects minor cleanup — collect, don't pre-judge).
+
+## Dependency / tiering / concurrency
+| Task | Tier | Deps |
+|---|---|---|
+| 37.setup | orch | — |
+| 37.0 QE + stores | Sonnet | — (contract first — stores net-new) |
+| 37.1 fortune/scope | Sonnet | 37.0 |
+| 37.2 Chronicle UI | Opus | 37.0 + 37.1 |
+| 37.3 unification | Opus | 37.2 (shared card + view files) |
+| 37.4 live + gallery | orch + Russell | all |
+Strictly sequential (shared engine/view files). `git add` explicit paths; commit per task; orchestrator independently re-runs all suites per wave (isolation re-run before calling a lone parallel-run failure a regression). `foundry_worldFabric` untouched this phase (baseline `ce93851` + the pre-existing 4-item tree).
+
+## Verification
+QE-first phase37 e2e red→green; existing suites stay green (baselines above). 37.4's real time-pass against live content is the technical gate; **Russell's hands-on between-session ritual is the final gate.** After this phase the roadmap's original arc is complete; the flagged-future list (CLI cooperation via the MCP + this review engine, Encounter Builder's fate, per-branch fortune, tag-first Bestiary) queues on his word.
