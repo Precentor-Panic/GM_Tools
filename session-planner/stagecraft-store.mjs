@@ -116,7 +116,8 @@ export function saveStagecraftAsset(
     localFilePath = null,
     compendiumRef = null,
     thumb = null,
-    pendingImport = null
+    pendingImport = null,
+    catalogRef = null
   },
   opts = {}
 ) {
@@ -138,6 +139,17 @@ export function saveStagecraftAsset(
     compendiumRef,
     thumb,
     pendingImport,
+    // Phase 38 task 38.4 (Russell's catalog-tier request, 2026-08-10):
+    // `{manifestUrl, packId} | null` -- a row for a map pack that exists in
+    // an EXTERNAL catalog (e.g. Czepeku's Patreon master list) but is NOT
+    // installed in Foundry. Browsable/searchable/taggable like any shelf
+    // row -- "an LLM looking through the library" (his words) can see and
+    // suggest it -- and `manifestUrl` is everything needed to install the
+    // pack later, at which point the pack's compendium scenes surface as
+    // ordinary compendiumRef browse rows. Additive-optional; a catalog row
+    // has foundryRef:null + compendiumRef:null and is NEVER pushable/
+    // importable until the pack is actually installed.
+    catalogRef,
     createdAt: now
   };
   const assets = readAssets(world);

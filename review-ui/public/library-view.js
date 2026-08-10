@@ -980,6 +980,18 @@ function buildShelf(ctx, which) {
         style: "font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.04em; color: oklch(0.55 0.012 70); font-style: italic;"
       }));
     }
+    // Phase 38 task 38.4 -- Russell's catalog tier: an external-catalog map
+    // pack that isn't installed in Foundry yet. Visible/searchable so the
+    // whole catalog is suggestible; badged so it can't be mistaken for a
+    // stageable map ("load them in later if they become useful" -- his call).
+    if (r.catalogOnly) {
+      topRowChildren.push(el("span", {
+        testid: "tagged-shelf-row-catalog-badge",
+        text: "in catalog — not installed",
+        title: "Known from the map catalog but not installed in Foundry yet — ask to install this pack to make its scenes importable",
+        style: "font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.04em; color: oklch(0.55 0.10 65); font-style: italic;"
+      }));
+    }
     // Phase 35.5a: Reliquary-only (Stagecraft rows never carry graphEntityId).
     if (r.kind === "item") {
       topRowChildren.push(graphPromoteAffordance(r, async (btn) => {
@@ -1068,7 +1080,12 @@ function normalizeShelf(list, isReliquary) {
           // row (compendiumRef set, foundryRef still null) carries a thumb
           // through for the shelf row's own quiet preview, when present.
           compendiumRef: r.compendiumRef ?? null,
-          thumb: r.thumb ?? null
+          thumb: r.thumb ?? null,
+          // Phase 38 task 38.4 (Russell's catalog tier): an external-catalog
+          // pack that ISN'T installed in Foundry yet -- browsable so nothing
+          // scanning the library is blind to it, badged so nobody mistakes
+          // it for a stageable map.
+          catalogOnly: !!r.catalogRef && !r.compendiumRef && !r.foundryRef
         });
 }
 

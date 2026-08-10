@@ -172,6 +172,28 @@ const WORLD = "stagecraft-store-test-world";
     assert.equal(browseRow.foundryRef, null);
   });
 
+  test("saveStagecraftAsset: catalogRef (38.4 catalog tier) defaults null, round-trips a not-installed catalog row", () => {
+    const plain = saveStagecraftAsset(WORLD, { kind: "map", name: "Plain2", status: "proposed" }, { makeId: () => "sc-cat-0" });
+    assert.equal(plain.catalogRef, null);
+
+    const catalogRow = saveStagecraftAsset(
+      WORLD,
+      {
+        kind: "map",
+        name: "Hippodrome",
+        source: "local",
+        meta: "Czepeku pack — in catalog, not installed",
+        tags: ["czepeku"],
+        catalogRef: { manifestUrl: "https://example.com/hippodrome/module.json", packId: "czepeku-hippodrome" },
+        status: "accepted"
+      },
+      { makeId: () => "sc-cat-1" }
+    );
+    assert.deepEqual(catalogRow.catalogRef, { manifestUrl: "https://example.com/hippodrome/module.json", packId: "czepeku-hippodrome" });
+    assert.equal(catalogRow.foundryRef, null);
+    assert.equal(catalogRow.compendiumRef, null);
+  });
+
   test("updateStagecraftAssetFields: thumb refreshes on a re-ingest, like name/meta", () => {
     const asset = saveStagecraftAsset(
       WORLD,
