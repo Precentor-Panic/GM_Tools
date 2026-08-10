@@ -270,5 +270,88 @@ test("DEFAULT_TEXTURE_MODEL is claude-sonnet-5 per the phase-1 task spec", () =>
   assert.equal(DEFAULT_TEXTURE_MODEL, "claude-sonnet-5");
 });
 
+// ---------------------------------------------- Phase 37 task 37.1: fortune-bias / nudge-tags prompt plumbing
+// Deterministic PROMPT-SNAPSHOT tests: no live API, mirrors this file's own
+// mockClient + "textureRegion: passes the reviewer note through to the
+// prompt on regenerate" pattern above (capture params.messages[0].content,
+// assert on substrings) -- never asserting on model-authored TEXT quality,
+// only on what THIS codebase deterministically puts into the prompt.
+
+test("textureRegion: an OMITTED fortuneBias/nudgeTags renders NO tone line at all -- every pre-Phase-37 caller is byte-for-byte unaffected", async () => {
+  let capturedPrompt = "";
+  const client = mockClient([
+    (params) => {
+      capturedPrompt = params.messages[0].content;
+      return JSON.stringify([{ op: "upsert_entity", id: "alvor", data: {}, rationale: "x" }]);
+    }
+  ]);
+  const region = { regionId: "region-0", entityIds: ["alvor"], deltas: [] };
+  await textureRegion(region, { entities, edges, world: "wf-test", batchId: "batch1", sourceKind: "manual" }, { client });
+  assert.ok(!capturedPrompt.includes("Overall fortune"), "no fortuneBias given -- no fortune line expected");
+  assert.ok(!capturedPrompt.includes("Nudge this pass"), "no nudgeTags given -- no nudge line expected");
+});
+
+test("textureRegion: fortuneBias + fortuneLabel render a tone line in the prompt", async () => {
+  let capturedPrompt = "";
+  const client = mockClient([
+    (params) => {
+      capturedPrompt = params.messages[0].content;
+      return JSON.stringify([{ op: "upsert_entity", id: "alvor", data: {}, rationale: "x" }]);
+    }
+  ]);
+  const region = { regionId: "region-0", entityIds: ["alvor"], deltas: [] };
+  await textureRegion(
+    region,
+    { entities, edges, world: "wf-test", batchId: "batch1", sourceKind: "manual", fortuneBias: -2, fortuneLabel: "Ruinous" },
+    { client }
+  );
+  assert.ok(capturedPrompt.includes("Overall fortune"), `expected a fortune tone line, got:\n${capturedPrompt}`);
+  assert.ok(capturedPrompt.includes("-2"), "expected the numeric bias in the prompt");
+  assert.ok(capturedPrompt.includes("Ruinous"), "expected the fortune stop's own label in the prompt");
+});
+
+test("textureRegion: nudgeTags render a 'Nudge this pass toward' line in the prompt", async () => {
+  let capturedPrompt = "";
+  const client = mockClient([
+    (params) => {
+      capturedPrompt = params.messages[0].content;
+      return JSON.stringify([{ op: "upsert_entity", id: "alvor", data: {}, rationale: "x" }]);
+    }
+  ]);
+  const region = { regionId: "region-0", entityIds: ["alvor"], deltas: [] };
+  await textureRegion(
+    region,
+    { entities, edges, world: "wf-test", batchId: "batch1", sourceKind: "manual", nudgeTags: ["decay", "feud"] },
+    { client }
+  );
+  assert.ok(capturedPrompt.includes("Nudge this pass toward: decay, feud."), `expected the nudge line, got:\n${capturedPrompt}`);
+});
+
+test("textureRegion: nudgeTags are stamped onto an emitted upsert_entity mutation's own data.tags, deduplicated against any tags the model itself proposed", async () => {
+  const goodResponse = JSON.stringify([
+    { op: "upsert_entity", id: "alvor", data: { description: "x", tags: ["existing", "decay"] }, rationale: "x" }
+  ]);
+  const client = mockClient([goodResponse]);
+  const region = { regionId: "region-0", entityIds: ["alvor"], deltas: [] };
+  const [mutation] = await textureRegion(
+    region,
+    { entities, edges, world: "wf-test", batchId: "batch1", sourceKind: "manual", nudgeTags: ["decay", "feud"] },
+    { client }
+  );
+  assert.deepEqual(mutation.data.tags, ["existing", "decay", "feud"], "nudge tags merge in, deduplicated against any the model already proposed");
+});
+
+test("textureRegion: nudgeTags are NEVER stamped onto a non-entity mutation (e.g. upsert_edge -- edges have no `tags` field in this codebase's vocabulary)", async () => {
+  const goodResponse = JSON.stringify([{ op: "upsert_edge", id: "e4", data: { strength: 0.1 }, rationale: "x" }]);
+  const client = mockClient([goodResponse]);
+  const region = { regionId: "region-0", entityIds: ["alvor", "gerdur"], deltas: [] };
+  const [mutation] = await textureRegion(
+    region,
+    { entities, edges, world: "wf-test", batchId: "batch1", sourceKind: "manual", nudgeTags: ["decay"] },
+    { client }
+  );
+  assert.equal(mutation.data.tags, undefined);
+});
+
 await Promise.all(pending);
 console.log(`\n${passed} passed`);

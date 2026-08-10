@@ -136,6 +136,21 @@ scene-tray/*
 # gitignore gap, one more time).
 foundry-sync-log/
 
+# Phase 37 task 37.1 (added at spec time, not after the fact -- per this
+# project's own recurring-gap lesson): session-planner/world-clock.mjs and
+# session-planner/fortune-track.mjs are flat per-world-file stores, same
+# convention as session-scenes/ above; session-planner/chronicle-run.mjs is
+# a per-batch file under a per-world subdir, same convention as
+# pending-resolution/ above.
+world-clock/*
+!world-clock/.gitkeep
+
+fortune-track/*
+!fortune-track/.gitkeep
+
+chronicle-run/*/
+!chronicle-run/.gitkeep
+
 node_modules/
 
 # never commit API keys / secrets

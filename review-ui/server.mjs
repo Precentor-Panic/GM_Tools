@@ -74,7 +74,7 @@ import { findEntity, neighborhood } from "../wf-mcp-server/lib/graph.mjs";
 import { bootstrapSnapshot } from "../graph-import/headless-apply.mjs";
 
 import { loadBatch, listBatches } from "../mutation-engine/review-state.mjs";
-import { summarizeBatch } from "../mutation-engine/grain.mjs";
+import { summarizeBatch, renderHeadline } from "../mutation-engine/grain.mjs";
 import { findUnreviewedEntities, markHumanReviewed, DEFAULT_MAX_AGE_DAYS, DEFAULT_MAX_UNREVIEWED_ACCEPTS } from "../mutation-engine/human-review.mjs";
 import { listPendingEntities, readAvailablePending } from "../mutation-engine/pending-ledger.mjs";
 import { resolvePending } from "../time-skip/resolve-pending.mjs";
@@ -225,6 +225,18 @@ import { importCompendiumSceneOnAccept, reconcilePendingCompendiumImports } from
 import { deriveConnectionState, syncNow } from "../wf-mcp-server/lib/foundry-connection.mjs";
 import { getSettings as getAppSettings, patchSettings as patchAppSettings } from "../session-planner/app-settings.mjs";
 import { importFromWorldAnvil } from "../wf-mcp-server/lib/worldanvil-intake.mjs";
+
+// Phase 37 task 37.1 -- Chronicle stores + the run-composition route. Thin
+// wrappers only, same convention as every other route in this file:
+// resolveWorld()/resolveDir() with NO client-supplied dataDir override
+// anywhere below. orchestrateBatch is the SAME resumable orchestrator every
+// other propose/time-skip path already uses -- POST /api/chronicle/run
+// composes it, never forks a second one.
+import { getWorldClock, advanceWorldClock } from "../session-planner/world-clock.mjs";
+import { getFortune, setFortune } from "../session-planner/fortune-track.mjs";
+import { recordChronicleRun, getChronicleRun } from "../session-planner/chronicle-run.mjs";
+import { orchestrateBatch } from "../time-skip/run.mjs";
+import { resolveBranchesDeltas } from "../time-skip/scope.mjs";
 
 // Phase 22 (task 22.7) -- Scene Engine routes. Thin wrappers only, same
 // convention as every other route in this file: resolveWorld()/resolveDir()
@@ -664,7 +676,13 @@ function unreviewedEntitiesPayload(w, dir, opts) {
   return flagged.map((f) => ({ ...f, name: findEntity(entities, f.entityId)?.name ?? f.entityId }));
 }
 
-/** GET /api/pending-entities payload: every entity with an available backlog, plus its entries and a display name. */
+/**
+ * GET /api/pending-entities payload: every entity with an available
+ * backlog, plus its entries and a display name. Phase 37 task 37.1 adds
+ * `type` additively (§5's "queued intents" deferred-lane mapping,
+ * review-ui/test/e2e/phase37-fixture.mjs) -- sourced from the same live
+ * snapshot lookup `name` already uses, no second graph lookup.
+ */
 function pendingEntitiesPayload(w, dir) {
   let entities = [];
   try {
@@ -672,11 +690,47 @@ function pendingEntitiesPayload(w, dir) {
   } catch {
     // No snapshot yet is fine here -- pending entries can still be listed by id, just without a friendly name.
   }
-  return listPendingEntities(w).map((entityId) => ({
-    entityId,
-    name: findEntity(entities, entityId)?.name ?? entityId,
-    entries: readAvailablePending(w, entityId)
-  }));
+  return listPendingEntities(w).map((entityId) => {
+    const entity = findEntity(entities, entityId);
+    return {
+      entityId,
+      name: entity?.name ?? entityId,
+      type: entity?.type ?? null,
+      entries: readAvailablePending(w, entityId)
+    };
+  });
+}
+
+/**
+ * GET /api/chronicle/log payload -- Phase 37 task 37.1, §4 of
+ * review-ui/test/e2e/phase37-fixture.mjs: a READ layer composing the
+ * EXISTING listBatches(world) (already newest-first) with grain.mjs's
+ * EXISTING summarizeBatch/renderHeadline for the friendly one-line headline,
+ * plus chronicle-run.mjs's per-batch sidecar for the two fields listBatches
+ * has no source for (`span`/`fortuneAtRun`) -- null/null for a batch NOT
+ * created via Chronicle's own composer, a real valid state, never a thrown
+ * error or a guessed value. ZERO new persisted history of its own.
+ */
+function chronicleLogPayload(w) {
+  const batches = listBatches(w);
+  const flaggedEntityIds = flaggedEntityIdSet(w);
+  const entries = batches.map((b) => {
+    const run = getChronicleRun(w, b.id);
+    const summary = summarizeBatch(loadBatch(w, b.id), { flaggedEntityIds });
+    return {
+      batchRef: b.id,
+      span: run?.span ?? null,
+      scope: b.scope,
+      fortuneAtRun: run?.fortuneAtRun ?? null,
+      at: b.createdAt,
+      headline: renderHeadline(summary),
+      mutationCount: b.mutationCount,
+      pendingCount: b.pendingCount,
+      acceptedCount: b.acceptedCount,
+      status: b.status
+    };
+  });
+  return { world: w, entries };
 }
 
 // ---------------------------------------------------------------------------
@@ -1280,6 +1334,134 @@ async function handleApi(req, res, url, parts) {
     const dir = resolveDir();
     const w = resolveWorld(q.get("world"));
     return sendJson(res, 200, { world: w, entities: pendingEntitiesPayload(w, dir) });
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 37 task 37.1 -- Chronicle: world-clock, fortune, chronicle-log,
+  // and the run-composition route. See review-ui/test/e2e/phase37-fixture.mjs
+  // for the full pinned contract every route below implements exactly.
+  // ---------------------------------------------------------------------
+
+  // GET /api/chronicle/world-clock?world=
+  if (method === "GET" && parts.length === 3 && parts[1] === "chronicle" && parts[2] === "world-clock") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, getWorldClock(w));
+  }
+
+  // POST /api/chronicle/world-clock/advance  { world, span:{days?|spanId?} }
+  // THE elapsedSessions single-source rule (fixture §2): a client-supplied
+  // `elapsedSessions` (or any other extraneous body field) is never read --
+  // only `span` is, and advanceWorldClock computes its own return value.
+  if (
+    method === "POST" &&
+    parts.length === 4 &&
+    parts[1] === "chronicle" &&
+    parts[2] === "world-clock" &&
+    parts[3] === "advance"
+  ) {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    return sendJson(res, 200, advanceWorldClock(w, body.span));
+  }
+
+  // GET /api/chronicle/fortune?world=
+  if (method === "GET" && parts.length === 3 && parts[1] === "chronicle" && parts[2] === "fortune") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, getFortune(w));
+  }
+
+  // POST /api/chronicle/fortune  { world, stopId }
+  if (method === "POST" && parts.length === 3 && parts[1] === "chronicle" && parts[2] === "fortune") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    return sendJson(res, 200, setFortune(w, body.stopId));
+  }
+
+  // GET /api/chronicle/log?world=
+  if (method === "GET" && parts.length === 3 && parts[1] === "chronicle" && parts[2] === "log") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, chronicleLogPayload(w));
+  }
+
+  // POST /api/chronicle/run
+  //   { world, scopeKind?, branchIds?, carriedEntryIds?, span, prompt?, tags? }
+  // -> { batchId, mutationCount, headline, clock:{currentDate,sessionNumber,
+  //      elapsedSessions}, fortuneAtRun, scopeKind }
+  //
+  // §6's scopeKind -> scope.mjs mode translation, done ONCE here regardless
+  // of scopeKind so the §2 elapsedSessions single-source guard covers all
+  // three: advanceWorldClock is called EXACTLY ONCE per run, and its own
+  // returned elapsedSessions is the ONLY value ever merged into the resolved
+  // scope spec -- a client-supplied body.elapsedSessions is NEVER read
+  // anywhere in this handler (confirm by grep: `body.elapsedSessions` does
+  // not appear below).
+  if (method === "POST" && parts.length === 3 && parts[1] === "chronicle" && parts[2] === "run") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const dir = resolveDir();
+    const { entities, edges } = loadSnapshot(dir, w).snapshot;
+
+    const scopeKind = body.scopeKind ?? "queued-intents";
+    if (!["queued-intents", "branches", "whole-world"].includes(scopeKind)) {
+      throw new Error(
+        `POST /api/chronicle/run: unknown scopeKind "${scopeKind}" (expected 'queued-intents', 'branches', or 'whole-world').`
+      );
+    }
+
+    // THE single call site permitted to compute this run's elapsedSessions.
+    const clock = advanceWorldClock(w, body.span);
+
+    let scopeSpec;
+    let precomputedDeltas;
+    if (scopeKind === "queued-intents") {
+      // Default scope = queued intents ONLY (the settled decision). Omitting
+      // carriedEntryIds means "everything currently queued"; an explicit
+      // empty array means "carry nothing this pass" -- a real, valid,
+      // distinct no-op run, never silently upgraded to a wider scope.
+      const carriedIds = Array.isArray(body.carriedEntryIds) ? new Set(body.carriedEntryIds) : null;
+      const seeds = [];
+      for (const entityId of listPendingEntities(w)) {
+        for (const entry of readAvailablePending(w, entityId)) {
+          if (carriedIds && !carriedIds.has(entry.entryId)) continue;
+          seeds.push({ entityId, magnitude: Math.min(1, Math.abs(entry.impactScore)) });
+        }
+      }
+      scopeSpec = { mode: "seed", seeds, elapsedSessions: clock.elapsedSessions };
+      // scope.mjs's own seed-mode resolution throws on an EMPTY seeds[] --
+      // bypass it entirely for the valid "nothing queued/carried" case
+      // rather than letting that throw surface as a spurious 400.
+      if (seeds.length === 0) precomputedDeltas = [];
+    } else if (scopeKind === "branches") {
+      const branchIds = Array.isArray(body.branchIds) ? body.branchIds : [];
+      if (!branchIds.length) {
+        throw new Error("POST /api/chronicle/run: scopeKind 'branches' requires a non-empty branchIds[].");
+      }
+      precomputedDeltas = resolveBranchesDeltas({ entities, edges }, branchIds, { elapsedSessions: clock.elapsedSessions });
+      scopeSpec = { mode: "branches", branchIds, elapsedSessions: clock.elapsedSessions };
+    } else {
+      scopeSpec = { mode: "ambient", elapsedSessions: clock.elapsedSessions };
+    }
+
+    const fortune = getFortune(w);
+    const result = await orchestrateBatch(w, scopeSpec, body.prompt, {
+      entities,
+      edges,
+      ...(precomputedDeltas !== undefined ? { precomputedDeltas } : {}),
+      fortuneBias: fortune.bias,
+      fortuneLabel: fortune.stopId,
+      nudgeTags: Array.isArray(body.tags) ? body.tags : []
+    });
+
+    recordChronicleRun(w, result.batchId, { span: body.span, fortuneAtRun: fortune.stopId, elapsedSessions: clock.elapsedSessions });
+
+    return sendJson(res, 200, {
+      batchId: result.batchId,
+      mutationCount: result.mutationCount,
+      headline: result.headline,
+      clock: { currentDate: clock.currentDate, sessionNumber: clock.sessionNumber, elapsedSessions: clock.elapsedSessions },
+      fortuneAtRun: fortune.stopId,
+      scopeKind
+    });
   }
 
   // POST /api/pending-entities/:entityId/resolve  { world, dataDir, depth, maxNeighbors, elapsedTimeDescriptor }

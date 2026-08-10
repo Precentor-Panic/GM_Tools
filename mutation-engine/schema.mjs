@@ -46,7 +46,21 @@ import { z } from "zod";
 // are both meaningfully different, and this project's own convention is
 // that a mutation's origin should always be auditable months later. Purely
 // additive; old batch files still parse unchanged.
-export const SCHEMA_VERSION = 4;
+//
+// Bumped 4 -> 5 for Phase 37 task 37.1 (Chronicle's shared proposal/diff
+// card, review-ui/public/proposal-card.js, 37.2's build target): StoredMutation
+// gained two new OPTIONAL fields, `type` (the entity/edge's own type, from
+// the live entity or the mutation's own proposed data) and `risk` (one of
+// 'safe'/'look'/'contradict', the pinned v1 DETERMINISTIC, non-LLM
+// heuristic -- see time-skip/run.mjs's attachDiffs/deriveRisk and
+// review-ui/test/e2e/phase37-fixture.mjs §7 for the full pinned rationale).
+// Both are stamped by attachDiffs, the ONE function both orchestrateBatch
+// AND orchestrateCycle already call before createBatch -- extending it there
+// means both orchestrators gain type/risk for free, no second call site to
+// remember. Purely additive -- old batch files with neither field still
+// parse unchanged; a consumer must render a neutral/unlabeled state for an
+// absent risk, never crash on a missing attribute.
+export const SCHEMA_VERSION = 5;
 
 // Same op set wf-mcp-server/index.mjs's wf_apply_mutations already accepts.
 export const MutationOp = z.enum([
@@ -123,7 +137,13 @@ export const StoredMutation = Mutation.extend({
   regionId: z.string().optional(),
   entityContext: z.any().optional(),
   preState: z.any().nullable().optional(),
-  diff: z.any().optional()
+  diff: z.any().optional(),
+  // Phase 37 task 37.1 (SCHEMA_VERSION 4 -> 5, see the header comment above):
+  // stamped by attachDiffs -- the entity/edge's own type, and the pinned v1
+  // deterministic risk-triage bucket. Both optional -- absent on any
+  // pre-Phase-37 batch file.
+  type: z.string().optional(),
+  risk: z.enum(["safe", "look", "contradict"]).optional()
 }).strict();
 
 // Batch-level lifecycle status. 'open' while any mutation is still pending

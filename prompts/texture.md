@@ -3,7 +3,10 @@
 Used by `mutation-engine/texture.mjs`. One call per region/cluster of
 candidate deltas (see `mutation-engine/propagate.mjs`'s `candidateDeltas` and
 `groupByRegion`) — never one call per node. Placeholders (`{{...}}`) are
-filled in by `texture.mjs` before the call.
+filled in by `texture.mjs` before the call. `{{toneLine}}` (Phase 37 task
+37.1) is additive — Chronicle's fortune-bias/nudge-tags cue, empty string
+("") when omitted, byte-identical to before for every caller that doesn't
+pass it.
 
 ---
 
@@ -18,7 +21,7 @@ that change: what actually happened to this entity, in-world.
 World: {{world}}
 Change kind in this region: {{sourceKind}}
 Elapsed time descriptor: {{elapsedTimeDescriptor}}
-
+{{toneLine}}
 ## Entities and edges in this region
 
 {{regionContext}}

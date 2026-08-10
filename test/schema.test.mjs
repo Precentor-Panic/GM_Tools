@@ -23,8 +23,8 @@ function test(name, fn) {
   }
 }
 
-test("SCHEMA_VERSION is exported and is 4 (bumped for Phase 12's mention-scan addition)", () => {
-  assert.equal(SCHEMA_VERSION, 4);
+test("SCHEMA_VERSION is exported and is 5 (bumped for Phase 37 task 37.1's StoredMutation.type/risk addition)", () => {
+  assert.equal(SCHEMA_VERSION, 5);
 });
 
 // --------------------------------------------------------------- Mutation
@@ -128,6 +128,43 @@ test("StoredMutation: accepts a well-formed stored mutation, including bookkeepi
   assert.equal(parsed.entityContext.name, "Alvor");
   assert.deepEqual(parsed.preState, { id: "ent1", importance: 0.5 });
   assert.deepEqual(parsed.diff, [{ field: "importance", from: 0.5, to: 0.7 }]);
+});
+
+test("StoredMutation: a PRE-Phase-37 mutation with NEITHER type nor risk still parses unchanged (SCHEMA_VERSION 4 -> 5 is purely additive)", () => {
+  const good = {
+    op: "upsert_entity",
+    id: "ent1",
+    data: {},
+    rationale: "x",
+    batchId: "batch1",
+    sourceKind: "manual",
+    mutationId: "m0",
+    status: "pending"
+  };
+  const parsed = StoredMutation.parse(good);
+  assert.equal(parsed.type, undefined);
+  assert.equal(parsed.risk, undefined);
+});
+
+test("StoredMutation: accepts type/risk when present, rejects an invalid risk enum value", () => {
+  const good = {
+    op: "upsert_entity",
+    id: "ent1",
+    data: {},
+    rationale: "x",
+    batchId: "batch1",
+    sourceKind: "manual",
+    mutationId: "m0",
+    status: "pending",
+    type: "person",
+    risk: "look"
+  };
+  const parsed = StoredMutation.parse(good);
+  assert.equal(parsed.type, "person");
+  assert.equal(parsed.risk, "look");
+
+  const bad = { ...good, risk: "dangerous" };
+  assert.equal(StoredMutation.safeParse(bad).success, false);
 });
 
 test("StoredMutation: still rejects a genuinely malformed mutation (wrong type on a known field)", () => {

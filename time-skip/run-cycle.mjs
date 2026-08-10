@@ -35,6 +35,7 @@ import { textureBatch, textureRegion, renderPendingResolutionSummary } from "../
 import { createBatch, makeBatchId } from "../mutation-engine/review-state.mjs";
 import { summarizeBatch, renderHeadline } from "../mutation-engine/grain.mjs";
 import { readAvailablePending, writePending, listPendingEntities, markProposed, sourceBatchHeadline } from "../mutation-engine/pending-ledger.mjs";
+import { findUnreviewedEntities } from "../mutation-engine/human-review.mjs";
 import { attachDiffs } from "./run.mjs";
 import { resolveScope } from "./scope.mjs";
 import { neighborhood, findEntity } from "../wf-mcp-server/lib/graph.mjs";
@@ -73,11 +74,20 @@ function deltaEntityIds(delta, edges) {
  * @param {number} [opts.growthBoundThreshold]         default DEFAULT_GROWTH_BOUND_THRESHOLD (5)
  * @param {string} [opts.batchId]                      explicit batch id (tests only; no resumability here)
  * @param {object} [opts.textureOpts]                  forwarded to textureRegion/textureBatch (injectable client, etc.)
+ * @param {number} [opts.fortuneBias]                  Phase 37 task 37.1: Chronicle's fortune-track bias (-2..2),
+ *                                                      forwarded into BOTH texture calls below (headline +
+ *                                                      growth-bound sweep) as an additive tone cue -- an omitted
+ *                                                      caller renders the identical prompt every pre-Phase-37
+ *                                                      caller already gets.
+ * @param {string} [opts.fortuneLabel]                 the fortune stop's display label, paired with fortuneBias.
+ * @param {string[]} [opts.nudgeTags]                  Chronicle's "nudge it further" tag ids -- forwarded into
+ *                                                      both texture calls, stamped onto emitted upsert_entity
+ *                                                      mutations' own data.tags (see texture.mjs's mergeTags).
  * @returns {Promise<{batchId:string, mutationCount:number, headlineTexturedCount:number, totalCycleDeltas:number,
  *                     deferredEntryCount:number, sweptEntityCount:number, headline:string}>}
  */
 export async function orchestrateCycle(world, cycleSpec, opts = {}) {
-  const { entities, edges, textureOpts = {} } = opts;
+  const { entities, edges, textureOpts = {}, fortuneBias, fortuneLabel, nudgeTags } = opts;
   if (!entities || !edges) {
     throw new Error("orchestrateCycle requires opts.entities and opts.edges (the live snapshot)");
   }
@@ -111,7 +121,7 @@ export async function orchestrateCycle(world, cycleSpec, opts = {}) {
   const { deltas: headlineDeltas } = resolveScope({ entities, edges }, headlineScope);
   const { mutations: headlineMutations } = await textureBatch(
     headlineDeltas,
-    { entities, edges, world, batchId, elapsedTimeDescriptor },
+    { entities, edges, world, batchId, elapsedTimeDescriptor, fortuneBias, fortuneLabel, nudgeTags },
     textureOpts
   );
 
@@ -184,7 +194,10 @@ export async function orchestrateCycle(world, cycleSpec, opts = {}) {
         batchId,
         sourceKind: "deferred-resolution",
         elapsedTimeDescriptor,
-        deltaSummaryOverride: renderPendingResolutionSummary(records)
+        deltaSummaryOverride: renderPendingResolutionSummary(records),
+        fortuneBias,
+        fortuneLabel,
+        nudgeTags
       },
       textureOpts
     );
@@ -197,7 +210,8 @@ export async function orchestrateCycle(world, cycleSpec, opts = {}) {
   }
 
   // 5. Persist the headline (+ any sweep) batch.
-  const diffedMutations = attachDiffs(mutations, entities, edges);
+  const flaggedEntityIds = new Set(findUnreviewedEntities(world).map((f) => f.entityId));
+  const diffedMutations = attachDiffs(mutations, entities, edges, { flaggedEntityIds });
   const batch = createBatch(world, cycleScope, elapsedTimeDescriptor, diffedMutations, {
     makeId: () => batchId,
     resolvedPendingEntries

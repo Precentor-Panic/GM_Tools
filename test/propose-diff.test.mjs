@@ -135,6 +135,48 @@ test("wired end-to-end: attachDiffs -> createBatch -> grain.renderEntityDiff sho
   assert.ok(regionText.includes("importance: 0.5 -> 0.7") || regionText.includes("Alvor"), "region render should mention the diffed entity");
 });
 
+// ------------------------------------------ Phase 37 task 37.1: type/risk
+
+test("attachDiffs: stamps `type` from the live entity's own real type on an EDIT, or the mutation's own proposed data.type on a CREATE", () => {
+  const [editMutation, , createMutation] = attachDiffs(proposedMutations(), entities, edges);
+  assert.equal(editMutation.type, "person", "an EDIT's type must come from the live entity's own real type");
+  assert.equal(createMutation.type, "concept", "a CREATE's type must come from the mutation's own proposed data.type");
+});
+
+test("attachDiffs: stamps `risk` per the pinned v1 heuristic -- create defaults to 'look', a plain low-impact edit defaults to 'safe'", () => {
+  const [editMutation, , createMutation] = attachDiffs(proposedMutations(), entities, edges);
+  assert.equal(createMutation.risk, "look", "a brand-new node/edge must default to 'look'");
+  // editMutation has impactScore 0.6 >= HEADLINE_IMPORTANCE_THRESHOLD (0.5) -> 'look', not 'safe'.
+  assert.equal(editMutation.risk, "look", "impactScore 0.6 clears the 0.5 threshold -> 'look'");
+});
+
+test("attachDiffs: a delete op is ALWAYS 'contradict', no exceptions", () => {
+  const [deleteMutation] = attachDiffs(
+    [{ op: "delete_entity", id: "alvor", rationale: "gone", batchId: "b1", sourceKind: "manual" }],
+    entities,
+    edges
+  );
+  assert.equal(deleteMutation.risk, "contradict");
+});
+
+test("attachDiffs: a flagged-unreviewed entity's mutation is ALWAYS 'contradict', even a low-impact edit", () => {
+  const flaggedEntityIds = new Set(["gerdur"]);
+  const [entityEdit] = attachDiffs(
+    [{ op: "upsert_entity", id: "gerdur", data: { description: "new" }, rationale: "x", batchId: "b1", sourceKind: "ambient-decay", impactScore: 0.1 }],
+    entities,
+    edges,
+    { flaggedEntityIds }
+  );
+  assert.equal(entityEdit.risk, "contradict", "a flagged-unreviewed entity's mutation must be 'contradict' regardless of impactScore");
+});
+
+test("attachDiffs: an omitted opts (every pre-Phase-37 call site) behaves exactly as before -- diff still attached, type/risk still computed against an empty flagged set", () => {
+  const [entityMutation] = attachDiffs(proposedMutations(), entities, edges);
+  assert.ok(Array.isArray(entityMutation.diff));
+  assert.equal(typeof entityMutation.type, "string");
+  assert.ok(["safe", "look", "contradict"].includes(entityMutation.risk));
+});
+
 console.log(`\n${passed} passed`);
 
 process.on("exit", () => {

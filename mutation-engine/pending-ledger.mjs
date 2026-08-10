@@ -42,7 +42,13 @@ import { summarizeBatch, renderHeadline } from "./grain.mjs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "pending-resolution");
 
-export const SCHEMA_VERSION = 1;
+// Bumped 1 -> 2 for Phase 37 task 37.1 (Chronicle's "queued intents"
+// deferred lane, review-ui/test/e2e/phase37-fixture.mjs §5): PendingEntry
+// gained an OPTIONAL `tags: string[]` field, additive -- old ledger files
+// with no `tags` key still parse unchanged. Maps onto the Composer's
+// deferred-lane row's own `tags` (e.g. "drifts", "grudge") straight through
+// to a real, already-shipped field on this store, rather than a new one.
+export const SCHEMA_VERSION = 2;
 
 export const PendingStatus = z.enum(["pending", "proposed"]);
 
@@ -53,7 +59,8 @@ export const PendingEntry = z.object({
   sourceBatchId: z.string(),
   cycleDescriptor: z.string(),
   status: PendingStatus,
-  createdAt: z.string()
+  createdAt: z.string(),
+  tags: z.array(z.string()).optional()
 }).strict();
 
 export function pendingLedgerRoot() {
@@ -125,7 +132,8 @@ export function writePending(world, entityId, entry, opts = {}) {
     sourceBatchId: entry.sourceBatchId,
     cycleDescriptor: entry.cycleDescriptor,
     status: entry.status ?? "pending",
-    createdAt: entry.createdAt ?? new Date().toISOString()
+    createdAt: entry.createdAt ?? new Date().toISOString(),
+    ...(entry.tags !== undefined ? { tags: entry.tags } : {})
   };
   return writeLedger(world, entityId, [...existing, full]);
 }

@@ -263,6 +263,22 @@ test("applyLedgerOutcome: reject reverts the touched entries to 'pending', doesn
   assert.equal(entries[0].status, "pending");
 });
 
+// ------------------------------------------ Phase 37 task 37.1: tags (SCHEMA_VERSION 1 -> 2)
+
+test("writePending: accepts an optional `tags` array, round-trips it through readPending", () => {
+  const entity = "ent-tags";
+  writePending(WORLD, entity, baseEntry({ tags: ["drifts", "changes hands"] }), { makeId: () => "tg1" });
+  const [entry] = readPending(WORLD, entity);
+  assert.deepEqual(entry.tags, ["drifts", "changes hands"]);
+});
+
+test("writePending: omitting `tags` entirely still parses (additive/optional field, old-shape callers unaffected)", () => {
+  const entity = "ent-no-tags";
+  writePending(WORLD, entity, baseEntry(), { makeId: () => "tg2" });
+  const [entry] = readPending(WORLD, entity);
+  assert.equal(entry.tags, undefined);
+});
+
 console.log(`\n${passed} passed`);
 
 process.on("exit", () => {

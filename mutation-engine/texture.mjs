@@ -202,6 +202,44 @@ function fillTemplate(vars) {
 }
 
 /**
+ * Phase 37 task 37.1: render an additive "tone" cue block for the texturing
+ * prompt from Chronicle's fortune bias + "nudge it further" tags. Returns
+ * "" when neither is given -- an omitted-opts caller (every pre-Phase-37
+ * call site) renders the identical prompt text this always has, modulo the
+ * one placeholder line itself (see prompts/texture.md).
+ *
+ * @param {number} [fortuneBias]   -2..2, Chronicle's fortune-track bias
+ * @param {string} [fortuneLabel]  the fortune stop's display label (e.g. "Ruinous")
+ * @param {string[]} [nudgeTags]   Chronicle's "nudge it further" tag ids
+ * @returns {string}
+ */
+function renderToneLine(fortuneBias, fortuneLabel, nudgeTags) {
+  const lines = [];
+  if (fortuneBias !== undefined && fortuneBias !== null) {
+    const labelPart = fortuneLabel ? ` (${fortuneLabel})` : "";
+    lines.push(
+      `Overall fortune for this stretch of time: bias ${fortuneBias > 0 ? "+" : ""}${fortuneBias}${labelPart} on a ` +
+        `-2..2 scale -- let this tilt how kind or harsh outcomes trend, without overriding what the deltas above ` +
+        `actually call for.`
+    );
+  }
+  if (Array.isArray(nudgeTags) && nudgeTags.length) {
+    lines.push(`Nudge this pass toward: ${nudgeTags.join(", ")}.`);
+  }
+  return lines.length ? `\n${lines.join("\n")}\n` : "";
+}
+
+/**
+ * Merge Chronicle's "nudge it further" tag ids onto an entity's own `tags`
+ * array, deduplicated. Deliberately CODE-SIDE, not reliant on the LLM
+ * choosing to echo them back -- "these become tags on the graph, not prose"
+ * per Chronicle.dc.html's own UI copy for this control.
+ */
+function mergeTags(existingTags, nudgeTags) {
+  return [...new Set([...(Array.isArray(existingTags) ? existingTags : []), ...nudgeTags])];
+}
+
+/**
  * Texture a single region: one Anthropic API call, validate -> retry-once
  * -> typed-error-on-second-failure. A truncated response (stop_reason
  * max_tokens) is detected explicitly and treated as its own retry-worthy
@@ -229,6 +267,12 @@ function fillTemplate(vars) {
  *                                              callers (as {impactScore} stubs) so the impactScore-max calc below
  *                                              is unaffected -- this override only changes what the model reads,
  *                                              not the bookkeeping.
+ * @param {number} [ctx.fortuneBias]   Phase 37 task 37.1: Chronicle's fortune-track bias (-2..2), additive --
+ *                                     an omitted ctx renders the identical prompt every pre-Phase-37 caller
+ *                                     already gets.
+ * @param {string} [ctx.fortuneLabel]  the fortune stop's display label (e.g. "Ruinous"), paired with fortuneBias.
+ * @param {string[]} [ctx.nudgeTags]   Chronicle's "nudge it further" tag ids -- steers the prompt AND is stamped,
+ *                                     deterministically, onto every emitted upsert_entity mutation's own data.tags.
  * @param {object} [opts]
  * @param {object} [opts.client]  injectable Anthropic-SDK-shaped client (for tests / DI)
  * @param {string} [opts.apiKey]
@@ -237,7 +281,7 @@ function fillTemplate(vars) {
  * @returns {Promise<object[]>}  validated Mutation objects
  */
 export async function textureRegion(region, ctx, opts = {}) {
-  const { entities, edges, world, batchId, sourceKind, elapsedTimeDescriptor, note, deltaSummaryOverride } = ctx;
+  const { entities, edges, world, batchId, sourceKind, elapsedTimeDescriptor, note, deltaSummaryOverride, fortuneBias, fortuneLabel, nudgeTags } = ctx;
   const regionContext = renderRegionContext(entities, region.entityIds, edges) || "(no entities)";
   const deltaSummary = deltaSummaryOverride ?? (renderDeltaSummary(region.deltas, entities) || "(no deltas)");
 
@@ -247,6 +291,7 @@ export async function textureRegion(region, ctx, opts = {}) {
     elapsedTimeDescriptor: elapsedTimeDescriptor ?? "(not specified)",
     regionContext,
     deltaSummary,
+    toneLine: renderToneLine(fortuneBias, fortuneLabel, nudgeTags),
     retryNote: note ? `Additional note from the reviewer: ${note}` : ""
   });
 
@@ -300,8 +345,15 @@ export async function textureRegion(region, ctx, opts = {}) {
         // through Mutation itself; schema.mjs's StoredMutation validates the
         // fully-enriched object later, once review-state.mjs persists it.
         const validated = Mutation.parse({ ...m, batchId, sourceKind, impactScore });
+        // Phase 37 task 37.1: stamp Chronicle's "nudge it further" tags onto
+        // every emitted upsert_entity mutation's own data.tags, deterministically
+        // (code-side, not reliant on the model choosing to echo them back).
+        const tagged =
+          Array.isArray(nudgeTags) && nudgeTags.length && validated.op === "upsert_entity"
+            ? { ...validated, data: { ...(validated.data ?? {}), tags: mergeTags(validated.data?.tags, nudgeTags) } }
+            : validated;
         return {
-          ...validated,
+          ...tagged,
           regionId: region.regionId,
           ...(entity
             ? { entityContext: { name: entity.name, importance: entity.importance, tags: entity.tags } }
@@ -335,7 +387,7 @@ export async function textureRegion(region, ctx, opts = {}) {
  * @returns {Promise<{mutations:object[], regions:Array}>}
  */
 export async function textureBatch(candidateDeltas, ctx, opts = {}) {
-  const { entities, edges, world, batchId, elapsedTimeDescriptor, note } = ctx;
+  const { entities, edges, world, batchId, elapsedTimeDescriptor, note, fortuneBias, fortuneLabel, nudgeTags } = ctx;
   const regions = groupByRegion(candidateDeltas, edges);
   const mutations = [];
   for (const region of regions) {
@@ -344,7 +396,7 @@ export async function textureBatch(candidateDeltas, ctx, opts = {}) {
       : "ambient-decay";
     const regionMutations = await textureRegion(
       region,
-      { entities, edges, world, batchId, sourceKind, elapsedTimeDescriptor, note },
+      { entities, edges, world, batchId, sourceKind, elapsedTimeDescriptor, note, fortuneBias, fortuneLabel, nudgeTags },
       opts
     );
     mutations.push(...regionMutations);

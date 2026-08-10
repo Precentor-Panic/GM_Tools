@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { resolveScope, SCOPE_MODES, CONTAINED_IN_DEFAULT_DEPTH } from "../time-skip/scope.mjs";
+import { resolveScope, resolveBranchesDeltas, SCOPE_MODES, CONTAINED_IN_DEFAULT_DEPTH } from "../time-skip/scope.mjs";
 import { neighborhood } from "../wf-mcp-server/lib/graph.mjs";
 import { ambientDecay } from "../mutation-engine/propagate.mjs";
 
@@ -212,6 +212,43 @@ test("contained-in: requires anchorId", () => {
 
 test("contained-in: default depth constant is a very high cap, not the shallow region default", () => {
   assert.ok(CONTAINED_IN_DEFAULT_DEPTH >= 100, "contained-in's default depth should comfortably exceed any realistic containment chain");
+});
+
+// ------------------------------------------------------------------ Phase 37 task 37.1: resolveBranchesDeltas (Chronicle's "branches" scopeKind)
+
+test("resolveBranchesDeltas: a single branchId matches resolveScope's own plain contained-in output for that same anchor", () => {
+  const single = resolveScope({ entities, edges }, { mode: "contained-in", anchorId: "cityHall", elapsedSessions: 100 });
+  const merged = resolveBranchesDeltas({ entities, edges }, ["cityHall"], { elapsedSessions: 100 });
+  const singleEdgeIds = new Set(single.deltas.filter((d) => d.kind === "ambient-decay").map((d) => d.edgeId));
+  const mergedEdgeIds = new Set(merged.filter((d) => d.kind === "ambient-decay").map((d) => d.edgeId));
+  assert.deepEqual(mergedEdgeIds, singleEdgeIds);
+  assert.equal(merged.length, single.deltas.length);
+});
+
+test("resolveBranchesDeltas: merges an OVERLAPPING second branchId without duplicating the shared delta", () => {
+  // district1's own containment subtree ({district1, building1, room1}) is
+  // entirely nested inside cityHall's -- both anchors independently produce
+  // a delta for edge k1 (district1<->building1, knowledge, wholly inside
+  // both scopes). The merge must dedupe this to exactly one delta, not two.
+  const merged = resolveBranchesDeltas({ entities, edges }, ["cityHall", "district1"], { elapsedSessions: 100 });
+  const k1Deltas = merged.filter((d) => d.edgeId === "k1");
+  assert.equal(k1Deltas.length, 1, "an edge reachable from BOTH branches must appear exactly once in the merged result, not once per branch");
+});
+
+test("resolveBranchesDeltas: an anchor whose own scope contributes nothing (no containment edges of its own) doesn't break the merge", () => {
+  // 'expat' has no containment edges at all -- its own contained-in
+  // resolution reaches only itself, zero deltas. Merging it alongside
+  // district1 must equal district1's own result exactly.
+  const districtOnly = resolveScope({ entities, edges }, { mode: "contained-in", anchorId: "district1", elapsedSessions: 100 });
+  const merged = resolveBranchesDeltas({ entities, edges }, ["district1", "expat"], { elapsedSessions: 100 });
+  const districtEdgeIds = new Set(districtOnly.deltas.filter((d) => d.kind === "ambient-decay").map((d) => d.edgeId));
+  const mergedEdgeIds = new Set(merged.filter((d) => d.kind === "ambient-decay").map((d) => d.edgeId));
+  assert.deepEqual(mergedEdgeIds, districtEdgeIds);
+});
+
+test("resolveBranchesDeltas: requires at least one branchId", () => {
+  assert.throws(() => resolveBranchesDeltas({ entities, edges }, []), /branchId/);
+  assert.throws(() => resolveBranchesDeltas({ entities, edges }, undefined), /branchId/);
 });
 
 console.log(`\n${passed} passed`);

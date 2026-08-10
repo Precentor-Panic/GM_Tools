@@ -203,3 +203,52 @@ function resolveContainedInDeltas(entities, edges, scopeSpec) {
   }
   return candidateDeltas(containedEntities, containedEdges, { elapsedSessions: scopeSpec.elapsedSessions ?? 1 });
 }
+
+// ------------------------------------------------------------ Phase 37 task 37.1: Chronicle "branches" scopeKind
+
+/**
+ * Resolve a UNION of 'contained-in' scopes, one per branchId, merged by
+ * (entityId ?? edgeId) keeping the max "impact" per key — mirrors
+ * resolveSeedDeltas's own merge-by-max pattern above, applied one layer up
+ * for a multi-anchor scope. contained-in mode ITSELF is unchanged (still
+ * single-anchorId, per its own established signature) — this is purely a
+ * run-composition-level merge over N independent resolveScope calls; no new
+ * scope.mjs mode is added to the resolveScope dispatch above. Lives here
+ * (rather than inline in review-ui/server.mjs's POST /api/chronicle/run
+ * handler) because it reuses this file's snapshot + scope-mode vocabulary
+ * directly and deserves the same direct unit-test coverage every other
+ * scope.mjs mode gets, per review-ui/test/e2e/phase37-fixture.mjs §6.
+ *
+ * AMBIGUITY RESOLVED (flagged): the fixture's own prose says "keeping the
+ * max `impactScore` per entity", but a plain (no-seeds) contained-in
+ * resolution produces exclusively 'ambient-decay'-kind deltas, which have no
+ * `impactScore` field (only `edgeId`/`from`/`to`/`delta`) — only
+ * 'seed-propagated' deltas carry one. The merge key here therefore
+ * generalizes to `delta.impactScore ?? Math.abs(delta.delta ?? 0)`, the
+ * EXACT SAME cross-kind-impact idiom time-skip/run-cycle.mjs's own
+ * deferred-entry write path already established for this identical
+ * ambient-decay-has-no-impactScore gap (see that module's `writePending`
+ * call site) — reused here rather than inventing a second convention.
+ *
+ * @param {{entities:object[], edges:object[]}} snapshot
+ * @param {string[]} branchIds  >=1 required
+ * @param {object} [opts]
+ * @param {number} [opts.elapsedSessions]  forwarded to each per-branch contained-in resolution
+ * @returns {Array} the merged, deduplicated deltas list
+ */
+export function resolveBranchesDeltas(snapshot, branchIds, opts = {}) {
+  if (!branchIds?.length) {
+    throw new Error("resolveBranchesDeltas requires at least one branchId");
+  }
+  const impactOf = (delta) => delta.impactScore ?? Math.abs(delta.delta ?? 0);
+  const merged = new Map();
+  for (const anchorId of branchIds) {
+    const { deltas } = resolveScope(snapshot, { mode: "contained-in", anchorId, elapsedSessions: opts.elapsedSessions });
+    for (const delta of deltas) {
+      const key = delta.entityId ?? delta.edgeId;
+      const existing = merged.get(key);
+      if (!existing || impactOf(delta) > impactOf(existing)) merged.set(key, delta);
+    }
+  }
+  return [...merged.values()];
+}
