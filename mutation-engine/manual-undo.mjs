@@ -86,7 +86,13 @@ const DEFAULT_ROOT = join(__dirname, "..", "manual-undo");
 // level, THEN delete the node cascading its remaining edges, as ONE atomic
 // undo action -- same `graphMutations`-array shape, same no-migration
 // reasoning as SCHEMA_VERSION 2's own note above).
-export const SCHEMA_VERSION = 3;
+//
+// SCHEMA_VERSION 4 (Phase 38 task 38.3): additive -- ManualUndoKind gained
+// "anchor_membership" (manual-edit-ops.mjs's new anchorMembership, the World
+// Loyalty tree's own atomic drag-drop re-anchor: a delete-old-loyalty-edges
+// + add-new-membership-edge group, EXACT sibling shape to "reparent_node"
+// above, one edge family over -- same no-migration reasoning).
+export const SCHEMA_VERSION = 4;
 
 export const ManualUndoKind = z.enum([
   "add_node",
@@ -97,6 +103,7 @@ export const ManualUndoKind = z.enum([
   "delete_edge",
   "reparent_node",
   "remove_reparent_up",
+  "anchor_membership",
   "narration_reset"
 ]);
 

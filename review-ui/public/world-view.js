@@ -104,9 +104,15 @@ const ui = {
   query: "",
   types: new Set(),
   looseOpen: true,
-  looseFilter: null
+  looseFilter: null,
+  // Phase 38 task 38.3: "spatial" | "loyalty" -- which derived tree the LEFT
+  // tree pane renders. View-local UI state (like expanded/query), reset to
+  // "spatial" on resetForWorld -- a world switch never carries Loyalty mode
+  // over. SPATIAL IS THE DEFAULT; every phase30/31/33-pinned containment
+  // behavior is untouched unless the GM explicitly switches.
+  treeMode: "spatial"
 };
-const cache = { world: null, graph: null, derived: null, scenes: null, usedInScene: null };
+const cache = { world: null, graph: null, derived: null, loyaltyDerived: null, scenes: null, usedInScene: null };
 let selectedId = null;
 let mountToken = 0;
 let descSaver = null;
@@ -137,9 +143,11 @@ function resetForWorld(world) {
   ui.looseOpen = true;
   ui.looseFilter = null;
   ui.expandedInit = false;
+  ui.treeMode = "spatial";
   cache.world = null;
   cache.graph = null;
   cache.derived = null;
+  cache.loyaltyDerived = null;
   cache.scenes = null;
   cache.usedInScene = null;
   removeArmedId = null;
@@ -148,25 +156,51 @@ function resetForWorld(world) {
 }
 
 // ---------------------------------------------------------------------------
-// Derived containment structure from the containment EDGES.
+// Derived tree structure from a chosen set of "parent" EDGES. Defaults to
+// containment (BYTE-IDENTICAL to the pre-Phase-38 behavior -- every existing
+// call site that doesn't pass a second arg is unaffected). Phase 38 task
+// 38.3's Loyalty predicate (LOYALTY_PARENT_EDGE below) reuses this same
+// function to derive a SECOND, independent tree over {membership, fealty}
+// edges (phase38-fixture.mjs §6b).
+//
+// SINGLE-PARENT MOST-RECENT-WINS: a node may carry more than one qualifying
+// parent-edge today (containment never does in practice -- reparentNode
+// enforces at most one -- but Loyalty's free-string vocab can, via
+// writeup-import or hand-authored data). For each source node, the
+// qualifying edge with the greatest `edge.updatedAt ?? edge.createdAt`
+// (ISO-string comparison) wins; ties (including "all null/absent", the
+// common case for headlessly-authored fixtures with no real timestamps) go
+// to the LAST one encountered in `graph.edges` -- array order is itself a
+// legitimate recency proxy. For the default containment predicate this is
+// byte-identical to the old plain-overwrite loop (which was also
+// last-in-array-wins).
 // ---------------------------------------------------------------------------
-function buildDerived(graph) {
+function buildDerived(graph, isParentEdge = (e) => e.relationshipType === "containment") {
   const nodesById = new Map();
   for (const n of graph.nodes || []) nodesById.set(n.id, n);
   const parentOf = new Map();
   const childrenOf = new Map();
+  const parentScoreOf = new Map();
   const nonContainment = [];
   for (const e of graph.edges || []) {
-    if (e.relationshipType === "containment") {
-      parentOf.set(e.sourceId, e.targetId);
-      if (!childrenOf.has(e.targetId)) childrenOf.set(e.targetId, []);
-      childrenOf.get(e.targetId).push(e.sourceId);
-    } else {
-      nonContainment.push(e);
+    if (!isParentEdge(e)) { nonContainment.push(e); continue; }
+    const score = e.updatedAt ?? e.createdAt ?? "";
+    const prevScore = parentScoreOf.get(e.sourceId);
+    if (prevScore !== undefined && score < prevScore) continue; // an earlier, more-recent-scoring edge already won
+    const oldParent = parentOf.get(e.sourceId);
+    if (oldParent !== undefined) {
+      const kids = childrenOf.get(oldParent);
+      if (kids) childrenOf.set(oldParent, kids.filter((id) => id !== e.sourceId));
     }
+    parentOf.set(e.sourceId, e.targetId);
+    parentScoreOf.set(e.sourceId, score);
+    if (!childrenOf.has(e.targetId)) childrenOf.set(e.targetId, []);
+    childrenOf.get(e.targetId).push(e.sourceId);
   }
   return { nodesById, parentOf, childrenOf, nonContainment };
 }
+const LOYALTY_PARENT_EDGE = (e) => e.relationshipType === "membership" || e.relationshipType === "fealty";
+
 function d() { return cache.derived; }
 function node(id) { return d().nodesById.get(id); }
 function parentIdOf(id) {
@@ -184,6 +218,46 @@ function ancestorChain(id) {
   let p = parentIdOf(id);
   const seen = new Set([id]);
   while (p && !seen.has(p)) { chain.unshift(p); seen.add(p); p = parentIdOf(p); }
+  return chain;
+}
+
+// ---------------------------------------------------------------------------
+// TREE-SCOPED helpers (Phase 38 task 38.3): everything the LEFT tree pane
+// itself renders/expands/drags over -- visibleRows/toggleExpandAll/
+// buildTreeRow's kid-count/the drag-drop target resolution -- reads through
+// these instead of the d()-family above, so the tree can switch between the
+// Spatial derivation (cache.derived, identical object to d()'s default) and
+// the Loyalty derivation (cache.loyaltyDerived) while everything OUTSIDE the
+// tree pane (the detail pane's breadcrumb/contents, "Mark related", and
+// Loose threads' own predicate -- see looseReasons/nonContainmentEdgesFor
+// below) stays CONTAINMENT-based unconditionally, per the phase38 contract's
+// own explicit "loose-threads stays containment-based" instruction. When
+// ui.treeMode is "spatial" (the default), activeDerived() IS cache.derived
+// -- the exact same object d() returns -- so tree rendering is byte-
+// identical to the pre-Phase-38 behavior.
+// ---------------------------------------------------------------------------
+function activeDerived() {
+  return ui.treeMode === "loyalty" ? cache.loyaltyDerived : cache.derived;
+}
+function treeNode(id) { return activeDerived().nodesById.get(id); }
+function treeParentIdOf(id) {
+  const ad = activeDerived();
+  const p = ad.parentOf.get(id);
+  return p != null && ad.nodesById.has(p) ? p : null;
+}
+function treeChildIdsOf(id) {
+  const ad = activeDerived();
+  return (ad.childrenOf.get(id) || []).filter((cid) => ad.nodesById.has(cid));
+}
+function treeRootIds() {
+  const ad = activeDerived();
+  return [...ad.nodesById.keys()].filter((id) => treeParentIdOf(id) === null);
+}
+function treeAncestorChain(id) {
+  const chain = [];
+  let p = treeParentIdOf(id);
+  const seen = new Set([id]);
+  while (p && !seen.has(p)) { chain.unshift(p); seen.add(p); p = treeParentIdOf(p); }
   return chain;
 }
 function sortNodes(a, b) {
@@ -221,12 +295,13 @@ function buildSkeleton() {
   const treePane = el("aside", { class: "wv-tree-pane" });
   const treeHead = el("div", { class: "wv-tree-head" });
   treeHead.appendChild(el("div", { class: "wv-mono-label" }, "Where things are"));
+  treeHead.appendChild(buildTreeModeToggle());
   const spacer = el("div", { style: "flex:1" });
   const expandToggle = el("div", { class: "wv-expand-toggle" });
   expandToggle.addEventListener("click", toggleExpandAll);
   treeHead.append(spacer, expandToggle);
   const treeScroll = el("div", { class: "wv-tree-scroll" });
-  const tree = el("div", { class: "wv-tree", "data-testid": "world-tree" });
+  const tree = el("div", { class: "wv-tree", "data-testid": "world-tree", "data-tree-mode": ui.treeMode });
   const treeHint = el("div", { class: "wv-tree-hint" },
     "Drag any node onto a place to put it inside. That single edge is all the detail you owe it.");
   treeScroll.append(tree, treeHint);
@@ -329,20 +404,20 @@ function visibleRows() {
   const filtering = !!ui.query.trim() || ui.types.size > 0;
   const keep = new Set();
   if (filtering) {
-    for (const n of d().nodesById.values()) {
+    for (const n of activeDerived().nodesById.values()) {
       if (!matches(n)) continue;
       keep.add(n.id);
-      for (const a of ancestorChain(n.id)) keep.add(a);
+      for (const a of treeAncestorChain(n.id)) keep.add(a);
     }
   }
   const rows = [];
   const walk = (parentId, depth) => {
-    const ids = (parentId === null ? rootIds() : childIdsOf(parentId))
+    const ids = (parentId === null ? treeRootIds() : treeChildIdsOf(parentId))
       .filter((id) => !filtering || keep.has(id))
-      .map((id) => node(id))
+      .map((id) => treeNode(id))
       .sort(sortNodes);
     for (const n of ids) {
-      const kidIds = childIdsOf(n.id).filter((id) => !filtering || keep.has(id));
+      const kidIds = treeChildIdsOf(n.id).filter((id) => !filtering || keep.has(id));
       const open = filtering ? true : ui.expanded.has(n.id);
       rows.push({ node: n, depth, kids: kidIds.length, open });
       if (open && kidIds.length) walk(n.id, depth + 1);
@@ -356,8 +431,8 @@ function toggleExpandAll() {
     ui.expanded = new Set();
   } else {
     ui.expanded = new Set();
-    for (const n of d().nodesById.values()) {
-      if (childIdsOf(n.id).length) ui.expanded.add(n.id);
+    for (const n of activeDerived().nodesById.values()) {
+      if (treeChildIdsOf(n.id).length) ui.expanded.add(n.id);
     }
   }
   renderTree();
@@ -365,10 +440,58 @@ function toggleExpandAll() {
 function renderTree() {
   const tree = root() && root().querySelector('[data-testid="world-tree"]');
   if (!tree) return;
+  tree.setAttribute("data-tree-mode", ui.treeMode);
   tree.innerHTML = "";
   for (const r of visibleRows()) tree.appendChild(buildTreeRow(r));
   const toggle = root().querySelector(".wv-expand-toggle");
   if (toggle) toggle.textContent = ui.expanded.size > 6 ? "collapse all" : "expand all";
+}
+
+// ---------------------------------------------------------------------------
+// Phase 38 task 38.3: the Spatial|Loyalty segmented toggle, mounted into
+// .wv-tree-head. A local mirror of session-planner-view.js's
+// buildSegmentedControl idiom (world-view.js has no existing cross-view
+// import from session-planner-view.js, and this project's convention is to
+// avoid a new one for a single small shared widget -- phase38-fixture.mjs
+// §6a's own "lift or mirror locally" instruction).
+// ---------------------------------------------------------------------------
+function buildTreeModeToggle() {
+  const group = el("div", { class: "wv-tree-mode-toggle", "data-testid": "wv-tree-mode-toggle", role: "group" });
+  const spatialBtn = el("button", {
+    type: "button", class: "wv-tree-mode-btn",
+    "data-testid": "wv-tree-mode-spatial-btn",
+    "aria-pressed": ui.treeMode === "spatial" ? "true" : "false"
+  }, "Spatial");
+  const loyaltyBtn = el("button", {
+    type: "button", class: "wv-tree-mode-btn",
+    "data-testid": "wv-tree-mode-loyalty-btn",
+    "aria-pressed": ui.treeMode === "loyalty" ? "true" : "false"
+  }, "Loyalty");
+  spatialBtn.addEventListener("click", () => setTreeMode("spatial"));
+  loyaltyBtn.addEventListener("click", () => setTreeMode("loyalty"));
+  group.append(spatialBtn, loyaltyBtn);
+  return group;
+}
+function syncTreeModeButtons() {
+  const r = root();
+  if (!r) return;
+  const spatialBtn = r.querySelector('[data-testid="wv-tree-mode-spatial-btn"]');
+  const loyaltyBtn = r.querySelector('[data-testid="wv-tree-mode-loyalty-btn"]');
+  if (spatialBtn) spatialBtn.setAttribute("aria-pressed", ui.treeMode === "spatial" ? "true" : "false");
+  if (loyaltyBtn) loyaltyBtn.setAttribute("aria-pressed", ui.treeMode === "loyalty" ? "true" : "false");
+}
+function setTreeMode(mode) {
+  if (ui.treeMode === mode || (mode !== "spatial" && mode !== "loyalty")) return;
+  ui.treeMode = mode;
+  // Reveal the newly-active tree's own structure (mirrors loadGraph's own
+  // first-load "expand every node with children" convention) rather than
+  // carrying over an expand-state that belonged to the other derivation.
+  ui.expanded = new Set();
+  for (const n of activeDerived().nodesById.values()) {
+    if (treeChildIdsOf(n.id).length) ui.expanded.add(n.id);
+  }
+  syncTreeModeButtons();
+  renderTree();
 }
 function buildTreeRow(r) {
   const n = r.node;
@@ -437,6 +560,12 @@ function wireReparentTarget(rowEl, targetIdArg, resolveTargetId) {
 }
 
 async function reparent(id, parentId) {
+  // Phase 38 task 38.3, §6c: the SAME wireReparentTarget/startDrag/dragId
+  // plumbing calls this on every drop; it branches on the CURRENT UI mode
+  // at drop time rather than existing as two separate drag implementations.
+  // In Spatial mode (the default) this falls through to the ORIGINAL,
+  // completely unchanged containment-reparent path below.
+  if (ui.treeMode === "loyalty") { await anchorLoyalty(id, parentId); return; }
   const prevParent = parentIdOf(id);
   const n = node(id);
   const pn = node(parentId);
@@ -459,6 +588,38 @@ async function reparent(id, parentId) {
     });
   } catch (err) {
     showUndoToast(`Could not move: ${err.message}`, () => {});
+  }
+}
+
+// Phase 38 task 38.3, §6d: dropping tree row A onto tree row B in Loyalty
+// mode calls the NEW anchor-membership route instead of .../reparent --
+// manual-edit-ops.mjs's anchorMembership, a genuinely separate sibling op
+// (reparentNode itself is never touched). Undo-toast copy family: "“<name>”
+// now serves “<parent>”" (mirrors the containment toast's own "is now
+// inside" structure), same undo-restores-prior-parent mechanism.
+async function anchorLoyalty(id, parentId) {
+  const prevParent = treeParentIdOf(id);
+  const n = node(id);
+  const pn = node(parentId);
+  if (!n || !pn) return;
+  try {
+    await wApi(`/api/graph/nodes/${encodeURIComponent(id)}/anchor-membership`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), parentId })
+    });
+    ui.expanded.add(parentId);
+    await reload();
+    showUndoToast(`“${n.name}” now serves “${pn.name}”`, async () => {
+      await wApi(`/api/graph/nodes/${encodeURIComponent(id)}/anchor-membership`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), parentId: prevParent })
+      });
+      await reload();
+    });
+  } catch (err) {
+    showUndoToast(`Could not re-anchor: ${err.message}`, () => {});
   }
 }
 
@@ -1263,6 +1424,7 @@ async function loadGraph() {
   const graph = await wApi(`/api/graph${withWorld({ filter: "all" })}`);
   cache.graph = graph;
   cache.derived = buildDerived(graph);
+  cache.loyaltyDerived = buildDerived(graph, LOYALTY_PARENT_EDGE);
   cache.world = currentWorld();
   // First load of a world: reveal the structure by expanding every node that
   // has children (one-time; a later user collapse-all is respected).

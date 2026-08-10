@@ -118,6 +118,7 @@ import {
   deleteNodeOp,
   deleteEdgeOp,
   reparentNode,
+  anchorMembership,
   removeNodeReparentUp,
   resetEntityNarrationOp,
   undoLastManualEditOp,
@@ -1383,6 +1384,28 @@ async function handleApi(req, res, url, parts) {
     const dir = resolveDir();
     const w = resolveWorld(body.world);
     const result = await reparentNode(dir, w, parts[3], body.parentId ?? null);
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/graph/nodes/:entityId/anchor-membership  { world, parentId }
+  // Phase 38 task 38.3 -- atomic drag-drop re-anchor for the World Loyalty
+  // tree (manual-edit-ops.mjs's anchorMembership): removes the node's
+  // existing membership/fealty PARENT edge(s) and adds a new `membership`
+  // edge to `parentId` as ONE atomic undo unit. `parentId: null` unanchors.
+  // A genuinely separate, sibling route to /reparent above -- reparentNode
+  // (and this route) are NEVER touched by it, per the phase38 contract's
+  // own "reparentNode untouched" instruction.
+  if (
+    method === "POST" &&
+    parts.length === 5 &&
+    parts[1] === "graph" &&
+    parts[2] === "nodes" &&
+    parts[4] === "anchor-membership"
+  ) {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const result = await anchorMembership(dir, w, parts[3], body.parentId ?? null);
     return sendJson(res, 200, result);
   }
 

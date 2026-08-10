@@ -133,6 +133,23 @@ test("ROUTE: POST /api/graph/nodes/:id/anchor-membership -- 404 today (§6d, new
     assert.equal(body.entityId, "p38loy-fighter");
     assert.equal(body.parentId, "p38loy-house");
     assert.equal(typeof body.removedEdgeCount, "number");
+    // Task 38.3 fix (not a contract change -- phase38-fixture.mjs's own §6d
+    // is untouched): once the route is REAL, this probe has a genuine,
+    // permanent effect on the SHARED fixture graph the very next test (the
+    // Spatial-mode guard pin below) independently re-checks "p38loy-e1"
+    // against by id -- pre-38.3 this call 404'd and never mutated anything,
+    // so the two tests' independence was accidental, not by design. Undo it
+    // via the existing /api/manual-undo route (anchorMembership sets the
+    // SAME single undo slot every manual-edit-ops write does, and its own
+    // undo re-creates each removed edge with its EXACT original id/data --
+    // see manual-edit-ops.mjs's anchorMembership doc comment), restoring
+    // "p38loy-e1" byte-for-byte before the next test runs.
+    const undoRes = await fetch(`${base}/api/manual-undo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: WORLD })
+    });
+    assert.equal(undoRes.status, 200, "undoing this probe's own mutation must succeed");
   }
 });
 

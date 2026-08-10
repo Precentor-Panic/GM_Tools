@@ -47,6 +47,7 @@ const {
   deleteNodeOp,
   deleteEdgeOp,
   reparentNode,
+  anchorMembership,
   removeNodeReparentUp,
   resetEntityNarrationOp,
   undoLastManualEditOp,
@@ -351,6 +352,147 @@ await test("reparentNode: a node with MULTIPLE existing containment edges (an un
     [secondEdge.targetId, "loc-root"].sort(),
     "the exact original targets are restored"
   );
+});
+
+// ---------------------------------------------------------------- anchorMembership (Phase 38 task 38.3)
+
+// A dedicated fixture, deliberately separate ids from the reparentNode
+// fixture above (loy- prefix) -- a small Loyalty chain:
+//   loy-fighter --membership--> loy-stable --fealty--> loy-house
+// plus a lone unattached node (loy-drifter, no loyalty parent -- a root).
+applyHeadless(snapPath, [
+  { op: "upsert_entity", data: { id: "loy-house", name: "Loy House", type: "faction", importance: 0.5 } },
+  { op: "upsert_entity", data: { id: "loy-stable", name: "Loy Stable", type: "faction", importance: 0.5 } },
+  { op: "upsert_entity", data: { id: "loy-fighter", name: "Loy Fighter", type: "person", importance: 0.4 } },
+  { op: "upsert_entity", data: { id: "loy-drifter", name: "Loy Drifter", type: "person", importance: 0.3 } },
+  { op: "upsert_edge", data: { id: "loy-edge-fighter-stable", sourceId: "loy-fighter", targetId: "loy-stable", relationshipType: "membership" } },
+  { op: "upsert_edge", data: { id: "loy-edge-stable-house", sourceId: "loy-stable", targetId: "loy-house", relationshipType: "fealty" } }
+]);
+
+function loyaltyParentEdgeOf(entityId) {
+  return edges().find(
+    (e) => e.sourceId === entityId && (e.relationshipType === "membership" || e.relationshipType === "fealty")
+  );
+}
+
+await test("anchorMembership: moves the node's loyalty edge to the new parent as a NEW membership edge, one atomic write", async () => {
+  const before = edges().length;
+  const result = await anchorMembership(dataDir, WORLD, "loy-fighter", "loy-house");
+  assert.equal(result.entityId, "loy-fighter");
+  assert.equal(result.parentId, "loy-house");
+  assert.equal(result.removedEdgeCount, 1);
+  assert.ok(result.edgeId, "a new edge id must be reported");
+  assert.equal(edges().length, before); // one removed, one added
+  assert.equal(findEdge("loy-edge-fighter-stable"), undefined);
+  const newParentEdge = loyaltyParentEdgeOf("loy-fighter");
+  assert.ok(newParentEdge);
+  assert.equal(newParentEdge.targetId, "loy-house");
+  assert.equal(newParentEdge.relationshipType, "membership", "a re-anchor ALWAYS creates a membership edge, never fealty");
+});
+
+await test("anchorMembership: undo restores the ORIGINAL loyalty edge (delete-new + recreate-old, as ONE undone action)", async () => {
+  const before = edges().length;
+  const undoResult = await undoLastManualEditOp(dataDir, WORLD);
+  assert.equal(undoResult.status, "undone");
+  assert.equal(undoResult.kind, "anchor_membership");
+  assert.equal(edges().length, before);
+  const restored = loyaltyParentEdgeOf("loy-fighter");
+  assert.ok(restored);
+  assert.equal(restored.targetId, "loy-stable", "back to its original loyalty parent");
+  assert.equal(restored.id, "loy-edge-fighter-stable", "the EXACT original edge id must come back");
+  assert.equal(restored.relationshipType, "membership", "the ORIGINAL edge type is restored, not re-derived");
+});
+
+await test("anchorMembership: parentId null UNANCHORS (root case) -- removes the existing loyalty edge(s), adds none", async () => {
+  const before = edges().length;
+  const result = await anchorMembership(dataDir, WORLD, "loy-fighter", null);
+  assert.equal(result.parentId, null);
+  assert.equal(result.removedEdgeCount, 1);
+  assert.equal(result.edgeId, null);
+  assert.equal(edges().length, before - 1);
+  assert.equal(loyaltyParentEdgeOf("loy-fighter"), undefined, "loy-fighter is now a Loyalty root");
+
+  const undoResult = await undoLastManualEditOp(dataDir, WORLD);
+  assert.equal(undoResult.status, "undone");
+  assert.equal(undoResult.kind, "anchor_membership");
+  assert.ok(loyaltyParentEdgeOf("loy-fighter"));
+});
+
+await test("anchorMembership: unanchoring a node with NO existing loyalty edge is a clean no-op (removedEdgeCount 0), not an error", async () => {
+  const result = await anchorMembership(dataDir, WORLD, "loy-drifter", null); // loy-drifter has no loyalty parent edge at all
+  assert.deepEqual(result, { entityId: "loy-drifter", parentId: null, removedEdgeCount: 0, edgeId: null });
+});
+
+await test("anchorMembership: CYCLE GUARD -- refuses to anchor a node under its own Loyalty descendant", async () => {
+  // loy-stable is currently loy-house's CHILD (loy-stable -fealty-> loy-house,
+  // via the earlier test). Trying to anchor loy-house UNDER loy-stable would
+  // make loy-house its own descendant's descendant -- a cycle.
+  const before = edges().length;
+  await assert.rejects(() => anchorMembership(dataDir, WORLD, "loy-house", "loy-stable"), /cycle/i);
+  assert.equal(edges().length, before, "a rejected anchor must not have written anything");
+});
+
+await test("anchorMembership: refuses to anchor a node under itself", async () => {
+  await assert.rejects(() => anchorMembership(dataDir, WORLD, "loy-stable", "loy-stable"), /itself/i);
+});
+
+await test("anchorMembership: rejects an unknown entityId or unknown parentId", async () => {
+  await assert.rejects(() => anchorMembership(dataDir, WORLD, "does-not-exist", "loy-house"));
+  await assert.rejects(() => anchorMembership(dataDir, WORLD, "loy-stable", "does-not-exist-either"));
+});
+
+await test("anchorMembership: reparentNode's OWN containment behavior is completely unaffected by an anchorMembership call (reparentNode never modified/repurposed)", async () => {
+  // Give loy-fighter a real containment (Spatial) edge alongside its Loyalty
+  // one, exercise reparentNode on it, then call anchorMembership on the SAME
+  // node -- containment must be untouched by the Loyalty write, and vice
+  // versa (the two edge families never cross-contaminate).
+  const reparentResult = await reparentNode(dataDir, WORLD, "loy-fighter", "loc-root");
+  assert.equal(reparentResult.entityId, "loy-fighter");
+  const containmentEdge = edges().find((e) => e.sourceId === "loy-fighter" && e.relationshipType === "containment");
+  assert.ok(containmentEdge, "loy-fighter now has a real containment edge to loc-root");
+
+  await anchorMembership(dataDir, WORLD, "loy-fighter", "loy-house");
+  const containmentEdgeAfter = edges().find((e) => e.sourceId === "loy-fighter" && e.relationshipType === "containment");
+  assert.ok(containmentEdgeAfter, "the containment edge must survive an anchorMembership call untouched");
+  assert.equal(containmentEdgeAfter.id, containmentEdge.id);
+  assert.equal(containmentEdgeAfter.targetId, "loc-root");
+
+  await reparentNode(dataDir, WORLD, "loy-fighter", null);
+  const loyaltyEdgeAfter = loyaltyParentEdgeOf("loy-fighter");
+  assert.ok(loyaltyEdgeAfter, "the Loyalty membership edge must survive a reparentNode call untouched");
+  assert.equal(loyaltyEdgeAfter.targetId, "loy-house");
+});
+
+// Deliberately LAST in this block (mirrors reparentNode's own "MULTIPLE
+// existing edges" test being last in ITS block, same reasoning): leaves
+// loy-stable with an intentionally ambiguous-order restored multi-edge
+// state after its own undo, so no later assertion in this file depends on
+// loy-stable's exact winning parent.
+await test("anchorMembership: removes BOTH membership and fealty prior edges (not just membership) when collapsing multi-loyalty history", async () => {
+  // Give loy-stable a SECOND, pre-existing loyalty edge of the OTHER type
+  // (fealty), so the "removes every membership OR fealty edge" behavior has
+  // real multi-type coverage, not just multi-membership.
+  const extraFealty = await addEdgeOp(dataDir, WORLD, { sourceId: "loy-stable", targetId: "loy-drifter", relationshipType: "fealty" });
+  const beforeEdges = edges().filter((e) => e.sourceId === "loy-stable" && (e.relationshipType === "membership" || e.relationshipType === "fealty"));
+  assert.equal(beforeEdges.length, 2, "sanity: loy-stable now has a fealty (to loy-house) AND a fealty (to loy-drifter) edge");
+
+  const result = await anchorMembership(dataDir, WORLD, "loy-stable", "loy-house");
+  assert.equal(result.removedEdgeCount, 2, "BOTH pre-existing loyalty edges must be removed, regardless of type");
+  const afterEdges = edges().filter((e) => e.sourceId === "loy-stable" && (e.relationshipType === "membership" || e.relationshipType === "fealty"));
+  assert.equal(afterEdges.length, 1);
+  assert.equal(afterEdges[0].targetId, "loy-house");
+  assert.equal(afterEdges[0].relationshipType, "membership");
+
+  const undoResult = await undoLastManualEditOp(dataDir, WORLD);
+  assert.equal(undoResult.status, "undone");
+  const restoredEdges = edges().filter((e) => e.sourceId === "loy-stable" && (e.relationshipType === "membership" || e.relationshipType === "fealty"));
+  assert.equal(restoredEdges.length, 2, "BOTH original edges must come back atomically");
+  assert.deepEqual(
+    restoredEdges.map((e) => e.targetId).sort(),
+    [extraFealty.targetId, "loy-house"].sort(),
+    "the exact original targets are restored"
+  );
+  assert.ok(restoredEdges.some((e) => e.relationshipType === "fealty" && e.targetId === "loy-house"), "the ORIGINAL fealty-to-house edge is restored as fealty, not silently rewritten to membership");
 });
 
 // ---------------------------------------------------------------- removeNodeReparentUp (Phase 34 task 34.1)

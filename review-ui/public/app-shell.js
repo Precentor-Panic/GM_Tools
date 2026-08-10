@@ -306,15 +306,90 @@ async function fillRailPlans(listEl) {
     planNameCache.set(p.id, p.name);
     const activeCls = p.id === railOpenPlanId ? " shell-plan-item--active" : "";
     const item = el("div", { class: "shell-plan-item" + activeCls, "data-testid": "shell-plan-item", "data-plan-id": p.id });
+    item.addEventListener("click", () => goto(`planner/plan/${p.id}`));
+
+    // Phase 38 task 38.3: the plan rail's own ✕, mirroring fillRailScenes'
+    // row-wrapper + delete-btn + confirm-panel pattern testid-for-testid
+    // (shell-scene-library-item* -> shell-plan-item*, per the phase38
+    // contract's §5). The EXISTING `shell-plan-item-name`/`shell-plan-item-meta`
+    // testids are unchanged, just now living inside this row wrapper.
+    const row = el("div", { class: "shell-plan-item-row", "data-testid": "shell-plan-item-row" });
+    const main = el("div", { class: "shell-plan-item-main" });
     const name = el("div", { class: "shell-plan-item-name", "data-testid": "shell-plan-item-name" });
     name.textContent = p.name || "(untitled plan)";
     const meta = el("div", { class: "shell-plan-item-meta", "data-testid": "shell-plan-item-meta" });
     const n = (p.sceneIds || []).length;
     meta.textContent = `${n} scene${n === 1 ? "" : "s"}`;
-    item.append(name, meta);
-    item.addEventListener("click", () => goto(`planner/plan/${p.id}`));
+    main.append(name, meta);
+    row.appendChild(main);
+
+    const deleteBtn = el("button", {
+      class: "shell-plan-item-delete-btn",
+      "data-testid": "shell-plan-item-delete-btn",
+      "data-plan-id": p.id,
+      title: "Delete this plan entirely",
+      type: "button"
+    });
+    deleteBtn.textContent = "✕";
+    deleteBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      togglePlanDeleteConfirm(item, p);
+    });
+    row.appendChild(deleteBtn);
+
+    item.appendChild(row);
     listEl.appendChild(item);
   }
+}
+
+// Guarded confirm panel for the plan rail's ✕, same shape/idiom as
+// toggleSceneDeleteConfirm below -- reuses the EXISTING, already-shipped
+// DELETE /api/scene-planning/plans/:planId route (deletePlan, plans.mjs:212)
+// with zero backend changes (phase38 contract §5). Copy mirrors the
+// runsheet's own confirmDeletePlan verbatim, with the rail-specific "removed
+// from the run list" framing the contract's §5 pins.
+function togglePlanDeleteConfirm(item, plan) {
+  const existing = item.querySelector('[data-testid="shell-plan-item-delete-confirm-panel"]');
+  if (existing) { existing.remove(); return; }
+
+  const panel = el("div", {
+    class: "shell-plan-item-delete-confirm-panel",
+    "data-testid": "shell-plan-item-delete-confirm-panel",
+    "data-plan-id": plan.id
+  });
+  const warn = el("p", { class: "hint" });
+  warn.textContent = "Delete this plan entirely? It will be removed from the run list — its scenes are untouched and stay in the Scene library.";
+  const status = el("span", { class: "hint" });
+  const confirmBtn = el("button", { class: "btn btn--accept", type: "button", "data-testid": "shell-plan-item-delete-confirm-btn" });
+  confirmBtn.textContent = "Yes, delete";
+  const cancelBtn = el("button", { class: "btn", type: "button", "data-testid": "shell-plan-item-delete-cancel-btn" });
+  cancelBtn.textContent = "Cancel";
+
+  confirmBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    confirmBtn.disabled = true;
+    try {
+      await shApi(`/api/scene-planning/plans/${encodeURIComponent(plan.id)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      });
+      planNameCache.delete(plan.id);
+      const wasOpenPlan = railOpenPlanId === plan.id;
+      item.remove();
+      if (wasOpenPlan) {
+        railOpenPlanId = null;
+        goto("planner/plans");
+      }
+    } catch (err) {
+      status.textContent = `Could not delete: ${err.message}`;
+      confirmBtn.disabled = false;
+    }
+  });
+  cancelBtn.addEventListener("click", (e) => { e.stopPropagation(); panel.remove(); });
+
+  panel.append(warn, confirmBtn, cancelBtn, status);
+  item.appendChild(panel);
 }
 
 async function fillRailScenes(listEl, countEl) {

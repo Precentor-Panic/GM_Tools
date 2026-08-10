@@ -448,6 +448,154 @@ export async function reparentNode(dir, w, entityId, newParentId) {
   return { entityId, parentId: normalizedParentId, removedEdgeCount: existingEdges.length, edgeId: newEdgeId };
 }
 
+// --- anchor membership (Phase 38 task 38.3) ---------------------------------
+
+/**
+ * Picks the single winning Loyalty PARENT edge for `entityId` (single-parent
+ * most-recent-wins, phase38-fixture.mjs §6b/§6d): among every edge where
+ * `entityId` is `sourceId` and `relationshipType` is `"membership"` or
+ * `"fealty"`, the edge with the greatest `edge.updatedAt ?? edge.createdAt`
+ * (ISO-string comparison) wins; ties (including "all null/absent" -- common
+ * in headlessly-authored data with no real timestamps) go to the LAST one
+ * encountered in `edges` (array order is itself a legitimate recency proxy,
+ * the same convention the Loyalty tree's own client-side buildDerived
+ * uses). Returns `null` if `entityId` has no qualifying edge (a Loyalty
+ * root).
+ */
+function loyaltyParentEdgeOf(edges, entityId) {
+  let winner = null;
+  let winnerScore = null;
+  for (const e of edges) {
+    if (e.sourceId !== entityId) continue;
+    if (e.relationshipType !== "membership" && e.relationshipType !== "fealty") continue;
+    const score = e.updatedAt ?? e.createdAt ?? "";
+    if (winner === null || score >= winnerScore) {
+      winner = e;
+      winnerScore = score;
+    }
+  }
+  return winner;
+}
+
+/**
+ * Atomic drag-drop re-anchor for the World Loyalty tree (phase38-fixture.mjs
+ * §6d): removes EVERY existing edge where `entityId` is the CHILD
+ * (`sourceId`) and `relationshipType` is `"membership"` OR `"fealty"` (BOTH
+ * types, not just membership -- collapsing any pre-existing multi-loyalty
+ * history into the one new edge below is the point of this op), and --
+ * unless anchoring to root (`parentId: null`, same "unparent-only" meaning
+ * reparentNode gives `newParentId: null`) -- adds exactly ONE new edge
+ * `{sourceId: entityId, targetId: parentId, relationshipType: "membership"}`
+ * (ALWAYS `"membership"`, never `"fealty"` -- per the task plan's own locked
+ * decision, "drag creates a `membership` edge"; a `fealty` edge is a
+ * distinct, hand-authored relationship this op never creates, only ever
+ * removes as part of the "existing loyalty parent" cleanup).
+ *
+ * MIRRORS reparentNode's shape exactly, type swapped -- `reparentNode`
+ * ITSELF IS NEVER MODIFIED; this is a genuinely separate, sibling
+ * function/route (see manual-edit-routes.test.mjs / the review-ui route
+ * table for the dedicated guard proving reparentNode's own behavior is
+ * unaffected by a call here).
+ *
+ * CYCLE GUARD: identical structure to reparentNode's, walking the LOYALTY
+ * parent chain (membership/fealty edges only, via loyaltyParentEdgeOf's
+ * SAME recency-tie-break above when a still-uncollapsed node has more than
+ * one) upward from `parentId`; if `entityId` itself is reached, refuse
+ * (would create a Loyalty cycle).
+ *
+ * ATOMIC UNDO: one `applyManualMutations` call (every removed edge
+ * re-created + the new edge deleted, EXACT mirror of reparentNode's own
+ * undo-inverse construction), one undo slot.
+ *
+ * @param {string} dir
+ * @param {string} w
+ * @param {string} entityId
+ * @param {string|null} parentId
+ * @returns {Promise<{entityId:string, parentId:string|null, removedEdgeCount:number, edgeId:string|null}>}
+ */
+export async function anchorMembership(dir, w, entityId, parentId) {
+  requireNonEmptyString(entityId, "entityId");
+  const normalizedParentId = parentId === undefined ? null : parentId;
+  const { entities, edges } = loadSnapshot(dir, w).snapshot;
+  if (!entities.some((e) => e.id === entityId)) {
+    throw new Error(`No entity "${entityId}" found in the live graph.`);
+  }
+
+  if (normalizedParentId !== null) {
+    requireNonEmptyString(normalizedParentId, "parentId");
+    if (normalizedParentId === entityId) {
+      throw new Error("Cannot anchor a node's membership under itself.");
+    }
+    if (!entities.some((e) => e.id === normalizedParentId)) {
+      throw new Error(`No entity "${normalizedParentId}" found in the live graph.`);
+    }
+    // Cycle guard: climb the LOYALTY chain from the PROPOSED parent
+    // upward. If entityId turns up, normalizedParentId is currently one of
+    // entityId's own Loyalty descendants -- anchoring entityId under it
+    // would make entityId its own ancestor.
+    let cursor = normalizedParentId;
+    const seen = new Set();
+    while (cursor) {
+      if (cursor === entityId) {
+        throw new Error(
+          `Cannot anchor "${entityId}" under "${normalizedParentId}" -- "${normalizedParentId}" is currently a Loyalty descendant of "${entityId}" (this would create a cycle).`
+        );
+      }
+      if (seen.has(cursor)) break; // defensive: pre-existing cycle in the data, never loop forever
+      seen.add(cursor);
+      const parentEdge = loyaltyParentEdgeOf(edges, cursor);
+      cursor = parentEdge ? parentEdge.targetId : null;
+    }
+  }
+
+  const existingEdges = edges.filter(
+    (e) => e.sourceId === entityId && (e.relationshipType === "membership" || e.relationshipType === "fealty")
+  );
+
+  const mutationCores = existingEdges.map((e) => ({
+    op: "delete_edge",
+    id: e.id,
+    rationale: `Manual edit: anchor membership -- removed ${e.relationshipType} edge to "${e.targetId}".`
+  }));
+
+  let newEdgeId = null;
+  if (normalizedParentId !== null) {
+    newEdgeId = makeManualId();
+    mutationCores.push({
+      op: "upsert_edge",
+      id: newEdgeId,
+      data: { id: newEdgeId, sourceId: entityId, targetId: normalizedParentId, relationshipType: "membership" },
+      rationale: `Manual edit: anchor membership -- membership edge to "${normalizedParentId}" created.`
+    });
+  }
+
+  if (!mutationCores.length) {
+    // Already unanchored, and the caller asked to unanchor again -- a
+    // genuine no-op, not an error (mirrors reparentNode's own no-op case).
+    return { entityId, parentId: null, removedEdgeCount: 0, edgeId: null };
+  }
+
+  applyManualMutations(dir, w, mutationCores);
+  markHumanReviewed(w, normalizedParentId ? [entityId, normalizedParentId] : [entityId]);
+
+  // Undo inverse, grouped as ONE action: re-create every removed edge with
+  // its exact original data, and delete the new edge if one was created --
+  // EXACT mirror of reparentNode's own inverse construction.
+  const inverseMutations = [
+    ...existingEdges.map((e) => ({ op: "upsert_edge", id: e.id, data: e })),
+    ...(newEdgeId ? [{ op: "delete_edge", id: newEdgeId }] : [])
+  ];
+  setUndoSlot(w, {
+    kind: "anchor_membership",
+    description: normalizedParentId
+      ? `"${entityId}" anchored under "${normalizedParentId}".`
+      : `"${entityId}" unanchored.`,
+    graphMutations: inverseMutations
+  });
+
+  return { entityId, parentId: normalizedParentId, removedEdgeCount: existingEdges.length, edgeId: newEdgeId };
+}
+
 // --- hybrid remove (Phase 34 task 34.1) -------------------------------------
 
 /**
