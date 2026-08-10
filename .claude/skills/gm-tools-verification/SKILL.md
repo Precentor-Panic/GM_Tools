@@ -46,22 +46,27 @@ work, diff:
 cd /opt/dev/foundry_worldFabric && git status --short && git rev-parse --short HEAD
 ```
 
-**Current baseline (as of Phase 36 task 36.3):**
-- `HEAD` = `6d53d97` ("Phase 36 task 36.3 amendment: at-most-once ops watcher (live-smoke fix)") — an
-  explicit, orchestrator-sanctioned amendment to the 36.1 wave: the live smoke produced FIVE copies of one
-  pushed scene because the ops watcher's async check() overlapped its own 5s ticks and re-applied the
-  still-uncleared batch. Adds three layered guards (no-overlap `running` flag; applied-batch signature via the
-  new pure `opsBatchSignature` so a lagging clear is re-cleared, never re-applied; `game.users.activeGM` leader
-  gate for multi-client). Sits on `f18902e` ("36.1: bridge v2 ops" — Level-doc background, update_scene/
-  create_token/create_journal_image, playlists[], base-`Actor.<id>` token uuids, source-serialized `system` so
-  dnd5e-v4 `activities` stop collapsing to `{}`), itself on `da0f249`. If `HEAD` has moved past `6d53d97`
-  without a corresponding GM_Tools phase task that says so, investigate before proceeding.
+**Current baseline (as of Phase 38 task 38.1):**
+- `HEAD` = `ce93851` ("Phase 38 task 38.1: bridge v3 index (worldItems + compendia headers) +
+  import_compendium_scene") — the orchestrator-sanctioned wave #3 extending the bridge to v3: the index gains
+  top-level `worldItems[]` (`game.items`, reusing `extractItem` verbatim) and `compendia[]` (`game.packs`
+  headers via the lazy `pack.index` only, Scene packs additionally carrying `entries:[{id,name,thumb}]`), and
+  the ops watcher gains `import_compendium_scene {packId,entryId}` →
+  `game.scenes.importFromCompendium(pack, entryId)` (the compendium Scene's embedded Level doc round-trips for
+  free, so no `create_scene`-style Level-doc write is needed — verified against the installed v14 client). All
+  additive-optional, `FOUNDRY_INDEX_VERSION` stays 1; bridge tests 27 → 34. Sits on `6d53d97` ("Phase 36 task
+  36.3 amendment: at-most-once ops watcher (live-smoke fix)" — three layered guards: no-overlap `running` flag;
+  applied-batch signature via the pure `opsBatchSignature` so a lagging clear is re-cleared, never re-applied;
+  `game.users.activeGM` leader gate), itself on `f18902e` ("36.1: bridge v2 ops" — Level-doc background,
+  update_scene/create_token/create_journal_image, playlists[], base-`Actor.<id>` token uuids, source-serialized
+  `system` so dnd5e-v4 `activities` stop collapsing to `{}`), itself on `da0f249`. If `HEAD` has moved past
+  `ce93851` without a corresponding GM_Tools phase task that says so, investigate before proceeding.
 - Working tree: `package.json` and `scripts/apps/cockpit-app.mjs` modified, `setup-test.mjs` and
   `test/e2e-m13a.mjs` untracked — the SAME pre-existing, unrelated-to-GM_Tools four-item state this baseline has
   carried since before Phase 32 (36.1 did not touch any of these four; the regenerated `world-fabric-v0.1.0.zip`
   is gitignored and never appears in status).
 
-The check going forward is **"no UNEXPECTED changes beyond the committed bridge (`da0f249`) plus this
+The check going forward is **"no UNEXPECTED changes beyond the committed bridge (now `ce93851`) plus this
 pre-existing four-item working-tree state"** — not "zero diff at all." If the diff grows beyond exactly those
 four working-tree items, or `HEAD` moves without a documented reason, something touched the wrong repo (or the
 wrong part of it) — stop and investigate before proceeding.
