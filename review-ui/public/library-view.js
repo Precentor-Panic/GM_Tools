@@ -946,7 +946,20 @@ function buildShelf(ctx, which) {
     });
     row.addEventListener("dragend", () => setTrayDragPayload(null));
 
-    row.appendChild(el("span", { text: k.glyph, style: `font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: ${k.accent}; padding-top: 2px; flex: none;` }));
+    // Phase 38 task 38.2, §3 -- a compendium browse row's thumb (when the
+    // pack entry carried one) renders in place of the plain kind glyph, a
+    // quiet visual "this one has a real preview" cue; every other row (no
+    // thumb) keeps the existing glyph unchanged.
+    if (r.thumb) {
+      row.appendChild(el("img", {
+        testid: "tagged-shelf-row-thumb",
+        src: r.thumb,
+        alt: "",
+        style: "width: 30px; height: 30px; object-fit: cover; border-radius: 3px; flex: none; border: 1px solid oklch(0.85 0.010 80);"
+      }));
+    } else {
+      row.appendChild(el("span", { text: k.glyph, style: `font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: ${k.accent}; padding-top: 2px; flex: none;` }));
+    }
 
     const bodyCol = el("div", { style: "flex: 1; min-width: 0;" });
     const topRowChildren = [
@@ -955,6 +968,18 @@ function buildShelf(ctx, which) {
       el("span", { style: "flex: 1;" }),
       sourcePill(r.source)
     ];
+    // Phase 38 task 38.2, §2 -- a loose world item (no owning actor/party
+    // member) gets a quiet provenance marker instead of an owner link line
+    // (this view has never rendered one -- "unowned renders cleanly" is
+    // structural, this is purely the added quiet-text).
+    if (r.worldItem) {
+      topRowChildren.push(el("span", {
+        testid: "tagged-shelf-row-world-item-badge",
+        text: "world item",
+        title: "Pulled from Foundry's loose world items -- not carried by any actor",
+        style: "font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.04em; color: oklch(0.55 0.012 70); font-style: italic;"
+      }));
+    }
     // Phase 35.5a: Reliquary-only (Stagecraft rows never carry graphEntityId).
     if (r.kind === "item") {
       topRowChildren.push(graphPromoteAffordance(r, async (btn) => {
@@ -1025,12 +1050,25 @@ function normalizeShelf(list, isReliquary) {
           // Phase 35.5a: carried through so shelfRow can render the
           // promote-to-graph affordance / "in the graph" marker. Absent on
           // Stagecraft rows (undefined -- falsy, same as null).
-          graphEntityId: r.graphEntityId ?? null
+          graphEntityId: r.graphEntityId ?? null,
+          // Phase 38 task 38.2, §2 -- a loose Foundry world item (no owning
+          // actor/party member -- foundry-pull-ops.mjs's worldItems[] loop)
+          // renders a quiet "world item" provenance instead of an owner
+          // link line (there IS no owner link line anywhere in this view
+          // today -- an actor-owned item's ownerPartyMemberId isn't
+          // rendered either -- so "unowned renders cleanly" already holds
+          // structurally; this flag is purely the ADDED provenance quiet-text).
+          worldItem: !!r.foundryItemRef && !r.ownerPartyMemberId && !r.ownerFoundryActorUuid
         }
       : {
           id: r.id, kind: r.kind, name: r.name, meta: r.meta,
           desc: r.desc, tags: r.tags || [],
-          source: r.source === "foundry" ? "foundry" : "mine"
+          source: r.source === "foundry" ? "foundry" : "mine",
+          // Phase 38 task 38.2, §3 -- a not-yet-imported compendium browse
+          // row (compendiumRef set, foundryRef still null) carries a thumb
+          // through for the shelf row's own quiet preview, when present.
+          compendiumRef: r.compendiumRef ?? null,
+          thumb: r.thumb ?? null
         });
 }
 

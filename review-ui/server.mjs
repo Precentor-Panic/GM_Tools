@@ -209,6 +209,11 @@ import { pullFoundryActorsToStores } from "../wf-mcp-server/lib/foundry-pull-ops
 // Phase 36 task 36.2 -- `flushDirtyStagedScenes`, the quiet-push flush
 // engine (same file, extended -- see that module's own header note).
 import { pushSceneToFoundry, flushDirtyStagedScenes } from "../wf-mcp-server/lib/foundry-push-ops.mjs";
+// Phase 38 task 38.2, §4 -- import-on-accept (a compendiumRef Stagecraft
+// browse row's accept composes `import_compendium_scene` through the SAME
+// ops channel, asynchronous like a staged push). Sibling module to
+// foundry-push-ops.mjs -- see its own header comment.
+import { importCompendiumSceneOnAccept, reconcilePendingCompendiumImports } from "../wf-mcp-server/lib/stagecraft-import-ops.mjs";
 
 // Phase 34 task 34.1 -- Connection-Menu backend glue: connection-state
 // derivation + sync-now (foundry-connection.mjs composes readFoundryIndex
@@ -1879,6 +1884,13 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const dir = resolveDir();
     const w = resolveWorld(body.world);
+    // Phase 38 task 38.2, §4 -- reconcile any late-arriving import result
+    // FIRST, same "natural call site" reasoning as the accept route above,
+    // so a re-pull's compendiumRef dedup (foundry-pull-ops.mjs's
+    // upsertCompendiumBrowseRow) sees an already-imported row's CURRENT
+    // (possibly just-reconciled) accepted status rather than a stale
+    // still-proposed one.
+    reconcilePendingCompendiumImports(dir, w);
     const result = pullFoundryActorsToStores(dir, w);
     return sendJson(res, 200, result);
   }
@@ -2623,9 +2635,41 @@ async function handleApi(req, res, url, parts) {
   // world for a matching `{kind:'asset', id: asset.id}` roster row and touch
   // each matching scene (touchSceneSafely itself fires scheduleFlush when
   // that scene is staged).
+  //
+  // Phase 38 task 38.2, §4 -- EXTENDED, not forked: when the target asset
+  // carries a non-null `compendiumRef` and has no `foundryRef?.sceneUuid`
+  // yet, accept is no longer a synchronous status flip -- it composes
+  // `import_compendium_scene` through the ops channel
+  // (importCompendiumSceneOnAccept, wf-mcp-server/lib/
+  // stagecraft-import-ops.mjs) and the response shape changes to
+  // `{status, ok?, asset, ...}` (see that module's own doc comment for the
+  // exact three-outcome shape). A NON-compendiumRef accept (every existing
+  // caller) takes the EXACT SAME PATH AS TODAY, byte-identical `{asset}`
+  // response -- a hard backward-compatibility pin (phase38-fixture.mjs §4's
+  // own GREEN PIN test).
   if (method === "POST" && parts.length === 5 && parts[1] === "session-planner" && parts[2] === "stagecraft" && parts[4] === "accept") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
+    const dir = resolveDir();
+
+    // Reconcile any late-arriving import result BEFORE deciding how to
+    // handle THIS accept call -- a stale pendingImport must never
+    // permanently block a retry (§4's own explicit instruction).
+    reconcilePendingCompendiumImports(dir, w);
+
+    const target = getStagecraftAsset(w, parts[3]);
+    if (target.compendiumRef && !target.foundryRef?.sceneUuid) {
+      const outcome = await importCompendiumSceneOnAccept(dir, w, parts[3]);
+      if (outcome.status === "applied" && outcome.ok) {
+        for (const rec of listSceneTrayRecordsForWorld(w)) {
+          if ((rec.roster ?? []).some((r) => r.kind === "asset" && r.id === target.id)) {
+            touchSceneSafely(w, rec.sceneId);
+          }
+        }
+      }
+      return sendJson(res, 200, outcome);
+    }
+
     const asset = acceptStagecraftAsset(w, parts[3]);
     for (const rec of listSceneTrayRecordsForWorld(w)) {
       if ((rec.roster ?? []).some((r) => r.kind === "asset" && r.id === asset.id)) {

@@ -246,6 +246,32 @@ function deriveEffects(effects) {
 const NON_INVENTORY_ITEM_TYPES = new Set(["class", "subclass", "weapon", "feat", "spell", "race", "background"]);
 
 /**
+ * ONE Foundry item document → ItemRecord-SHAPED raw fields (name/type/
+ * quantity/description/foundryItemRef) -- Phase 38 task 38.2, §2's resolved
+ * ambiguity: extracted out of `mapActorItemsToInventory` (below) so a SECOND
+ * caller (the worldItems[] pull-mapper, wf-mcp-server/lib/
+ * foundry-pull-ops.mjs) can reuse the SAME per-item field derivation
+ * UNFILTERED -- a loose world item has no sibling mapper duplicating its
+ * data the way an actor's own class/weapon/feat items do (see
+ * NON_INVENTORY_ITEM_TYPES's doc comment), so it carries no type exclusion.
+ * `mapActorItemsToInventory` itself is a byte-identical, non-breaking
+ * refactor on top of this -- the existing type filter stays exactly where it
+ * was, on that (actor-items) caller only. PURE, no I/O, fail-soft on a
+ * malformed item.
+ * @param {object} item
+ * @returns {{name:string, type:string|null, quantity:number|null, description:string|null, foundryItemRef:string|null}}
+ */
+export function mapItemToInventoryFields(item) {
+  return {
+    name: typeof item?.name === "string" && item.name ? item.name : "Unnamed Item",
+    type: typeof item?.type === "string" ? item.type : null,
+    quantity: typeof item?.system?.quantity === "number" ? item.system.quantity : null,
+    description: stripHtml(item?.system?.description?.value),
+    foundryItemRef: typeof item?.uuid === "string" ? item.uuid : null
+  };
+}
+
+/**
  * actor.items[] → ItemRecord-SHAPED raw fields (name/type/quantity/
  * description/foundryItemRef), one per genuine INVENTORY item -- Phase 35
  * task 35.1, per plans/phase-32-deferred.md §1's own instruction to keep
@@ -265,13 +291,7 @@ export function mapActorItemsToInventory(actor) {
   const items = Array.isArray(actor?.items) ? actor.items : [];
   return items
     .filter((it) => it && typeof it.type === "string" && !NON_INVENTORY_ITEM_TYPES.has(it.type))
-    .map((it) => ({
-      name: typeof it.name === "string" && it.name ? it.name : "Unnamed Item",
-      type: typeof it.type === "string" ? it.type : null,
-      quantity: typeof it?.system?.quantity === "number" ? it.system.quantity : null,
-      description: stripHtml(it?.system?.description?.value),
-      foundryItemRef: typeof it.uuid === "string" ? it.uuid : null
-    }));
+    .map(mapItemToInventoryFields);
 }
 
 // --- classifyActor ---------------------------------------------------------

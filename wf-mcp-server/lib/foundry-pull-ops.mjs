@@ -72,13 +72,33 @@
  * wiped/replaced and reported as `count:0`, per token-store.mjs's own
  * REPLACE-semantics doc comment) -- `syncTokensForScene` does the actual
  * per-scene replace + best-effort sceneId resolution.
+ *
+ * Phase 38 task 38.2, §2/§3 of review-ui/test/e2e/phase38-fixture.mjs (THE
+ * WRITTEN CONTRACT) -- TWO more loops, same pass, folded into the EXISTING
+ * `itemsProposed`/`stagecraftProposed` buckets (no new response keys):
+ *   - `index.worldItems[]` -> Reliquary UNOWNED proposals (both owner fields
+ *     null -- a loose world item has no owning actor), via the SAME
+ *     `upsertItem` three-way branch keyed on `foundryItemRef`, now
+ *     generalized to take its owner/sourceText from the caller instead of
+ *     deriving them from an `actor` (see foundry-actor-mapper.mjs's
+ *     `mapItemToInventoryFields` doc comment for the shared-derivation
+ *     refactor this composes with).
+ *   - `index.compendia[]` Scene-pack `entries[]` -> Stagecraft `kind:"map"`
+ *     browse rows carrying a NEW additive `compendiumRef:{packId,entryId}`
+ *     + `foundryRef:null` (not yet imported) + meta "in compendium — import
+ *     to stage", via a NEW `upsertCompendiumBrowseRow`, one level over
+ *     `upsertStagecraftMap`'s own three-way branch, keyed on
+ *     `compendiumRef.packId+entryId` instead of `foundryRef.sceneUuid`. A
+ *     non-Scene pack (or a Scene pack with no `entries` key) contributes
+ *     nothing.
  */
 import { readFoundryIndex } from "./foundry-index.mjs";
 import {
   classifyActor,
   mapActorToBestiary,
   mapActorToPartyMember,
-  mapActorItemsToInventory
+  mapActorItemsToInventory,
+  mapItemToInventoryFields
 } from "../../combat-planning/foundry-actor-mapper.mjs";
 import { saveBestiaryEntry, listBestiaryEntries, updateBestiaryEntryRawFields } from "../../combat-planning/bestiary-store.mjs";
 import { savePartyMember, listPartyMembers, updatePartyMemberFields } from "../../combat-planning/party-roster-store.mjs";
@@ -93,6 +113,12 @@ function sourceTextFor(actor) {
 function sourceTextForItem(actor, item) {
   return `Pulled from Foundry actor ${actor.uuid}, item ${item.foundryItemRef} (${item.name}).`;
 }
+
+/** Phase 38 task 38.2, §2 -- a loose `worldItems[]` entry has no owning actor, so its sourceText carries no actor uuid to cite. */
+const SOURCE_TEXT_FOR_WORLD_ITEM = "Pulled from Foundry world items.";
+
+/** Phase 38 task 38.2, §3 -- StagecraftAsset.meta for a not-yet-imported compendium browse row. */
+const COMPENDIUM_BROWSE_META = "in compendium — import to stage";
 
 /**
  * Derived display string from a scene's width/height/grid -- free-form, not
@@ -159,8 +185,15 @@ function upsertPartyMember(world, actor, mapped, opts) {
   return { record: member, action: "created" };
 }
 
-/** upsertItem -- Phase 35 task 35.1, §6. Same three-way branch as upsertBestiary/upsertPartyMember, keyed on foundryItemRef. */
-function upsertItem(world, actor, mappedItem, ownerPartyMemberId, opts) {
+/**
+ * upsertItem -- Phase 35 task 35.1, §6, GENERALIZED at Phase 38 task 38.2 §2
+ * so it works for BOTH an actor-embedded item (ownerFoundryActorUuid/
+ * ownerPartyMemberId set) and a loose `worldItems[]` entry (both null) --
+ * same three-way branch as upsertBestiary/upsertPartyMember, keyed on
+ * foundryItemRef, with the owner/sourceText now supplied by the caller
+ * rather than derived from an `actor` this function no longer requires.
+ */
+function upsertItem(world, mappedItem, { ownerFoundryActorUuid = null, ownerPartyMemberId = null, sourceText = null } = {}, opts) {
   const matches = listItems(world).filter((i) => i.foundryItemRef === mappedItem.foundryItemRef);
   const acceptedMatch = matches.find((i) => i.status === "accepted");
   if (acceptedMatch) return { record: acceptedMatch, action: "already-linked" };
@@ -172,8 +205,8 @@ function upsertItem(world, actor, mappedItem, ownerPartyMemberId, opts) {
       type: mappedItem.type,
       quantity: mappedItem.quantity,
       description: mappedItem.description,
-      sourceText: sourceTextForItem(actor, mappedItem),
-      ownerFoundryActorUuid: actor.uuid,
+      sourceText,
+      ownerFoundryActorUuid,
       ownerPartyMemberId
     });
     return { record: item, action: "updated" };
@@ -187,9 +220,9 @@ function upsertItem(world, actor, mappedItem, ownerPartyMemberId, opts) {
       quantity: mappedItem.quantity,
       description: mappedItem.description,
       foundryItemRef: mappedItem.foundryItemRef,
-      ownerFoundryActorUuid: actor.uuid,
+      ownerFoundryActorUuid,
       ownerPartyMemberId,
-      sourceText: sourceTextForItem(actor, mappedItem)
+      sourceText
     },
     opts
   );
@@ -231,6 +264,62 @@ function hasUsableBackground(scene) {
 }
 
 /**
+ * upsertCompendiumBrowseRow -- Phase 38 task 38.2, §3. One level over
+ * upsertStagecraftMap's own three-way branch (same shape, exactly), keyed on
+ * `compendiumRef.packId + compendiumRef.entryId` instead of
+ * `foundryRef.sceneUuid` -- a compendium Scene entry that hasn't been
+ * imported yet has no `foundryRef.sceneUuid` to key on. `kind:"map"`
+ * deliberately reuses the existing map shelf (not a new kind); `thumb` is an
+ * ADDITIVE-ONLY field (not part of the contract's own pinned StagecraftAsset
+ * candidate shape) carried through so the Library's browse-row rendering has
+ * something to show -- absent/`null` changes nothing about the pinned
+ * fixture assertions (name/meta/compendiumRef/foundryRef/status), it is
+ * purely additive.
+ *
+ * ACCEPTED-match branch left untouched, same reasoning as upsertStagecraftMap
+ * -- this is what makes "an imported entry's browse row and its resulting
+ * world-scene row must NOT duplicate" hold structurally (see this file's own
+ * header comment / phase38-fixture.mjs §3): once imported,
+ * compendiumRef+foundryRef.sceneUuid live on the SAME accepted row, so BOTH
+ * this branch (matching on compendiumRef) and upsertStagecraftMap's own
+ * branch (matching on the newly-created world scene's sceneUuid, on some
+ * FUTURE pull that also re-syncs scenes[]) converge on that one record.
+ */
+function upsertCompendiumBrowseRow(world, pack, entry, opts) {
+  const matches = listStagecraftAssets(world, "map").filter(
+    (a) => a.compendiumRef?.packId === pack.packId && a.compendiumRef?.entryId === entry.id
+  );
+  const acceptedMatch = matches.find((a) => a.status === "accepted");
+  if (acceptedMatch) return { record: acceptedMatch, action: "already-linked" };
+
+  const mapped = {
+    name: typeof entry?.name === "string" && entry.name ? entry.name : "Unnamed Scene",
+    source: "foundry",
+    meta: COMPENDIUM_BROWSE_META,
+    thumb: typeof entry?.thumb === "string" ? entry.thumb : null
+  };
+
+  const proposedMatch = matches.find((a) => a.status === "proposed");
+  if (proposedMatch) {
+    const asset = updateStagecraftAssetFields(world, proposedMatch.id, mapped);
+    return { record: asset, action: "updated" };
+  }
+
+  const asset = saveStagecraftAsset(
+    world,
+    {
+      kind: "map",
+      ...mapped,
+      foundryRef: null,
+      compendiumRef: { packId: pack.packId, entryId: entry.id },
+      status: "proposed"
+    },
+    opts
+  );
+  return { record: asset, action: "created" };
+}
+
+/**
  * Every distinct sceneUuid touched this pull -- the union of index.scenes[]
  * and the flattened index.tokens[]'s own sceneUuid, so a scene with zero
  * placed tokens this run still gets its token set correctly wiped/replaced
@@ -266,9 +355,21 @@ function distinctSceneUuidsWithTokens(index) {
  */
 export function pullFoundryActorsToStores(dataDir, world, opts = {}) {
   const index = readFoundryIndex(dataDir, world);
-  if (!index || !Array.isArray(index.actors) || index.actors.length === 0) {
+  // Phase 38 task 38.2 fix: the ORIGINAL guard here was `!index ||
+  // !Array.isArray(index.actors) || index.actors.length === 0` -- treating
+  // "index exists but has zero actors" identically to "no index file at
+  // all" and bailing out before EVER reaching the scenes[]/worldItems[]/
+  // compendia[] loops below. That was harmless before this phase (every
+  // real/fixture index that existed also had actors), but phase38-fixture.mjs's
+  // own minimal index (§7 -- "no actors/scenes, only worldItems+compendia")
+  // is the first fixture to exercise an index with actors:[] and real content
+  // in the OTHER top-level arrays -- only a genuinely MISSING index file
+  // (readFoundryIndex returning null) short-circuits now; an empty
+  // `actors[]` simply makes the actor loop below a no-op, same as an empty
+  // `scenes[]`/`worldItems[]`/`compendia[]` already was.
+  if (!index) {
     return {
-      indexFound: !!index,
+      indexFound: false,
       bestiaryProposed: [],
       partyProposed: [],
       itemsProposed: [],
@@ -286,7 +387,7 @@ export function pullFoundryActorsToStores(dataDir, world, opts = {}) {
   const alreadyLinked = { bestiary: [], party: [], items: [] };
   const skippedActors = [];
 
-  for (const actor of index.actors) {
+  for (const actor of Array.isArray(index.actors) ? index.actors : []) {
     if (!actor || typeof actor !== "object" || !actor.uuid) {
       skippedActors.push({ uuid: actor?.uuid ?? "(missing uuid)", reason: "actor is missing a uuid -- cannot dedup/link, skipped" });
       continue;
@@ -304,7 +405,12 @@ export function pullFoundryActorsToStores(dataDir, world, opts = {}) {
         // can resolve against `record` above with no second pull action.
         for (const mappedItem of mapActorItemsToInventory(actor)) {
           if (!mappedItem.foundryItemRef) continue; // can't dedup/link without a stable ref -- skip, matching the actor-uuid guard above
-          const { record: itemRecord, action: itemAction } = upsertItem(world, actor, mappedItem, record.id, opts);
+          const { record: itemRecord, action: itemAction } = upsertItem(
+            world,
+            mappedItem,
+            { ownerFoundryActorUuid: actor.uuid, ownerPartyMemberId: record.id, sourceText: sourceTextForItem(actor, mappedItem) },
+            opts
+          );
           if (itemAction === "already-linked") alreadyLinked.items.push(mappedItem.foundryItemRef);
           else itemsProposed.push(itemRecord);
         }
@@ -334,6 +440,45 @@ export function pullFoundryActorsToStores(dataDir, world, opts = {}) {
     } catch {
       // Defense-in-depth only, same reasoning as the actor loop's own catch --
       // a genuinely malformed scene record must never abort the whole pull.
+    }
+  }
+
+  // Phase 38 task 38.2, §2 -- worldItems[] -> Reliquary UNOWNED proposals
+  // (ownerFoundryActorUuid/ownerPartyMemberId both null -- no owning actor
+  // exists for a loose world item). Unlike an actor's own items[], NO type
+  // filter applies here (§2's resolved ambiguity, foundry-actor-mapper.mjs's
+  // own header comment) -- every worldItems[] entry becomes a candidate.
+  for (const worldItem of Array.isArray(index.worldItems) ? index.worldItems : []) {
+    if (!worldItem || typeof worldItem !== "object" || !worldItem.uuid) continue;
+    try {
+      const mappedItem = mapItemToInventoryFields(worldItem);
+      if (!mappedItem.foundryItemRef) continue; // can't dedup/link without a stable ref -- skip, matching the actor loop's own guard
+      const { record: itemRecord, action: itemAction } = upsertItem(
+        world,
+        mappedItem,
+        { ownerFoundryActorUuid: null, ownerPartyMemberId: null, sourceText: SOURCE_TEXT_FOR_WORLD_ITEM },
+        opts
+      );
+      if (itemAction === "already-linked") alreadyLinked.items.push(mappedItem.foundryItemRef);
+      else itemsProposed.push(itemRecord);
+    } catch {
+      // Defense-in-depth only, same reasoning as the actor loop's own catch.
+    }
+  }
+
+  // Phase 38 task 38.2, §3 -- compendia[] Scene-pack entries -> Stagecraft
+  // browse rows. A non-Scene pack (or a Scene pack with no `entries` key)
+  // contributes nothing -- browsable entries are a Scene-only concept.
+  for (const pack of Array.isArray(index.compendia) ? index.compendia : []) {
+    if (!pack || pack.documentType !== "Scene" || !Array.isArray(pack.entries)) continue;
+    for (const entry of pack.entries) {
+      if (!entry || typeof entry !== "object" || !entry.id) continue;
+      try {
+        const { record, action } = upsertCompendiumBrowseRow(world, pack, entry, opts);
+        if (action !== "already-linked") stagecraftProposed.push(record);
+      } catch {
+        // Defense-in-depth only, same reasoning as the scenes[] loop's own catch.
+      }
     }
   }
 

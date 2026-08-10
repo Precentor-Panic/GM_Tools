@@ -34,6 +34,28 @@
  * own header note) — it exists purely so the flush composer's src-resolution
  * order (wf-mcp-server/lib/foundry-push-ops.mjs) has a field to read once
  * something eventually populates it.
+ *
+ * ADDITIVE CHANGE (Phase 38 task 38.2, §3/§4 of review-ui/test/e2e/
+ * phase38-fixture.mjs — THE WRITTEN CONTRACT): THREE more additive-optional
+ * fields, all default `null`, all pre-existing records simply reading as
+ * having none of them:
+ *   - `compendiumRef: {packId, entryId} | null` — present ONLY on a
+ *     not-yet-imported compendium Scene browse row (wf-mcp-server/lib/
+ *     foundry-pull-ops.mjs's `upsertCompendiumBrowseRow`). A hand-added or
+ *     Foundry-`scenes[]`-pulled map asset always has `compendiumRef: null`.
+ *   - `thumb: string | null` — the compendium pack entry's own thumbnail
+ *     path, carried through so the Library's browse-row rendering has
+ *     something to show pre-import. NOT part of the bridge contract's own
+ *     pinned StagecraftAsset candidate shape (§3 of phase38-fixture.mjs) —
+ *     a deliberate, additive-only extension for the Library rendering
+ *     deliverable, flagged here as such.
+ *   - `pendingImport: {opId, requestedAt} | null` — the import-on-accept
+ *     flow's OWN pending ledger (wf-mcp-server/lib/stagecraft-import-ops.mjs),
+ *     mirroring `session-planner/scenes.mjs`'s `pendingPush` shape one store
+ *     over: set when an `import_compendium_scene` op was written but the
+ *     accept route's poll window closed before a result landed; cleared once
+ *     `reconcilePendingCompendiumImports` (or a same-call poll) consumes a
+ *     matching result.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -82,7 +104,20 @@ export function makeStagecraftAssetId() {
  */
 export function saveStagecraftAsset(
   world,
-  { kind, name, source = "local", meta = null, desc = null, tags = [], foundryRef = null, status = "accepted", localFilePath = null },
+  {
+    kind,
+    name,
+    source = "local",
+    meta = null,
+    desc = null,
+    tags = [],
+    foundryRef = null,
+    status = "accepted",
+    localFilePath = null,
+    compendiumRef = null,
+    thumb = null,
+    pendingImport = null
+  },
   opts = {}
 ) {
   const makeId = opts.makeId ?? makeStagecraftAssetId;
@@ -99,6 +134,10 @@ export function saveStagecraftAsset(
     foundryRef,
     status,
     localFilePath,
+    // Phase 38 task 38.2, §3/§4 -- see this file's own header comment.
+    compendiumRef,
+    thumb,
+    pendingImport,
     createdAt: now
   };
   const assets = readAssets(world);
@@ -169,7 +208,7 @@ export function discardStagecraftAsset(world, assetId) {
  * updater.
  * @returns {object}   the updated StagecraftAsset
  */
-export function updateStagecraftAssetFields(world, assetId, { name, source, meta, desc, foundryRef } = {}) {
+export function updateStagecraftAssetFields(world, assetId, { name, source, meta, desc, foundryRef, thumb } = {}) {
   const assets = readAssets(world);
   const idx = findAssetIndex(world, assetId, assets);
   const existing = assets[idx];
@@ -185,7 +224,10 @@ export function updateStagecraftAssetFields(world, assetId, { name, source, meta
     source: source ?? existing.source,
     meta: meta !== undefined ? meta : existing.meta,
     desc: desc !== undefined ? desc : existing.desc,
-    foundryRef: foundryRef !== undefined ? foundryRef : existing.foundryRef
+    foundryRef: foundryRef !== undefined ? foundryRef : existing.foundryRef,
+    // Phase 38 task 38.2, §3 -- a compendium browse row's re-ingest also
+    // refreshes its thumb (additive-only field, see this file's own header).
+    thumb: thumb !== undefined ? thumb : existing.thumb
   };
   const next = [...assets];
   next[idx] = updated;
@@ -209,6 +251,60 @@ export function removeStagecraftTag(world, assetId, tag) {
   const next = removeTag(assets, assetId, tag);
   writeAssets(world, next);
   return next.find((a) => a.id === assetId);
+}
+
+/**
+ * Phase 38 task 38.2, §4 -- the import-on-accept flow's pending-import
+ * ledger writer. Mirrors `session-planner/scenes.mjs`'s `setScenePendingPush`
+ * exactly, one store over: set `{opId, requestedAt}` when an
+ * `import_compendium_scene` op was written but the accept route's poll
+ * window closed before a result landed; `null` clears it (either because a
+ * result landed, ok:true or ok:false, or because there was never a pending
+ * import to begin with). `pendingImport` is additive-optional -- a
+ * pre-Phase-38.2 asset on disk simply has this key absent, read identically
+ * to `null`.
+ * @param {string} world
+ * @param {string} assetId
+ * @param {{opId:string, requestedAt:string}|null} pending
+ * @returns {object}   the updated StagecraftAsset
+ */
+export function setStagecraftAssetPendingImport(world, assetId, pending) {
+  const assets = readAssets(world);
+  const idx = findAssetIndex(world, assetId, assets);
+  const updated = { ...assets[idx], pendingImport: pending ?? null };
+  const next = [...assets];
+  next[idx] = updated;
+  writeAssets(world, next);
+  return updated;
+}
+
+/**
+ * Phase 38 task 38.2, §4 -- completes a compendiumRef browse row on a
+ * confirmed `ok:true` import result: `foundryRef.sceneUuid` set,
+ * `status:'accepted'`, `pendingImport` cleared. From this moment the row is
+ * an ORDINARY accepted Foundry map asset (§3's "normal accepted-map
+ * behavior") -- no further special-casing anywhere reads `compendiumRef`
+ * again except to key a future re-pull's dedup (which now finds THIS
+ * accepted row and leaves it untouched, same as `upsertStagecraftMap`'s own
+ * accepted-match branch).
+ * @param {string} world
+ * @param {string} assetId
+ * @param {string} sceneUuid
+ * @returns {object}   the updated StagecraftAsset
+ */
+export function markStagecraftAssetImported(world, assetId, sceneUuid) {
+  const assets = readAssets(world);
+  const idx = findAssetIndex(world, assetId, assets);
+  const updated = {
+    ...assets[idx],
+    foundryRef: { sceneUuid },
+    status: "accepted",
+    pendingImport: null
+  };
+  const next = [...assets];
+  next[idx] = updated;
+  writeAssets(world, next);
+  return updated;
 }
 
 export { ConcurrentWriteError };

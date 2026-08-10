@@ -42,7 +42,9 @@ const WORLD = "stagecraft-store-test-world";
     discardStagecraftAsset,
     updateStagecraftAssetFields,
     addStagecraftTag,
-    removeStagecraftTag
+    removeStagecraftTag,
+    setStagecraftAssetPendingImport,
+    markStagecraftAssetImported
   } = await import("../../session-planner/stagecraft-store.mjs");
 
   test("directory isolation: stagecraftRoot() honors GM_TOOLS_STAGECRAFT_DIR, never the repo's real default", () => {
@@ -139,6 +141,79 @@ const WORLD = "stagecraft-store-test-world";
     assert.deepEqual(reread.tags, ["cover"]);
     const untagged = removeStagecraftTag(WORLD, "sc-1", "cover");
     assert.deepEqual(untagged.tags, []);
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 38 task 38.2, §3/§4 -- compendiumRef/thumb/pendingImport (additive)
+  // -------------------------------------------------------------------------
+
+  test("saveStagecraftAsset: compendiumRef/thumb/pendingImport default null, round-trip an explicit compendiumRef browse row", () => {
+    const plain = saveStagecraftAsset(WORLD, { kind: "map", name: "Plain", status: "proposed" }, { makeId: () => "sc-5" });
+    assert.equal(plain.compendiumRef, null);
+    assert.equal(plain.thumb, null);
+    assert.equal(plain.pendingImport, null);
+
+    const browseRow = saveStagecraftAsset(
+      WORLD,
+      {
+        kind: "map",
+        name: "The Drowned Anchor",
+        source: "foundry",
+        meta: "in compendium — import to stage",
+        foundryRef: null,
+        compendiumRef: { packId: "czepeku-taverns.scenes", entryId: "scnEntryTavernA" },
+        thumb: "modules/czepeku-taverns/thumbs/tavern-a.webp",
+        status: "proposed"
+      },
+      { makeId: () => "sc-6" }
+    );
+    assert.deepEqual(browseRow.compendiumRef, { packId: "czepeku-taverns.scenes", entryId: "scnEntryTavernA" });
+    assert.equal(browseRow.thumb, "modules/czepeku-taverns/thumbs/tavern-a.webp");
+    assert.equal(browseRow.foundryRef, null);
+  });
+
+  test("updateStagecraftAssetFields: thumb refreshes on a re-ingest, like name/meta", () => {
+    const asset = saveStagecraftAsset(
+      WORLD,
+      { kind: "map", name: "Old", meta: "old meta", thumb: "old.webp", status: "proposed" },
+      { makeId: () => "sc-7" }
+    );
+    const updated = updateStagecraftAssetFields(WORLD, asset.id, { name: "New", meta: "new meta", thumb: "new.webp" });
+    assert.equal(updated.thumb, "new.webp");
+  });
+
+  test("setStagecraftAssetPendingImport: sets and clears the {opId, requestedAt} ledger, additive/independent of status", () => {
+    const asset = saveStagecraftAsset(WORLD, { kind: "map", name: "Pending Import", status: "proposed" }, { makeId: () => "sc-8" });
+    const pending = setStagecraftAssetPendingImport(WORLD, asset.id, { opId: "op_1", requestedAt: "2026-08-10T00:00:00.000Z" });
+    assert.deepEqual(pending.pendingImport, { opId: "op_1", requestedAt: "2026-08-10T00:00:00.000Z" });
+    assert.equal(pending.status, "proposed", "setting pendingImport never changes status by itself");
+
+    const cleared = setStagecraftAssetPendingImport(WORLD, asset.id, null);
+    assert.equal(cleared.pendingImport, null);
+  });
+
+  test("markStagecraftAssetImported: sets foundryRef.sceneUuid, flips status to accepted, clears pendingImport", () => {
+    const asset = saveStagecraftAsset(
+      WORLD,
+      {
+        kind: "map",
+        name: "The Gilded Cask",
+        source: "foundry",
+        meta: "in compendium — import to stage",
+        compendiumRef: { packId: "czepeku-taverns.scenes", entryId: "scnEntryTavernB" },
+        status: "proposed"
+      },
+      { makeId: () => "sc-9" }
+    );
+    setStagecraftAssetPendingImport(WORLD, asset.id, { opId: "op_2", requestedAt: "2026-08-10T00:00:00.000Z" });
+
+    const imported = markStagecraftAssetImported(WORLD, asset.id, "Scene.gildedCaskImported");
+    assert.deepEqual(imported.foundryRef, { sceneUuid: "Scene.gildedCaskImported" });
+    assert.equal(imported.status, "accepted");
+    assert.equal(imported.pendingImport, null);
+    // compendiumRef itself is left untouched -- it's the dedup key a future
+    // re-pull still needs to find THIS now-accepted row.
+    assert.deepEqual(imported.compendiumRef, { packId: "czepeku-taverns.scenes", entryId: "scnEntryTavernB" });
   });
 
   console.log(`\n${passed} passed`);

@@ -44,7 +44,7 @@ const { foundryIndexPath } = await import("../lib/snapshot.mjs");
 const { listBestiaryEntries, acceptBestiaryEntry } = await import("../../combat-planning/bestiary-store.mjs");
 const { listPartyMembers, acceptPartyMember } = await import("../../combat-planning/party-roster-store.mjs");
 const { listItems, acceptItem } = await import("../../combat-planning/item-store.mjs");
-const { listStagecraftAssets } = await import("../../session-planner/stagecraft-store.mjs");
+const { listStagecraftAssets, markStagecraftAssetImported } = await import("../../session-planner/stagecraft-store.mjs");
 const { listTokens } = await import("../../session-planner/token-store.mjs");
 
 function writeIndexFixture(world, fixtureName) {
@@ -266,6 +266,126 @@ test("pullFoundryActorsToStores: the minimal fixture's single sparse monster is 
   assert.equal(result.bestiaryProposed[0].rawFields.hp, 9);
   assert.equal(result.bestiaryProposed[0].rawFields.ac, null);
   assert.deepEqual(result.skippedActors, []);
+});
+
+// ---------------------------------------------------------------------------
+// Phase 38 task 38.2, §2/§3/§7 -- worldItems[] -> Reliquary unowned
+// proposals, compendia[] Scene entries -> Stagecraft browse rows, and the
+// early-return guard fix (actors:[] must not also skip scenes/worldItems/
+// compendia). Mirrors review-ui/test/e2e/phase38-fixture.mjs's own
+// writeFoundryIndexV3Fixture shape, hand-authored here for a fast
+// unit-level pass (the e2e file covers the same contract at the route
+// level).
+// ---------------------------------------------------------------------------
+const V3_WORLD = "pull-ops-v3-world";
+const v3Index = {
+  version: 1,
+  worldId: V3_WORLD,
+  exportedAt: "2026-08-10T12:00:00.000Z",
+  actors: [],
+  users: [],
+  scenes: [],
+  tokens: [],
+  worldItems: [
+    {
+      uuid: "Item.worldPotion",
+      name: "Potion of Fire Breath",
+      type: "consumable",
+      system: { quantity: 4, description: { value: "<p>Breathe fire for 1 minute.</p>" } }
+    },
+    {
+      uuid: "Item.worldLongsword",
+      name: "Longsword +1",
+      type: "weapon",
+      system: { quantity: 1, description: { value: "<p>A finely balanced blade.</p>" } }
+    }
+  ],
+  compendia: [
+    {
+      packId: "czepeku-taverns.scenes",
+      label: "Czepeku Taverns — Scenes",
+      documentType: "Scene",
+      count: 3,
+      entries: [
+        { id: "scnEntryTavernA", name: "The Drowned Anchor", thumb: "modules/czepeku-taverns/thumbs/tavern-a.webp" },
+        { id: "scnEntryTavernB", name: "The Gilded Cask", thumb: "modules/czepeku-taverns/thumbs/tavern-b.webp" },
+        { id: "scnEntryTavernC", name: "The Salt & Smoke", thumb: null }
+      ]
+    },
+    { packId: "plutonium-next.items", label: "Plutonium — Items", documentType: "Item", count: 5417 }
+  ]
+};
+mkdirSync(dirname(foundryIndexPath(dataDir, V3_WORLD)), { recursive: true });
+writeFileSync(foundryIndexPath(dataDir, V3_WORLD), JSON.stringify(v3Index), "utf8");
+
+test("pullFoundryActorsToStores: an index with actors:[] but worldItems/compendia present -- indexFound:true, and BOTH new arrays are still processed (the early-return guard no longer conflates 'zero actors' with 'no index')", () => {
+  const result = pullFoundryActorsToStores(dataDir, V3_WORLD);
+  assert.equal(result.indexFound, true);
+  assert.deepEqual(result.bestiaryProposed, []);
+  assert.deepEqual(result.partyProposed, []);
+  assert.equal(result.itemsProposed.length, 2, "both worldItems[] entries land in itemsProposed");
+  assert.equal(result.stagecraftProposed.length, 3, "all 3 Scene-pack entries land in stagecraftProposed");
+});
+
+test("pullFoundryActorsToStores: worldItems[] land UNOWNED (both owner fields null) with world-items sourceText, status:'proposed' -- NO type filter (a weapon-typed world item is still included)", () => {
+  const items = listItems(V3_WORLD);
+  const potion = items.find((i) => i.foundryItemRef === "Item.worldPotion");
+  assert.ok(potion);
+  assert.equal(potion.name, "Potion of Fire Breath");
+  assert.equal(potion.quantity, 4);
+  assert.equal(potion.ownerFoundryActorUuid, null);
+  assert.equal(potion.ownerPartyMemberId, null);
+  assert.match(potion.sourceText ?? "", /world items/i);
+  assert.equal(potion.status, "proposed");
+
+  const sword = items.find((i) => i.foundryItemRef === "Item.worldLongsword");
+  assert.ok(sword, "a weapon-typed world item is NOT excluded (unlike an actor's own items[])");
+  assert.equal(sword.type, "weapon");
+});
+
+test("pullFoundryActorsToStores: compendia[] Scene entries land as Stagecraft kind:'map' browse rows (compendiumRef, foundryRef:null, import meta, thumb carried through); the non-Scene pack contributes nothing", () => {
+  const assets = listStagecraftAssets(V3_WORLD, "map");
+  const browseRows = assets.filter((a) => a.compendiumRef);
+  assert.equal(browseRows.length, 3);
+
+  const tavernA = browseRows.find((a) => a.compendiumRef.entryId === "scnEntryTavernA");
+  assert.equal(tavernA.compendiumRef.packId, "czepeku-taverns.scenes");
+  assert.equal(tavernA.name, "The Drowned Anchor");
+  assert.equal(tavernA.foundryRef, null);
+  assert.match(tavernA.meta ?? "", /in compendium.*import to stage/i);
+  assert.equal(tavernA.status, "proposed");
+  assert.equal(tavernA.thumb, "modules/czepeku-taverns/thumbs/tavern-a.webp");
+
+  const tavernC = browseRows.find((a) => a.compendiumRef.entryId === "scnEntryTavernC");
+  assert.equal(tavernC.thumb, null, "a null pack-entry thumb is carried through as null, never fabricated");
+
+  const fromNonScenePack = browseRows.filter((a) => a.compendiumRef.packId === "plutonium-next.items");
+  assert.equal(fromNonScenePack.length, 0);
+});
+
+test("pullFoundryActorsToStores: re-pulling upserts on foundryItemRef / packId+entryId -- no duplicate rows on a second pull", () => {
+  const itemsBefore = listItems(V3_WORLD).length;
+  const stagecraftBefore = listStagecraftAssets(V3_WORLD, "map").length;
+
+  const result = pullFoundryActorsToStores(dataDir, V3_WORLD);
+  assert.equal(result.itemsProposed.length, 2, "still-proposed candidates are UPDATED in place");
+  assert.equal(result.stagecraftProposed.length, 3);
+  assert.equal(listItems(V3_WORLD).length, itemsBefore, "no new item rows created");
+  assert.equal(listStagecraftAssets(V3_WORLD, "map").length, stagecraftBefore, "no new stagecraft rows created");
+});
+
+test("pullFoundryActorsToStores: an ACCEPTED compendium browse row is left untouched by a re-pull, reported via the SAME 'not in stagecraftProposed' convention as upsertStagecraftMap's own accepted-match branch", () => {
+  const tavernBefore = listStagecraftAssets(V3_WORLD, "map").find((a) => a.compendiumRef?.entryId === "scnEntryTavernB");
+  // Simulate a completed import (this is exactly what markStagecraftAssetImported does, exercised directly here for a pure pull-ops-level pin).
+  markStagecraftAssetImported(V3_WORLD, tavernBefore.id, "Scene.gildedCaskImported");
+
+  const result = pullFoundryActorsToStores(dataDir, V3_WORLD);
+  const stillProposedTaverns = result.stagecraftProposed.filter((a) => a.compendiumRef?.packId === "czepeku-taverns.scenes");
+  assert.equal(stillProposedTaverns.length, 2, "only the two still-proposed browse rows are reported -- the accepted/imported one is left untouched, not re-proposed");
+
+  const tavernAfter = listStagecraftAssets(V3_WORLD, "map").find((a) => a.id === tavernBefore.id);
+  assert.equal(tavernAfter.status, "accepted");
+  assert.deepEqual(tavernAfter.foundryRef, { sceneUuid: "Scene.gildedCaskImported" }, "the accepted/imported row's foundryRef survives the re-pull untouched");
 });
 
 console.log(`\n${passed} passed`);

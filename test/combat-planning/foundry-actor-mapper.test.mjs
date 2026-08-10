@@ -26,7 +26,7 @@ function test(name, fn) {
   }
 }
 
-const { classifyActor, mapActorToBestiary, mapActorToPartyMember, mapActorItemsToInventory, stripHtml } =
+const { classifyActor, mapActorToBestiary, mapActorToPartyMember, mapActorItemsToInventory, mapItemToInventoryFields, stripHtml } =
   await import("../../combat-planning/foundry-actor-mapper.mjs");
 
 const sample = JSON.parse(readFileSync(join(FIXTURES_DIR, "foundry-index.sample.json"), "utf8"));
@@ -328,6 +328,43 @@ test("mapActorItemsToInventory: fail-soft -- no items[]/malformed actor never th
   const mapped = mapActorItemsToInventory({ items: [{ uuid: "Item.x", name: "Loose Loot", type: "loot", system: {} }] });
   assert.equal(mapped[0].quantity, null);
   assert.equal(mapped[0].description, null);
+});
+
+// ------------------------------------------------- mapItemToInventoryFields (Phase 38 task 38.2, §2)
+
+test("mapItemToInventoryFields: the shared single-item extraction mapActorItemsToInventory now calls internally -- SAME output as before the refactor", () => {
+  const item = { uuid: "Item.potion", name: "Potion of Healing", type: "consumable", system: { quantity: 3, description: { value: "<p>Regains 2d4 + 2 hit points.</p>" } } };
+  const fields = mapItemToInventoryFields(item);
+  assert.deepEqual(fields, {
+    name: "Potion of Healing",
+    type: "consumable",
+    quantity: 3,
+    description: "Regains 2d4 + 2 hit points.",
+    foundryItemRef: "Item.potion"
+  });
+});
+
+test("mapItemToInventoryFields: applies NO type filter (unlike mapActorItemsToInventory's own caller-side filter) -- a weapon-typed item maps cleanly", () => {
+  const sword = { uuid: "Item.worldLongsword", name: "Longsword +1", type: "weapon", system: { quantity: 1 } };
+  const fields = mapItemToInventoryFields(sword);
+  assert.equal(fields.name, "Longsword +1");
+  assert.equal(fields.type, "weapon");
+  assert.equal(fields.foundryItemRef, "Item.worldLongsword");
+});
+
+test("mapItemToInventoryFields: fail-soft on a malformed/empty item, never throws", () => {
+  assert.deepEqual(mapItemToInventoryFields({}), { name: "Unnamed Item", type: null, quantity: null, description: null, foundryItemRef: null });
+  assert.deepEqual(mapItemToInventoryFields(null), { name: "Unnamed Item", type: null, quantity: null, description: null, foundryItemRef: null });
+});
+
+test("mapActorItemsToInventory byte-identical after the refactor: re-running the pre-existing genuine-inventory-item test through mapItemToInventoryFields directly gives the SAME per-item shape as the filtered wrapper", () => {
+  const actor = {
+    uuid: "Actor.invTest2",
+    items: [{ uuid: "Item.bag2", name: "Bag of Holding", type: "equipment", system: { quantity: 1 } }]
+  };
+  const viaWrapper = mapActorItemsToInventory(actor)[0];
+  const viaShared = mapItemToInventoryFields(actor.items[0]);
+  assert.deepEqual(viaWrapper, viaShared);
 });
 
 console.log(`\n${passed} passed`);
