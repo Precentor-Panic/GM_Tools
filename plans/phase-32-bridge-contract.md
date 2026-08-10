@@ -1,15 +1,18 @@
 # Phase 32 task 32.0 — The Foundry Bridge File-Format Contract
 
-**Status: authoritative, v2** (amended Phase 36 task 36.0 — the QUIET staged scene push. v1 sections below are
-UNCHANGED except where this v2 amendment explicitly overrides them; new/changed material is marked **(v2)**
-inline rather than rewriting the whole document, so a reader can see exactly what task 36.1/36.2 add on top of
-the already-shipped v1 baseline). This is the contract 32.1/36.1 (Foundry-module producer, `foundry_worldFabric`)
-and 32.2/32.3/36.2 (GM_Tools consumers/producers) implement TO. Neither side may deviate from a field name/shape
-here without a follow-up edit to this file — if a task hits a shape question this doc doesn't answer, that's a
-bug in this doc, not a license to guess. See this file's own "Changelog" section (bottom) for the v1→v2 diff
-summary, and `plans/phase-36-tasks.md` / `review-ui/test/e2e/phase36-fixture.mjs` for the quiet-push spec that
-consumes these shapes (the bridge-contract file stays scoped to the WIRE FORMAT only — GM_Tools-side store
-fields/routes/flush semantics are specified in phase36-fixture.mjs, not duplicated here).
+**Status: authoritative, v3** (amended Phase 36 task 36.0 — the QUIET staged scene push; amended again Phase 38
+task 38.0 — compendium content pipeline. v1/v2 sections below are UNCHANGED except where a later amendment
+explicitly overrides them; new/changed material is marked **(v2)** / **(v3)** inline rather than rewriting the
+whole document, so a reader can see exactly what each task adds on top of the already-shipped baseline). This is
+the contract 32.1/36.1/38.1 (Foundry-module producer, `foundry_worldFabric`) and 32.2/32.3/36.2/38.2 (GM_Tools
+consumers/producers) implement TO. Neither side may deviate from a field name/shape here without a follow-up
+edit to this file — if a task hits a shape question this doc doesn't answer, that's a bug in this doc, not a
+license to guess. See this file's own "Changelog" section (bottom) for the v1→v2→v3 diff summary, and
+`plans/phase-36-tasks.md` / `review-ui/test/e2e/phase36-fixture.mjs` for the quiet-push spec, and
+`plans/phase-38-tasks.md` / `review-ui/test/e2e/phase38-fixture.mjs` for the content-pipeline spec, that consume
+these shapes (the bridge-contract file stays scoped to the WIRE FORMAT only — GM_Tools-side store
+fields/routes/flush/import semantics are specified in phase36-fixture.mjs/phase38-fixture.mjs, not duplicated
+here).
 
 Design record: `/home/russell/.claude/plans/ok-i-m-back-with-dazzling-newt.md` (§Architecture). Task list:
 `plans/phase-32-tasks.md`. Grounded against real code — see "Grounding" at the bottom of this file for exact
@@ -79,10 +82,12 @@ convention needed (nothing to signal "done" about — it's informational, read a
   users: User[],
   scenes: Scene[],
   tokens: Token[],              // flat convenience index — see §1.4
-  playlists: Playlist[]         // (v2, Phase 36) — see §1.5. Additive-optional per the "additive-only
+  playlists: Playlist[],         // (v2, Phase 36) — see §1.5. Additive-optional per the "additive-only
                                  // versioning" rule below (a pre-36.1 exporter simply omits this key; every
                                  // 32.2-era consumer already tolerates unknown/missing top-level keys), so
                                  // FOUNDRY_INDEX_VERSION stays 1 — this is NOT a breaking shape change.
+  worldItems: Item[],            // (v3, Phase 38) — see §1.6. Additive-optional, same reasoning as playlists.
+  compendia: CompendiumPackInfo[] // (v3, Phase 38) — see §1.7. Additive-optional, same reasoning as playlists.
 }
 ```
 
@@ -278,6 +283,87 @@ overwrites `playlists[]` wholesale, never a diff. Additive-optional (see the top
 absent entirely on a pre-36.1 index, and every consumer (32.2-era or later) must treat a missing `playlists`
 key identically to `playlists: []`.
 
+### 1.6 `worldItems[]` (v3, Phase 38) — top-level, alongside `actors`/`users`/`scenes`/`tokens`/`playlists`
+
+**Grounding fact (explorer report, 2026-08-10, `plans/phase-38-tasks.md`'s own "Bridge blind spots"):** the index
+enumerates ONLY world actors/users/scenes/playlists — `game.items` (LOOSE world Items, not embedded on any
+actor — where Plutonium's world-import lands, per Russell's "expand the Reliquary dramatically" ask) is
+completely invisible to GM_Tools today. `worldItems[]` closes that gap.
+
+```
+worldItems: Item[]   // SAME Item shape as §1.1's embedded actors[].items[] entries, VERBATIM — reuses
+                      // foundry_worldFabric's own existing extractItem() function unchanged (it already takes
+                      // any Foundry Item document, embedded or not) — NOT a second item-shape/extraction
+                      // function. { uuid, name, type, img, system } — see §1.1's own Item shape for the exact
+                      // field docs (system is an OPAQUE pass-through, same "fail soft on an unrecognized field"
+                      // rule).
+```
+
+Built from `game.items` (Foundry's world-level Item WorldCollection — genuinely loose items, never an actor's
+embedded `items[]`, no overlap with §1.1's per-actor arrays). Same "always a full replace" semantics as the rest
+of the index. Additive-optional: absent entirely on a pre-38.1 index, every consumer must treat a missing
+`worldItems` key identically to `worldItems: []`. `uuid` here is the item's own `"Item.<id>"` world-item uuid
+(NOT compound/embedded — there is no owning actor to compound it with), which is exactly the value 38.2's
+Reliquary mapper uses as `foundryItemRef` for dedup/upsert (mirrors §1.1 Item's `uuid`→`foundryItemRef` join key
+convention exactly, just with no owning actor on the other end).
+
+### 1.7 `compendia[]` (v3, Phase 38) — top-level, alongside the above
+
+**Grounding fact (same explorer report):** `game.packs` (ALL compendium content — where Czepeku's map packs and
+any pack-based content live until imported) is ALSO completely invisible to GM_Tools today. `compendia[]` closes
+this second gap, deliberately CHEAPLY: a pack can hold hundreds of MB of documents (Czepeku packs, per the task
+plan's own grounding), so this section enumerates pack HEADERS via Foundry's own lazy `pack.index` read (never
+`pack.getDocuments()`/full-document loads) — confirmed against the real client source
+(`CompendiumCollection#getIndex`, `foundry_worldFabric/scripts/data/pack-scan.mjs`'s own existing
+`listImportablePacks()` precedent for `pack.collection`/`pack.metadata.label`/`pack.documentName`/`pack.index`).
+
+```
+compendia: CompendiumPackInfo[]
+
+CompendiumPackInfo = {
+  packId: string,        // pack.collection — e.g. "czepeku-taverns.scenes" — the STABLE id used everywhere
+                          // else in this contract a pack is referenced (§2's import_compendium_scene.data.packId,
+                          // 38.2's compendiumRef.packId dedup key).
+  label: string,          // pack.metadata.label ?? pack.collection — human-readable pack title.
+  documentType: string,   // pack.documentName — "Scene" | "Item" | "Actor" | "JournalEntry" | ... (whatever
+                           // Foundry reports; NOT filtered/allowlisted here the way pack-scan.mjs's
+                           // listImportablePacks() restricts to {Item,Actor,JournalEntry} — this index is a
+                           // faithful inventory of EVERY installed pack, not just the ones a particular consumer
+                           // currently knows how to use; 38.2's Stagecraft mapper is the one that filters to
+                           // documentType==="Scene").
+  count: number,           // pack.index.size (falls back to pack.size when index isn't loaded yet) — same
+                            // "count, not full enumeration" idiom pack-scan.mjs's own `size` field already uses.
+  entries: PackEntry[] | undefined   // ONLY present when documentType === "Scene" — see below. Genuinely ABSENT
+                                      // (not `null`, not `[]`) on a non-Scene pack, so a consumer can branch on
+                                      // `"entries" in pack` / `pack.entries !== undefined` to tell "a Scene pack
+                                      // with zero entries" apart from "a non-Scene pack, headers only" without
+                                      // relying on count===0 ambiguity.
+}
+
+PackEntry = { id: string, name: string, thumb: string | null }
+```
+
+**Why entries are Scene-pack-only:** the phase's own concrete ask is "browse a Czepeku pack's map scenes before
+importing" (Stagecraft browse rows, §2's `import_compendium_scene`) — no other pack document type has an
+analogous "browse then selectively import" UI this phase builds. Enumerating every document's name for
+EVERY installed pack (Plutonium alone ships packs with thousands of items/spells/monsters) would make this
+already-cheap `pack.index` read needlessly large for packs nothing downstream reads per-entry yet; a future phase
+that wants browsable Item/Actor pack entries extends this section then, following the exact same pattern.
+
+`PackEntry.thumb` is `pack.index`'s own `.img` field for a Scene document — confirmed against the real client
+source (`CompendiumCollection#indexDocument`: `index.img = data.thumb ?? data.img`, i.e. a Scene's dedicated
+`thumb` field, Foundry's own compendium-listing thumbnail) — `pack.index` already carries this VERBATIM per-entry
+with zero extra reads once the index is loaded (`pack.getIndex()`), matching this section's own "cheap header
+reads only" rule. `null` when a Scene document in the pack has no thumb/img set.
+
+`entries[].id` is the document's own `_id` WITHIN the pack (NOT a full uuid) — this is deliberately the exact
+value §2's `import_compendium_scene.data.entryId` takes, so a browse-row's `{packId, entryId}` pair round-trips
+directly into the import op with no reshaping, mirroring `create_token`'s own "no reshaping either direction"
+precedent (§2's `create_scene.data.grid` note) one level up.
+
+Same "always a full replace" semantics as the rest of the index. Additive-optional: absent entirely on a
+pre-38.1 index, every consumer must treat a missing `compendia` key identically to `compendia: []`.
+
 ---
 
 ## 2. `world-fabric-foundry-ops.json` (GM_Tools → Foundry, PUSH)
@@ -437,6 +523,56 @@ const doc = await getDocumentClass("JournalEntry").create({
 return doc?.uuid;
 ```
 
+### `kind: "import_compendium_scene"` — (v3, Phase 38, NEW)
+
+```
+data: {
+  packId: string,    // required — §1.7's CompendiumPackInfo.packId (pack.collection)
+  entryId: string     // required — §1.7's PackEntry.id (the document's own _id within the pack)
+}
+```
+
+Creates a real WORLD Scene document from a compendium Scene entry — the backend for Stagecraft's "browse a
+Czepeku pack → import 2–3 you'll actually run" flow. On success, reports back `foundryUuid` (the new world
+Scene's own uuid, e.g. `"Scene.xyz789"`) in the matching result (§3), exactly like `create_scene`.
+
+**The v14 idiom (researched this task, documented here so 38.1's implementer doesn't have to re-derive it):**
+
+```js
+const pack = game.packs.get(data.packId);
+if (!pack) throw new Error(`import_compendium_scene: unknown pack "${data.packId}"`);
+const imported = await game.scenes.importFromCompendium(pack, data.entryId);
+return imported?.uuid;
+```
+
+`game.scenes` is a `WorldCollection` (confirmed by direct read of the installed v14 client source,
+`client/documents/collections/scenes.mjs`: `class Scenes extends WorldCollection`), and
+`WorldCollection#importFromCompendium(pack, id, updateData={}, options={})`
+(`client/documents/abstract/world-collection.mjs:80`) is Foundry's OWN official import helper — NOT the
+"`pack.getDocument(entryId)` → `Scene.create(doc.toObject())`" idiom this task was scoped to verify against (that
+manual two-step form also works, but `importFromCompendium` is what Foundry's own compendium-sidebar "Import"
+button calls, and it additionally applies `WorldCollection#fromCompendium`'s data hygiene — clearing `folder`/
+`sort`/`ownership`/compendium `active` state and stamping `_stats.compendiumSource` — none of which the manual
+two-step form does for free). Prefer it over the manual form.
+
+**Background/Level-doc consideration for imported scenes — VERIFIED, not assumed, and GOOD NEWS relative to
+`create_scene`'s own showstopper:** `create_scene`'s push path (above) needs the explicit `updateEmbeddedDocuments
+("Level", …)` follow-up because it builds a scene from a FLAT `{name, background:{src}}` payload with no
+embedded Level document of its own. `import_compendium_scene` does NOT have this problem: `importFromCompendium`
+→ `fromCompendium` calls `document.toObject()` with its default `source=true` (confirmed by direct read of
+`common/abstract/data.mjs:820`, `toObject(source=true) { return deepClone(this._source) }`) — this deep-clones
+the COMPLETE source data of the compendium Scene document, which INCLUDES its embedded `levels` collection (the
+`defaultLevel0000` doc that actually carries `background.src` on v14, per this contract's own `create_scene`
+background-write-semantics note above). That full source, embedded Level doc and all, is what
+`WorldCollection#importDocument` hands to `Scene.create(...)` — so a compendium Scene's real map art survives
+the import automatically, with ZERO extra Level-doc write needed on this path. 38.1's implementer must still
+VERIFY this live against a real Czepeku pack scene at implementation time (per this contract's own standing
+"verify, don't assume, given `background`'s own proof that v14 silently drops naively-shaped fields" rule) —
+but the mechanism is sound and does not need a bespoke fix the way `create_scene`/`update_scene` did.
+
+An unresolvable `packId` or `entryId` (unknown pack, or a document id not present in that pack) is a per-op
+failure (`ok:false`, §3), not a thrown/aborted batch — same convention as every other kind in this section.
+
 ### Reserved kinds — still NOT implemented (unchanged from v1; no phase has claimed these yet)
 
 | `kind` | Indicative `data` shape | Notes |
@@ -529,6 +665,17 @@ oversight** — 32.1/32.2/32.3 should not "fix" it into consistency.
   - GM_Tools-side quiet-push spec (Scene additive fields, stage route, flush semantics, map-src resolution,
     local-copy path) lives in `review-ui/test/e2e/phase36-fixture.mjs`, not in this file — this file stays
     scoped to the wire format only, per its own "Scope and non-goals" section at the top.
+- **v3** (Phase 38 task 38.0, this amendment) — all additive, **no `*_VERSION` constant bumped** (both changes
+  qualify as "additive-only" per this doc's own cross-cutting convention):
+  - Index gains top-level `worldItems: Item[]` (§1.6, `game.items` — closes the "loose world items invisible"
+    blind spot) and `compendia: CompendiumPackInfo[]` (§1.7, `game.packs` header enumeration via `pack.index`
+    only, Scene packs additionally get `entries:[{id,name,thumb}]`) — both additive-optional.
+  - NEW op kind `import_compendium_scene` (§2): `{packId, entryId}` → a real world Scene, via Foundry's own
+    `game.scenes.importFromCompendium(pack, entryId)` — verified this does NOT need `create_scene`'s Level-doc
+    background fix (the compendium document's own embedded Level doc round-trips through `toObject()` for free).
+  - GM_Tools-side content-pipeline spec (Reliquary/Stagecraft pull-mapper shapes, the import-on-accept
+    composition + pending/reconcile reuse, plan-delete rail contract, the Loyalty tree + `anchorMembership` op)
+    lives in `review-ui/test/e2e/phase38-fixture.mjs`, not in this file — same "wire format only" scoping as v2.
 
 ---
 
@@ -552,6 +699,10 @@ the 32.2/32.3 code that will consume it, without colliding with either existing 
 both consume THOSE shapes directly, per that file's own header — the "shared-fixture discipline" this project
 established in Phase 32 continues, just anchored in the newer e2e-fixture convention rather than growing this
 older `wf-mcp-server/test/fixtures/` directory further).
+
+**(v3, Phase 38)** Same discipline continues one level further — the v3 shapes (`worldItems[]`, `compendia[]`,
+`import_compendium_scene`) live as inline constants/mock-index builders in `review-ui/test/e2e/phase38-fixture.mjs`,
+not as new files under this directory.
 
 ## Grounding (file:line used while writing this contract)
 
