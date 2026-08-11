@@ -79,6 +79,36 @@ test("Chronicle surface renders the deferred lane from the EXISTING pending-ledg
   assert.equal(await ringRow.getAttribute("data-carried"), "false", "unchecking must be purely local UI state, immediately reflected in data-carried");
 });
 
+// Cleanup pin (Russell's Phase-37 pass, 2026-08-11): selecting the branches
+// scope with nothing picked used to reach the server and 400 ("requires a
+// non-empty branchIds[]"). The Composer must deflect that run client-side:
+// one merged "Somewhere in particular…" chip (no duplicate picker toggle),
+// and a dimmed Run button + quiet hint until a branch is picked.
+test("branches scope with no branch picked DEFLECTS the run with a quiet hint (never the server 400), and exactly ONE 'Somewhere in particular' control exists", async () => {
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+  await page.goto(`${base}/#chronicle`);
+  await page.locator('[data-testid="chronicle-surface-root"]').waitFor({ state: "visible", timeout: 15000 });
+
+  const somewhereControls = page.locator('text="Somewhere in particular…"');
+  assert.equal(await somewhereControls.count(), 1, "the duplicate picker toggle is retired -- ONE chip serves select+open");
+
+  await page.locator('[data-testid="chronicle-scope-chip"][data-scope-kind="branches"]').click();
+  const meta = page.locator('[data-testid="chronicle-run-meta"]');
+  await page.waitForFunction(() => document.querySelector('[data-testid="chronicle-run-meta"]')?.getAttribute("data-run-blocked") === "true", null, { timeout: 5000 });
+  assert.match((await meta.textContent()) ?? "", /pick at least one/, "the hint explains what is missing");
+
+  assert.equal(await page.locator('[data-testid="chronicle-run-btn"]').getAttribute("aria-disabled"), "true", "the Run button reads disabled");
+  const failed = [];
+  page.on("response", (r) => { if (r.url().includes("/api/chronicle/run") && r.status() >= 400) failed.push(r.status()); });
+  // force:true bypasses Playwright's own actionability refusal (aria-disabled)
+  // so the JS-side guard is what's actually exercised.
+  await page.locator('[data-testid="chronicle-run-btn"]').click({ force: true });
+  await page.waitForTimeout(800);
+  assert.deepEqual(failed, [], "a blocked run must never reach the server");
+  await page.close();
+});
+
 test("the Composer has EXACTLY ONE span/duration control, shared byte-identically between Composer and Timeline modes -- no second duration input anywhere in the surface", async () => {
   const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
   await primeWorldSelection(page, base, WORLD);

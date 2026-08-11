@@ -191,6 +191,7 @@ export async function renderChronicleSurface(arg) {
   const branchChipsHost = el("div", { style: "display: flex; flex-wrap: wrap; gap: 6px;" });
   const branchPickerHost = el("div", {});
   const runMetaEl = el("div", { testid: "chronicle-run-meta", style: "font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.58 0.012 70);" });
+  let runBtnEl = null; // set by buildRunRow; refreshRunMeta dims it when a run can't succeed
   let historyListHost = null;
 
   // ---- initial data ------------------------------------------------------
@@ -469,6 +470,13 @@ export async function renderChronicleSurface(arg) {
 
   function buildScopeRow() {
     const row = el("div", { style: "display: flex; flex-wrap: wrap; gap: 6px; align-items: center;" });
+    // Cleanup (Russell's Phase-37 pass, 2026-08-11): the row previously
+    // rendered TWO "Somewhere in particular…" controls -- the scope chip AND
+    // a separate picker toggle -- both flipping scopeKind to "branches"
+    // immediately, so a run before any branch was picked hit the server's
+    // (correct) 400 "requires a non-empty branchIds[]". ONE chip now serves
+    // both roles: selecting "branches" opens the picker; the Run button
+    // separately refuses the empty state with a quiet hint (see runDisabledReason).
     for (const sk of SCOPE_KINDS) {
       const chip = el("div", {
         testid: "chronicle-scope-chip",
@@ -478,19 +486,16 @@ export async function renderChronicleSurface(arg) {
         text: sk.label,
         style: chipStyle(state.scopeKind === sk.id)
       });
-      chip.addEventListener("click", () => { state.scopeKind = sk.id; if (sk.id !== "branches") state.pickerOpen = false; paintScopeChips(); paintBranchPicker(); refreshRunMeta(); });
+      chip.addEventListener("click", () => {
+        state.scopeKind = sk.id;
+        state.pickerOpen = sk.id === "branches"; // picking the branches scope IS opening the picker
+        paintScopeChips(); paintBranchPicker(); refreshRunMeta();
+      });
       scopeChipEls.push(chip);
       row.appendChild(chip);
     }
-    // branch chips + picker toggle live in the same row
+    // picked-branch chips live in the same row (the picker itself renders below)
     row.appendChild(branchChipsHost);
-    const toggle = el("div", {
-      testid: "chronicle-branch-picker-toggle",
-      role: "button",
-      style: "display: flex; align-items: center; gap: 6px; padding: 5px 11px; border: 1px dashed oklch(0.80 0.010 80); border-radius: 20px; cursor: pointer; font-size: 12px; color: oklch(0.50 0.012 70);"
-    }, [el("span", { text: "▢", style: "font-family: 'IBM Plex Mono', monospace; font-size: 10px;" }), el("span", { text: "Somewhere in particular…" })]);
-    toggle.addEventListener("click", () => { state.pickerOpen = !state.pickerOpen; state.scopeKind = "branches"; paintScopeChips(); paintBranchPicker(); });
-    row.appendChild(toggle);
     return row;
   }
 
@@ -688,17 +693,38 @@ export async function renderChronicleSurface(arg) {
   function spanHead() { return (SPANS.find((s) => s.id === state.spanId) || SPANS[2]).head; }
 
   // ---- Run row ----------------------------------------------------------
+  // Cleanup (Russell's pass): a run that CANNOT succeed (branches scope with
+  // nothing picked) must never reach the server's 400 -- the button deflects
+  // with a quiet hint instead. The server-side validation stays as backstop.
+  function runDisabledReason() {
+    if (state.scopeKind === "branches" && state.branchIds.length === 0) {
+      return "pick at least one place or faction first";
+    }
+    return null;
+  }
   function buildRunRow() {
-    const btn = el("div", {
+    runBtnEl = el("div", {
       testid: "chronicle-run-btn",
       role: "button",
       style: `display: flex; align-items: center; gap: 9px; padding: 9px 18px; border-radius: 5px; cursor: pointer; background: ${TEAL}; color: oklch(0.99 0.005 185); font-size: 13px; font-weight: 500;`
     }, [el("span", { text: "✦", style: "font-family: 'IBM Plex Mono', monospace; font-size: 11px;" }), el("span", { testid: "chronicle-run-btn-label", text: "Let time pass" })]);
-    btn.addEventListener("click", runAdvance);
-    runMetaEl.textContent = runMetaText();
-    return el("div", { style: "display: flex; align-items: center; gap: 14px; margin-top: 20px; padding-top: 16px; border-top: 1px solid oklch(0.89 0.010 80);" }, [btn, runMetaEl]);
+    runBtnEl.addEventListener("click", () => {
+      if (runDisabledReason()) { refreshRunMeta(); return; }
+      runAdvance();
+    });
+    refreshRunMeta();
+    return el("div", { style: "display: flex; align-items: center; gap: 14px; margin-top: 20px; padding-top: 16px; border-top: 1px solid oklch(0.89 0.010 80);" }, [runBtnEl, runMetaEl]);
   }
-  function refreshRunMeta() { runMetaEl.textContent = runMetaText(); }
+  function refreshRunMeta() {
+    const reason = runDisabledReason();
+    runMetaEl.textContent = reason ?? runMetaText();
+    runMetaEl.setAttribute("data-run-blocked", reason ? "true" : "false");
+    if (runBtnEl) {
+      runBtnEl.setAttribute("aria-disabled", reason ? "true" : "false");
+      runBtnEl.style.opacity = reason ? "0.55" : "1";
+      runBtnEl.style.cursor = reason ? "default" : "pointer";
+    }
+  }
   function runMetaText() {
     const fLabel = (FORTUNES.find((f) => f.id === state.fortuneStopId) || FORTUNES[2]).label.toLowerCase();
     const scopeSummary = state.scopeKind === "queued-intents" ? `${state.carried.size} intents` : state.scopeKind === "branches" ? `${state.branchIds.length} branch${state.branchIds.length === 1 ? "" : "es"}` : "whole world";
