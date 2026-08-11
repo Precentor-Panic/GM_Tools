@@ -89,13 +89,25 @@ test("[GREEN GUARD] POST /api/batches/:id/accept still works end to end, unmodif
   assert.equal(stored.status, "accepted");
 });
 
-test("[GREEN GUARD] the legacy #review/<batchId> deep-link screen still renders the real batch (survives Chronicle's own scaffold landing alongside it)", async () => {
+// Phase 37 task 37.3 RECONCILIATION (retire-as-superseded): the legacy
+// `#review/<batchId>` SCREEN retired -- graph review is now the Chronicle's
+// job (the shared proposal-card). The capability this pin protects (a
+// `#review/<batchId>` deep link / handoff still reaches the real batch) is
+// PRESERVED, just relocated: `#review/<batchId>` now hash-redirects to
+// `#chronicle/batch/<batchId>`, which renders that same batch's detail through
+// the shared proposal-card in Chronicle's "What changed" panel. Replacement
+// asserted below. The route-level pins above (GET /api/batches[/:id],
+// accept) are UNCHANGED -- those are the batch-ROUTE guards that must stay.
+test("[GREEN GUARD] the legacy #review/<batchId> deep link redirects into Chronicle's batch detail and renders the real batch through the shared proposal-card", async () => {
   const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
   await primeWorldSelection(page, base, WORLD);
   await page.goto(`${base}/#review/${batch.id}`);
-  const reviewView = page.locator("#view-review");
-  await reviewView.waitFor({ state: "visible", timeout: 15000 });
-  assert.ok(await reviewView.evaluate((el) => el.classList.contains("active")), "#view-review must be the active legacy view for a #review/<batchId> deep link");
-  const list = page.locator("#review-list");
-  await list.waitFor({ state: "attached", timeout: 10000 });
+  // Keep-by-hash redirect: the old deep link lands on the new home.
+  await page.waitForFunction((id) => location.hash === `#chronicle/batch/${id}`, batch.id, { timeout: 15000 });
+  // The shell (Chronicle surface) is the active root, not the legacy main.
+  await page.locator('[data-testid="chronicle-surface-root"]').waitFor({ state: "visible", timeout: 15000 });
+  // The real batch's mutation renders through the ONE shared proposal-card.
+  const mutationId = batch.mutations[0].mutationId;
+  await page.locator(`[data-testid="proposal-card"][data-mutation-id="${mutationId}"]`).waitFor({ state: "visible", timeout: 15000 });
+  await page.close();
 });

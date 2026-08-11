@@ -143,7 +143,7 @@ function segBtn(label, active, onClick, testid, extra = {}) {
 // ---------------------------------------------------------------------------
 // Entry point. Owns #shell-main (single root child, per the phase34 e2e).
 // ---------------------------------------------------------------------------
-export async function renderChronicleSurface() {
+export async function renderChronicleSurface(arg) {
   const world = currentWorld();
 
   const root = el("div", {
@@ -298,6 +298,28 @@ export async function renderChronicleSurface() {
   body.appendChild(history);
 
   paintAdvMode();
+
+  // -----------------------------------------------------------------------
+  // Phase 37 task 37.3: deep-link + Wrap-up handoff routing (the SAME
+  // surface, entered from three retired places).
+  //  - `#chronicle/batch/<batchId>` -> load that batch's detail straight
+  //    into the "What changed" panel (the SHARED proposal-card). This is
+  //    the new home for the retired `#review/<batchId>` screen and the
+  //    Connection-Menu lore-intake + Wrap-rail "Review" handoffs -- one
+  //    review surface, not three local card renderers.
+  //  - `#chronicle/compose` -> the Wrap-up "N threads waiting -- pass time
+  //    now?" entry point: Composer mode with the queued-intents scope
+  //    pre-selected (the deferred lane is always visible at left).
+  const route = parseChronicleArg(arg);
+  if (route.kind === "compose") {
+    state.advMode = "composer";
+    state.scopeKind = "queued-intents";
+    paintAdvMode();
+    paintScopeChips();
+    refreshRunMeta();
+  } else if (route.kind === "batch" && route.batchId) {
+    await loadBatchDetail(route.batchId);
+  }
 
   // -----------------------------------------------------------------------
   // Builders
@@ -823,6 +845,22 @@ export async function renderChronicleSurface() {
     state.running = false;
   }
 
+  // ---- batch deep-link (retired #review/<batchId>'s new home) -----------
+  // Fetch a specific batch's detail and render its region entities through
+  // the SAME shared proposal-card pipeline a composed run produces -- no
+  // second review surface. Used by the `#chronicle/batch/<id>` route.
+  async function loadBatchDetail(batchId) {
+    try {
+      const detail = await api(`/api/batches/${encodeURIComponent(batchId)}${withWorld()}`);
+      state.batchId = batchId;
+      state.proposals = (detail.regions || []).flatMap((r) => r.entities || []);
+      paintProposals();
+      proposalsWrap.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    } catch (err) {
+      console.error("chronicle batch deep-link failed:", err);
+    }
+  }
+
   // ---- mode switching ---------------------------------------------------
   function setAdvMode(mode) { state.advMode = mode; paintAdvToggle(); paintAdvMode(); }
   function paintAdvMode() {
@@ -844,6 +882,13 @@ export async function renderChronicleSurface() {
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
+/** Chronicle's own hash-arg vocabulary (app.js passes `arg` = the hash's rest). */
+function parseChronicleArg(arg) {
+  if (!arg) return { kind: "default" };
+  if (arg === "compose") return { kind: "compose" };
+  if (arg.startsWith("batch/")) return { kind: "batch", batchId: arg.slice("batch/".length) };
+  return { kind: "default" };
+}
 function formatWorldClock(clock) {
   if (!clock) return "";
   const cal = clock.calendar ? `${clock.calendar} · ` : "";

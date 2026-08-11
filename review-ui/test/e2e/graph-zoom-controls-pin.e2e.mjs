@@ -147,10 +147,11 @@ test("standalone Graph view: zoom controls stay pinned to the viewport corner wh
   await assertZoomBarStaysPinned("#graph-standalone");
 });
 
-test("Batch Review Graph toggle: zoom controls stay pinned to the viewport corner while the graph is scrolled", async () => {
-  await page.goto(`${base}/#review/${batch.id}`);
-  await page.locator('[data-review-mode="graph"]').click();
-  await page.locator("#review-graph .graph-node").first().waitFor({ state: "visible", timeout: 15000 });
-  await page.waitForTimeout(300);
-  await assertZoomBarStaysPinned("#review-graph");
-});
+// Phase 37 task 37.3 RECONCILIATION (retire-as-superseded): the second call
+// site this test covered -- Batch Review's Graph toggle (`#review/<batchId>`
+// -> `[data-review-mode="graph"]` -> `#review-graph`) -- is RETIRED with the
+// #review screen. The zoom-controls-pin fix lives in the shared graph-view.js
+// and is still exercised by the standalone `#graph` test above (the ONE
+// surviving call site), so the regression guard is preserved; the retired
+// duplicate against the now-deleted #review-graph mount is removed here.
+// (The `batch` fixture above is left in place; it is cheap and harmless.)

@@ -47,11 +47,15 @@ after(async () => {
   cleanupScratchEnv(scratchDir);
 });
 
-test("app-shell is hidden on a legacy hash (#queue) and visible with legacy chrome hidden on #planner/plans", async () => {
+// Phase 37 task 37.3: this test's old "legacy hash" example was `#queue`,
+// which now hash-redirects into the shell (#chronicle). Retargeted to `#graph`
+// -- a surviving legacy (non-shell) hash -- so the shell-vs-legacy-chrome
+// visibility switch this test actually exercises is unchanged.
+test("app-shell is hidden on a legacy hash (#graph) and visible with legacy chrome hidden on #planner/plans", async () => {
   const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
   await primeWorldSelection(page, base, WORLD);
 
-  await page.goto(`${base}/#queue`);
+  await page.goto(`${base}/#graph`);
   await page.locator("header.topbar").waitFor({ state: "visible", timeout: 15000 });
   assert.equal(await page.locator('[data-testid="app-shell"]').isVisible().catch(() => false), false, "app-shell must be hidden on a legacy hash");
 

@@ -535,7 +535,10 @@ function renderLoreResult(result) {
     "Grouped by where things sit inside each other, so you can accept a whole branch at once. Nothing is in your graph yet."));
 
   const actions = el("div", { class: "conn-lore-result-actions" });
-  const review = el("a", { class: "conn-lore-result-review", href: `#review/${result.batchId}`, "data-testid": "conn-lore-review-batch" }, "Review batch");
+  // Phase 37 task 37.3: lore intake is "reviewed in the Chronicle" (the ONE
+  // review surface) -- this handoff now deep-links into Chronicle's batch
+  // detail (the shared proposal-card), not the retired #review screen.
+  const review = el("a", { class: "conn-lore-result-review", href: `#chronicle/batch/${result.batchId}`, "data-testid": "conn-lore-review-batch" }, "Review batch");
   review.addEventListener("click", () => closeConnectionPanel());
   actions.appendChild(review);
   // NOTE: "Accept all without reading" is intentionally OMITTED — the propose
@@ -587,7 +590,7 @@ function renderHistorySection() {
         el("span", { class: "conn-history-meta" }, `${b.status} · ${b.mutationCount} · ${b.pendingCount} pending`)
       );
       if (b.pendingCount > 0) {
-        const open = el("a", { class: "conn-history-open", href: `#review/${b.id}` }, "review");
+        const open = el("a", { class: "conn-history-open", href: `#chronicle/batch/${b.id}` }, "review");
         open.addEventListener("click", () => closeConnectionPanel());
         row.appendChild(open);
       }

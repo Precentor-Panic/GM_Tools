@@ -9,7 +9,7 @@
 <body>
 
 <header class="topbar">
-  <button class="brand" data-nav="queue" title="Back to Queue">GM Review</button>
+  <button class="brand" title="GM Review">GM Review</button>
   <!-- Phase 15 task 15.3: at mobile widths, .topnav + .topbar-right collapse
        into a dropdown drawer toggled by this button instead of overflowing
        off-screen -- see style.css's mobile media query and app.js's toggle
@@ -18,9 +18,11 @@
   <button id="mobile-menu-btn" class="icon-btn mobile-menu-btn" aria-label="Menu" aria-expanded="false" aria-controls="topbar-collapsible">&#9776;</button>
   <div id="topbar-collapsible" class="topbar-collapsible">
     <nav class="topnav">
-      <button data-nav="queue">Queue</button>
+      <!-- Phase 37 task 37.3: the Queue + Deferred Debt nav entries retired
+           (their screens fold into Chronicle -- #queue/#debt hash-redirect
+           there). New Import stays (already a 34.2 redirect into the
+           Connection Menu). -->
       <button data-nav="import">New Import</button>
-      <button data-nav="debt">Deferred Debt</button>
       <button data-nav="graph">Graph</button>
       <button data-nav="plans" data-testid="plans-nav">Plans</button>
       <button data-nav="combat-planning" data-testid="combat-planning-nav">Encounter Builder</button>
@@ -34,21 +36,12 @@
 
 <main>
 
-<!-- ================= QUEUE ================= -->
-<section id="view-queue" class="view">
-  <h1>Queue</h1>
-  <div id="queue-empty" class="empty-state" hidden>Nothing needs you right now.</div>
-
-  <div id="queue-batches-wrap" hidden>
-    <h2 class="section-label">Awaiting review</h2>
-    <ul id="queue-batches" class="queue-list"></ul>
-  </div>
-
-  <div id="queue-flagged-wrap" hidden>
-    <h2 class="section-label">Long-unreviewed entities</h2>
-    <ul id="queue-flagged" class="queue-list queue-list--flagged"></ul>
-  </div>
-</section>
+<!-- ================= QUEUE -- RETIRED Phase 37 task 37.3 =================
+     Folded into the Chronicle (the ONE review surface): the pending-batch
+     list + long-unreviewed entities live in Chronicle's history rail +
+     deferred lane. `#queue` hash-redirects to `#chronicle` (app.js's
+     renderCurrentView), keep-by-hash convention. The batch ROUTES
+     (/api/batches/*) are untouched -- only this screen retired. ==== -->
 
 <!-- ================= NEW IMPORT (Phase 8) ================= -->
 <section id="view-import" class="view">
@@ -76,54 +69,15 @@
   </div>
 </section>
 
-<!-- ================= REVIEW ================= -->
-<section id="view-review" class="view">
-  <div class="review-header">
-    <button class="link-btn" data-nav="queue">&larr; Back to Queue</button>
-    <div id="review-headline" class="review-headline"></div>
-    <div id="review-meta" class="review-meta"></div>
-    <div id="review-explainer" class="hint review-explainer"></div>
-    <div id="rubber-duck-reject-panel" class="rubber-duck-panel" hidden></div>
-  </div>
-
-  <div id="review-sync-bar" class="sync-bar" hidden>
-    <span id="review-sync-status" class="hint"></span>
-    <button id="btn-sync-now" class="btn btn--accept">Sync to Foundry</button>
-  </div>
-
-  <div id="review-actionbar" class="action-bar">
-    <button id="btn-select-all" class="btn btn--ghost">Select All</button>
-    <button id="btn-select-none" class="btn btn--ghost">Select None</button>
-    <label class="select-all-boring">
-      <button id="btn-select-boring" class="btn btn--ghost" title="Selects everything below this batch's importance threshold -- routine/minor changes, not the ones likely to need your attention">Select All Boring</button>
-    </label>
-    <div class="action-bar-spacer"></div>
-    <button id="btn-accept-selected" class="btn btn--accept">Accept Selected</button>
-    <button id="btn-reject-selected" class="btn btn--reject">Reject Selected</button>
-  </div>
-
-  <!-- Phase 7 task 7.3: List/Graph toggle. Both render from the SAME
-       reviewState.detail and the SAME checkboxes in #review-list -- Graph
-       mode never fetches or tracks a second copy of selection/accept/reject
-       state, see app.js's renderReviewGraph. -->
-  <div class="view-toggle" id="review-mode-toggle">
-    <button data-review-mode="list" class="active">List</button>
-    <button data-review-mode="graph">Graph</button>
-  </div>
-
-  <div id="review-list-wrap">
-    <div id="review-list" class="mutation-list"></div>
-  </div>
-
-  <div id="review-graph-wrap" hidden>
-    <div class="graph-context-controls">
-      <span class="hint">Batch entities plus their persisted neighbors.</span>
-      <button id="btn-graph-expand-context" class="btn btn--ghost">Expand context</button>
-      <span id="review-graph-count" class="graph-node-count"></span>
-    </div>
-    <div id="review-graph" class="graph-view-container"></div>
-  </div>
-</section>
+<!-- ================= REVIEW -- RETIRED Phase 37 task 37.3 =================
+     Graph review is now the Chronicle's job (the ONE shared proposal-card
+     component, proposal-card.js). `#review/<batchId>` hash-redirects to
+     `#chronicle/batch/<batchId>` -- the same batch's detail rendered through
+     that shared card in Chronicle's "What changed" panel. The batch ROUTES
+     (/api/batches/*, accept/reject/sync) are untouched; only this screen and
+     its List/Graph toggle retired. The batch-mode Graph view (rubber-band
+     multi-select) retired with it; the standalone #graph view is unaffected.
+     ==== -->
 
 <!-- ================= GRAPH (standalone, Phase 7 task 7.4 / Phase 12 editor) ================= -->
 <section id="view-graph" class="view">
@@ -204,14 +158,10 @@
   <div id="combat-planning-ingest-body"></div>
 </section>
 
-<!-- ================= DEFERRED DEBT ================= -->
-<section id="view-debt" class="view">
-  <h1>Deferred Debt</h1>
-  <p class="hint">Entities carrying accumulated, un-textured history from past time-skips. Nothing here costs anything until you resolve it.</p>
-  <input id="debt-search" type="search" placeholder="Search entities&hellip;" class="search-box">
-  <ul id="debt-list" class="debt-list"></ul>
-  <div id="debt-empty" class="empty-state" hidden>No deferred entities in this world.</div>
-</section>
+<!-- ================= DEFERRED DEBT -- RETIRED Phase 37 task 37.3 =========
+     The deferred-debt list is now the Chronicle's deferred lane (over the
+     SAME pending-ledger). `#debt` hash-redirects to `#chronicle`, where the
+     lane surfaces queued intents with defer/promote/carry controls. ==== -->
 
 <!-- ================= SETTINGS ================= -->
 <section id="view-settings" class="view">

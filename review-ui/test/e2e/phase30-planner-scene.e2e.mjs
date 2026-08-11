@@ -352,13 +352,24 @@ test("Wrap rail: propose -> accept -> apply syncs, and nothing writes to the gra
   assert.equal(await page.evaluate(() => location.hash), `#planner/scene/${scene.id}`);
 
   await panel.locator('[data-testid="wrap-note-intake-run-btn"]').click();
-  const card = panel.locator(`[data-testid="wrap-proposal-card"]`).first();
+  // Phase 37 task 37.3 RECONCILIATION: the Wrap rail's local card renderer
+  // (wrap-proposal-card / wrap-proposal-accept / wrap-proposal-status) is
+  // GONE -- it now mounts THE shared proposal-card (proposal-card.js, the
+  // SAME component Chronicle + Connection-Menu lore intake use). The rail's
+  // OWN chrome (wrap-panel, wrap-note-intake-run-btn, wrap-apply-btn,
+  // wrap-proposal-rail) is unchanged; only the card internals are the shared
+  // ones. Accept/Reject behavior is identical -- the shared card calls the
+  // SAME per-mutation `scope:"entity"` accept route the local card called.
+  const card = panel.locator(`[data-testid="proposal-card"]`).first();
   await card.waitFor({ state: "visible", timeout: 8000 });
 
   // No accepted mutation yet -> nothing may have been synced to the graph.
-  await card.locator('[data-testid="wrap-proposal-accept"]').click();
+  await card.locator('[data-testid="proposal-card-accept-btn"]').click();
+  // The shared card persists the accept, then flips its own data-decided.
+  await panel.locator('[data-testid="proposal-card"][data-decided="yes"]').first().waitFor({ state: "visible", timeout: 8000 });
   const applyBtn = panel.locator('[data-testid="wrap-apply-btn"]');
   await applyBtn.click();
-  await panel.locator('[data-testid="wrap-proposal-status"]').first().waitFor({ state: "visible", timeout: 8000 });
+  // Apply (/sync, accepted-only) is the only graph write; the rail marks itself applied on success.
+  await panel.locator('[data-testid="wrap-proposal-rail"][data-applied="true"]').waitFor({ state: "attached", timeout: 8000 });
   await page.close();
 });

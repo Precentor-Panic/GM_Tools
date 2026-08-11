@@ -362,7 +362,10 @@ export async function createSceneViaRoute(base, world, { locationEntityId, objec
 
 /** Sets localStorage["gmReview.world"] via a real page load first, matching scenes-tab-*.e2e.mjs's own established convention (page.evaluate cannot touch localStorage on about:blank). */
 export async function primeWorldSelection(page, base, world) {
-  await page.goto(`${base}/#queue`);
+  // Phase 37 task 37.3: #queue retired (now redirects into the shell); use a
+  // surviving legacy hash to load the app + set localStorage before the real
+  // navigation. Any hash works -- this only primes localStorage.
+  await page.goto(`${base}/#graph`);
   await page.evaluate((w) => localStorage.setItem("gmReview.world", w), world);
 }
 

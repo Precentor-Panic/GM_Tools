@@ -80,6 +80,13 @@ import { showUndoToast } from "./plans-view.js";
 // shared tray's kind-glyph convention verbatim (◈ item / ▦ map / ◐ splash /
 // ♪ music) rather than re-deriving a second copy.
 import { KIND_GLYPH } from "./scene-tray.js";
+// Phase 37 task 37.3: the Wrap rail renders its proposals through THE ONE
+// shared proposal/diff card (README's "implement once"), replacing 29.6's
+// local buildProposalCard renderer -- the SAME component Chronicle's "What
+// changed" panel and the Connection-Menu lore intake use. The rail keeps its
+// own chrome (slide-down panel, blurb, Accept all + Apply-to-graph footer);
+// only the per-mutation card markup is now the shared one.
+import { renderProposalCard } from "./proposal-card.js";
 
 // ---------------------------------------------------------------------------
 // local api/world helpers (see file header -- deliberately not imported
@@ -1734,7 +1741,49 @@ function buildWrapPanel(scene, refreshElements) {
   promoteSection.appendChild(promoteHost);
   panel.appendChild(promoteSection);
 
+  // (3) Phase 37 task 37.3: the quiet Chronicle entry point that rides
+  // Wrap-up. When the world's pending-ledger (the deferred-intents lane) is
+  // carrying threads deferred from past time-skips/wrap-ups, offer to pass
+  // time now -- one line, no chrome. It hands off into the Chronicle Composer
+  // with the queued-intents scope pre-selected (the deferred lane visible at
+  // left), via the `#chronicle/compose` route. Nothing runs here; it only
+  // navigates. Hidden entirely (never rendered) when nothing is queued.
+  const passTime = document.createElement("div");
+  passTime.className = "wrap-section wrap-passtime";
+  passTime.setAttribute("data-testid", "wrap-passtime-line");
+  passTime.hidden = true;
+  panel.appendChild(passTime);
+  refreshWrapPassTimeLine(passTime);
+
   return panel;
+}
+
+/**
+ * Populate (or leave hidden) the Wrap panel's "N threads waiting -- pass time
+ * now?" line from the world's real pending-ledger. Best-effort: any read
+ * failure just leaves the line hidden (it is a quiet nudge, never load-bearing).
+ */
+async function refreshWrapPassTimeLine(host) {
+  let pending;
+  try {
+    pending = await spApi(`/api/pending-entities${spWithWorld()}`);
+  } catch {
+    return; // stay hidden
+  }
+  let threads = 0;
+  for (const ent of pending.entities || []) threads += (ent.entries || []).length;
+  if (threads <= 0) return; // nothing queued -> no line at all
+
+  host.innerHTML = "";
+  const line = document.createElement("button");
+  line.type = "button";
+  line.className = "wrap-passtime-link";
+  line.setAttribute("data-testid", "wrap-passtime-link");
+  line.setAttribute("data-thread-count", String(threads));
+  line.textContent = `${threads} thread${threads === 1 ? "" : "s"} waiting — pass time now?`;
+  line.addEventListener("click", () => { location.hash = "chronicle/compose"; });
+  host.appendChild(line);
+  host.hidden = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1750,158 +1799,15 @@ function buildWrapPanel(scene, refreshElements) {
 // graph.
 // ---------------------------------------------------------------------------
 
-/** README §D kind badge, DERIVED client-side from a mutation's own op + diff (no new server field). The `(created)` sentinel diff.mjs emits for a brand-new entity/edge is the "new node"/"new edge" signal; an upsert_entity with a real field-level diff is a "field edit". */
-function deriveProposalKind(entity) {
-  const created = Array.isArray(entity.diff) && entity.diff.some((d) => d.field === "(created)");
-  if (entity.op === "upsert_edge") return created ? "new edge" : "field edit";
-  if (entity.op === "upsert_entity") return created ? "new node" : "field edit";
-  return "field edit";
-}
-
-function formatProposalValue(v) {
-  if (v == null) return "";
-  return typeof v === "string" ? v : JSON.stringify(v);
-}
-
-/** README §D diff rows for one proposal card. A `(created)` sentinel yields a SINGLE added (`+`) row summarizing the new node/edge (never a removed row -- there is no prior value). A field-level diff yields a removed (`−`) row ONLY when `from` is non-null, plus an added (`+`) row for `to`. */
-function buildProposalDiffRows(entity) {
-  const rows = [];
-  const diff = Array.isArray(entity.diff) ? entity.diff : [];
-  for (const d of diff) {
-    if (d.field === "(created)") {
-      const after = (d.to && typeof d.to === "object") ? d.to : (entity.data || {});
-      const typeWord = after.type ? `${after.type} ` : "";
-      const nounWord = entity.op === "upsert_edge" ? "edge" : "node";
-      const name = after.name || entity.name || "node";
-      rows.push({ sign: "+", text: `New ${typeWord}${nounWord} “${name}”` });
-      continue;
-    }
-    if (d.from != null && d.from !== "") {
-      rows.push({ sign: "-", text: `${d.field}: ${formatProposalValue(d.from)}` });
-    }
-    rows.push({ sign: "+", text: `${d.field}: ${formatProposalValue(d.to)}` });
-  }
-  if (!rows.length) {
-    for (const [k, val] of Object.entries(entity.data || {})) {
-      rows.push({ sign: "+", text: `${k}: ${formatProposalValue(val)}` });
-    }
-  }
-  return rows;
-}
-
-/**
- * One proposal card. Accept/Reject call the EXISTING per-mutation route
- * (`POST /api/batches/:batchId/accept|reject {scope:'entity', id}`) -- the SAME
- * route Batch Review's list/graph modes use, never a second implementation.
- * On accept the card turns green-bordered; on reject it goes flat grey.
- * Returns handles so "Accept all" can drive every card programmatically.
- */
-function buildProposalCard(batchId, entity, decisions, onDecision) {
-  const card = document.createElement("div");
-  card.className = "wrap-proposal-card";
-  card.setAttribute("data-testid", "wrap-proposal-card");
-  card.setAttribute("data-mutation-id", entity.mutationId);
-  card.setAttribute("data-batch-id", batchId);
-
-  const header = document.createElement("div");
-  header.className = "wrap-proposal-header";
-
-  const kind = deriveProposalKind(entity);
-  const badge = document.createElement("span");
-  badge.className = "wrap-proposal-kind-badge";
-  badge.setAttribute("data-testid", "wrap-proposal-kind-badge");
-  badge.setAttribute("data-kind", kind);
-  badge.textContent = kind;
-
-  const target = document.createElement("span");
-  target.className = "wrap-proposal-target";
-  target.textContent = entity.name || entity.entityId || "(unnamed)";
-
-  const spacer = document.createElement("span");
-  spacer.className = "wrap-proposal-spacer";
-
-  const statusWord = document.createElement("span");
-  statusWord.className = "wrap-proposal-status";
-  statusWord.setAttribute("data-testid", "wrap-proposal-status");
-
-  header.append(badge, target, spacer, statusWord);
-  card.appendChild(header);
-
-  for (const row of buildProposalDiffRows(entity)) {
-    const added = row.sign === "+";
-    const line = document.createElement("div");
-    line.className = `wrap-proposal-diff ${added ? "wrap-proposal-diff--added" : "wrap-proposal-diff--removed"}`;
-    line.setAttribute("data-testid", added ? "wrap-proposal-diff-added" : "wrap-proposal-diff-removed");
-    const sign = document.createElement("span");
-    sign.className = "wrap-proposal-diff-sign";
-    sign.textContent = row.sign;
-    const val = document.createElement("span");
-    val.className = "wrap-proposal-diff-text";
-    val.textContent = row.text;
-    line.append(sign, val);
-    card.appendChild(line);
-  }
-
-  if (entity.rationale) {
-    const why = document.createElement("div");
-    why.className = "wrap-proposal-why";
-    why.textContent = entity.rationale;
-    card.appendChild(why);
-  }
-
-  const actions = document.createElement("div");
-  actions.className = "wrap-proposal-actions";
-  const acceptBtn = document.createElement("button");
-  acceptBtn.type = "button";
-  acceptBtn.className = "btn wrap-proposal-accept-btn";
-  acceptBtn.setAttribute("data-testid", "wrap-proposal-accept");
-  acceptBtn.setAttribute("data-mutation-id", entity.mutationId);
-  acceptBtn.textContent = "Accept";
-  const rejectBtn = document.createElement("button");
-  rejectBtn.type = "button";
-  rejectBtn.className = "btn wrap-proposal-reject-btn";
-  rejectBtn.setAttribute("data-testid", "wrap-proposal-reject");
-  rejectBtn.setAttribute("data-mutation-id", entity.mutationId);
-  rejectBtn.textContent = "Reject";
-  actions.append(acceptBtn, rejectBtn);
-  card.appendChild(actions);
-
-  function paint() {
-    const d = decisions.get(entity.mutationId) || "pending";
-    card.setAttribute("data-decision", d);
-    card.classList.toggle("wrap-proposal-card--accepted", d === "accepted");
-    card.classList.toggle("wrap-proposal-card--rejected", d === "rejected");
-    statusWord.textContent = d === "accepted" ? "accepted" : d === "rejected" ? "rejected" : "";
-    acceptBtn.classList.toggle("wrap-proposal-accept-btn--on", d === "accepted");
-    rejectBtn.classList.toggle("wrap-proposal-reject-btn--on", d === "rejected");
-  }
-
-  async function decide(decision) {
-    if (decisions.get(entity.mutationId) === decision) return;
-    acceptBtn.disabled = true;
-    rejectBtn.disabled = true;
-    try {
-      await spApi(`/api/batches/${encodeURIComponent(batchId)}/${decision === "accepted" ? "accept" : "reject"}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ world: currentWorld(), scope: "entity", id: entity.mutationId })
-      });
-      decisions.set(entity.mutationId, decision);
-      paint();
-      onDecision();
-    } catch (err) {
-      statusWord.textContent = `error: ${err.message}`;
-    } finally {
-      acceptBtn.disabled = false;
-      rejectBtn.disabled = false;
-    }
-  }
-
-  acceptBtn.addEventListener("click", () => decide("accepted"));
-  rejectBtn.addEventListener("click", () => decide("rejected"));
-  paint();
-  return { card, accept: () => decide("accepted") };
-}
+// Phase 37 task 37.3: the four local card-rendering helpers 29.6 shipped here
+// (deriveProposalKind / formatProposalValue / buildProposalDiffRows /
+// buildProposalCard) are GONE -- the rail now mounts the ONE shared
+// proposal-card component (renderProposalCard, imported above). See
+// buildWrapProposalRail below for the adoption: same batch fetch, same
+// decisions/Apply footer chrome, the card itself is the shared one. The card
+// owns its own Accept/Reject wiring (the SAME `scope:"entity"` per-mutation
+// route the old local card called) and reports each decision back through its
+// `onDecided` callback, which the rail uses to keep the Apply footer in sync.
 
 /**
  * Fetch the batch and render the inline proposal-card rail into `host`. Seeds
@@ -1965,7 +1871,12 @@ async function buildWrapProposalRail(scene, batchId, host) {
     applyBtn.classList.toggle("wrap-apply-btn--ready", n > 0);
   }
 
-  const cards = [];
+  // The shared proposal-card owns its own Accept/Reject POST + repaint; the
+  // rail only needs each decision reported back to keep its Apply footer in
+  // sync (and to seed `decisions` for the accepted-count math). Every mount
+  // records the card element so "Accept all" can drive them via their own
+  // (shared) Accept button -- the one accept path, not a rail-local duplicate.
+  const cardEls = [];
   if (!entities.length) {
     const empty = document.createElement("p");
     empty.className = "hint";
@@ -1973,20 +1884,31 @@ async function buildWrapProposalRail(scene, batchId, host) {
     cardsHost.appendChild(empty);
   } else {
     for (const entity of entities) {
-      const handle = buildProposalCard(batchId, entity, decisions, updateApply);
-      cards.push(handle);
-      cardsHost.appendChild(handle.card);
+      const cardEl = renderProposalCard(entity, {
+        world: currentWorld(),
+        batchId,
+        onDecided: (decided, m) => {
+          const mid = m.mutationId ?? m.id;
+          if (mid) decisions.set(mid, decided === "yes" ? "accepted" : decided === "no" ? "rejected" : "pending");
+          updateApply();
+        }
+      });
+      cardEls.push(cardEl);
+      cardsHost.appendChild(cardEl);
     }
   }
   rail.appendChild(footer);
 
-  acceptAllBtn.addEventListener("click", async () => {
+  acceptAllBtn.addEventListener("click", () => {
     acceptAllBtn.disabled = true;
-    for (const c of cards) {
-      // eslint-disable-next-line no-await-in-loop
-      await c.accept();
+    for (const cardEl of cardEls) {
+      if (cardEl.getAttribute("data-decided") === "yes") continue;
+      cardEl.querySelector('[data-testid="proposal-card-accept-btn"]')?.click();
     }
-    acceptAllBtn.disabled = false;
+    // Each accept resolves independently and calls onDecided -> updateApply;
+    // re-enable once the clicks are dispatched (the footer reflects reality as
+    // they land). A settle tick keeps the button from looking permanently dead.
+    setTimeout(() => { acceptAllBtn.disabled = false; }, 400);
   });
 
   applyBtn.addEventListener("click", async () => {
