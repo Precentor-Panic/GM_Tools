@@ -1672,6 +1672,18 @@ function renderPrepField(entity, doc, container, fieldName, value) {
   await initWorldSelect();
   // Reflect the new default in the URL bar so a refresh/bookmark stays on the
   // designer app (parseHash already renders it; this just makes the hash explicit).
-  if (!location.hash) location.hash = "planner/plans";
-  renderCurrentView();
+  //
+  // QA W2 fix (Group C #16): setting `location.hash` from empty to a real
+  // value fires the `hashchange` listener below (asynchronously) -- the
+  // unconditional renderCurrentView() call that used to follow it
+  // UNCONDITIONALLY fired a SECOND, redundant render immediately, so a cold
+  // boot with no prior hash rendered (and fetched everything it fetches)
+  // TWICE. Only call directly when no hash change is about to happen (an
+  // already-set hash, e.g. a bookmark/refresh) -- otherwise let the single
+  // hashchange event do the one real render.
+  if (!location.hash) {
+    location.hash = "planner/plans";
+  } else {
+    renderCurrentView();
+  }
 })();

@@ -18,17 +18,33 @@
 // reusing showUndoToast from plans-view.js rather than a second toast host.
 "use strict";
 import { showUndoToast, buildAddScenePanel } from "./plans-view.js";
-import { renderPlannerScenePage } from "./session-planner-view.js";
+import { renderPlannerScenePage, resetScenePageMode } from "./session-planner-view.js";
 import { renderWorldSurface as renderWorldSurfaceView, clearWorldTopbar } from "./world-view.js";
 import { mountConnectionChip } from "./connection-menu.js";
 import { renderLibrarySurface } from "./library-view.js";
 import { renderChronicleSurface } from "./chronicle-view.js";
+import { isValidWorldId, slugifyWorldId } from "./world-id.js";
 
 // ---------------------------------------------------------------------------
 // local api/world helpers (same standalone convention as plans-view.js)
 // ---------------------------------------------------------------------------
 function currentWorld() {
   return localStorage.getItem("gmReview.world") || null;
+}
+
+// QA W2 fix (Group C #15): backend error messages meant for an MCP/tool
+// caller (resolveWorld's own "Call wf_list_worlds... WF_DEFAULT_WORLD..."
+// wording) must never reach a human user verbatim -- map that ONE class of
+// jargon to plain copy everywhere this shell surfaces `err.message`.
+// Everything else passes through unchanged (most caught errors here ARE
+// already caller-facing, deliberate messages from this project's own route
+// handlers).
+function friendlyErrorMessage(message) {
+  if (typeof message !== "string") return message;
+  if (/wf_list_worlds|WF_DEFAULT_WORLD|No world specified/i.test(message)) {
+    return "No world is selected — pick one from the top bar first.";
+  }
+  return message;
 }
 
 async function shApi(path, opts) {
@@ -72,6 +88,9 @@ function goto(hash) {
 // established standalone convention.
 // ---------------------------------------------------------------------------
 async function fetchEntityInfoMap() {
+  // QA W2 fix (Group C #16): don't fire a world-scoped graph fetch (a
+  // guaranteed 400) when no world is selected.
+  if (!currentWorld()) return new Map();
   try {
     const graph = await shApi(`/api/graph${shWithWorld({ filter: "all" })}`);
     const map = new Map();
@@ -82,10 +101,16 @@ async function fetchEntityInfoMap() {
   }
 }
 
+// QA W2 fix (Group B #10): a non-null locationEntityId that misses the
+// lookup (its anchor place was DELETED, or just hasn't loaded/synced yet)
+// used to fall back to the raw wf_ id -- never a good display string. Every
+// copy of this resolver (plans-view.js, session-planner-view.js,
+// scene-tray.js's sceneName, wf-mcp-server/lib/foundry-push-ops.mjs's
+// resolveSceneName) gets the SAME guard.
 function resolveSceneDisplayName(scene, entityInfoMap) {
   if (scene.name) return scene.name;
   if (scene.locationEntityId) {
-    return entityInfoMap.get(scene.locationEntityId)?.name ?? scene.locationEntityId;
+    return entityInfoMap.get(scene.locationEntityId)?.name ?? "(place removed)";
   }
   return scene.objectiveNote || "Ad-hoc scene";
 }
@@ -274,6 +299,17 @@ function renderRail(sub) {
   plansTitle.textContent = "Session plans";
   const newBtn = el("button", { class: "shell-new-plan-btn", "data-testid": "shell-new-plan-btn", title: "New plan", type: "button" });
   newBtn.textContent = "+";
+  // QA W2 fix (Group C #15): with no world selected, this button used to
+  // send a doomed request whose error surfaced raw MCP-tool/env-var jargon
+  // (resolveWorld's own "Call wf_list_worlds... WF_DEFAULT_WORLD..." message)
+  // plus a phantom Undo toast (an Undo button with nothing to undo). Guarded
+  // client-side: disabled + a "pick a world first" title, and
+  // createNewPlanAndOpen itself also guards (belt-and-suspenders for any
+  // other caller of the same function, e.g. the plans-shelf dashed card).
+  if (!currentWorld()) {
+    newBtn.disabled = true;
+    newBtn.title = "Pick a world first";
+  }
   newBtn.addEventListener("click", createNewPlanAndOpen);
   plansHeader.append(plansTitle, newBtn);
 
@@ -318,6 +354,9 @@ async function refreshPlannerRail() {
 
 async function fillRailPlans(listEl) {
   listEl.innerHTML = "";
+  // QA W2 fix (Group C #16): don't fire a world-scoped fetch (guaranteed to
+  // 400, no world to scope it to) when no world is selected at all.
+  if (!currentWorld()) return;
   let plans = [];
   try { ({ plans } = await shApi(`/api/scene-planning/plans${shWithWorld()}`)); } catch { /* leave empty */ }
   for (const p of plans) {
@@ -400,7 +439,7 @@ function togglePlanDeleteConfirm(item, plan) {
         goto("planner/plans");
       }
     } catch (err) {
-      status.textContent = `Could not delete: ${err.message}`;
+      status.textContent = `Could not delete: ${friendlyErrorMessage(err.message)}`;
       confirmBtn.disabled = false;
     }
   });
@@ -412,6 +451,8 @@ function togglePlanDeleteConfirm(item, plan) {
 
 async function fillRailScenes(listEl, countEl) {
   listEl.innerHTML = "";
+  // QA W2 fix (Group C #16): same no-world guard as fillRailPlans above.
+  if (!currentWorld()) { if (countEl) countEl.textContent = "0"; return; }
   let scenes = [];
   try { ({ scenes } = await shApi(`/api/scene-planning/scenes${shWithWorld()}`)); } catch { /* leave empty */ }
   const infoMap = await fetchEntityInfoMap();
@@ -514,7 +555,7 @@ function toggleSceneDeleteConfirm(item, scene, countEl) {
       // reorderRunsheet already use elsewhere in this file.
       if (railOpenPlanId) refreshMainIfPlan(railOpenPlanId);
     } catch (err) {
-      status.textContent = `Could not delete: ${err.message}`;
+      status.textContent = `Could not delete: ${friendlyErrorMessage(err.message)}`;
       confirmBtn.disabled = false;
     }
   });
@@ -525,6 +566,20 @@ function toggleSceneDeleteConfirm(item, scene, countEl) {
 }
 
 async function createNewPlanAndOpen() {
+  // QA W2 fix (Group C #15): guard here too (not just the rail button's own
+  // disabled state) -- this is called from more than one place (the rail's
+  // "+", the plans-shelf dashed "+ New plan" card), and a doomed request
+  // must never fire regardless of which one triggered it.
+  if (!currentWorld()) {
+    const host = railNoticeHost();
+    if (host) {
+      host.innerHTML = "";
+      const notice = el("div", { "data-testid": "shell-new-plan-no-world-notice" });
+      notice.textContent = "Pick a world first.";
+      host.appendChild(notice);
+    }
+    return;
+  }
   try {
     const { plan } = await shApi("/api/scene-planning/plans", {
       method: "POST",
@@ -534,7 +589,7 @@ async function createNewPlanAndOpen() {
     planNameCache.set(plan.id, plan.name);
     goto(`planner/plan/${plan.id}`);
   } catch (err) {
-    showUndoToast(`Could not create plan: ${err.message}`, () => {});
+    showUndoToast(`Could not create plan: ${friendlyErrorMessage(err.message)}`, () => {});
   }
 }
 
@@ -600,7 +655,7 @@ async function addSceneToOpenPlan(sceneId) {
     });
     refreshMainIfPlan(planId);
   } catch (err) {
-    showUndoToast(`Could not add scene: ${err.message}`, () => {});
+    showUndoToast(`Could not add scene: ${friendlyErrorMessage(err.message)}`, () => {});
   }
 }
 
@@ -619,6 +674,83 @@ function parsePlannerArg(arg) {
   return { kind: "plans" };
 }
 
+// QA W2 fix (Group C #13): with genuinely zero worlds, the ONLY prior path
+// forward was the unlabeled connection chip's own create-world panel
+// (connection-menu.js) -- easy to miss entirely. This is the SAME
+// POST /api/worlds flow (Task 14.2's bootstrapSnapshot wiring), just also
+// reachable as a real call-to-action right in the main column. When worlds
+// DO exist but none is selected, this instead points at the existing
+// picker rather than duplicating a create-world affordance that isn't the
+// actual problem.
+async function renderNoWorldLanding(wrapper) {
+  let worlds = [];
+  try { ({ worlds } = await shApi("/api/worlds")); } catch { /* treat as zero */ }
+
+  if (worlds.length > 0) {
+    const p = el("p", { class: "hint" });
+    p.textContent = "Select a world first — use the picker in the top bar.";
+    wrapper.appendChild(p);
+    return;
+  }
+
+  const card = el("div", { class: "planner-empty-cta", "data-testid": "planner-create-world-cta" });
+  const title = el("div", { class: "planner-empty-cta-title" });
+  title.textContent = "Create your first world";
+  card.appendChild(title);
+  const desc = el("p", { class: "hint" });
+  desc.textContent = "For a genuinely new campaign with no prior Foundry world at all. Creates an empty standalone snapshot, immediately selectable and ready to use.";
+  card.appendChild(desc);
+  const row = el("div", { class: "planner-empty-cta-row" });
+  const input = el("input", { type: "text", class: "planner-empty-cta-input", "data-testid": "planner-create-world-input", placeholder: "world id, e.g. my-campaign" });
+  const btn = el("button", { type: "button", class: "btn btn--accept", "data-testid": "planner-create-world-btn" });
+  btn.textContent = "Create a world";
+  const status = el("div", { class: "hint", "data-testid": "planner-create-world-status" });
+  // QA W2 fix (Group C #14): same client-side validate + auto-slug-suggest
+  // as connection-menu.js's own create-world panel (world-id.js, shared).
+  let suggestedSlug = "";
+  function refreshHint() {
+    const raw = input.value.trim();
+    if (!raw || isValidWorldId(raw)) { status.textContent = ""; suggestedSlug = ""; return; }
+    suggestedSlug = slugifyWorldId(raw);
+    status.textContent = suggestedSlug
+      ? `Only lowercase letters, digits, hyphens, and underscores — try "${suggestedSlug}"?`
+      : "Only lowercase letters, digits, hyphens, and underscores.";
+  }
+  input.addEventListener("input", refreshHint);
+  btn.addEventListener("click", async () => {
+    let id = input.value.trim();
+    if (!id) { status.textContent = "Enter a world id first."; return; }
+    if (!isValidWorldId(id)) {
+      if (suggestedSlug && suggestedSlug !== id) {
+        input.value = suggestedSlug;
+        refreshHint();
+        status.textContent = `Cleaned up to "${suggestedSlug}" — click Create a world again to confirm.`;
+        return;
+      }
+      status.textContent = "Only lowercase letters, digits, hyphens, and underscores are allowed.";
+      return;
+    }
+    btn.disabled = true;
+    status.textContent = "Creating…";
+    try {
+      const result = await shApi("/api/worlds", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: id })
+      });
+      localStorage.setItem("gmReview.world", result.world);
+      worldOptionsBuilt = false; // force the topbar picker to refetch and include the new world
+      const { view, arg } = currentShellRoute();
+      renderShell(view, arg);
+    } catch (err) {
+      status.textContent = `Could not create world: ${friendlyErrorMessage(err.message)}`;
+      btn.disabled = false;
+    }
+  });
+  row.append(input, btn);
+  card.append(row, status);
+  wrapper.appendChild(card);
+}
+
 // view=plans -> the REAL designer plan shelf (README §A): a card grid, each
 // card showing the plan's name, a mono meta line (N scenes · est. min), and
 // its first few scene names, plus a dashed "+ New plan" card.
@@ -627,9 +759,7 @@ async function renderPlansSurface() {
   setMain(wrapper);
 
   if (!currentWorld()) {
-    const p = el("p", { class: "hint" });
-    p.textContent = "Select a world first.";
-    wrapper.appendChild(p);
+    await renderNoWorldLanding(wrapper);
     return;
   }
 
@@ -705,8 +835,14 @@ async function renderPlanSurface(planId) {
   try {
     ({ plan } = await shApi(`/api/scene-planning/plans/${encodeURIComponent(planId)}${shWithWorld()}`));
   } catch {
-    const p = el("p", { class: "hint" });
-    p.textContent = `Could not load plan "${planId}".`;
+    // QA W2 fix (Group C #17): browsing back onto a deleted plan's hash used
+    // to show "Could not load plan '<raw id>'" with no way out except manual
+    // URL editing -- friendly copy + a real link back to the plan shelf.
+    const p = el("p", { class: "hint", "data-testid": "planner-plan-not-found" });
+    p.append("This plan no longer exists. ");
+    const link = el("a", { href: "#planner/plans", "data-testid": "planner-plan-not-found-link" });
+    link.textContent = "Back to plans";
+    p.appendChild(link);
     wrapper.appendChild(p);
     return;
   }
@@ -761,7 +897,7 @@ async function renderPlanSurface(planId) {
 
   const rowsHost = el("div", { class: "planner-runsheet-rows", "data-testid": "planner-runsheet-rows" });
   col.appendChild(rowsHost);
-  await fillRunsheetRows(rowsHost, plan.id);
+  await fillRunsheetRows(rowsHost, plan.id, metaText);
 
   // + Add scene -> inline place-chip panel (reuses plans-view.js's real
   // create-place -> create-scene -> attach-to-plan flow), refreshing the
@@ -834,16 +970,27 @@ async function savePlanName(planId, name, repaint) {
     if (view === "planner") renderBreadcrumb(parsePlannerArg(arg));
   } catch (err) {
     if (repaint) repaint();
-    showUndoToast(`Could not rename plan: ${err.message}`, () => {});
+    showUndoToast(`Could not rename plan: ${friendlyErrorMessage(err.message)}`, () => {});
   }
 }
 
-async function fillRunsheetRows(rowsHost, planId) {
+// QA W2 fix (Group A #3): `metaText` is optional so every OTHER caller of
+// this shared refresh keeps working unmodified -- when passed, the header's
+// "N scenes · est. M min" line is repainted from this SAME fetched `plan`,
+// the same fix pattern applied to the rail via updatePlanMeta below.
+function updatePlanMeta(metaText, plan) {
+  if (!metaText) return;
+  const n = (plan.sceneIds || []).length;
+  metaText.textContent = `${n} scene${n === 1 ? "" : "s"} · est. ${n * 45} min`;
+}
+
+async function fillRunsheetRows(rowsHost, planId, metaText) {
   rowsHost.innerHTML = "";
   let plan;
   try {
     ({ plan } = await shApi(`/api/scene-planning/plans/${encodeURIComponent(planId)}${shWithWorld()}`));
   } catch { return; }
+  updatePlanMeta(metaText, plan);
   const sceneIds = plan.sceneIds || [];
   if (!sceneIds.length) {
     const empty = el("p", { class: "hint" });
@@ -887,9 +1034,9 @@ async function fillRunsheetRows(rowsHost, planId) {
     bodyCol.addEventListener("click", () => goto(`planner/scene/${sceneId}`));
 
     const controls = el("div", { class: "planner-runsheet-controls" });
-    if (i > 0) controls.appendChild(makeRunsheetCtl("↑", "Move up", "planner-runsheet-up-btn", sceneId, () => reorderRunsheet(planId, sceneIds, i, i - 1, rowsHost)));
-    if (i < sceneIds.length - 1) controls.appendChild(makeRunsheetCtl("↓", "Move down", "planner-runsheet-down-btn", sceneId, () => reorderRunsheet(planId, sceneIds, i, i + 1, rowsHost)));
-    controls.appendChild(makeRunsheetCtl("✕", "Remove from plan (the scene survives)", "planner-runsheet-remove-btn", sceneId, () => removeSceneFromPlan(planId, sceneId, rowsHost)));
+    if (i > 0) controls.appendChild(makeRunsheetCtl("↑", "Move up", "planner-runsheet-up-btn", sceneId, () => reorderRunsheet(planId, sceneIds, i, i - 1, rowsHost, metaText)));
+    if (i < sceneIds.length - 1) controls.appendChild(makeRunsheetCtl("↓", "Move down", "planner-runsheet-down-btn", sceneId, () => reorderRunsheet(planId, sceneIds, i, i + 1, rowsHost, metaText)));
+    controls.appendChild(makeRunsheetCtl("✕", "Remove from plan (the scene survives)", "planner-runsheet-remove-btn", sceneId, () => removeSceneFromPlan(planId, sceneId, rowsHost, metaText)));
 
     row.append(num, bodyCol, controls);
     rowsHost.appendChild(row);
@@ -907,7 +1054,7 @@ function makeRunsheetCtl(glyph, title, testid, sceneId, onClick) {
   return b;
 }
 
-async function reorderRunsheet(planId, sceneIds, from, to, rowsHost) {
+async function reorderRunsheet(planId, sceneIds, from, to, rowsHost, metaText) {
   const newIds = sceneIds.slice();
   [newIds[from], newIds[to]] = [newIds[to], newIds[from]];
   await shApi(`/api/scene-planning/plans/${encodeURIComponent(planId)}/reorder`, {
@@ -915,23 +1062,30 @@ async function reorderRunsheet(planId, sceneIds, from, to, rowsHost) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ world: currentWorld(), sceneIds: newIds })
   });
-  await fillRunsheetRows(rowsHost, planId);
+  await fillRunsheetRows(rowsHost, planId, metaText);
 }
 
-async function removeSceneFromPlan(planId, sceneId, rowsHost) {
+// QA W2 fix (Group A #3): removing a scene left the runsheet's own header
+// ("N scenes · est. M min") and the rail's plan-shelf count both stale until
+// a reload -- fillRunsheetRows already refetches the plan and now repaints
+// metaText from that SAME response (updatePlanMeta), and refreshPlannerRail
+// keeps the rail's own count in step right away instead of on next navigation.
+async function removeSceneFromPlan(planId, sceneId, rowsHost, metaText) {
   await shApi(`/api/scene-planning/plans/${encodeURIComponent(planId)}/scenes/${encodeURIComponent(sceneId)}`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ world: currentWorld() })
   });
-  await fillRunsheetRows(rowsHost, planId);
+  await fillRunsheetRows(rowsHost, planId, metaText);
+  await refreshPlannerRail();
   showUndoToast("Removed scene from plan.", async () => {
     await shApi(`/api/scene-planning/plans/${encodeURIComponent(planId)}/scenes`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ world: currentWorld(), sceneId })
     });
-    await fillRunsheetRows(rowsHost, planId);
+    await fillRunsheetRows(rowsHost, planId, metaText);
+    await refreshPlannerRail();
   });
 }
 
@@ -1025,6 +1179,10 @@ export function renderShell(view, arg) {
     shell.setAttribute("data-surface", "world");
     paintNavActive("world");
     railOpenPlanId = null;
+    // QA W2 fix (Group A #1): Prep|Run is planner-scene-local state -- leaving
+    // the planner surface entirely resets it, so a later return to a scene
+    // always opens fresh in Prep rather than an unrelated stale Run.
+    resetScenePageMode();
     renderBreadcrumb(null);
     renderRail(null);
     renderWorldSurface(arg);
@@ -1035,6 +1193,7 @@ export function renderShell(view, arg) {
     shell.setAttribute("data-surface", view);
     paintNavActive(view);
     railOpenPlanId = null;
+    resetScenePageMode();
     clearWorldTopbar();
     renderBreadcrumb(null);
     renderRail(null);

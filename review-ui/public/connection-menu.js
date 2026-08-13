@@ -21,6 +21,7 @@
 // 560px panel sections). Route contract: plans/phase-34-tasks.md §"Pre-
 // specified route/store contract" (all routes live as of 34.1).
 "use strict";
+import { isValidWorldId, slugifyWorldId } from "./world-id.js";
 
 // ---------------------------------------------------------------------------
 // local helpers (same standalone convention as the sibling view modules)
@@ -184,16 +185,31 @@ function buildChip() {
   chipBuilt = true;
 }
 
+// QA W2 fix (Group C #18): "9 to review · 9 to review" was a render race,
+// not a counting bug -- refreshConnectionChip's pending-count step APPENDS
+// onto whatever the chip's text already holds (`textEl.textContent += ...`)
+// after its own SEPARATE await. Two overlapping calls (e.g. a rapid
+// world-switch re-mounting the chip while a prior refresh is still in
+// flight) can interleave as: A's connection fetch resolves -> A paints the
+// base text -> B's connection fetch resolves -> B ALSO paints the base text
+// (still clean) -> A's batches fetch resolves -> A appends "N to review" ->
+// B's batches fetch resolves -> B appends "N to review" AGAIN onto A's
+// already-appended text, since B's own paint happened before A's append.
+// A generation token makes only the LATEST call's append ever land.
+let connectionChipRefreshToken = 0;
+
 /** Fetch the connection + pending-review count and paint the chip. */
 export async function refreshConnectionChip() {
   const chip = document.querySelector('[data-testid="conn-chip"]');
   if (!chip) return;
+  const myToken = ++connectionChipRefreshToken;
   const w = currentWorld();
   let conn = { state: "off", counts: null, lastSync: null };
   if (w) {
     try { conn = await cmApi(`/api/foundry/connection?world=${encodeURIComponent(w)}`); }
     catch { /* keep off */ }
   }
+  if (myToken !== connectionChipRefreshToken) return; // superseded by a newer call
   lastConn = conn;
   paintChip(conn);
 
@@ -201,9 +217,12 @@ export async function refreshConnectionChip() {
   if (w) {
     try {
       const { batches } = await cmApi(`/api/batches?world=${encodeURIComponent(w)}`);
+      if (myToken !== connectionChipRefreshToken) return; // superseded by a newer call
       const pending = (batches || []).reduce((n, b) => n + (b.pendingCount || 0), 0);
       const textEl = chip.querySelector(".conn-chip-text");
-      if (textEl && pending > 0) textEl.textContent += ` · ${pending} to review`;
+      // Idempotent: reconstructed from THIS call's own base paint, never a
+      // blind append onto whatever text happens to be sitting there.
+      if (textEl && pending > 0) textEl.textContent = `${textEl.textContent} · ${pending} to review`;
     } catch { /* ignore */ }
   }
 }
@@ -341,9 +360,37 @@ function renderFoundrySection() {
     const input = el("input", { type: "text", class: "conn-create-world-input", "data-testid": "conn-create-world-input", placeholder: "world id, e.g. my-campaign" });
     const btn = el("button", { type: "button", class: "conn-create-world-btn", "data-testid": "conn-create-world-btn" }, "Create world");
     const status = el("div", { class: "conn-create-world-status" });
+    // QA W2 fix (Group C #14): "My First Campaign" used to round-trip to a
+    // server 400 mentioning "directory names" -- validate + auto-suggest a
+    // slug client-side instead, live as they type.
+    const hint = el("div", { class: "conn-create-world-status", "data-testid": "conn-create-world-hint" });
+    let suggestedSlug = "";
+    function refreshHint() {
+      const raw = input.value.trim();
+      if (!raw || isValidWorldId(raw)) { hint.textContent = ""; suggestedSlug = ""; return; }
+      suggestedSlug = slugifyWorldId(raw);
+      hint.textContent = suggestedSlug
+        ? `Only lowercase letters, digits, hyphens, and underscores — try "${suggestedSlug}"?`
+        : "Only lowercase letters, digits, hyphens, and underscores.";
+    }
+    input.addEventListener("input", refreshHint);
     btn.addEventListener("click", async () => {
-      const id = input.value.trim();
+      let id = input.value.trim();
       if (!id) { status.textContent = "Enter a world id first."; return; }
+      if (!isValidWorldId(id)) {
+        // Same two-step clarity precedent as the planner's "Create place"
+        // flow: the first click applies the suggested fix and asks for
+        // confirmation rather than either silently mutating or bluntly
+        // rejecting what was typed.
+        if (suggestedSlug && suggestedSlug !== id) {
+          input.value = suggestedSlug;
+          refreshHint();
+          status.textContent = `Cleaned up to "${suggestedSlug}" — click Create world again to confirm.`;
+          return;
+        }
+        status.textContent = "Only lowercase letters, digits, hyphens, and underscores are allowed.";
+        return;
+      }
       status.textContent = "Creating…";
       try {
         const result = await cmApi("/api/worlds", {
@@ -356,7 +403,7 @@ function renderFoundrySection() {
       } catch (err) { status.textContent = `Create failed: ${err.message}`; }
     });
     row.append(input, btn);
-    cw.append(row, status);
+    cw.append(row, hint, status);
     card.appendChild(cw);
     sec.appendChild(card);
   }
