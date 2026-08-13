@@ -141,13 +141,33 @@ function test(name, fn) {
     process.exitCode = 1;
   }
 }
+async function testAsync(name, fn) {
+  try {
+    await fn();
+    passed++;
+    console.log(`  ok  ${name}`);
+  } catch (err) {
+    console.error(`FAIL  ${name}`);
+    console.error(err.stack || err.message);
+    process.exitCode = 1;
+  }
+}
 
 const scratchDir = mkdtempSync(join(tmpdir(), "gm-tools-bestiary-store-test-"));
 process.env.GM_TOOLS_REVIEW_STATE_DIR = join(scratchDir, "review-state");
 process.env.GM_TOOLS_BESTIARY_DIR = join(scratchDir, "bestiary");
+// Phase 37.6b -- promoteBestiaryEntryToGraph's own addNodeOp dependency
+// chain (manual-edit-ops.mjs) transitively touches manual-undo/human-review,
+// same isolation set test/scene-planning/scene-elements.test.mjs's own
+// promoteElement tests already establish for the identical addNodeOp call.
+process.env.GM_TOOLS_MANUAL_UNDO_DIR = join(scratchDir, "manual-undo");
+process.env.GM_TOOLS_HUMAN_REVIEW_DIR = join(scratchDir, "human-review");
+process.env.WF_DATA_DIR = join(scratchDir, "foundrydata");
 
 const REPO_DEFAULT_ROOT = join(new URL("../../bestiary", import.meta.url).pathname);
 const before = existsSync(REPO_DEFAULT_ROOT) ? new Set(readdirSync(REPO_DEFAULT_ROOT)) : new Set();
+
+const PROMOTE_WORLD = "bestiary-store-promote-test-world";
 
 const PLAUSIBLE_RAW_FIELDS = {
   name: "Dire Wolf",
@@ -175,8 +195,14 @@ const IMPLAUSIBLE_RAW_FIELDS = {
     updateBestiaryEntryScore,
     acceptBestiaryEntry,
     discardBestiaryEntry,
-    updateBestiaryEntryRawFields
+    updateBestiaryEntryRawFields,
+    compactStatFlavorLine,
+    promoteBestiaryEntryToGraph,
+    createReskinnedBestiaryEntry
   } = await import("../../combat-planning/bestiary-store.mjs");
+  const { snapshotFilePath, loadSnapshot } = await import("../../wf-mcp-server/lib/snapshot.mjs");
+  const { bootstrapSnapshot } = await import("../../graph-import/headless-apply.mjs");
+  bootstrapSnapshot(snapshotFilePath(process.env.WF_DATA_DIR, PROMOTE_WORLD), { worldId: PROMOTE_WORLD });
 
   test("directory isolation: bestiaryRoot() honors GM_TOOLS_BESTIARY_DIR, never the repo's real default", () => {
     assert.equal(bestiaryRoot(), process.env.GM_TOOLS_BESTIARY_DIR);
@@ -364,6 +390,126 @@ const IMPLAUSIBLE_RAW_FIELDS = {
   test("updateBestiaryEntryNote/updateBestiaryEntryRating: an explicit null clears the field back to 'use the book value'/no note", () => {
     const cleared = updateBestiaryEntryRating("bst-p35-legacy", null);
     assert.equal(cleared.rating, null);
+  });
+
+  // ---------------------------------------------------------------------
+  // Phase 37.6b -- "Promote to a named world figure" + "Wear it as
+  // something else" (wiring the two remaining Library stubs).
+  // ---------------------------------------------------------------------
+
+  test("compactStatFlavorLine: PURE -- a non-numeric flavor summary (type, CR, alignment, named attacks) never includes the actual damage numbers", () => {
+    const line = compactStatFlavorLine({
+      name: "Test Goblin", type: "humanoid (goblinoid)", challengeRating: "1/4", alignment: "neutral evil",
+      attacks: [{ name: "Scimitar", toHitBonus: 4, damageDice: "1d6+2" }]
+    });
+    assert.match(line, /humanoid \(goblinoid\)/);
+    assert.match(line, /CR 1\/4/);
+    assert.match(line, /neutral evil/);
+    assert.match(line, /Scimitar/);
+    assert.doesNotMatch(line, /1d6\+2/, "must never leak the literal damage dice into the flavor line");
+  });
+
+  test("compactStatFlavorLine: null for rawFields with nothing to say (never fabricates prose)", () => {
+    assert.equal(compactStatFlavorLine({}), null);
+    assert.equal(compactStatFlavorLine(null), null);
+  });
+
+  await testAsync("promoteBestiaryEntryToGraph: creates a REAL graph node (type 'person', description seeded from compactStatFlavorLine) and back-links graphEntityId", async () => {
+    const entry = saveBestiaryEntry(
+      { rawFields: PLAUSIBLE_RAW_FIELDS },
+      { makeId: () => "bst-promote-1", now: "2026-08-12T00:00:00.000Z" }
+    );
+    const before = loadSnapshot(process.env.WF_DATA_DIR, PROMOTE_WORLD).snapshot.entities.length;
+
+    const result = await promoteBestiaryEntryToGraph(process.env.WF_DATA_DIR, PROMOTE_WORLD, entry.id);
+    assert.equal(result.created, true);
+    assert.ok(result.entityId, "must return the new entity's id");
+
+    const after = loadSnapshot(process.env.WF_DATA_DIR, PROMOTE_WORLD).snapshot;
+    assert.equal(after.entities.length, before + 1, "exactly one new entity created");
+    const node = after.entities.find((n) => n.id === result.entityId);
+    assert.ok(node, "the promoted entity must be a real, fetchable graph node");
+    assert.equal(node.name, "Dire Wolf");
+    assert.equal(node.type, "person", "the deliberate, documented choice -- see promoteBestiaryEntryToGraph's own doc comment for why");
+    assert.match(node.description, /beast/, "description seeded from compactStatFlavorLine, not fabricated");
+
+    const reread = getBestiaryEntry(entry.id);
+    assert.equal(reread.graphEntityId, result.entityId, "the BestiaryEntry must be back-linked to the real node");
+    assert.equal(reread.rawFields.hp, PLAUSIBLE_RAW_FIELDS.hp, "the entry's own stat block is untouched by promotion");
+  });
+
+  await testAsync("promoteBestiaryEntryToGraph: idempotent -- a second promote returns the SAME entityId, created:false, creates NO second node", async () => {
+    const entry = saveBestiaryEntry(
+      { rawFields: PLAUSIBLE_RAW_FIELDS },
+      { makeId: () => "bst-promote-2", now: "2026-08-12T00:00:00.000Z" }
+    );
+    const first = await promoteBestiaryEntryToGraph(process.env.WF_DATA_DIR, PROMOTE_WORLD, entry.id);
+    const beforeSecond = loadSnapshot(process.env.WF_DATA_DIR, PROMOTE_WORLD).snapshot.entities.length;
+
+    const second = await promoteBestiaryEntryToGraph(process.env.WF_DATA_DIR, PROMOTE_WORLD, entry.id);
+    assert.equal(second.created, false);
+    assert.equal(second.entityId, first.entityId, "must return the SAME entity id, not a new one");
+
+    const afterSecond = loadSnapshot(process.env.WF_DATA_DIR, PROMOTE_WORLD).snapshot.entities.length;
+    assert.equal(afterSecond, beforeSecond, "promoting twice must NOT create a second node");
+  });
+
+  await testAsync("promoteBestiaryEntryToGraph: an entry with no rawFields flavor still promotes (description omitted, not a crash)", async () => {
+    const entry = saveBestiaryEntry(
+      { rawFields: { name: "Bare Stat Block" } },
+      { makeId: () => "bst-promote-bare", now: "2026-08-12T00:00:00.000Z" }
+    );
+    const result = await promoteBestiaryEntryToGraph(process.env.WF_DATA_DIR, PROMOTE_WORLD, entry.id);
+    assert.equal(result.created, true);
+    const node = loadSnapshot(process.env.WF_DATA_DIR, PROMOTE_WORLD).snapshot.entities.find((n) => n.id === result.entityId);
+    assert.equal(node.name, "Bare Stat Block");
+  });
+
+  await testAsync("promoteBestiaryEntryToGraph: an unknown entry id fails cleanly, no graph write", async () => {
+    const before = loadSnapshot(process.env.WF_DATA_DIR, PROMOTE_WORLD).snapshot.entities.length;
+    await assert.rejects(() => promoteBestiaryEntryToGraph(process.env.WF_DATA_DIR, PROMOTE_WORLD, "bst-does-not-exist"));
+    const after = loadSnapshot(process.env.WF_DATA_DIR, PROMOTE_WORLD).snapshot.entities.length;
+    assert.equal(after, before, "an unknown id must never create a node");
+  });
+
+  test("createReskinnedBestiaryEntry: rawFields IDENTICAL to the source except `name`; note carries description+habitat; status 'accepted'; never foundry-linked; sourcePill 'reskin'", () => {
+    const source = saveBestiaryEntry(
+      { rawFields: PLAUSIBLE_RAW_FIELDS, foundryActorRef: "Actor.source-wolf" },
+      { makeId: () => "bst-reskin-source", now: "2026-08-12T00:00:00.000Z" }
+    );
+    const created = createReskinnedBestiaryEntry(
+      source,
+      { name: "Ashfen Cur", description: "A mangy, ash-grey stray that hunts in the ruined quarter.", habitatHint: "Urban ruins, at dusk." },
+      { makeId: () => "bst-reskin-1", now: "2026-08-12T00:05:00.000Z" }
+    );
+
+    assert.equal(created.id, "bst-reskin-1");
+    assert.equal(created.rawFields.name, "Ashfen Cur", "name is the ONE overwritten field");
+    assert.equal(created.rawFields.hp, PLAUSIBLE_RAW_FIELDS.hp, "hp copied verbatim -- same numbers");
+    assert.equal(created.rawFields.ac, PLAUSIBLE_RAW_FIELDS.ac, "ac copied verbatim -- same numbers");
+    assert.deepEqual(created.rawFields.attacks, PLAUSIBLE_RAW_FIELDS.attacks, "attacks copied verbatim -- same numbers");
+    assert.match(created.note, /mangy, ash-grey stray/, "the suggestion's description lands in the note field");
+    assert.match(created.note, /Urban ruins, at dusk\./, "the habitat hint lands in the note field too");
+    assert.equal(created.status, "accepted", "an accepted reskin suggestion IS the accept -- not left 'proposed'");
+    assert.equal(created.foundryActorRef, null, "a reskin is NEVER foundry-linked, even when its source entry was");
+    assert.equal(created.reskinOfEntryId, "bst-reskin-source", "back-linked to the entry it was reskinned from");
+    assert.equal(created.sourcePill, "reskin");
+
+    // Genuinely persisted, not just echoed -- re-fetch from disk.
+    const reread = getBestiaryEntry("bst-reskin-1");
+    assert.equal(reread.status, "accepted");
+    assert.equal(reread.sourcePill, "reskin");
+  });
+
+  test("createReskinnedBestiaryEntry: throws a clear error for an empty/missing suggestion name -- no entry created", () => {
+    const source = saveBestiaryEntry(
+      { rawFields: PLAUSIBLE_RAW_FIELDS },
+      { makeId: () => "bst-reskin-source-2", now: "2026-08-12T00:00:00.000Z" }
+    );
+    assert.throws(
+      () => createReskinnedBestiaryEntry(source, { name: "   ", description: "x", habitatHint: "y" }),
+      /non-empty suggestion\.name/
+    );
   });
 
   console.log(`\n${passed} passed`);

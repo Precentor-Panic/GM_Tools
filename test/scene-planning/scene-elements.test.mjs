@@ -338,6 +338,32 @@ test("attachExistingNodeAsElement: appended at max(order)+1, same ordering conve
   assert.equal(attached.order, 1);
 });
 
+test("attachExistingNodeAsElement: Phase 37.6b addition -- an explicit `stat` persists (unlocks the graph-linked creature tray-drop, phase35-fixture.mjs §7)", () => {
+  const world = "scene-elements-fromgraph-stat-world";
+  const scene = createScene(world, { locationEntityId: "place-anchor-1" }, { makeId: () => "scene-fromgraph-stat" });
+  const stat = { hp: 27, ac: 15, cr: "1/4" };
+  const element = attachExistingNodeAsElement(
+    dataDir,
+    world,
+    scene.id,
+    "npc-fromgraph-1",
+    { name: "Ashen Warden Cael", stat },
+    { makeId: () => "elem-fromgraph-stat-1" }
+  );
+  assert.deepEqual(element.stat, stat);
+  const reread = getElement(world, scene.id, "elem-fromgraph-stat-1");
+  assert.deepEqual(reread.stat, stat, "must genuinely persist, not just echo the input");
+});
+
+test("attachExistingNodeAsElement: `stat` still defaults to null when omitted -- every pre-37.6b caller (the from-graph route/picker) is byte-compatible", () => {
+  const world = "scene-elements-fromgraph-stat-omitted-world";
+  const scene = createScene(world, { locationEntityId: "place-anchor-1" }, { makeId: () => "scene-fromgraph-stat-omitted" });
+  const element = attachExistingNodeAsElement(
+    dataDir, world, scene.id, "npc-fromgraph-1", { name: "Ashen Warden Cael" }, { makeId: () => "elem-fromgraph-stat-omitted-1" }
+  );
+  assert.equal(element.stat, null);
+});
+
 // ------------------------------------------------- promote / demote (async, real graph writes)
 
 await testAsync("promoteElement: creates a REAL graph node + a REAL containment edge to the scene's anchor place, sets kind:'graph'+graphEntityId", async () => {

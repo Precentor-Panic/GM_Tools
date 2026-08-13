@@ -9,11 +9,13 @@
 //
 // Real backend data replaces the prototype's seed arrays; every mutation is a
 // thin fetch() to the §8 routes 35.1 already built (front-ends are thin
-// wrappers — gm-tools-conventions). Two prototype affordances are deliberately
-// STUBS this phase, flagged in their own on-screen copy: the reskin-suggester
-// ("Wear it as something else") and "Promote to a named world figure" — both
-// need a graph-write path no bestiary entry can carry yet (the task plan marks
-// them stored-not-wired).
+// wrappers — gm-tools-conventions). Two prototype affordances shipped as
+// STUBS in Phase 35 (flagged in their own on-screen copy, since no bestiary
+// entry could carry a graph-write path yet) are wired for real as of Phase
+// 37.6b: the reskin-suggester ("Wear it as something else", a real LLM call
+// via combat-planning/reskin-suggest.mjs) and "Promote to a named world
+// figure" (bestiary-store.mjs's promoteBestiaryEntryToGraph, mirroring the
+// Reliquary's own item-promote affordance).
 //
 // Faithful-port notes / deliberate deviations from the prototype markup:
 //  - The scene tray is mounted in a CONSISTENT rail on all four tabs (the
@@ -38,7 +40,12 @@ const TEAL = "oklch(0.55 0.075 185)";
 const SOURCE_PILL = {
   srd: { label: "5e SRD", bg: "oklch(0.90 0.030 185)", fg: "oklch(0.36 0.060 185)" },
   foundry: { label: "Foundry world", bg: "oklch(0.90 0.035 260)", fg: "oklch(0.36 0.07 260)" },
-  mine: { label: "Mine", bg: "oklch(0.90 0.045 65)", fg: "oklch(0.38 0.09 65)" }
+  mine: { label: "Mine", bg: "oklch(0.90 0.045 65)", fg: "oklch(0.38 0.09 65)" },
+  // Phase 37.6b -- "Wear it as something else." Colors verbatim from
+  // Library.dc.html's own RESKIN-tier `sourceChips` seed (the pixel
+  // authority's pre-existing "reskin" pill, line 611) -- matched, not
+  // invented, same as every other SOURCE_PILL entry here.
+  reskin: { label: "Reskinned", bg: "oklch(0.90 0.045 300)", fg: "oklch(0.36 0.08 300)" }
 };
 const KINDS = {
   item: { label: "Item", glyph: "◈", accent: "oklch(0.55 0.075 185)" },
@@ -257,7 +264,7 @@ function buildBestiary(ctx) {
   });
   search.addEventListener("input", () => { st.query = search.value; paintGrid(); });
   const chips = el("div", { style: "display: flex; gap: 5px;" });
-  for (const id of ["srd", "foundry", "mine"]) {
+  for (const id of ["srd", "foundry", "mine", "reskin"]) {
     const chip = el("div", {
       text: SOURCE_PILL[id].label,
       style: "padding: 4px 10px; border: 1px solid oklch(0.86 0.010 80); border-radius: 20px; cursor: pointer; font-size: 11.5px; background: oklch(0.975 0.006 85); color: oklch(0.50 0.014 65);"
@@ -303,7 +310,13 @@ function buildBestiary(ctx) {
   bodyRow.appendChild(root);
 
   // --- helpers ---
-  const habitatsOf = () => []; // no graph link on a bestiary entry yet (task plan: "Promote" is a stub)
+  // Phase 37.6b wired promote-to-graph (a bestiary entry CAN carry a graph
+  // link now, e.graphEntityId), but deriving "which places/habitats" from
+  // that link (e.g. walking the promoted node's own containment edges) is
+  // NOT this task's scope -- flagged, not built. Habitat placement stays
+  // whatever it already was (nothing -- "belongs nowhere yet" is still every
+  // entry's real state) until a future pass wires it.
+  const habitatsOf = () => [];
   function filtered() {
     const q = st.query.trim().toLowerCase();
     const anySource = Object.keys(st.sources).some((k) => st.sources[k]);
@@ -542,36 +555,143 @@ function buildBestiary(ctx) {
     noteWrap.appendChild(note);
     scroll.appendChild(noteWrap);
 
-    // reskin-suggester — STUB this phase (flagged in its own copy). Phase
-    // 37.6 task 1 ✦-HONESTY COMMENT CONVENTION: this ✦ is a KNOWN, EXPLICITLY
-    // DEFERRED stub, not decorative and not yet reaching a real LLM route --
-    // the UI's own "not wired yet" copy already says so; this is the code-side
-    // half of that same honesty, for the grep-provable invariant. Wiring it to
-    // a real LLM reskin call is task 37.6b's own explicit scope ("'Wear it as
-    // something else' = a real LLM reskin... new bestiary entry source
-    // 'reskin'"), a separate wave from this one -- not touched here.
-    scroll.appendChild(el("div", { style: "margin-top: 14px; border: 1px solid oklch(0.88 0.010 80); border-radius: 4px; background: oklch(0.965 0.006 85); padding: 11px 12px;" }, [
-      el("div", { style: "display: flex; align-items: center; gap: 8px;" }, [
+    // reskin-suggester — Phase 37.6b: wired to a real LLM call
+    // (combat-planning/reskin-suggest.mjs via POST .../reskin-suggest).
+    // "Same numbers, different creature": accepting a suggestion creates a
+    // NEW bestiary entry (POST .../reskin-accept) with the byte-identical
+    // rawFields, this entry's stat rail is untouched. Ephemeral per-render
+    // state (reset whenever paintStatRail reruns, e.g. selecting a
+    // different creature) -- suggestions are a one-shot review surface, not
+    // persisted anywhere until accepted.
+    const reskinState = { loading: false, suggestions: null, vision: "" };
+    const reskinBox = el("div", { testid: "library-reskin-box", "data-entry-id": e.id, style: "margin-top: 14px; border: 1px solid oklch(0.88 0.010 80); border-radius: 4px; background: oklch(0.965 0.006 85); padding: 11px 12px;" });
+    scroll.appendChild(reskinBox);
+
+    async function runReskinSuggest() {
+      reskinState.loading = true;
+      renderReskinBox();
+      try {
+        const result = await api(`/api/combat-planning/bestiary/${encodeURIComponent(e.id)}/reskin-suggest`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ world, vision: reskinState.vision })
+        });
+        reskinState.suggestions = result.suggestions || [];
+      } catch {
+        reskinState.suggestions = []; // one-shot failure -- "no suggestions came back", never a silent hang
+      }
+      reskinState.loading = false;
+      renderReskinBox();
+    }
+
+    function renderReskinBox() {
+      reskinBox.innerHTML = "";
+      const header = el("div", { style: "display: flex; align-items: center; gap: 8px;" }, [
         el("span", { text: "✦", style: "font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.08 300);" }),
         el("span", { text: "Wear it as something else", style: "font-size: 12.5px; font-weight: 500; color: oklch(0.34 0.06 300);" }),
-        el("span", { style: "flex: 1;" }),
-        el("span", { text: "not wired yet", style: "font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.58 0.012 70);" })
-      ]),
-      el("div", { text: "Same numbers, different creature. The reskin suggester arrives in a later phase — this affordance is a placeholder.", style: "font-size: 11.5px; line-height: 1.45; color: oklch(0.50 0.014 65); margin-top: 6px;" })
-    ]));
+        el("span", { style: "flex: 1;" })
+      ]);
+      reskinBox.appendChild(header);
 
-    // "Where it's been" + promote — STUB this phase (flagged in its own copy)
-    scroll.appendChild(el("div", { style: "margin-top: 14px; border-top: 1px solid oklch(0.88 0.010 80); padding-top: 12px;" }, [
+      if (!reskinState.suggestions) {
+        reskinBox.appendChild(el("div", { text: "Same numbers, different creature — the model never sees or changes the stat block.", style: "font-size: 11.5px; line-height: 1.45; color: oklch(0.50 0.014 65); margin-top: 6px;" }));
+        const visionInput = el("input", {
+          testid: "library-reskin-vision-input",
+          placeholder: "an absolute chad of a city patrolman (optional)",
+          value: reskinState.vision,
+          style: "width: 100%; margin-top: 9px; padding: 6px 10px; border: 1px solid oklch(0.85 0.010 80); border-radius: 4px; font-family: inherit; font-size: 12.5px; background: oklch(1 0 0); color: inherit;"
+        });
+        visionInput.addEventListener("input", () => { reskinState.vision = visionInput.value; });
+        reskinBox.appendChild(visionInput);
+        const suggestBtn = el("div", {
+          testid: "library-reskin-suggest-btn",
+          text: reskinState.loading ? "Thinking…" : "Suggest a skin",
+          style: `display: inline-block; margin-top: 9px; padding: 5px 12px; border-radius: 4px; cursor: ${reskinState.loading ? "default" : "pointer"}; font-size: 12px; background: ${reskinState.loading ? "oklch(0.72 0.040 300)" : "oklch(0.52 0.10 300)"}; color: oklch(0.99 0.005 300);`
+        });
+        if (!reskinState.loading) suggestBtn.addEventListener("click", runReskinSuggest);
+        reskinBox.appendChild(suggestBtn);
+        return;
+      }
+
+      if (!reskinState.suggestions.length) {
+        reskinBox.appendChild(el("div", { testid: "library-reskin-empty", text: "No suggestions came back — try again.", style: "font-size: 11.5px; color: oklch(0.58 0.012 70); margin-top: 6px;" }));
+        const retryBtn = el("span", { testid: "library-reskin-retry-btn", text: "Again", style: "display: inline-block; margin-top: 7px; padding: 4px 11px; border: 1px solid oklch(0.86 0.010 80); border-radius: 4px; cursor: pointer; font-size: 11.5px; color: oklch(0.50 0.014 65); background: oklch(1 0 0);" });
+        retryBtn.addEventListener("click", () => { reskinState.suggestions = null; renderReskinBox(); });
+        reskinBox.appendChild(retryBtn);
+        return;
+      }
+
+      for (const s of reskinState.suggestions) {
+        const card = el("div", {
+          testid: "library-reskin-suggestion-card",
+          "data-suggestion-name": s.name,
+          style: "margin-top: 9px; padding: 9px 10px; border: 1px solid oklch(0.80 0.050 300); border-radius: 4px; background: oklch(0.975 0.012 300);"
+        }, [
+          el("div", { text: s.name, style: "font-family: Spectral, serif; font-size: 15px; font-weight: 500;" }),
+          el("div", { text: s.description, style: "font-size: 12px; line-height: 1.5; color: oklch(0.44 0.014 65); margin-top: 5px;" }),
+          el("div", { text: s.habitatHint, style: "font-size: 11px; font-style: italic; color: oklch(0.56 0.012 70); margin-top: 5px;" })
+        ]);
+        const actions = el("div", { style: "display: flex; gap: 8px; margin-top: 9px;" });
+        const acceptBtn = el("span", {
+          testid: "library-reskin-accept-btn",
+          text: "Keep it",
+          style: "padding: 4px 11px; border: 1px solid oklch(0.76 0.060 300); border-radius: 4px; cursor: pointer; font-size: 11.5px; color: oklch(0.36 0.08 300); background: oklch(0.96 0.020 300);"
+        });
+        acceptBtn.addEventListener("click", async () => {
+          acceptBtn.textContent = "Creating…";
+          try {
+            await api(`/api/combat-planning/bestiary/${encodeURIComponent(e.id)}/reskin-accept`, {
+              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ suggestion: s })
+            });
+            await renderLibrarySurface("bestiary"); // a NEW catalogue entry now exists -- full reload picks it up
+          } catch { acceptBtn.textContent = "Keep it"; }
+        });
+        const dismissBtn = el("span", {
+          testid: "library-reskin-dismiss-btn",
+          text: "Dismiss",
+          style: "padding: 4px 11px; border: 1px solid oklch(0.86 0.010 80); border-radius: 4px; cursor: pointer; font-size: 11.5px; color: oklch(0.50 0.014 65); background: oklch(1 0 0);"
+        });
+        dismissBtn.addEventListener("click", () => {
+          reskinState.suggestions = reskinState.suggestions.filter((x) => x !== s);
+          renderReskinBox();
+        });
+        actions.append(acceptBtn, dismissBtn);
+        card.appendChild(actions);
+        reskinBox.appendChild(card);
+      }
+    }
+    renderReskinBox();
+
+    // "Where it's been" + promote — Phase 37.6b: promote wired for real,
+    // mirroring the Reliquary's item-promote affordance (graphPromoteAffordance,
+    // SAME function, SAME "⛓ in the graph" convention once linked).
+    // Scene-appearance tracking itself stays out of scope (a catalogue entry,
+    // not a character -- that's still fine; nothing here claims otherwise).
+    const promoteWrap = el("div", { style: "margin-top: 14px; border-top: 1px solid oklch(0.88 0.010 80); padding-top: 12px;" }, [
       el("div", { text: "Where it's been", style: "font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.53 0.012 70); margin-bottom: 7px;" }),
-      el("div", { text: "Scene-appearance tracking isn't wired yet — a catalogue entry, not a character. That's fine.", style: "font-size: 12px; color: oklch(0.58 0.012 70); line-height: 1.45;" }),
-      el("div", { style: "display: flex; align-items: center; gap: 8px; margin-top: 9px; padding: 8px 11px; border: 1px dashed oklch(0.82 0.010 80); border-radius: 4px;" }, [
-        el("span", { text: "◉", style: "font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.075 185);" }),
-        el("div", {}, [
-          el("div", { text: "Promote to a named world figure", style: "font-size: 12.5px; color: oklch(0.38 0.030 185);" }),
-          el("div", { text: "Not wired yet. Will create a graph node that keeps this stat block.", style: "font-size: 11px; color: oklch(0.58 0.012 70); margin-top: 2px;" })
-        ])
+      el("div", { text: "Scene-appearance tracking isn't wired yet — a catalogue entry, not a character. That's fine.", style: "font-size: 12px; color: oklch(0.58 0.012 70); line-height: 1.45;" })
+    ]);
+    const promoteRow = el("div", { style: "display: flex; align-items: center; gap: 8px; margin-top: 9px; padding: 8px 11px; border: 1px dashed oklch(0.82 0.010 80); border-radius: 4px;" }, [
+      el("span", { text: "◉", style: "font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.075 185);" }),
+      el("div", { style: "flex: 1;" }, [
+        el("div", { text: "Promote to a named world figure", style: "font-size: 12.5px; color: oklch(0.38 0.030 185);" }),
+        el("div", { text: "Creates a graph node that keeps this stat block.", style: "font-size: 11px; color: oklch(0.58 0.012 70); margin-top: 2px;" })
       ])
-    ]));
+    ]);
+    promoteRow.appendChild(graphPromoteAffordance(e, async (btn) => {
+      btn.style.opacity = "0.6";
+      try {
+        const result = await api(`/api/combat-planning/bestiary/${encodeURIComponent(e.id)}/promote-to-graph`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ world })
+        });
+        e.graphEntityId = result.entityId; // update in place -- keeps this creature selected, no full reload needed
+      } catch { /* leave the affordance clickable to retry */ }
+      paintStatRail();
+    }, {
+      testidPrefix: "library-bestiary",
+      badgeTitle: "This creature is linked to a graph node",
+      btnTitle: "Promote this creature to a named world figure"
+    }));
+    promoteWrap.appendChild(promoteRow);
+    scroll.appendChild(promoteWrap);
 
     statRail.appendChild(scroll);
   }
@@ -1113,29 +1233,42 @@ function normalizeShelf(list, isReliquary) {
 // ---------------------------------------------------------------------------
 // Phase 35.5a (task #44) -- "promote items of interest from the reliquary to
 // the graph as nodes." Reliquary-only (r.kind === "item"; Stagecraft rows
-// never carry this) -- the BESTIARY "Promote to a named world figure"
-// affordance stays a stub (Russell asked for items only this pass). Quiet,
-// small: a dashed pill next to the source pill that swaps to a quiet
-// "in the graph" marker after promotion, reusing the SAME "⛓ graph" glyph
-// convention session-planner-view.js's scene-element-graph-badge already
-// established for "this thing carries a real graph link."
+// never carry this). Quiet, small: a dashed pill next to the source pill
+// that swaps to a quiet "in the graph" marker after promotion, reusing the
+// SAME "⛓ graph" glyph convention session-planner-view.js's
+// scene-element-graph-badge already established for "this thing carries a
+// real graph link." Phase 37.6b wires the Bestiary's OWN "Promote to a
+// named world figure" affordance through this SAME function (see
+// buildBestiary's paintStatRail below) rather than a second copy.
 // ---------------------------------------------------------------------------
-function graphPromoteAffordance(r, onPromote) {
+// Phase 37.6b: gained an optional `opts` param (testidPrefix/badgeText/
+// badgeTitle/btnText/btnTitle) so the Bestiary's own "Promote to a named
+// world figure" affordance can reuse this SAME function/glyph convention
+// (per gm-tools-conventions -- "if you find yourself writing the same...
+// logic twice, stop") rather than a second copy. Every default reproduces
+// the Reliquary caller's EXACT pre-existing testids/copy byte-for-byte when
+// `opts` is omitted -- backward compatible, that caller is unchanged below.
+function graphPromoteAffordance(r, onPromote, opts = {}) {
+  const testidPrefix = opts.testidPrefix ?? "tagged-shelf-row";
+  const badgeText = opts.badgeText ?? "⛓ in the graph";
+  const badgeTitle = opts.badgeTitle ?? "This item is linked to a graph node";
+  const btnText = opts.btnText ?? "→ graph";
+  const btnTitle = opts.btnTitle ?? "Promote this item to a graph node";
   if (r.graphEntityId) {
     return el("span", {
-      testid: "tagged-shelf-row-graph-badge",
+      testid: `${testidPrefix}-graph-badge`,
       "data-item-id": r.id,
       "data-graph-entity-id": r.graphEntityId,
-      text: "⛓ in the graph",
-      title: "This item is linked to a graph node",
+      text: badgeText,
+      title: badgeTitle,
       style: "padding: 2px 8px; border-radius: 20px; font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.04em; color: oklch(0.44 0.050 185); background: oklch(0.94 0.020 185); border: 1px solid oklch(0.80 0.035 185); white-space: nowrap;"
     });
   }
   const btn = el("span", {
-    testid: "tagged-shelf-row-promote-btn",
+    testid: `${testidPrefix}-promote-btn`,
     "data-item-id": r.id,
-    text: "→ graph",
-    title: "Promote this item to a graph node",
+    text: btnText,
+    title: btnTitle,
     style: "padding: 2px 8px; border: 1px dashed oklch(0.72 0.045 185); border-radius: 20px; font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.04em; color: oklch(0.44 0.050 185); cursor: pointer; white-space: nowrap;"
   });
   btn.addEventListener("click", (ev) => {

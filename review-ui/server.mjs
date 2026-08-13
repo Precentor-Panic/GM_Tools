@@ -170,8 +170,13 @@ import {
   acceptBestiaryEntry,
   discardBestiaryEntry,
   updateBestiaryEntryNote,
-  updateBestiaryEntryRating
+  updateBestiaryEntryRating,
+  promoteBestiaryEntryToGraph,
+  createReskinnedBestiaryEntry
 } from "../combat-planning/bestiary-store.mjs";
+// Phase 37.6b -- "Wear it as something else" (see the module's own doc
+// comment for the full grounding/offline-degrade story).
+import { suggestReskins } from "../combat-planning/reskin-suggest.mjs";
 import { proposePartyMemberFromText, proposePartyMemberFromPdf } from "../combat-planning/party-roster-ingest.mjs";
 import {
   savePartyMember,
@@ -811,6 +816,40 @@ function offlineDevelopDescriptionClient() {
         const vision = (m ? m[1] : "").trim() || "the GM's own vision";
         const suggestion = `(Offline pass — no model configured; edit or dismiss before accepting.) Following the GM's own note (“${vision}”), this place could stand to gain detail along those lines — set ANTHROPIC_API_KEY for a real suggestion.`;
         return { content: [{ type: "text", text: JSON.stringify({ suggestion }) }], stop_reason: "end_turn" };
+      }
+    }
+  };
+}
+
+/**
+ * OFFLINE DETERMINISTIC reskin-suggest client (see POST /api/combat-
+ * planning/bestiary/:id/reskin-suggest). Same shape/reasoning as
+ * offlineDevelopDescriptionClient above -- used only when no
+ * ANTHROPIC_API_KEY is set, so "✦ Wear it as something else" degrades
+ * HONESTLY (real, clearly-labelled placeholder suggestions the GM reviews
+ * and can accept/dismiss) rather than the route throwing on client
+ * construction. Reads the creature's own name straight out of the prompt's
+ * "## The creature being reskinned" section rather than inventing one, and
+ * echoes the GM's own vision line back the same way
+ * offlineDevelopDescriptionClient already does, so the placeholder can
+ * never be mistaken for a real model suggestion. Returns exactly
+ * MIN_RESKIN_SUGGESTIONS (2) suggestions -- combat-planning/reskin-
+ * suggest.mjs's own validation requires at least that many. With a key
+ * present this is never constructed.
+ */
+function offlineReskinSuggestClient() {
+  return {
+    messages: {
+      create: async ({ messages } = {}) => {
+        const prompt = messages?.[0]?.content ?? "";
+        const nameMatch = /## The creature being reskinned\s*\n\n([^\n—]*)/.exec(String(prompt));
+        const creatureName = (nameMatch ? nameMatch[1] : "").trim() || "this creature";
+        const suggestions = [1, 2].map((n) => ({
+          name: `${creatureName} (offline reskin ${n})`,
+          description: `(Offline pass — no model configured; edit or dismiss before accepting.) A reskinned take on ${creatureName} — set ANTHROPIC_API_KEY for a real suggestion.`,
+          habitatHint: "(offline pass — no habitat suggested)"
+        }));
+        return { content: [{ type: "text", text: JSON.stringify({ suggestions }) }], stop_reason: "end_turn" };
       }
     }
   };
@@ -3214,16 +3253,34 @@ async function handleApi(req, res, url, parts) {
       const alreadyInRoster = before.roster.some((r) => r.id === id && r.kind === "creature");
       let element = null;
       if (!alreadyInRoster) {
-        const existingElement = listElementsForScene(w, sceneId).find((e) => e.fields?.bestiaryEntryId === id);
-        if (existingElement) {
-          element = existingElement;
-        } else {
-          element = createElement(w, sceneId, {
-            name: entry.rawFields?.name ?? "Unnamed Creature",
-            kind: "local",
-            fields: { bestiaryEntryId: id },
+        // Phase 37.6b unlock: a bestiary entry carrying a real graph link
+        // (promoted via "Promote to a named world figure") attaches through
+        // the from-graph flow -- a REAL kind:'graph' element -- instead of
+        // the local+stat path below, per phase35-fixture.mjs §7's own
+        // forward-compatible pin ("the 'graph-node creatures reuse
+        // attachExistingNodeAsElement' branch... is FORWARD-COMPATIBLE
+        // PLUMBING ONLY this phase" -- 37.6b is that future phase). The stat
+        // still populates (attachExistingNodeAsElement's additive `stat`
+        // param, same statFromBestiaryRawFields projection as the local
+        // path uses) -- a graph-linked creature drop is not a downgrade.
+        if (entry.graphEntityId) {
+          const dir = resolveDir();
+          element = await attachExistingNodeAsElement(dir, w, sceneId, entry.graphEntityId, {
+            name: entry.rawFields?.name ?? undefined,
             stat: statFromBestiaryRawFields(entry)
           });
+        } else {
+          const existingElement = listElementsForScene(w, sceneId).find((e) => e.fields?.bestiaryEntryId === id);
+          if (existingElement) {
+            element = existingElement;
+          } else {
+            element = createElement(w, sceneId, {
+              name: entry.rawFields?.name ?? "Unnamed Creature",
+              kind: "local",
+              fields: { bestiaryEntryId: id },
+              stat: statFromBestiaryRawFields(entry)
+            });
+          }
         }
       }
       const result = addToSceneTray(w, sceneId, { id, kind }, {});
@@ -3290,6 +3347,63 @@ async function handleApi(req, res, url, parts) {
   if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "rating") {
     const body = await readBody(req);
     const entry = updateBestiaryEntryRating(parts[3], body.rating);
+    return sendJson(res, 200, { entry });
+  }
+
+  // -----------------------------------------------------------------------
+  // Phase 37.6b -- the two Library Bestiary stubs, wired for real.
+  // -----------------------------------------------------------------------
+
+  // POST /api/combat-planning/bestiary/:id/promote-to-graph   {world}   -> {entry, entityId, created}
+  // "Promote to a named world figure." Mirrors items' identical
+  // promote-to-graph route exactly; idempotent (see bestiary-store.mjs's
+  // promoteBestiaryEntryToGraph doc comment) -- a second promote on an
+  // already-linked entry returns created:false and writes nothing.
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "promote-to-graph") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const result = await promoteBestiaryEntryToGraph(dir, w, parts[3]);
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/combat-planning/bestiary/:id/reskin-suggest   {world, vision?}   -> {suggestions}
+  // "Wear it as something else." NEVER writes anything -- see
+  // combat-planning/reskin-suggest.mjs's own doc comment for the full
+  // grounding/offline-degrade story. `world` supplies the graph context
+  // (buildAdjacencyContext around the entry's promoted node if it has one,
+  // else a compact whole-world summary); it does NOT scope the bestiary
+  // entry itself (bestiary-store.mjs is library-wide, per its own
+  // documented scoping decision).
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "reskin-suggest") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const entry = getBestiaryEntry(parts[3]); // throws "No bestiary entry found" -> 404
+    const { entities, edges } = loadSnapshot(dir, w).snapshot;
+    const result = await suggestReskins(entry, entities, edges, body.vision, {
+      // Same OFFLINE DETERMINISTIC degrade as POST /api/graph/nodes/:id/
+      // develop-description's own texture-adjacent call -- a key-less
+      // dev/demo environment (and this route's own e2e coverage) gets real,
+      // honestly-labelled suggestions instead of a thrown "missing API key"
+      // from the Anthropic SDK constructor. With a key present this branch
+      // never fires.
+      ...(process.env.ANTHROPIC_API_KEY ? {} : { client: offlineReskinSuggestClient() })
+    });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/combat-planning/bestiary/:id/reskin-accept   {suggestion:{name,description,habitatHint}}   -> {entry}
+  // Accepting one of reskin-suggest's one-shot cards: creates a brand-new
+  // bestiary entry (see bestiary-store.mjs's createReskinnedBestiaryEntry
+  // doc comment for the full shape/status/back-link story -- identical
+  // rawFields except `name`, status "accepted" immediately, never
+  // foundry-linked). `:id` is the SOURCE entry being reskinned -- it is
+  // never itself mutated by this route.
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "reskin-accept") {
+    const body = await readBody(req);
+    const source = getBestiaryEntry(parts[3]); // throws "No bestiary entry found" -> 404
+    const entry = createReskinnedBestiaryEntry(source, body.suggestion);
     return sendJson(res, 200, { entry });
   }
 

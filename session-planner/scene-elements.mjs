@@ -301,19 +301,31 @@ export function reorderElements(world, sceneId, orderedElementIds) {
  * already-existing `entityId` verbatim. Appended at max(order for this
  * scene)+1, same ordering convention as `createElement`.
  *
+ * Phase 37.6b addition: an optional `stat` field, additive-only and
+ * backward-compatible (every EXISTING caller -- the `POST .../elements/
+ * from-graph` route/the scene page's own "◇ From graph" picker -- omits it
+ * and gets the exact same `stat: null` this function has always written).
+ * Unlocks phase35-fixture.mjs §7's own forward-compatible pin: a graph-
+ * linked bestiary entry's tray-drop attaches THROUGH THIS function instead
+ * of createElement's local+stat path, and "the stat still populates" per
+ * that unlock's own instruction requires somewhere to put it.
+ *
  * @param {string} dir       resolved data dir (resolveDir()'s return value) — used only to look up the entity's real name from the live snapshot when `name` is omitted
  * @param {string} world
  * @param {string} sceneId
  * @param {string} entityId  an EXISTING World Fabric entity id
- * @param {{name?:string}} [fields]   defaults to the entity's own real name (from the live snapshot) when omitted
+ * @param {{name?:string, stat?:object}} [fields]   `name` defaults to the entity's own real name (from the live snapshot) when omitted; `stat` defaults to `null` (Phase 37.6b addition, see above)
  * @param {object} [opts]
  * @param {() => string} [opts.makeId]
  * @param {string} [opts.now]
  * @returns {object}   the created element, OR the scene's already-existing
  *   `kind:'graph'` element for this `entityId` verbatim, unchanged, if one
- *   already exists (Phase 33 task 33.1 dedupe — see below)
+ *   already exists (Phase 33 task 33.1 dedupe — see below; note this means a
+ *   `stat` passed on a call that hits the dedupe branch is NOT retroactively
+ *   applied to the existing element, matching this same function's own
+ *   pre-existing "return the existing one, don't duplicate" precedent)
  */
-export function attachExistingNodeAsElement(dir, world, sceneId, entityId, { name } = {}, opts = {}) {
+export function attachExistingNodeAsElement(dir, world, sceneId, entityId, { name, stat = null } = {}, opts = {}) {
   const makeId = opts.makeId ?? makeElementId;
   const now = opts.now ?? new Date().toISOString();
   const elements = readElements(world);
@@ -344,7 +356,7 @@ export function attachExistingNodeAsElement(dir, world, sceneId, entityId, { nam
     graphEntityId: entityId,
     name: resolvedName,
     fields: {},
-    stat: null,
+    stat,
     order: nextOrder,
     createdAt: now
   };

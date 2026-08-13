@@ -55,15 +55,39 @@
  *
  * Also gains `sourcePill` -- a DERIVED, NEVER-PERSISTED read-time projection
  * (`deriveSourcePill`, applied at the same two read boundaries): "foundry" if
- * `foundryActorRef` is set, "srd" if `sourceText`/`sourcePdfName` mentions
- * "SRD" (case-insensitive), else "mine". A pure function of already-stored
- * fields -- never a fifth persisted status value.
+ * `foundryActorRef` is set, "reskin" if `reskinOfEntryId` is set (Phase
+ * 37.6b, see createReskinnedBestiaryEntry below), "srd" if
+ * `sourceText`/`sourcePdfName` mentions "SRD" (case-insensitive), else
+ * "mine". A pure function of already-stored fields -- never a fifth
+ * persisted status value.
+ *
+ * Phase 37.6b (task plan's own addendum, wiring the two Library stubs) adds
+ * two more additive, optional/nullable fields, following the EXACT SAME
+ * "no SCHEMA_VERSION bump, read-time-fallback-to-null" convention §5 above
+ * already established for `note`/`rating` (NOT item-store.mjs's own
+ * write-time-explicit-null convention for its sibling `graphEntityId` field
+ * -- this store already had its own precedent for additive optional fields
+ * before 35.5a's item promote existed, so it's followed here rather than
+ * copied from a sibling module):
+ *   - `graphEntityId` -- "Promote to a named world figure" (see
+ *     promoteBestiaryEntryToGraph below), mirrors item-store.mjs's own
+ *     back-link field name/semantics exactly (a promoted entry's link to
+ *     the real World Fabric node it now also exists as).
+ *   - `reskinOfEntryId` -- "Wear it as something else" (see
+ *     createReskinnedBestiaryEntry below), the flag deriveSourcePill keys
+ *     "reskin" off of: the id of the BestiaryEntry a reskinned entry's stat
+ *     block was copied from, verbatim, unchanged.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 import { diceAverage } from "./dice.mjs";
+// Phase 37.6b -- "Promote to a named world figure." Same cross-directory
+// reuse precedent item-store.mjs's promoteItemToGraph/session-planner/
+// scene-elements.mjs's promoteElement already established (all three import
+// addNodeOp from here) -- no second manual-entity-creation mechanism.
+import { addNodeOp } from "../wf-mcp-server/lib/manual-edit-ops.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "bestiary");
@@ -134,6 +158,12 @@ export function checkBestiaryOutliers(rawFields) {
  */
 export function deriveSourcePill(entry) {
   if (entry?.foundryActorRef) return "foundry";
+  // Phase 37.6b: checked BEFORE the srd/mine fallback -- a reskinned entry
+  // is never foundry-linked (createReskinnedBestiaryEntry always passes
+  // foundryActorRef:null) and won't typically carry "SRD" source text
+  // either, but the explicit back-link is the authoritative signal either
+  // way, not an absence-of-other-signals inference.
+  if (entry?.reskinOfEntryId) return "reskin";
   const flagText = `${entry?.sourceText ?? ""} ${entry?.sourcePdfName ?? ""}`;
   if (/srd/i.test(flagText)) return "srd";
   return "mine";
@@ -147,7 +177,15 @@ export function deriveSourcePill(entry) {
  */
 function projectReadFields(entry) {
   if (!entry) return entry;
-  return { ...entry, note: entry.note ?? null, rating: entry.rating ?? null, sourcePill: deriveSourcePill(entry) };
+  return {
+    ...entry,
+    note: entry.note ?? null,
+    rating: entry.rating ?? null,
+    // Phase 37.6b: same read-time-fallback-to-null convention as note/rating above.
+    graphEntityId: entry.graphEntityId ?? null,
+    reskinOfEntryId: entry.reskinOfEntryId ?? null,
+    sourcePill: deriveSourcePill(entry)
+  };
 }
 
 function readEntry(entryId) {
@@ -177,7 +215,7 @@ function writeEntry(entry) {
  * @returns {object}   the created BestiaryEntry
  */
 export function saveBestiaryEntry(
-  { rawFields, derivedScore = null, sourceText = null, sourcePdfName = null, foundryActorRef = null },
+  { rawFields, derivedScore = null, sourceText = null, sourcePdfName = null, foundryActorRef = null, reskinOfEntryId = null },
   opts = {}
 ) {
   const makeId = opts.makeId ?? makeBestiaryEntryId;
@@ -199,6 +237,11 @@ export function saveBestiaryEntry(
     // plans/phase-32-bridge-contract.md's own "additive-only versioning"
     // convention (adding an optional field is not a breaking change).
     foundryActorRef,
+    // Phase 37.6b -- nullable back-link to the BestiaryEntry this one was
+    // reskinned FROM (see createReskinnedBestiaryEntry below); null for
+    // every entry created any other way. Same additive-field reasoning as
+    // foundryActorRef immediately above.
+    reskinOfEntryId,
     needsConfirmation: outlier.flagged,
     outlierReasons: outlier.reasons,
     status: "proposed",
@@ -308,6 +351,161 @@ export function updateBestiaryEntryNote(entryId, note) {
 export function updateBestiaryEntryRating(entryId, rating) {
   const entry = readEntry(entryId);
   return projectReadFields(writeEntry({ ...entry, rating: rating ?? null }));
+}
+
+/**
+ * PURE, no I/O. A compact, non-numeric FLAVOR line derived from rawFields --
+ * "type, CR X, alignment" style, deliberately never the literal attack/
+ * damage-dice numbers (those stay untouched wherever this line is used).
+ * Two Phase 37.6b call sites share this ONE formatter rather than each
+ * re-deriving their own: promoteBestiaryEntryToGraph seeds a new graph
+ * node's description with it, and combat-planning/reskin-suggest.mjs's
+ * prompt context uses it to describe "what this stat block IS" to the model
+ * without handing over the numbers themselves to reinterpret.
+ * @param {object} rawFields
+ * @returns {string|null}   null if rawFields has nothing to say
+ */
+export function compactStatFlavorLine(rawFields) {
+  const rf = rawFields || {};
+  const parts = [];
+  if (rf.type) parts.push(rf.type);
+  if (rf.challengeRating != null) parts.push(`CR ${rf.challengeRating}`);
+  if (rf.alignment) parts.push(rf.alignment);
+  if (Array.isArray(rf.attacks) && rf.attacks.length) {
+    const names = rf.attacks.map((a) => a?.name).filter(Boolean).slice(0, 3);
+    if (names.length) parts.push(`fights with ${names.join(", ")}`);
+  }
+  return parts.length ? parts.join(", ") : null;
+}
+
+/**
+ * Status-independent patch (mirrors setItemGraphEntityId/updateBestiaryEntryNote's
+ * own "no status check" convention -- a promote is an ongoing table-use
+ * action, not a proposed-content edit) that writes the back-link
+ * promoteBestiaryEntryToGraph computes. Not exposed as its own route;
+ * promoteBestiaryEntryToGraph is the only caller.
+ * @returns {object}   the updated BestiaryEntry (projection included)
+ */
+function setBestiaryEntryGraphEntityId(entryId, graphEntityId) {
+  const entry = readEntry(entryId);
+  return projectReadFields(writeEntry({ ...entry, graphEntityId }));
+}
+
+/**
+ * Phase 37.6b -- "Promote to a named world figure." Mirrors item-store.mjs's
+ * promoteItemToGraph exactly: SAME mechanism (addNodeOp, the one manual-
+ * entity-creation route every promote/attach action in this project already
+ * shares), SAME idempotent "second promote returns the existing node,
+ * writes nothing" convention (a plain 200 re-describing current state, not
+ * a 409 -- promoting twice is not an error condition from the GM's point of
+ * view). Creates a real World Fabric graph entity from this BestiaryEntry
+ * and back-links the entry via `graphEntityId`. The entry keeps living in
+ * the Bestiary -- this only adds a back-link, never mutates rawFields/
+ * status/anything else about it.
+ *
+ * ENTITY TYPE: always `"person"` -- deliberately NOT dynamically inferred
+ * per-entry (e.g. off rf.type's free-text "beast"/"humanoid"/"construct"
+ * creature-type wording). Two reasons, both documented here since the task
+ * plan explicitly asked for the choice to be recorded:
+ *   1. The Library's own copy for this exact affordance is "Promote to a
+ *      NAMED WORLD FIGURE," not "promote to a graph node" -- the whole
+ *      point of this action (distinct from the item promote's neutral
+ *      "object" default) is elevating a stat block to the standing of a
+ *      recognized INDIVIDUAL in the world. "person" is this graph's
+ *      closest available concept for that intent.
+ *   2. This project's global entity-type enum (wf-mcp-server/index.mjs's
+ *      z.enum(["person","place","faction","object","event","concept"]),
+ *      the SAME enum item-store.mjs's own header comment already cites for
+ *      its "object" choice) has no dedicated "creature"/"monster" type at
+ *      all, and rf.type's free text ("giant", "swarm of Tiny beasts",
+ *      "elemental (air)"...) is not a reliable classifier onto the six-item
+ *      enum. Rather than guess wrong silently for a whole class of
+ *      creatures (an ooze reading "person" is an honest, visible
+ *      approximation; an ooze guessed into a wrong bucket by shaky regex
+ *      matching is a silent one), this names the ACTION's intent directly.
+ *      A promoted ooze or swarm reading "person" in the graph's type field
+ *      is the same kind of honest tradeoff item-store's own "object"
+ *      default already accepted for a promoted Reliquary weapon.
+ *
+ * DESCRIPTION: seeded from compactStatFlavorLine(entry.rawFields) when the
+ * entry has enough rawFields to produce one -- never fabricated prose, the
+ * SAME compact formatter combat-planning/reskin-suggest.mjs's prompt
+ * context uses (one shared helper, not two).
+ *
+ * @param {string} dir     resolved data dir (resolveDir()'s return value)
+ * @param {string} world   which world's graph gains the node -- a
+ *   BestiaryEntry itself carries no world (library-wide, per this module's
+ *   own scoping decision above), so the caller/GM picks the destination
+ *   world at promote time, exactly like item-store's identically-shaped
+ *   `{world}` route body param
+ * @param {string} entryId
+ * @returns {Promise<{entry:object, entityId:string, created:boolean}>}
+ */
+export async function promoteBestiaryEntryToGraph(dir, world, entryId) {
+  const existing = getBestiaryEntry(entryId); // throws "No bestiary entry found" -- same not-found convention as every sibling store's own promote
+
+  if (existing.graphEntityId) {
+    return { entry: existing, entityId: existing.graphEntityId, created: false };
+  }
+
+  const description = compactStatFlavorLine(existing.rawFields);
+  const { entityId } = await addNodeOp(dir, world, {
+    name: existing.rawFields?.name || "Unnamed",
+    type: "person",
+    ...(description ? { description } : {})
+  });
+
+  const entry = setBestiaryEntryGraphEntityId(entryId, entityId);
+  return { entry, entityId, created: true };
+}
+
+/**
+ * Phase 37.6b -- "Wear it as something else," accept-half. Creates a NEW
+ * BestiaryEntry from an accepted combat-planning/reskin-suggest.mjs
+ * suggestion:
+ *   - rawFields: IDENTICAL to the source entry's, with ONLY `name`
+ *     overwritten -- "same numbers, different creature" taken literally;
+ *     ac/hp/attacks/everything else is a structural copy, never re-derived
+ *     or passed through the model at all.
+ *   - the suggestion's flavor description (+ habitat hint) is written into
+ *     the new entry's `note` -- this store's EXISTING free-form GM-note
+ *     field (§5 above), per the task's own "desc into note ... per the
+ *     store shape" instruction; no new persisted prose field invented for it.
+ *   - `reskinOfEntryId` back-links to the entry it was reskinned from -- the
+ *     flag deriveSourcePill keys "reskin" off of.
+ *   - status is `"accepted"` immediately, NOT left `"proposed"` like a
+ *     fresh ingest -- the GM already made an explicit accept/dismiss
+ *     decision on the one-shot suggestion card itself; this function IS
+ *     that accept, not a re-review of it.
+ *   - `foundryActorRef` stays null always -- a reskin has no Foundry actor
+ *     of its own ("NOT foundry-linked" per the task's own explicit wording).
+ *
+ * checkBestiaryOutliers still runs (via the ordinary saveBestiaryEntry path,
+ * unchanged) -- the copied rawFields will always score identically to the
+ * source entry's own outlier result, since the numbers are untouched.
+ *
+ * @param {object} sourceEntry   the BestiaryEntry being reskinned (its rawFields are copied verbatim, only `name` overwritten)
+ * @param {{name:string, description:string, habitatHint?:string}} suggestion
+ * @param {object} [opts]   forwarded to saveBestiaryEntry (opts.makeId/opts.now, for deterministic tests)
+ * @returns {object}   the created, already-accepted BestiaryEntry (projection included)
+ */
+export function createReskinnedBestiaryEntry(sourceEntry, suggestion, opts = {}) {
+  const name = String(suggestion?.name ?? "").trim();
+  if (!name) {
+    throw new Error("createReskinnedBestiaryEntry requires a non-empty suggestion.name.");
+  }
+  const description = String(suggestion?.description ?? "").trim();
+  const habitatHint = String(suggestion?.habitatHint ?? "").trim();
+  const note = [description, habitatHint ? `Habitat: ${habitatHint}` : null].filter(Boolean).join("\n\n");
+
+  const rawFields = { ...(sourceEntry?.rawFields ?? {}), name };
+  const created = saveBestiaryEntry(
+    { rawFields, sourceText: null, sourcePdfName: null, foundryActorRef: null, reskinOfEntryId: sourceEntry?.id ?? null },
+    opts
+  );
+  if (note) updateBestiaryEntryNote(created.id, note);
+  acceptBestiaryEntry(created.id);
+  return getBestiaryEntry(created.id);
 }
 
 export { ConcurrentWriteError };
