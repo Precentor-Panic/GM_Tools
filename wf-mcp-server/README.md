@@ -81,17 +81,120 @@ out of a whole-document pass); use `scope='batch'`/`'region'` (equivalent — a
 writeup-import batch always has exactly one region) or reject the specific mutation via
 `wf_reject`.
 
+## MCP wave — Session Planner / Library / Chronicle tools
+
+Agents could already work the graph/review/prep/writeup surface above but had
+no access to the Session Planner (scenes/plans/elements/tray), the Library
+(bestiary/party/items/stagecraft), or the Chronicle (clock/fortune/intents/
+runs). This wave closes that gap. Every tool below reuses the SAME store/lib
+module `review-ui/server.mjs`'s matching HTTP route calls — mirrored, not
+forked. See `wf-mcp-server/lib/chronicle-ops.mjs` and `lib/planner-ops.mjs`
+for the two pieces of route-composition logic extracted into a shared module
+so both front-ends run the exact same code.
+
+**Multi-world safety**: every tool in this wave requires `world` explicitly
+in its schema (not `.optional()`) — it will not silently fall back to
+`WF_DEFAULT_WORLD` even if that env var happens to be set. Run
+`wf_list_worlds` first if unsure which id to use. (Bestiary tools are the
+one deliberate exception: bestiary-store.mjs is library-wide, not
+world-scoped — no `world` parameter exists on those at all, mirroring
+`GET /api/combat-planning/bestiary`'s own convention.)
+
+### Session Planner — reads
+
+| Tool | Purpose |
+|------|---------|
+| `wf_list_plans` | Every Plan for a world |
+| `wf_get_plan` | One Plan by id |
+| `wf_list_scenes` | Every Scene (`recency:true` for most-recently-touched-first) |
+| `wf_get_scene` | One Scene, composed: record + elements + tray + narration in one call |
+| `wf_get_scene_elements` | A Scene's ordered elements |
+
+### Session Planner — direct working-state mutations (no review gate, like the UI)
+
+| Tool | Purpose |
+|------|---------|
+| `wf_create_plan` / `wf_rename_plan` / `wf_add_scene_to_plan` / `wf_reorder_plan` | Plan CRUD |
+| `wf_create_scene` / `wf_update_scene` | Scene CRUD — `locationEntityId` must resolve to a `place`-type entity if it resolves to anything |
+| `wf_add_scene_element` / `wf_update_scene_element` | Scene element CRUD, incl. `stat` (shallow-merges on update) |
+| `wf_tray_drop` / `wf_tray_remove` / `wf_set_xp_budget` | Scene tray roster + XP budget — a creature drop's first occurrence creates a stat-carrying element, a repeat only stacks the roster |
+
+### Library — reads
+
+| Tool | Purpose |
+|------|---------|
+| `wf_list_bestiary` (no `world`) / `wf_get_bestiary_entry` (no `world`) | The library-wide bestiary shelf, with client-side `status`/`source` filters |
+| `wf_list_party` | A world's party roster |
+| `wf_list_items` | A world's Reliquary items |
+| `wf_list_stagecraft` | A world's Stagecraft assets — includes `compendiumRef` browse rows and `catalogRef` catalog rows, not just already-accepted assets, so an agent suggesting maps sees the whole catalog |
+
+### Library — hand-authoring (accepted immediately, no LLM call, no review gate)
+
+| Tool | Purpose |
+|------|---------|
+| `wf_add_bestiary_entry` (no `world`) | Mirrors `POST /api/combat-planning/bestiary/hand-add` |
+| `wf_add_party_member` | Mirrors `POST /api/combat-planning/party-roster/hand-add` |
+| `wf_add_item` | Mirrors `POST /api/combat-planning/items/hand-add` |
+| `wf_add_stagecraft_asset` | Mirrors `POST /api/session-planner/stagecraft/hand-add` |
+
+### Chronicle — reads
+
+| Tool | Purpose |
+|------|---------|
+| `wf_get_world_clock` | Current in-fiction date/session number |
+| `wf_get_fortune` | Current Fortune Track stop/bias |
+| `wf_list_chronicle_log` | Every Chronicle-run batch, newest-first, with headline + span/fortuneAtRun/promptSummary |
+| `wf_list_pending_intents` | Queued/deferred intents (pending-ledger backlog) available to carry into the next run |
+
+### Chronicle — mutations
+
+| Tool | Purpose |
+|------|---------|
+| `wf_chronicle_run` | **THROUGH THE REVIEW GATE** (creates a batch, `wf_accept`/`wf_reject` still required). Mirrors `POST /api/chronicle/run` exactly: the single-source `elapsedSessions` rule (the world clock advances exactly once, from `span` only) and prompt-as-seed (a typed `prompt` always earns ≥1 reviewable proposal). |
+| `wf_queue_intent` | Direct write, no review gate — queues a thread for a *future* `wf_chronicle_run` to resolve; doesn't itself touch the graph. Pinned `sourceBatchId:"manual"` sentinel. |
+| `wf_set_fortune` | Direct write, no review gate — biases the next `wf_chronicle_run`'s texturing pass. |
+
+**Reconciled, not duplicated**: prose intake ("writeup text → graph proposal,
+both rubber-duck phases") is `wf_propose_from_writeup` (above) — already
+returns a framing phase when rubber-duck mode is on, and `wf_select_framing`
+(above) is already its pick companion. No `wf_receive_information` tool was
+added; nothing was missing.
+
+## Keyless / offline safety
+
+Every LLM-backed tool in this server (both pre-existing and new) now goes
+through `lib/offline-clients.mjs`'s shared `offlineOpts()` — the SAME
+degrade `review-ui/server.mjs`'s HTTP routes have used since the QA
+fix-wave. With no `ANTHROPIC_API_KEY` set in **this server process's own
+environment**, an LLM-backed call degrades to an honest, clearly-labelled
+placeholder response (a real, reviewable batch/framing/prep-content draft)
+instead of failing on the raw Anthropic SDK's own construction-time "Could
+not resolve authentication method" error. `test/keyless-offline-safety.test.mjs`
+is the automated proof — it spawns the real server with no key and drives
+every LLM-backed tool through a real call, asserting none of them ever
+produce that error signature. (This corrects a gap found during the MCP
+wave: unlike the HTTP routes, these tools previously called straight into
+their library functions with NO offline opts at all — a genuinely real,
+reproducible failure mode for a keyless MCP session, not a hypothetical.)
+
 ## Config
 
-Set in `~/.mcp.json` under `mcpServers.world-fabric`. Env vars:
+Set in `~/.mcp.json` under `mcpServers.world-fabric` (see `.mcp.json.example`
+at the repo root for a ready-to-copy starting point). Env vars:
 
 - `WF_DATA_DIR` — Foundry data directory (the one containing `worlds/`). On
   this machine: `/home/russell/foundrydata/Data`. Falls back to OS-typical
   install paths if unset, but auto-detection has been unreliable across
   native/Docker installs — set it explicitly.
-- `WF_DEFAULT_WORLD` — optional. If unset, every tool call must pass
-  `world` explicitly (recommended, since multiple worlds/campaigns coexist
-  on this machine).
+- `WF_DEFAULT_WORLD` — optional, and NOT recommended if you run more than
+  one world/campaign (Russell does — an ongoing campaign plus a separate
+  one-shot). If unset, every tool call must pass `world` explicitly; every
+  tool added in the MCP wave above requires it explicitly regardless of
+  whether this is set.
+- `ANTHROPIC_API_KEY` — optional. Needed only for a real (non-placeholder)
+  LLM-backed call. See "Keyless / offline safety" above — every tool works
+  without it, just with honest placeholder content instead of real model
+  output.
 
 ## Local dev
 

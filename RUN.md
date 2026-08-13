@@ -59,6 +59,69 @@ The server's stdout/stderr are inherited straight into whichever terminal ran
 the launcher (or the desktop entry's terminal window). There's no separate
 log file.
 
+## Connect an agent
+
+`wf-mcp-server/` (`GM_Tools/wf-mcp-server/index.mjs`) exposes the whole stack
+— the World Fabric graph, the review-gate workflow, the Session Planner, the
+Library, and the Chronicle — as MCP tools, so a Claude Code session can
+co-plan a real session or one-shot with you *through the tool*, not just
+narrate around its edges. See `wf-mcp-server/README.md` for the full tool
+list.
+
+### 3-step attach (Claude Code)
+
+1. **Point it at your Foundry data dir.** Copy `.mcp.json.example` (repo
+   root) to `.mcp.json` (same location Claude Code auto-discovers project
+   MCP servers from) and fill in `WF_DATA_DIR` — the folder containing
+   `worlds/` (on a typical install, `.../FoundryVTT/Data`). Leave
+   `ANTHROPIC_API_KEY` blank if you don't have one handy — every tool still
+   works, LLM-backed ones just degrade to an honest placeholder instead of
+   real model output (see wf-mcp-server/README.md's "Keyless / offline
+   safety"). `command`/`args` in the example (`node`, `wf-mcp-server/index.mjs`)
+   are resolved relative to the project root Claude Code loaded — if `node`
+   isn't on your shell's PATH (it isn't by default on this machine — see the
+   top of this file), replace `"command": "node"` with the absolute path
+   (`which node`).
+   Equivalent one-liner instead of hand-editing JSON:
+   `claude mcp add world-fabric -- node wf-mcp-server/index.mjs` (run from
+   the repo root, then set `WF_DATA_DIR`/`ANTHROPIC_API_KEY` via `claude mcp
+   add`'s `--env` flag or by editing the resulting `.mcp.json` entry).
+2. **Restart/reconnect Claude Code** (or run `/mcp` to reconnect) so it
+   picks up the new server. Confirm with `wf_list_worlds` — it should list
+   every world under `WF_DATA_DIR` that has an exported
+   `world-fabric-snapshot.json`.
+3. **Load the agent contract skill.** `.claude/skills/gm-tools-agent/SKILL.md`
+   is a repo skill any attached agent should load before touching this
+   surface — the collaborator rules (always pull fabric context first,
+   `world` explicit on every call, what goes through a review gate vs. what
+   writes directly, prose intake = `wf_propose_from_writeup`).
+
+### What an attached agent can / can't do
+
+- **Can read** the whole graph, the Session Planner (plans/scenes/elements/
+  tray), the Library (bestiary/party/items/stagecraft), and the Chronicle
+  (clock/fortune/log/pending intents) — always with an explicit `world`.
+- **Can write directly, no review gate**: Session Planner working-state
+  (creating/editing a scene, plan, element, tray drop — the same kind of
+  edit the UI's own forms make) and Library hand-authoring (adding a
+  bestiary entry/party member/item/stagecraft asset by hand). This is
+  planner scratch-space / deliberate hand-authorship, not world canon.
+- **Must go through a review gate** for anything that proposes new/changed
+  *world canon*: `wf_propose_mutations`, `wf_propose_from_writeup` (+
+  `wf_select_framing`), `wf_chronicle_run`, `wf_run_cycle`/
+  `wf_resolve_pending` — each creates a batch that only reaches the graph
+  after an explicit `wf_accept` (or the equivalent Accept in the app's own
+  review UI — either side of the same review-state store).
+- **Cannot** bypass the graph mutation gate (`wf_apply_mutations`/
+  `wf_sync_to_foundry` still only ever write *accepted* mutations), restart
+  or otherwise control a live Foundry client, or reach anything the HTTP app
+  itself can't reach.
+- **The multi-world rule**: every tool that touches world-scoped state
+  requires `world` explicitly and never silently defaults across worlds —
+  real for Russell, who runs more than one world at a time (an ongoing
+  campaign plus a separate one-shot, each its own graph/planner/library
+  state). Don't assume a "current" world; ask or call `wf_list_worlds`.
+
 ## Troubleshooting
 
 - **"port 8787 is in use by something else"** — another process (not a

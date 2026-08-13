@@ -77,7 +77,7 @@ import { bootstrapSnapshot, applyHeadless } from "../graph-import/headless-apply
 import { loadBatch, listBatches } from "../mutation-engine/review-state.mjs";
 import { summarizeBatch, renderHeadline } from "../mutation-engine/grain.mjs";
 import { findUnreviewedEntities, markHumanReviewed, DEFAULT_MAX_AGE_DAYS, DEFAULT_MAX_UNREVIEWED_ACCEPTS } from "../mutation-engine/human-review.mjs";
-import { listPendingEntities, readAvailablePending, writePending } from "../mutation-engine/pending-ledger.mjs";
+import { listPendingEntities, readAvailablePending } from "../mutation-engine/pending-ledger.mjs";
 import { resolvePending } from "../time-skip/resolve-pending.mjs";
 import { getUserSettings, setRubberDuckMode } from "../mutation-engine/user-settings.mjs";
 
@@ -142,12 +142,9 @@ import {
   regeneratePrepFieldOp,
   markPrepContentStaleOp
 } from "../wf-mcp-server/lib/prep-content-ops.mjs";
-// QA W1 Fix 3: `fieldsSchemaForType` builds the offline prep-content client's
-// "generate" response GENERICALLY off the real per-entity-type zod schema
-// (each of the six templates is `.strict()` -- extra/missing keys fail
-// validation) instead of hand-duplicating each type's own field list here.
-import { z } from "zod";
-import { fieldsSchemaForType } from "../mutation-engine/prep-content.mjs";
+// (fieldsSchemaForType/`z` were only needed by the offline prep-content
+// client, now moved to wf-mcp-server/lib/offline-clients.mjs -- see the
+// import block above.)
 
 // Phase 16 -- Session Planner engine (task 16.6). Thin wrappers only, same
 // convention as every other route in this file: resolveWorld/resolveDir()
@@ -248,8 +245,40 @@ import { importFromWorldAnvil } from "../wf-mcp-server/lib/worldanvil-intake.mjs
 import { getWorldClock, advanceWorldClock } from "../session-planner/world-clock.mjs";
 import { getFortune, setFortune } from "../session-planner/fortune-track.mjs";
 import { recordChronicleRun, getChronicleRun } from "../session-planner/chronicle-run.mjs";
-import { orchestrateBatch } from "../time-skip/run.mjs";
-import { resolveBranchesDeltas } from "../time-skip/scope.mjs";
+// MCP wave -- extracted so wf-mcp-server/index.mjs's wf_chronicle_run/
+// wf_queue_intent/wf_list_chronicle_log/wf_list_pending_intents tools reuse
+// this EXACT composition instead of a second, drifting copy. See that
+// module's own header comment.
+import {
+  firstLineTruncated,
+  resolveOrCreateIntentEntity,
+  pendingEntitiesPayload,
+  chronicleLogPayload,
+  runChronicleOp,
+  queueIntentOp
+} from "../wf-mcp-server/lib/chronicle-ops.mjs";
+// MCP wave -- extracted so wf-mcp-server/index.mjs's LLM-backed tools share
+// the SAME keyless-safety degrade this file's routes have always had. See
+// that module's own header comment.
+// MCP wave -- extracted so wf-mcp-server/index.mjs's wf_tray_drop tool
+// reuses this EXACT composition instead of a second, drifting copy.
+import { sceneTrayDropOp } from "../wf-mcp-server/lib/planner-ops.mjs";
+import {
+  offlineOpts,
+  isOffline,
+  offlineTextureClient,
+  offlineDevelopDescriptionClient,
+  offlineReskinSuggestClient,
+  offlineWriteupClient,
+  offlineAssistPrepClient,
+  offlineBestiaryIngestClient,
+  offlinePartyRosterIngestClient,
+  offlineThematicFilterClient,
+  offlineQuickGenClient,
+  offlineNarrateClient,
+  offlineScanMentionsClient,
+  offlinePrepContentClient
+} from "../wf-mcp-server/lib/offline-clients.mjs";
 
 // Phase 22 (task 22.7) -- Scene Engine routes. Thin wrappers only, same
 // convention as every other route in this file: resolveWorld()/resolveDir()
@@ -538,28 +567,9 @@ function maybeScheduleFlush(world, scene) {
   if (scene?.stagedForFoundry === true) scheduleFlush(world);
 }
 
-/**
- * Phase 35 task 35.1, §7 -- the scene tray's creature-drop route composition:
- * a bestiary entry's `rawFields` (ac/hp/cr/etc) projected into
- * scene-elements.mjs's StatBlock shape (Phase 29's `{count,ac,hp,speed,cr,
- * raw,foundryActor}`), reused verbatim, no new stat fields invented here.
- * Values are passed through with their OWN native type (ac/hp/challengeRating
- * are genuinely numbers on a Foundry-pulled monster) -- StatBlock's ac/hp/cr
- * were widened to accept string OR number specifically for this call site
- * (scene-elements.mjs's own header comment explains why: stringifying here
- * would silently diverge from the source rawFields value's exact type). A
- * missing rawFields value is simply omitted, never a fabricated default.
- */
-function statFromBestiaryRawFields(entry) {
-  const rawFields = entry?.rawFields ?? {};
-  const stat = {};
-  if (rawFields.hp != null) stat.hp = rawFields.hp;
-  if (rawFields.ac != null) stat.ac = rawFields.ac;
-  if (rawFields.challengeRating != null) stat.cr = rawFields.challengeRating;
-  if (rawFields.speed != null) stat.speed = typeof rawFields.speed === "string" ? rawFields.speed : String(rawFields.speed);
-  if (entry?.foundryActorRef) stat.foundryActor = entry.foundryActorRef;
-  return stat;
-}
+// statFromBestiaryRawFields moved to wf-mcp-server/lib/planner-ops.mjs
+// (MCP wave) -- shared with wf_tray_drop. Imported below, alongside
+// sceneTrayDropOp, for the POST .../tray/drop route.
 
 /**
  * Full batch-detail payload for the Review view: headline + per-region,
@@ -697,479 +707,16 @@ function unreviewedEntitiesPayload(w, dir, opts) {
   return flagged.map((f) => ({ ...f, name: findEntity(entities, f.entityId)?.name ?? f.entityId }));
 }
 
-/**
- * GET /api/pending-entities payload: every entity with an available
- * backlog, plus its entries and a display name. Phase 37 task 37.1 adds
- * `type` additively (§5's "queued intents" deferred-lane mapping,
- * review-ui/test/e2e/phase37-fixture.mjs) -- sourced from the same live
- * snapshot lookup `name` already uses, no second graph lookup.
- */
-function pendingEntitiesPayload(w, dir) {
-  let entities = [];
-  try {
-    ({ entities } = loadSnapshot(dir, w).snapshot);
-  } catch {
-    // No snapshot yet is fine here -- pending entries can still be listed by id, just without a friendly name.
-  }
-  return listPendingEntities(w).map((entityId) => {
-    const entity = findEntity(entities, entityId);
-    return {
-      entityId,
-      name: entity?.name ?? entityId,
-      type: entity?.type ?? null,
-      entries: readAvailablePending(w, entityId)
-    };
-  });
-}
-
-/**
- * Resolve a free-typed name into an entity id -- the SHARED "dedup-or-create"
- * machinery Phase 37 task 37.5 extracts out of POST /api/chronicle/intents so
- * POST /api/chronicle/run's prompt-seed (see the run route below) can reuse
- * it byte-for-byte rather than re-deriving a second copy. Case-insensitive
- * exact-name dedup against the live graph; no match -> create ONE minimal
- * `concept`-typed entity via the existing headless-apply path (mirrors
- * writeup-import's own dedup-or-create convention). `entities` is mutated IN
- * PLACE with the newly-created record when one is made, so a caller that
- * goes on to pass this SAME array into orchestrateBatch/textureRegion (the
- * run route does) sees the new entity immediately -- no second snapshot
- * reload, and texture.mjs's own region-context rendering + entityContext
- * stamping pick up its real name for free.
- * @param {string} snapPath
- * @param {object[]} entities  the live snapshot's entities (mutated on create)
- * @param {string} name
- * @returns {{entityId:string, entityType:string, created:boolean}}
- */
-function resolveOrCreateIntentEntity(snapPath, entities, name) {
-  const lower = name.toLowerCase();
-  const match = entities.find((e) => typeof e.name === "string" && e.name.toLowerCase() === lower);
-  if (match) return { entityId: match.id, entityType: match.type ?? "concept", created: false };
-  const entityId = `intent-${randomUUID()}`;
-  applyHeadless(snapPath, [{ op: "upsert_entity", data: { id: entityId, name, type: "concept", importance: 0.4 } }]);
-  entities.push({ id: entityId, name, type: "concept", importance: 0.4 });
-  return { entityId, entityType: "concept", created: true };
-}
-
-/**
- * `name = first line, truncated to ~maxLen chars` -- the ONE truncation rule
- * Phase 37 task 37.5 uses both for a prompt-derived entity's name (60 chars)
- * and the chronicle-log history rail's `promptSummary` (80 chars), so the
- * two never drift out of sync with each other's idea of "the first line."
- * @param {string} text
- * @param {number} maxLen
- * @returns {string}
- */
-function firstLineTruncated(text, maxLen) {
-  const line = text.split("\n")[0].trim();
-  return line.length > maxLen ? `${line.slice(0, maxLen).trimEnd()}…` : line;
-}
-
-/**
- * GET /api/chronicle/log payload -- Phase 37 task 37.1, §4 of
- * review-ui/test/e2e/phase37-fixture.mjs: a READ layer composing the
- * EXISTING listBatches(world) (already newest-first, already carrying
- * mutationCount/pendingCount/acceptedCount) with grain.mjs's EXISTING
- * summarizeBatch/renderHeadline for the friendly one-line headline, plus
- * chronicle-run.mjs's per-batch sidecar for the fields listBatches has no
- * source for (`span`/`fortuneAtRun`/`promptSummary`, the last one added by
- * task 37.5) -- null for a batch NOT created via Chronicle's own composer, a
- * real valid state, never a thrown error or a guessed value. ZERO new
- * persisted history of its own.
- */
-// =============================================================================
-// QA fix-wave W1, Fix 3/Fix 4 -- OFFLINE DEGRADE for every LLM-backed route.
-//
-// FIX 3 (offline degrade): three-plus routes (writeup-propose, assist-prep,
-// propose-updates, bestiary/ingest -- plus a fuller grep-driven audit below)
-// threw the raw Anthropic SDK's own "Could not resolve authentication
-// method" construction-time error keyless, instead of degrading like
-// develop-description/reskin-suggest/chronicle-run already did. `offlineOpts`
-// is the ONE shared helper every LLM-backed route below now goes through --
-// grep `offlineOpts(` for the exhaustive, greppable list. Post-fix invariant:
-// no LLM route can throw an auth error keyless.
-//
-// FIX 4 (offline body must never carry disclaimer boilerplate that gets
-// SAVED verbatim as real content): every offline client below returns a
-// CLEAN body -- no "Offline pass"/"ANTHROPIC_API_KEY" text inside any field
-// that a GM's Accept persists as real world/prep/bestiary/party-roster data.
-// Where a route's response shape has a genuine "why" sibling that is REVIEW
-// METADATA, never itself written into an entity/content field (a mutation's
-// own `rationale`), the honest offline label lives THERE instead. Every
-// route below that returns a one-shot suggestion card ALSO stamps a
-// top-level `offline:true` machine flag on its JSON response, so the
-// frontend can render the disclaimer as CHROME (a small note above the
-// text) rather than baking it into the text itself.
-// =============================================================================
-
-/**
- * Shared "offline degrade" wrapper: `{}` when a real ANTHROPIC_API_KEY is
- * configured (every call below is completely unaffected, byte-identical to
- * before this fix-wave), or `{ client: makeOfflineClient() }` when it isn't
- * -- an LLM-backed route degrades to an honest, clearly-labelled placeholder
- * response instead of the raw Anthropic SDK's own construction-time throw.
- * `makeOfflineClient` is a thunk (not the client itself) so it's only ever
- * constructed on the keyless path, never uselessly built alongside a real key.
- */
-function offlineOpts(makeOfflineClient) {
-  return process.env.ANTHROPIC_API_KEY ? {} : { client: makeOfflineClient() };
-}
-
-/** True exactly when the offline-degrade path above is active for this process -- used to stamp response-level `offline:true` flags (Fix 4). */
-function isOffline() {
-  return !process.env.ANTHROPIC_API_KEY;
-}
-
-/** Extract the first user-role text content out of an Anthropic-SDK-shaped `messages.create({messages})` call -- every offline client below reads its prompt this same way. */
-function firstPromptText(messages) {
-  return String(messages?.[0]?.content ?? "");
-}
-
-/** Wrap a parsed JSON body as the Anthropic-SDK-shaped response every offline client below returns. */
-function offlineTextResponse(bodyObj) {
-  return { content: [{ type: "text", text: JSON.stringify(bodyObj) }], stop_reason: "end_turn" };
-}
-
-// A generic, honest, disclaimer-free placeholder for any persisted STRING
-// content field this file's offline clients need to fill (prep-content
-// fields, scene-element fields, etc.) -- deliberately free of "Offline
-// pass"/"ANTHROPIC_API_KEY" (Fix 4): short and honest, but never an
-// instruction aimed at the GM, so it reads sanely even if accepted verbatim.
-const OFFLINE_CONTENT_PLACEHOLDER = "Not detailed yet — a model wasn't available when this was generated.";
-
-/**
- * OFFLINE DETERMINISTIC texture client (see POST /api/chronicle/run). An
- * Anthropic-SDK-shaped stub used ONLY when no ANTHROPIC_API_KEY is set, so a
- * key-less dev/demo environment (and the Chronicle e2e) still produces a real,
- * reviewable proposal instead of crashing on client construction. It reads the
- * region's own entity id straight out of the textureRegion prompt (which
- * embeds `[id=…]` per renderRegionContext) and returns a single honest,
- * clearly-labelled placeholder field-edit for that entity -- never pretending
- * to be model-authored prose. With a key present it is never constructed.
- *
- * FIX 4: `data.description` (the field a GM's Accept persists verbatim as
- * real entity content) stays a short, clean, disclaimer-free placeholder;
- * the "offline pass" label itself lives only in `rationale` -- review
- * metadata (Batch Review's own "why" text), never written into the entity.
- */
-function offlineTextureClient(fortuneLabel) {
-  return {
-    messages: {
-      create: async ({ messages } = {}) => {
-        const prompt = firstPromptText(messages);
-        const m = /\[id=([^\]]+)\]/.exec(prompt);
-        const id = m ? m[1] : null;
-        const desc = `Time passed under a ${fortuneLabel} fortune.`;
-        const mutation = id
-          ? { op: "upsert_entity", id, data: { description: desc }, rationale: "Deferred thread carried into this passage (offline pass -- no model configured; edit or reject before applying)." }
-          : { op: "upsert_entity", data: { name: "An unnamed consequence", type: "concept", description: desc }, rationale: "Offline pass -- no model configured; edit or reject before applying." };
-        return offlineTextResponse([mutation]);
-      }
-    }
-  };
-}
-
-/**
- * OFFLINE DETERMINISTIC develop-description client (see POST /api/graph/
- * nodes/:entityId/develop-description). Same reasoning/shape as
- * offlineTextureClient above -- used ONLY when no ANTHROPIC_API_KEY is set,
- * so the "✦ develop this place" affordance degrades HONESTLY (a real,
- * clearly-labelled placeholder suggestion the GM reviews and can dismiss)
- * rather than the route throwing on client construction. Echoes the GM's own
- * vision back as the suggestion. With a key present this is never constructed.
- *
- * FIX 4 (the persona finding this was built to close): `suggestion` is now a
- * CLEAN, minimal echo of the GM's own vision line -- usable-as-is if
- * accepted verbatim, carrying NEITHER the "Offline pass" disclaimer NOR any
- * instruction to set ANTHROPIC_API_KEY. The route (below) stamps the
- * disclaimer onto a separate `offline:true` response flag instead, which the
- * frontend renders as chrome above the suggestion text, never inside it.
- */
-function offlineDevelopDescriptionClient() {
-  return {
-    messages: {
-      create: async ({ messages } = {}) => {
-        const prompt = firstPromptText(messages);
-        const m = /## The GM's own vision for this place, right now\s*\n\n([^\n]*)/.exec(prompt);
-        const vision = (m ? m[1] : "").trim() || "the GM's own vision";
-        const suggestion = vision.charAt(0).toUpperCase() + vision.slice(1) + (/[.!?]$/.test(vision) ? "" : ".");
-        return offlineTextResponse({ suggestion });
-      }
-    }
-  };
-}
-
-/**
- * OFFLINE DETERMINISTIC reskin-suggest client (see POST /api/combat-
- * planning/bestiary/:id/reskin-suggest). Same shape/reasoning as
- * offlineDevelopDescriptionClient above -- used only when no
- * ANTHROPIC_API_KEY is set, so "✦ Wear it as something else" degrades
- * HONESTLY (real, clearly-labelled placeholder suggestions the GM reviews
- * and can accept/dismiss) rather than the route throwing on client
- * construction. Reads the creature's own name straight out of the prompt's
- * "## The creature being reskinned" section rather than inventing one.
- * Returns exactly MIN_RESKIN_SUGGESTIONS (2) suggestions -- combat-planning/
- * reskin-suggest.mjs's own validation requires at least that many. With a
- * key present this is never constructed.
- *
- * FIX 4: `description`/`habitatHint` (the fields reskin-accept persists
- * verbatim into a brand-new bestiary entry) stay clean and disclaimer-free;
- * the route stamps `offline:true` on the response instead (same convention
- * as develop-description above).
- */
-function offlineReskinSuggestClient() {
-  return {
-    messages: {
-      create: async ({ messages } = {}) => {
-        const prompt = firstPromptText(messages);
-        const nameMatch = /## The creature being reskinned\s*\n\n([^\n—]*)/.exec(prompt);
-        const creatureName = (nameMatch ? nameMatch[1] : "").trim() || "this creature";
-        const suggestions = [1, 2].map((n) => ({
-          name: `${creatureName} (variant ${n})`,
-          description: `A reskinned take on ${creatureName}, not yet detailed.`,
-          habitatHint: "Not yet suggested."
-        }));
-        return offlineTextResponse({ suggestions });
-      }
-    }
-  };
-}
-
-/**
- * OFFLINE DETERMINISTIC writeup-import client (see POST /api/writeup-propose,
- * POST /api/scene-planning/scenes|plans/:id/propose-updates -- all three
- * routes ultimately call graph-import/writeup-import.mjs's importWriteup or
- * proposeFramingsFromWriteup with this same injected client). Detects WHICH
- * of the two prompt shapes it's answering by a marker unique to each
- * template (the extraction prompt always renders a "## Source text" section;
- * the framing prompt never does) rather than needing two separate DI seams
- * threaded through importWriteup's own dispatch.
- *
- * FIX 4: the extraction branch returns ZERO entities/edges -- the only
- * HONEST answer for "what did this text contain" without a real model (this
- * project has no non-LLM text-extraction fallback, and inventing placeholder
- * entities from unstructured prose would be actively misleading, not merely
- * unpolished). This still produces a real batch (mutationCount 0), so the
- * route returns 200 with a genuine, honestly-empty result rather than a
- * fabricated one -- the caller sees "nothing extracted (offline)" in the
- * batch summary, never phantom content. The framing branch returns 3 honest,
- * clearly-offline framing sentences (the schema requires exactly 3
- * non-empty strings) -- framings are throwaway UI copy, never persisted as
- * entity content, so no Fix-4 concern applies to them.
- *
- * Marker choice: BOTH prompts/writeup-import.md and prompts/writeup-
- * framing.md render a "## The writeup" section (confirmed by reading both
- * files directly, not assumed), so that heading alone can't distinguish
- * them -- prompts/writeup-import.md's own "## Entities already in this
- * world's graph" section is the one heading unique to the extraction
- * prompt, checked instead.
- */
-function offlineWriteupClient() {
-  return {
-    messages: {
-      create: async ({ messages } = {}) => {
-        const prompt = firstPromptText(messages);
-        if (/^##\s*Entities already in this world's graph/m.test(prompt)) {
-          return offlineTextResponse({ entities: [], edges: [] });
-        }
-        const framings = ["a", "b", "c"].map((id) => ({
-          id,
-          sentence: "Offline pass -- no model configured, so no real interpretation is available yet."
-        }));
-        return offlineTextResponse({ framings });
-      }
-    }
-  };
-}
-
-/**
- * OFFLINE DETERMINISTIC assist-prep client (see POST /api/scene-planning/
- * scenes/:sceneId/assist-prep). Chosen by the ROUTE per its own already-known
- * `mode` (propose-elements / draft-fields / draft-read-aloud) rather than
- * content-sniffing the prompt -- the route already branches on `mode` before
- * calling assistScenePrep, so this is simpler and more honest than a second,
- * regex-based dispatch of the same information.
- *
- * FIX 4: every returned field is clean/disclaimer-free (OFFLINE_CONTENT_PLACEHOLDER,
- * defined above) -- scene-element fields persist directly into the scene-elements
- * store on save, with no separate "rationale" sibling to carry a disclaimer instead.
- */
-function offlineAssistPrepClient(mode, elementName) {
-  return {
-    messages: {
-      create: async () => {
-        if (mode === "draft-read-aloud") {
-          return offlineTextResponse({ narration: OFFLINE_CONTENT_PLACEHOLDER });
-        }
-        const name = mode === "draft-fields" ? (elementName || "Untitled element") : "An unnamed detail";
-        const elements = [{ name, fields: { gives: OFFLINE_CONTENT_PLACEHOLDER } }];
-        return offlineTextResponse({ elements });
-      }
-    }
-  };
-}
-
-/**
- * OFFLINE DETERMINISTIC bestiary-ingest client (see POST /api/combat-
- * planning/bestiary/ingest). RawBestiaryFields requires {name, type, hp, ac}
- * -- an honest, obviously-placeholder stat block (hp/ac deliberately
- * implausible round numbers, not a guessed real value) the GM reviews and
- * edits/discards before it's ever promoted to the graph or used in combat
- * planning (bestiary entries are 'proposed' until an explicit accept).
- */
-function offlineBestiaryIngestClient() {
-  return {
-    messages: {
-      create: async () => offlineTextResponse({
-        name: "Unidentified creature",
-        type: "unknown",
-        hp: 1,
-        ac: 10
-      })
-    }
-  };
-}
-
-/** OFFLINE DETERMINISTIC party-roster-ingest client (see POST /api/combat-planning/party-roster/ingest). RawPartyMemberFields requires only a non-empty `name`; everything else is optional, so an honest placeholder name alone is a fully valid, reviewable proposal. */
-function offlinePartyRosterIngestClient() {
-  return {
-    messages: {
-      create: async () => offlineTextResponse({ name: "Unidentified character" })
-    }
-  };
-}
-
-/**
- * OFFLINE DETERMINISTIC thematic-filter client (see the encounter-suggest
- * pipeline's POST route). Reads every `"entryId": "..."` out of the rendered
- * candidatePoolJson section of the prompt and returns the WHOLE pool
- * unfiltered (never narrows it) -- the honest "no thematic judgment was
- * possible offline" answer, and the only response guaranteed to pass
- * proposeThematicTags' own "never invent an id outside the input pool"
- * validation without seeing the real pool object directly.
- */
-function offlineThematicFilterClient() {
-  return {
-    messages: {
-      create: async ({ messages } = {}) => {
-        const prompt = firstPromptText(messages);
-        const ids = [...prompt.matchAll(/"entryId":\s*"([^"]+)"/g)].map((m) => m[1]);
-        return offlineTextResponse({ filteredEntryIds: ids, rationale: "Offline pass -- no thematic filtering applied; the full candidate pool was passed through unfiltered." });
-      }
-    }
-  };
-}
-
-/** OFFLINE DETERMINISTIC quick-gen client (see POST /api/scene-planning/quick-gen). quickGenerate has no JSON/schema contract at all -- it returns raw model text verbatim -- so the offline body itself must already be the final, clean, disclaimer-free text a caller could use as-is. */
-function offlineQuickGenClient() {
-  return {
-    messages: {
-      create: async () => ({ content: [{ type: "text", text: OFFLINE_CONTENT_PLACEHOLDER }], stop_reason: "end_turn" })
-    }
-  };
-}
-
-/**
- * OFFLINE DETERMINISTIC narration client (see POST .../narrate,
- * .../mutations/:id/narrate, and the standalone entity "Narrate This"
- * route). Narration has no JSON schema -- it's plain prose, persisted
- * verbatim by entity-narration.mjs's saveEntityNarration on success -- so,
- * per Fix 4, the returned text must already be the clean, honest,
- * disclaimer-free body a GM could read at the table as-is (short and
- * plainly a placeholder, never an instruction to configure anything).
- */
-function offlineNarrateClient() {
-  return {
-    messages: {
-      create: async () => ({ content: [{ type: "text", text: OFFLINE_CONTENT_PLACEHOLDER }], stop_reason: "end_turn" })
-    }
-  };
-}
-
-/** OFFLINE DETERMINISTIC scan-mentions client (see POST /api/entities/:id/scan-mentions). MentionsResponse's `mentions` array has no minimum length -- the honest offline answer is "no mentions found," never an invented one. */
-function offlineScanMentionsClient() {
-  return {
-    messages: {
-      create: async () => offlineTextResponse({ mentions: [] })
-    }
-  };
-}
-
-/**
- * A single field's own offline placeholder value, honest to its real zod
- * type (an empty array for an array-typed field -- e.g. every template's
- * shared `potentialRolls` -- OFFLINE_CONTENT_PLACEHOLDER for a string one).
- * Generic over WHICH field, not hardcoded to `potentialRolls` by name, so
- * this stays correct even if a future template adds a second array field.
- */
-function offlinePrepFieldValue(fieldSchema) {
-  return fieldSchema instanceof z.ZodArray ? [] : OFFLINE_CONTENT_PLACEHOLDER;
-}
-
-/**
- * OFFLINE DETERMINISTIC prep-content client (see the "develop this node"
- * propose-framings/reframe/generate/regenerate-field routes). `kind`
- * selects the response shape the ROUTE already knows it's asking for
- * (framing vs. a full field set vs. a single field), same "route already
- * knows, don't content-sniff" reasoning as offlineAssistPrepClient above.
- *
- * `entityType` (required for kind "generate") drives the response OFF THE
- * REAL per-type zod schema (fieldsSchemaForType) -- each of the six
- * templates is `.strict()`, so a generic "fill every field name from every
- * type" response would fail validation for any type whose schema doesn't
- * contain some other type's field. Reading the schema directly means this
- * client can never drift out of sync with a template's real field list,
- * unlike a hand-duplicated field-name list would.
- */
-function offlinePrepContentClient(kind, { fieldName, entityType } = {}) {
-  return {
-    messages: {
-      create: async () => {
-        if (kind === "framing") {
-          const framings = ["a", "b", "c"].map((id) => ({ id, sentence: "Offline pass -- no real framing available without a model." }));
-          return offlineTextResponse({ framings });
-        }
-        if (kind === "field") {
-          const schema = fieldsSchemaForType(entityType);
-          return offlineTextResponse({ value: offlinePrepFieldValue(schema.shape[fieldName]) });
-        }
-        // kind === "generate": every key this entity type's own schema
-        // actually declares, each filled with its own type-honest placeholder.
-        const schema = fieldsSchemaForType(entityType);
-        const fields = {};
-        for (const [key, fieldSchema] of Object.entries(schema.shape)) {
-          fields[key] = offlinePrepFieldValue(fieldSchema);
-        }
-        return offlineTextResponse({ fields });
-      }
-    }
-  };
-}
-
-function chronicleLogPayload(w) {
-  const batches = listBatches(w);
-  const flaggedEntityIds = flaggedEntityIdSet(w);
-  const entries = batches.map((b) => {
-    const run = getChronicleRun(w, b.id);
-    const summary = summarizeBatch(loadBatch(w, b.id), { flaggedEntityIds });
-    return {
-      batchRef: b.id,
-      span: run?.span ?? null,
-      scope: b.scope,
-      fortuneAtRun: run?.fortuneAtRun ?? null,
-      // Phase 37 task 37.5: the history rail's readable title, never a raw
-      // batch id -- null for any batch without a Chronicle-run sidecar
-      // (same real-valid-null convention as span/fortuneAtRun above).
-      promptSummary: run?.promptSummary ?? null,
-      at: b.createdAt,
-      headline: renderHeadline(summary),
-      mutationCount: b.mutationCount,
-      pendingCount: b.pendingCount,
-      acceptedCount: b.acceptedCount,
-      status: b.status
-    };
-  });
-  return { world: w, entries };
-}
+// MCP wave: pendingEntitiesPayload/resolveOrCreateIntentEntity/
+// firstLineTruncated/chronicleLogPayload AND the whole "QA fix-wave W1, Fix
+// 3/Fix 4 -- OFFLINE DEGRADE for every LLM-backed route" block (offlineOpts/
+// isOffline/every offline*Client) moved verbatim to wf-mcp-server/lib/
+// chronicle-ops.mjs and wf-mcp-server/lib/offline-clients.mjs respectively,
+// so wf-mcp-server/index.mjs's MCP tools go through the EXACT SAME code
+// instead of a second, drifting copy -- per gm-tools-conventions' "front-ends
+// are thin wrappers, never logic duplicators." Imported at the top of this
+// file now; grep `offlineOpts(` there for the exhaustive, greppable call-site
+// list (unchanged from before this move).
 
 // ---------------------------------------------------------------------------
 // Phase 7 -- graph data route (task 7.1). Thin composition over EXISTING
@@ -1849,124 +1396,13 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     const dir = resolveDir();
-    const { entities, edges } = loadSnapshot(dir, w).snapshot;
-
-    const scopeKind = body.scopeKind ?? "queued-intents";
-    if (!["queued-intents", "branches", "whole-world"].includes(scopeKind)) {
-      throw new Error(
-        `POST /api/chronicle/run: unknown scopeKind "${scopeKind}" (expected 'queued-intents', 'branches', or 'whole-world').`
-      );
-    }
-
-    // Phase 37 task 37.5 (Russell's pass): the Composer's typed "say what
-    // happens" prompt was previously forwarded to orchestrateBatch ONLY as
-    // GM-note flavor text -- the actual regions came solely from carried
-    // intents/branches/ambient. A queued-intents run with nothing
-    // queued/carried therefore produced a real batch with ZERO regions and
-    // the described event evaporated (four zero-mutation batches from his
-    // session). `promptSummary` (first line, ~80 chars, null when none) is
-    // also the chronicle-run sidecar's readable-rail title (§B below).
-    const promptText = typeof body.prompt === "string" ? body.prompt.trim() : "";
-    const promptSummary = promptText ? firstLineTruncated(promptText, 80) : null;
-
-    // THE single call site permitted to compute this run's elapsedSessions.
-    const clock = advanceWorldClock(w, body.span);
-
-    let scopeSpec;
-    let precomputedDeltas;
-    if (scopeKind === "queued-intents") {
-      // Default scope = queued intents ONLY (the settled decision). Omitting
-      // carriedEntryIds means "everything currently queued"; an explicit
-      // empty array means "carry nothing this pass" -- a real, valid,
-      // distinct no-op run, never silently upgraded to a wider scope.
-      const carriedIds = Array.isArray(body.carriedEntryIds) ? new Set(body.carriedEntryIds) : null;
-      const seeds = [];
-      for (const entityId of listPendingEntities(w)) {
-        for (const entry of readAvailablePending(w, entityId)) {
-          if (carriedIds && !carriedIds.has(entry.entryId)) continue;
-          seeds.push({ entityId, magnitude: Math.min(1, Math.abs(entry.impactScore)) });
-        }
-      }
-      // The typed event is the PRIMARY seed (matches the Composer's own copy,
-      // "Everything checked at left rides along" -- the prompt is what rides,
-      // checked intents ALONG with it). Dedup-or-create via the SAME
-      // machinery POST /api/chronicle/intents uses, then add it as a seed
-      // exactly like a carried intent -- this alone guarantees a described
-      // event always earns >=1 reviewable proposal, even with nothing
-      // queued/carried. `entities` is mutated in place on create so the
-      // texturing pass below sees (and names) the new entity for free.
-      if (promptText) {
-        const snapPath = snapshotFilePath(dir, w);
-        const promptName = firstLineTruncated(promptText, 60);
-        const { entityId: promptEntityId } = resolveOrCreateIntentEntity(snapPath, entities, promptName);
-        seeds.push({ entityId: promptEntityId, magnitude: 1 });
-      }
-      scopeSpec = { mode: "seed", seeds, elapsedSessions: clock.elapsedSessions };
-      // The deferred thread ITSELF is the primary thing a queued-intents pass
-      // must answer -- so each carried entity gets its OWN delta. candidateDeltas'
-      // seed-propagation deliberately skips the epicenter (correct for "an event
-      // ripples outward from here", wrong for "resolve this queued question ABOUT
-      // this entity"), which left an isolated intent producing zero mutations.
-      // We therefore precompute the deltas directly: one seed-propagated delta
-      // per carried entity, clamped to at least the headline-importance floor so
-      // it always earns a real, reviewable proposal. (Folding each intent's own
-      // neighbourhood ripples in on top is a straightforward future addition.)
-      // scope.mjs's own seed-mode resolution throws on an EMPTY seeds[] -- the
-      // empty precomputed array below is the valid "nothing queued/carried" no-op.
-      const byId = new Map();
-      for (const s of seeds) {
-        const ent = findEntity(entities, s.entityId);
-        if (!byId.has(s.entityId)) {
-          byId.set(s.entityId, {
-            kind: "seed-propagated",
-            entityId: s.entityId,
-            impactScore: Math.max(s.magnitude, 0.5),
-            importance: Math.max(0, Math.min(1, ent?.importance ?? 0.3)),
-            needsLLM: true
-          });
-        }
-      }
-      precomputedDeltas = [...byId.values()];
-    } else if (scopeKind === "branches") {
-      const branchIds = Array.isArray(body.branchIds) ? body.branchIds : [];
-      if (!branchIds.length) {
-        throw new Error("POST /api/chronicle/run: scopeKind 'branches' requires a non-empty branchIds[].");
-      }
-      precomputedDeltas = resolveBranchesDeltas({ entities, edges }, branchIds, { elapsedSessions: clock.elapsedSessions });
-      scopeSpec = { mode: "branches", branchIds, elapsedSessions: clock.elapsedSessions };
-    } else {
-      scopeSpec = { mode: "ambient", elapsedSessions: clock.elapsedSessions };
-    }
-
-    const fortune = getFortune(w);
-    const result = await orchestrateBatch(w, scopeSpec, body.prompt, {
-      entities,
-      edges,
-      ...(precomputedDeltas !== undefined ? { precomputedDeltas } : {}),
-      fortuneBias: fortune.bias,
-      fortuneLabel: fortune.stopId,
-      nudgeTags: Array.isArray(body.tags) ? body.tags : [],
-      // OFFLINE DETERMINISTIC MODE: with no ANTHROPIC_API_KEY configured, the
-      // texture pass would otherwise throw the moment it tried to construct an
-      // Anthropic client. Rather than making the Chronicle unusable (and its
-      // e2e untestable) without a key, inject a deterministic client that
-      // emits ONE honest, clearly-labelled placeholder edit per region -- a
-      // real, reviewable proposal the GM can accept or reject. With a key
-      // present this branch never fires and the real orchestrator (37.1's
-      // path) runs byte-for-byte unchanged.
-      ...(process.env.ANTHROPIC_API_KEY ? {} : { textureOpts: { client: offlineTextureClient(fortune.stopId) } })
-    });
-
-    recordChronicleRun(w, result.batchId, { span: body.span, fortuneAtRun: fortune.stopId, elapsedSessions: clock.elapsedSessions, promptSummary });
-
-    return sendJson(res, 200, {
-      batchId: result.batchId,
-      mutationCount: result.mutationCount,
-      headline: result.headline,
-      clock: { currentDate: clock.currentDate, sessionNumber: clock.sessionNumber, elapsedSessions: clock.elapsedSessions },
-      fortuneAtRun: fortune.stopId,
-      scopeKind
-    });
+    // MCP wave: the full composition (scope resolution, THE single
+    // advanceWorldClock call, prompt-as-seed, offline-safe texturing) now
+    // lives in wf-mcp-server/lib/chronicle-ops.mjs's runChronicleOp -- shared
+    // verbatim with wf-mcp-server/index.mjs's wf_chronicle_run tool. See that
+    // module's own doc comment for the full pinned contract.
+    const result = await runChronicleOp(dir, w, body);
+    return sendJson(res, 200, result);
   }
 
   // POST /api/chronicle/intents  { world, name, note?, tags? }
@@ -1984,35 +1420,11 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     const dir = resolveDir();
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    if (!name) throw new Error("POST /api/chronicle/intents: `name` is required (the intent's subject).");
-    // QA W2 fix (Group B #12): same cap as wf-mcp-server/lib/manual-edit-ops.mjs's
-    // MAX_NAME_LENGTH (kept in step deliberately, not re-derived).
-    if (name.length > 200) throw new Error("POST /api/chronicle/intents: `name` must be 200 characters or fewer.");
-
-    const snapPath = snapshotFilePath(dir, w);
-    const { entities } = loadSnapshot(dir, w).snapshot;
-    // Dedup-or-create: SHARED with POST /api/chronicle/run's prompt-seed
-    // (Phase 37 task 37.5) via resolveOrCreateIntentEntity -- see its own
-    // doc comment for the (deliberately simple, v1) case-insensitive
-    // exact-name matcher rationale.
-    const { entityId, entityType } = resolveOrCreateIntentEntity(snapPath, entities, name);
-
-    writePending(w, entityId, {
-      causeTag: typeof body.note === "string" && body.note.trim() ? body.note.trim() : "Added by hand.",
-      impactScore: 0.4,
-      sourceBatchId: "manual",
-      cycleDescriptor: "Manual",
-      status: "pending",
-      ...(Array.isArray(body.tags) ? { tags: body.tags } : {})
-    });
-
-    return sendJson(res, 200, {
-      entityId,
-      name,
-      type: entityType,
-      entries: readAvailablePending(w, entityId)
-    });
+    // MCP wave: the dedup-or-create + writePending composition now lives in
+    // wf-mcp-server/lib/chronicle-ops.mjs's queueIntentOp -- shared verbatim
+    // with wf-mcp-server/index.mjs's wf_queue_intent tool.
+    const result = queueIntentOp(dir, w, body);
+    return sendJson(res, 200, result);
   }
 
   // POST /api/pending-entities/:entityId/resolve  { world, dataDir, depth, maxNeighbors, elapsedTimeDescriptor }
@@ -3715,91 +3127,17 @@ async function handleApi(req, res, url, parts) {
   if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "tray" && parts[5] === "drop") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
+    const dir = resolveDir();
     const sceneId = parts[3];
-    const { kind, id } = body;
-
-    // QA W2 fix (Group A #4): a missing `id` used to fall straight through
-    // into getBestiaryEntry(undefined), surfacing a confusing "No bestiary
-    // entry found: \"undefined\"" 404 instead of a clear validation error --
-    // this is a genuinely malformed request (400), not an unresolvable id.
-    if (!id) {
-      throw new Error("id is required");
-    }
-
-    if (kind === "creature") {
-      const entry = getBestiaryEntry(id); // throws "No bestiary entry found" -> 404
-      const before = getSceneTray(w, sceneId);
-      const alreadyInRoster = before.roster.some((r) => r.id === id && r.kind === "creature");
-      let element = null;
-      if (!alreadyInRoster) {
-        // Phase 37.6b unlock: a bestiary entry carrying a real graph link
-        // (promoted via "Promote to a named world figure") attaches through
-        // the from-graph flow -- a REAL kind:'graph' element -- instead of
-        // the local+stat path below, per phase35-fixture.mjs §7's own
-        // forward-compatible pin ("the 'graph-node creatures reuse
-        // attachExistingNodeAsElement' branch... is FORWARD-COMPATIBLE
-        // PLUMBING ONLY this phase" -- 37.6b is that future phase). The stat
-        // still populates (attachExistingNodeAsElement's additive `stat`
-        // param, same statFromBestiaryRawFields projection as the local
-        // path uses) -- a graph-linked creature drop is not a downgrade.
-        if (entry.graphEntityId) {
-          const dir = resolveDir();
-          element = await attachExistingNodeAsElement(dir, w, sceneId, entry.graphEntityId, {
-            name: entry.rawFields?.name ?? undefined,
-            stat: statFromBestiaryRawFields(entry)
-          });
-        } else {
-          const existingElement = listElementsForScene(w, sceneId).find((e) => e.fields?.bestiaryEntryId === id);
-          if (existingElement) {
-            element = existingElement;
-          } else {
-            element = createElement(w, sceneId, {
-              name: entry.rawFields?.name ?? "Unnamed Creature",
-              kind: "local",
-              fields: { bestiaryEntryId: id },
-              stat: statFromBestiaryRawFields(entry)
-            });
-          }
-        }
-      }
-      const result = addToSceneTray(w, sceneId, { id, kind }, {});
-      // Phase 36 task 36.2, §3 -- UNCONDITIONAL on every successful drop of
-      // every kind, including a creature's SECOND+ drop (roster-stacking
-      // only, no new element) -- any tray-roster change is itself a
-      // "this scene's ready-to-run content changed" event.
-      touchSceneSafely(w, sceneId);
-      return sendJson(res, 200, { ...result, element });
-    }
-
-    if (kind === "hero") {
-      getPartyMember(w, id); // throws "No party member found" -> 404
-      const result = addToSceneTray(w, sceneId, { id, kind }, {});
-      touchSceneSafely(w, sceneId); // Phase 36 task 36.2, §3
-      return sendJson(res, 200, { ...result, element: null });
-    }
-
-    if (kind === "asset") {
-      // §7's own pin: resolves item-store-first, then stagecraft-store.
-      let resolved = false;
-      try {
-        getItem(w, id);
-        resolved = true;
-      } catch { /* fall through to stagecraft-store */ }
-      if (!resolved) {
-        try {
-          getStagecraftAsset(w, id);
-          resolved = true;
-        } catch { /* neither store has it -- 404 below */ }
-      }
-      if (!resolved) {
-        throw new Error(`No asset found: world="${w}" id="${id}"`);
-      }
-      const result = addToSceneTray(w, sceneId, { id, kind }, {});
-      touchSceneSafely(w, sceneId); // Phase 36 task 36.2, §3
-      return sendJson(res, 200, { ...result, element: null });
-    }
-
-    throw new Error(`Unknown scene tray drop kind: "${kind}" -- expected "creature"|"hero"|"asset"`);
+    // MCP wave: the full creature/hero/asset composition now lives in
+    // wf-mcp-server/lib/planner-ops.mjs's sceneTrayDropOp -- shared verbatim
+    // with wf-mcp-server/index.mjs's wf_tray_drop tool. touchSceneSafely
+    // (recency bump + Phase 36 task 36.2 §3's quiet-push flush trigger)
+    // stays HERE at the route layer -- see that module's own header comment
+    // for why it's not part of the shared op.
+    const result = await sceneTrayDropOp(dir, w, sceneId, { kind: body.kind, id: body.id });
+    touchSceneSafely(w, sceneId);
+    return sendJson(res, 200, result);
   }
 
   // DELETE /api/scene-planning/scenes/:sceneId/tray/:kind/:id   {world}   -> {roster, xpBudget}

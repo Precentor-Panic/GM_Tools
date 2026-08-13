@@ -95,7 +95,76 @@ import {
 // lib/foundry-pull-ops.mjs's own header comment for the full contract.
 import { pullFoundryActorsToStores } from "./lib/foundry-pull-ops.mjs";
 
+// ======================================================================================
+// MCP wave -- Session Planner / Library / Chronicle parity tools, plus
+// keyless-safety wiring for every LLM-backed tool above. All of the imports
+// below reuse the SAME store/lib modules review-ui/server.mjs's HTTP routes
+// call -- mirroring route semantics, never forking logic (per
+// gm-tools-conventions). See each tool's own registerTool block further
+// down for the specific route it mirrors.
+// ======================================================================================
+
+// Session Planner: plans/scenes/elements/tray -- the direct working-state
+// stores behind /api/scene-planning/* and /api/session-planner/scenes*.
+import { createScene, getScene, listScenesForWorld, listScenesByRecency, updateScene, touchScene } from "../session-planner/scenes.mjs";
+import { createPlan, getPlan, listPlansForWorld, addSceneToPlan, reorderPlanScenes, renamePlan } from "../session-planner/plans.mjs";
+import { createElement, listElementsForScene, updateElement } from "../session-planner/scene-elements.mjs";
+import { getSceneTray, removeFromSceneTray, setSceneTrayXpBudget } from "../session-planner/scene-tray.mjs";
+import { getCurrentSceneNarration } from "../session-planner/scene-narration.mjs";
+// The scene-tray "drop" composition (creature/hero/asset resolution +
+// stat-carrying element dedup) -- shared verbatim with review-ui/server.mjs's
+// POST .../tray/drop route. See that module's own header comment for why
+// review-ui's own touchSceneSafely (recency bump + background Foundry-push
+// flush scheduling) is deliberately NOT part of this shared op.
+import { sceneTrayDropOp } from "./lib/planner-ops.mjs";
+
+// Library: bestiary (library-wide, no world concept)/party-roster/items/
+// stagecraft (incl. compendiumRef/catalogRef browse rows -- listStagecraftAssets
+// already returns everything, no separate catalog-browse function exists).
+import { listBestiaryEntries, getBestiaryEntry, saveBestiaryEntry, acceptBestiaryEntry, updateBestiaryEntryNote } from "../combat-planning/bestiary-store.mjs";
+import { listPartyMembers, savePartyMember } from "../combat-planning/party-roster-store.mjs";
+import { listItems, saveItem } from "../combat-planning/item-store.mjs";
+import { listStagecraftAssets, saveStagecraftAsset } from "../session-planner/stagecraft-store.mjs";
+
+// Chronicle: world-clock/fortune/log/pending-intents (reads) + chronicle-run/
+// queue-intent (mutations, both mirroring review-ui/server.mjs's own
+// /api/chronicle/* composition via wf-mcp-server/lib/chronicle-ops.mjs).
+import { getWorldClock } from "../session-planner/world-clock.mjs";
+import { getFortune, setFortune } from "../session-planner/fortune-track.mjs";
+import { chronicleLogPayload, pendingEntitiesPayload, runChronicleOp, queueIntentOp } from "./lib/chronicle-ops.mjs";
+
+// Keyless safety: the SAME offline-degrade infrastructure review-ui/server.mjs's
+// HTTP routes have used since the QA fix-wave, now shared here too -- every
+// LLM-backed tool below (existing and new) passes `offlineOpts(...)` so a
+// wf-mcp-server process with no ANTHROPIC_API_KEY in ITS OWN environment
+// degrades to an honest, clearly-labelled placeholder instead of crashing on
+// the raw Anthropic SDK's own construction-time "Could not resolve
+// authentication method" error. See that module's own header comment.
+import {
+  offlineOpts,
+  isOffline,
+  offlineTextureClient,
+  offlineWriteupClient,
+  offlineNarrateClient,
+  offlinePrepContentClient
+} from "./lib/offline-clients.mjs";
+
 const server = new McpServer({ name: "world-fabric", version: "0.1.0" });
+
+// Multi-world safety (hard requirement -- Russell runs multiple worlds at
+// once, e.g. an ongoing campaign + a separate one-shot): every NEW tool
+// below requires `world` explicitly (z.string(), not .optional()) rather
+// than following the pre-existing worldParam convention's silent fallback
+// to WF_DEFAULT_WORLD. This is a deliberate, narrower-than-precedent schema
+// for this wave's tools only -- see the MCP-wave report for why. Bestiary
+// tools are the one deliberate exception (no `world` param AT ALL) --
+// bestiary-store.mjs is library-wide, not world-scoped, mirroring
+// GET /api/combat-planning/bestiary's own documented "no world parameter"
+// convention exactly.
+const requiredWorldParam = z.string().min(1).describe(
+  "World ID (Foundry world folder name) -- REQUIRED. This server never silently defaults across worlds for this " +
+  "tool, even if WF_DEFAULT_WORLD happens to be set. Call wf_list_worlds first if unsure which id to use."
+);
 
 const worldParam = z.string().optional().describe(
   "World ID (Foundry world folder name). Defaults to WF_DEFAULT_WORLD env var if set. " +
@@ -384,7 +453,15 @@ server.registerTool(
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
       const { entities, edges } = loadSnapshot(dir, w).snapshot;
-      const result = await orchestrateBatch(w, scope, elapsedTimeDescriptor, { entities, edges, seeds });
+      // Keyless safety: degrades to offlineTextureClient (one honest
+      // placeholder edit per region) when ANTHROPIC_API_KEY is not set in
+      // this server process's own environment -- see lib/offline-clients.mjs.
+      const result = await orchestrateBatch(w, scope, elapsedTimeDescriptor, {
+        entities,
+        edges,
+        seeds,
+        textureOpts: offlineOpts(() => offlineTextureClient("unspecified"))
+      });
       return text(result);
     } catch (err) {
       return errorText(err);
@@ -429,7 +506,8 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
-      const result = await proposeFromWriteupOp(dir, w, { text: writeupText, mode });
+      // Keyless safety -- see lib/offline-clients.mjs.
+      const result = await proposeFromWriteupOp(dir, w, { text: writeupText, mode }, { llmOpts: offlineOpts(offlineWriteupClient) });
       return text(result);
     } catch (err) {
       return errorText(err);
@@ -480,14 +558,15 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
+      // Keyless safety -- see lib/offline-clients.mjs.
       if (batchId) {
-        const result = await selectFramingForExistingBatch(dir, w, { batchId, framings, selection });
+        const result = await selectFramingForExistingBatch(dir, w, { batchId, framings, selection }, { llmOpts: offlineOpts(offlineWriteupClient) });
         return text(result);
       }
       if (!writeupText) {
         throw new Error("wf_select_framing requires either `batchId` (re-framing an existing batch) or `writeupText` (a first framing pick).");
       }
-      const result = await selectFramingForNewBatch(dir, w, { writeupText, mode, framings, selection, rubberDuck });
+      const result = await selectFramingForNewBatch(dir, w, { writeupText, mode, framings, selection, rubberDuck }, { llmOpts: offlineOpts(offlineWriteupClient) });
       return text(result);
     } catch (err) {
       return errorText(err);
@@ -690,7 +769,13 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
-      const result = await regenerateOp(dir, w, { batchId, scope, id, note });
+      // Keyless safety -- both opts are passed unconditionally; regenerateOp
+      // itself dispatches to whichever one its batch's sourceKind actually
+      // needs (writeup-import vs. texture) -- see lib/offline-clients.mjs.
+      const result = await regenerateOp(dir, w, { batchId, scope, id, note }, {
+        writeupOpts: { llmOpts: offlineOpts(offlineWriteupClient) },
+        textureOpts: offlineOpts(() => offlineTextureClient("regenerated"))
+      });
       return text(result);
     } catch (err) {
       return errorText(err);
@@ -760,7 +845,8 @@ server.registerTool(
   async ({ world, batchId, note }) => {
     try {
       const w = resolveWorld(world);
-      const result = await narrateOp(w, { batchId, note });
+      // Keyless safety -- see lib/offline-clients.mjs.
+      const result = await narrateOp(w, { batchId, note }, offlineOpts(offlineNarrateClient));
       return text(result);
     } catch (err) {
       return errorText(err);
@@ -813,7 +899,8 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
-      const result = await narrateEntityOp(dir, w, { batchId, mutationId, note });
+      // Keyless safety -- see lib/offline-clients.mjs.
+      const result = await narrateEntityOp(dir, w, { batchId, mutationId, note }, offlineOpts(offlineNarrateClient));
       return text(result);
     } catch (err) {
       return errorText(err);
@@ -900,7 +987,8 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
-      const result = await proposePrepFramingsOp(dir, w, { entityId });
+      // Keyless safety -- see lib/offline-clients.mjs.
+      const result = await proposePrepFramingsOp(dir, w, { entityId }, offlineOpts(() => offlinePrepContentClient("framing")));
       return text(result);
     } catch (err) {
       return errorText(err);
@@ -930,7 +1018,8 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
-      const result = await reframePrepFramingsOp(dir, w, { entityId, priorRoundCount });
+      // Keyless safety -- see lib/offline-clients.mjs.
+      const result = await reframePrepFramingsOp(dir, w, { entityId, priorRoundCount }, offlineOpts(() => offlinePrepContentClient("framing")));
       return text(result);
     } catch (err) {
       return errorText(err);
@@ -970,7 +1059,12 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
-      const result = await generatePrepContentOp(dir, w, { entityId, selection });
+      // Keyless safety -- entityType is read for the offline client's
+      // per-type placeholder shape ONLY when actually offline (mirrors
+      // review-ui/server.mjs's own entityTypeForOffline convention). See
+      // lib/offline-clients.mjs.
+      const entityTypeForOffline = isOffline() ? findEntity(loadSnapshot(dir, w).snapshot.entities, entityId)?.type : null;
+      const result = await generatePrepContentOp(dir, w, { entityId, selection }, offlineOpts(() => offlinePrepContentClient("generate", { entityType: entityTypeForOffline })));
       return text(result);
     } catch (err) {
       return errorText(err);
@@ -1066,7 +1160,9 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
-      const result = await regeneratePrepFieldOp(dir, w, { entityId, fieldName, note });
+      // Keyless safety -- see lib/offline-clients.mjs.
+      const entityTypeForOffline = isOffline() ? findEntity(loadSnapshot(dir, w).snapshot.entities, entityId)?.type : null;
+      const result = await regeneratePrepFieldOp(dir, w, { entityId, fieldName, note }, offlineOpts(() => offlinePrepContentClient("field", { fieldName, entityType: entityTypeForOffline })));
       return text(result);
     } catch (err) {
       return errorText(err);
@@ -1220,10 +1316,11 @@ server.registerTool(
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
       const { entities, edges } = loadSnapshot(dir, w).snapshot;
+      // Keyless safety -- see lib/offline-clients.mjs.
       const result = await orchestrateCycle(
         w,
         { cycleScope, headlineAnchorId, headlineDepth, elapsedTimeDescriptor, cycleDescriptor },
-        { entities, edges, growthBoundThreshold }
+        { entities, edges, growthBoundThreshold, textureOpts: offlineOpts(() => offlineTextureClient("unspecified")) }
       );
       return text(result);
     } catch (err) {
@@ -1268,7 +1365,13 @@ server.registerTool(
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
       const { entities, edges } = loadSnapshot(dir, w).snapshot;
-      const result = await resolvePending(w, entityId, { depth, maxNeighbors }, { entities, edges, elapsedTimeDescriptor });
+      // Keyless safety -- see lib/offline-clients.mjs.
+      const result = await resolvePending(w, entityId, { depth, maxNeighbors }, {
+        entities,
+        edges,
+        elapsedTimeDescriptor,
+        textureOpts: offlineOpts(() => offlineTextureClient("resolved-pending"))
+      });
       return text(result);
     } catch (err) {
       return errorText(err);
@@ -1303,6 +1406,765 @@ server.registerTool(
       const w = resolveWorld(world);
       const result = pullFoundryActorsToStores(dir, w);
       return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// ======================================================================================
+// MCP wave -- Session Planner / Library / Chronicle parity tools. Agents can
+// already work the graph/review/prep/writeup surface above; the tools below
+// give an attached agent the SAME reach into the Session Planner (scenes/
+// plans/elements/tray), the Library (bestiary/party/items/stagecraft), and
+// the Chronicle (clock/fortune/intents/runs) that the review-ui app itself
+// has -- so Russell + a Claude agent can co-plan a session THROUGH the tool,
+// not just narrate around its edges.
+//
+// Every tool below reuses the SAME store/lib module review-ui/server.mjs's
+// matching HTTP route calls (mirroring route semantics, never forking
+// logic) -- see each tool's description for which route it mirrors, and
+// wf-mcp-server/lib/chronicle-ops.mjs / lib/planner-ops.mjs for the two
+// pieces of route composition logic that were extracted out to a shared
+// module so both front-ends call the exact same code.
+//
+// RECONCILED, not duplicated: the task brief called for a "wf_receive_information"
+// prose-intake tool ("writeup text -> importWriteup, both rubber-duck
+// phases"). wf_propose_from_writeup (above) already does exactly this --
+// off mode it returns a normal batch, rubber-duck-on mode returns
+// {phase:'framing', framings, writeupText, mode, rubberDuck} for the caller
+// to pick from -- and wf_select_framing (above) is already the framing-pick
+// companion tool the brief asked to confirm exists. Nothing was added here;
+// prose intake for an attached agent IS wf_propose_from_writeup.
+// ======================================================================================
+
+// --- Session Planner: reads --------------------------------------------------------
+
+server.registerTool(
+  "wf_list_plans",
+  {
+    title: "List every Plan for a world",
+    description:
+      "READ. Mirrors GET /api/scene-planning/plans -- session-planner/plans.mjs's listPlansForWorld(), in creation " +
+      "(append) order. [] for a world with no plans yet (never a 404 -- a world only ever exists as an on-disk " +
+      "store file, so 'no rows yet' and 'unknown world' are indistinguishable at the storage layer).",
+    inputSchema: { world: requiredWorldParam }
+  },
+  async ({ world }) => {
+    try {
+      const w = resolveWorld(world);
+      return text({ plans: listPlansForWorld(w) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_get_plan",
+  {
+    title: "Get one Plan by id",
+    description: "READ. Mirrors GET /api/scene-planning/plans/:planId -- session-planner/plans.mjs's getPlan(). Throws a clear error if not found.",
+    inputSchema: { world: requiredWorldParam, planId: z.string() }
+  },
+  async ({ world, planId }) => {
+    try {
+      const w = resolveWorld(world);
+      return text({ plan: getPlan(w, planId) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_list_scenes",
+  {
+    title: "List every Scene for a world",
+    description:
+      "READ. Mirrors GET /api/session-planner/scenes[?sort=recency] -- session-planner/scenes.mjs's " +
+      "listScenesForWorld() (creation order) or listScenesByRecency() (`recency:true` -- most-recently-touched " +
+      "first, the same ordering the Session Planner UI's own scene list defaults to).",
+    inputSchema: { world: requiredWorldParam, recency: z.boolean().optional().describe("true -- most-recently-touched first. Default false (creation order).") }
+  },
+  async ({ world, recency }) => {
+    try {
+      const w = resolveWorld(world);
+      return text({ scenes: recency ? listScenesByRecency(w) : listScenesForWorld(w) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_get_scene",
+  {
+    title: "Get one Scene, fully composed: record + elements + tray + narration",
+    description:
+      "READ. Composes FOUR existing reads into one call for planning convenience (session-planner/scenes.mjs's " +
+      "getScene, scene-elements.mjs's listElementsForScene, scene-tray.mjs's getSceneTray, scene-narration.mjs's " +
+      "getCurrentSceneNarration) -- the same four pieces the Session Planner UI's own scene page renders together, " +
+      "no HTTP route composes them into one response today. `scene` throws a clear error if the id doesn't exist; " +
+      "`elements`/`tray`/`narration` degrade gracefully (empty roster / null narration) rather than erroring.",
+    inputSchema: { world: requiredWorldParam, sceneId: z.string() }
+  },
+  async ({ world, sceneId }) => {
+    try {
+      const w = resolveWorld(world);
+      const scene = getScene(w, sceneId);
+      const elements = listElementsForScene(w, sceneId);
+      const tray = getSceneTray(w, sceneId);
+      const narration = getCurrentSceneNarration(w, sceneId);
+      return text({ scene, elements, tray, narration });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_get_scene_elements",
+  {
+    title: "List a Scene's ordered elements",
+    description: "READ. Mirrors GET /api/scene-planning/scenes/:sceneId/elements -- session-planner/scene-elements.mjs's listElementsForScene(). [] if none.",
+    inputSchema: { world: requiredWorldParam, sceneId: z.string() }
+  },
+  async ({ world, sceneId }) => {
+    try {
+      const w = resolveWorld(world);
+      return text({ elements: listElementsForScene(w, sceneId) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- Session Planner: direct working-state mutations (like the UI) ------------------
+// GATE POSTURE for every tool in this block: NONE -- these write directly,
+// same as the review-ui frontend's own scene/plan/element/tray forms do.
+// This is planner SCRATCH-SPACE (session prep the GM is actively drafting),
+// not world canon -- it never touches the World Fabric graph except via the
+// two explicit graph-linking ops (promote/from-graph, not exposed here --
+// see manual-edit-ops.mjs's own header comment for why those stay UI-only)
+// or a scene's own optional locationEntityId reference.
+
+server.registerTool(
+  "wf_create_plan",
+  {
+    title: "Create a new Plan",
+    description: "MUTATION -- direct write, no review gate (planner scratch-space). Mirrors POST /api/scene-planning/plans. `sceneIds` starts empty.",
+    inputSchema: { world: requiredWorldParam, name: z.string().optional() }
+  },
+  async ({ world, name }) => {
+    try {
+      const w = resolveWorld(world);
+      return text({ plan: createPlan(w, { name }) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_rename_plan",
+  {
+    title: "Rename a Plan",
+    description: "MUTATION -- direct write, no review gate. Mirrors POST /api/scene-planning/plans/:planId/rename.",
+    inputSchema: { world: requiredWorldParam, planId: z.string(), name: z.string().nullable() }
+  },
+  async ({ world, planId, name }) => {
+    try {
+      const w = resolveWorld(world);
+      return text({ plan: renamePlan(w, planId, name) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_add_scene_to_plan",
+  {
+    title: "Add an existing Scene to a Plan",
+    description: "MUTATION -- direct write, no review gate. Mirrors POST /api/scene-planning/plans/:planId/scenes. Appends; use wf_reorder_plan to resequence.",
+    inputSchema: { world: requiredWorldParam, planId: z.string(), sceneId: z.string() }
+  },
+  async ({ world, planId, sceneId }) => {
+    try {
+      const w = resolveWorld(world);
+      return text({ plan: addSceneToPlan(w, planId, sceneId) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_reorder_plan",
+  {
+    title: "Reorder a Plan's scenes",
+    description:
+      "MUTATION -- direct write, no review gate. Mirrors POST /api/scene-planning/plans/:planId/reorder. " +
+      "`sceneIds` must be a permutation of the plan's CURRENT sceneIds -- throws a clear error otherwise (not a " +
+      "silent partial reorder).",
+    inputSchema: { world: requiredWorldParam, planId: z.string(), sceneIds: z.array(z.string()) }
+  },
+  async ({ world, planId, sceneIds }) => {
+    try {
+      const w = resolveWorld(world);
+      return text({ plan: reorderPlanScenes(w, planId, sceneIds) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_create_scene",
+  {
+    title: "Create a new Scene",
+    description:
+      "MUTATION -- direct write, no review gate. Mirrors POST /api/session-planner/scenes. If `locationEntityId` " +
+      "is given and it resolves to an existing graph entity, that entity MUST be type 'place' -- rejected with a " +
+      "clear error otherwise (an unknown id is allowed through unchanged, same as the route: the guard only fires " +
+      "when the entity actually exists with a non-place type).",
+    inputSchema: {
+      world: requiredWorldParam,
+      dataDir: dataDirParam,
+      name: z.string().optional(),
+      locationEntityId: z.string().optional().describe("Must reference a 'place'-type graph entity if it resolves to an existing one."),
+      objectiveNote: z.string().optional()
+    }
+  },
+  async ({ world, dataDir, name, locationEntityId, objectiveNote }) => {
+    try {
+      const w = resolveWorld(world);
+      if (locationEntityId) {
+        const dir = resolveDir(dataDir);
+        const { entities } = loadSnapshot(dir, w).snapshot;
+        const locationEntity = findEntity(entities, locationEntityId);
+        if (locationEntity && locationEntity.type !== "place") {
+          throw new Error(`Scene locationEntityId "${locationEntityId}" must reference a "place" entity (found type "${locationEntity.type}").`);
+        }
+      }
+      return text({ scene: createScene(w, { locationEntityId, objectiveNote, name }) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_update_scene",
+  {
+    title: "Patch a Scene's name/objective",
+    description: "MUTATION -- direct write, no review gate. Mirrors POST /api/session-planner/scenes/:sceneId (patch-style -- only supplied fields change).",
+    inputSchema: { world: requiredWorldParam, sceneId: z.string(), name: z.string().optional(), objectiveNote: z.string().optional() }
+  },
+  async ({ world, sceneId, name, objectiveNote }) => {
+    try {
+      const w = resolveWorld(world);
+      return text({ scene: updateScene(w, sceneId, { name, objectiveNote }) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_add_scene_element",
+  {
+    title: "Add an element (prop/NPC/detail) to a Scene",
+    description:
+      "MUTATION -- direct write, no review gate. Mirrors POST /api/scene-planning/scenes/:sceneId/elements. " +
+      "`kind` defaults to 'local' (a scene-scoped detail, not a graph node). `stat` lets a create call carry an " +
+      "already-open stat block in one shot (e.g. dropping in an NPC/creature with hp/ac/cr).",
+    inputSchema: {
+      world: requiredWorldParam,
+      sceneId: z.string(),
+      name: z.string(),
+      kind: z.enum(["local", "graph"]).optional(),
+      fields: z.record(z.string(), z.any()).optional(),
+      stat: z.record(z.string(), z.any()).optional()
+    }
+  },
+  async ({ world, sceneId, name, kind, fields, stat }) => {
+    try {
+      const w = resolveWorld(world);
+      return text({ element: createElement(w, sceneId, { name, kind, fields, stat }) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_update_scene_element",
+  {
+    title: "Patch a Scene element, including its stat block",
+    description:
+      "MUTATION -- direct write, no review gate. Mirrors POST /api/scene-planning/scenes/:sceneId/elements/:elementId. " +
+      "Only supplied fields change; `stat` SHALLOW-MERGES onto the element's existing stat object (does not replace it wholesale).",
+    inputSchema: {
+      world: requiredWorldParam,
+      sceneId: z.string(),
+      elementId: z.string(),
+      name: z.string().optional(),
+      fields: z.record(z.string(), z.any()).optional(),
+      stat: z.record(z.string(), z.any()).optional()
+    }
+  },
+  async ({ world, sceneId, elementId, name, fields, stat }) => {
+    try {
+      const w = resolveWorld(world);
+      return text({ element: updateElement(w, sceneId, elementId, { name, fields, stat }) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_tray_drop",
+  {
+    title: "Drop a creature/hero/asset into a Scene's tray",
+    description:
+      "MUTATION -- direct write, no review gate. Mirrors POST /api/scene-planning/scenes/:sceneId/tray/drop " +
+      "(wf-mcp-server/lib/planner-ops.mjs's sceneTrayDropOp -- shared verbatim with that route). A 'creature' " +
+      "drop's FIRST occurrence creates/reuses a stat-carrying scene element (dedup'd against the same bestiary " +
+      "entry); a repeat drop only stacks the roster count. 'hero'/'asset' drops are display-only -- the roster row " +
+      "itself is the link, no scene element is created. An unresolvable id for the given kind throws a clear error. " +
+      "`kind:'asset'` resolves item-store first, then stagecraft-store.",
+    inputSchema: {
+      world: requiredWorldParam,
+      dataDir: dataDirParam,
+      sceneId: z.string(),
+      kind: z.enum(["creature", "hero", "asset"]),
+      id: z.string().describe("bestiaryEntryId (creature) / partyMemberId (hero) / itemId or stagecraftAssetId (asset).")
+    }
+  },
+  async ({ world, dataDir, sceneId, kind, id }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const result = await sceneTrayDropOp(dir, w, sceneId, { kind, id });
+      try { touchScene(w, sceneId); } catch { /* best-effort recency bump only -- see planner-ops.mjs's header comment */ }
+      return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_tray_remove",
+  {
+    title: "Remove a roster row from a Scene's tray",
+    description: "MUTATION -- direct write, no review gate. Mirrors DELETE /api/scene-planning/scenes/:sceneId/tray/:kind/:id. Idempotent -- removing an already-absent row is a safe no-op.",
+    inputSchema: { world: requiredWorldParam, sceneId: z.string(), kind: z.enum(["creature", "hero", "asset"]), id: z.string() }
+  },
+  async ({ world, sceneId, kind, id }) => {
+    try {
+      const w = resolveWorld(world);
+      const result = removeFromSceneTray(w, sceneId, kind, id);
+      try { touchScene(w, sceneId); } catch { /* best-effort recency bump only */ }
+      return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_set_xp_budget",
+  {
+    title: "Set a Scene tray's XP budget",
+    description: "MUTATION -- direct write, no review gate. Mirrors POST /api/scene-planning/scenes/:sceneId/tray/budget.",
+    inputSchema: { world: requiredWorldParam, sceneId: z.string(), xpBudget: z.number().nullable() }
+  },
+  async ({ world, sceneId, xpBudget }) => {
+    try {
+      const w = resolveWorld(world);
+      const result = setSceneTrayXpBudget(w, sceneId, xpBudget);
+      try { touchScene(w, sceneId); } catch { /* best-effort recency bump only */ }
+      return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- Library: reads -------------------------------------------------------------------
+
+server.registerTool(
+  "wf_list_bestiary",
+  {
+    title: "List bestiary entries (library-wide -- no world)",
+    description:
+      "READ. Mirrors GET /api/combat-planning/bestiary -- combat-planning/bestiary-store.mjs's listBestiaryEntries(). " +
+      "DELIBERATELY NO `world` PARAMETER: the bestiary is a library-wide shelf, not world-scoped (bestiary-store.mjs's " +
+      "own storage decision) -- do not pass one, it wouldn't be honored. Client-side filters (not a store-level " +
+      "feature): `status` ('proposed'|'accepted'|'discarded') and `source` (the entry's own derived sourcePill, " +
+      "e.g. 'mine'|'foundry'|'reskin').",
+    inputSchema: {
+      status: z.enum(["proposed", "accepted", "discarded"]).optional(),
+      source: z.string().optional().describe("Filters on the entry's own deriveSourcePill value, e.g. 'mine', 'foundry', 'reskin'.")
+    }
+  },
+  async ({ status, source }) => {
+    try {
+      let entries = listBestiaryEntries();
+      if (status) entries = entries.filter((e) => e.status === status);
+      if (source) entries = entries.filter((e) => e.sourcePill === source);
+      return text({ entries });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_get_bestiary_entry",
+  {
+    title: "Get one bestiary entry (library-wide -- no world)",
+    description: "READ. Mirrors the bestiary entry lookup combat-planning/bestiary-store.mjs's getBestiaryEntry() does. NO `world` parameter -- see wf_list_bestiary.",
+    inputSchema: { entryId: z.string() }
+  },
+  async ({ entryId }) => {
+    try {
+      return text({ entry: getBestiaryEntry(entryId) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_list_party",
+  {
+    title: "List a world's party roster",
+    description: "READ. Mirrors GET /api/combat-planning/party-roster -- combat-planning/party-roster-store.mjs's listPartyMembers().",
+    inputSchema: { world: requiredWorldParam }
+  },
+  async ({ world }) => {
+    try {
+      const w = resolveWorld(world);
+      return text({ members: listPartyMembers(w) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_list_items",
+  {
+    title: "List a world's Reliquary items",
+    description: "READ. Mirrors GET /api/combat-planning/items -- combat-planning/item-store.mjs's listItems().",
+    inputSchema: { world: requiredWorldParam }
+  },
+  async ({ world }) => {
+    try {
+      const w = resolveWorld(world);
+      return text({ items: listItems(w) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_list_stagecraft",
+  {
+    title: "List a world's Stagecraft assets (maps/splash/music), including catalog + compendium browse rows",
+    description:
+      "READ. Mirrors GET /api/session-planner/stagecraft -- session-planner/stagecraft-store.mjs's " +
+      "listStagecraftAssets(). Returns EVERY asset regardless of status/origin -- hand-added rows, Foundry-pulled " +
+      "rows, `compendiumRef` browse rows (a Foundry compendium Scene not yet imported), and `catalogRef` rows (the " +
+      "built-in map catalog) all come back in one list. An agent suggesting maps for a scene needs the whole " +
+      "catalog, not just already-accepted assets -- filter client-side on `status`/`compendiumRef`/`catalogRef` if " +
+      "you only want a subset.",
+    inputSchema: { world: requiredWorldParam, kind: z.enum(["map", "splash", "music"]).optional() }
+  },
+  async ({ world, kind }) => {
+    try {
+      const w = resolveWorld(world);
+      return text({ assets: listStagecraftAssets(w, kind) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- Library: hand-authoring parity (accepted immediately, no LLM call) -------------
+// GATE POSTURE for every tool in this block: NONE -- these are the QA-W2
+// hand-create routes' own semantics, mirrored exactly: a hand-typed entry is
+// a deliberate authorship act, not a proposal needing review, so each saves
+// and (where the store defaults to 'proposed') immediately self-accepts,
+// same as the HTTP route.
+
+server.registerTool(
+  "wf_add_bestiary_entry",
+  {
+    title: "Hand-author a bestiary entry (library-wide -- no world, accepted immediately)",
+    description:
+      "MUTATION -- no review gate (hand-authored, accepted immediately). Mirrors POST /api/combat-planning/bestiary/" +
+      "hand-add. NO `world` parameter (library-wide, see wf_list_bestiary). No LLM call.",
+    inputSchema: {
+      name: z.string().min(1).max(200),
+      type: z.string().optional().describe("Default 'Custom'."),
+      ac: z.number().optional(),
+      hp: z.number().optional(),
+      challengeRating: z.union([z.string(), z.number()]).optional(),
+      notes: z.string().optional()
+    }
+  },
+  async ({ name, type, ac, hp, challengeRating, notes }) => {
+    try {
+      const trimmed = name.trim();
+      if (!trimmed) throw new Error("wf_add_bestiary_entry: `name` is required.");
+      let entry = saveBestiaryEntry({
+        rawFields: { name: trimmed, type: type?.trim() || "Custom", ac, hp, challengeRating: challengeRating === "" ? undefined : challengeRating }
+      });
+      entry = acceptBestiaryEntry(entry.id);
+      if (notes?.trim()) entry = updateBestiaryEntryNote(entry.id, notes.trim());
+      return text({ entry });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_add_party_member",
+  {
+    title: "Hand-author a party roster member (accepted immediately)",
+    description: "MUTATION -- no review gate (hand-authored, savePartyMember's own default status is already 'accepted'). Mirrors POST /api/combat-planning/party-roster/hand-add. No LLM call.",
+    inputSchema: {
+      world: requiredWorldParam,
+      name: z.string().min(1).max(200),
+      class: z.string().optional(),
+      level: z.number().optional(),
+      ac: z.number().optional(),
+      hp: z.number().optional()
+    }
+  },
+  async ({ world, name, class: className, level, ac, hp }) => {
+    try {
+      const w = resolveWorld(world);
+      const trimmed = name.trim();
+      if (!trimmed) throw new Error("wf_add_party_member: `name` is required.");
+      const combatRelevant = {};
+      if (className?.trim()) combatRelevant.class = className.trim();
+      if (level != null) combatRelevant.level = level;
+      if (ac != null) combatRelevant.ac = ac;
+      if (hp != null) combatRelevant.hp = hp;
+      return text({ member: savePartyMember(w, { name: trimmed, combatRelevant, buildRelevant: {} }) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_add_item",
+  {
+    title: "Hand-author a Reliquary item (accepted immediately)",
+    description: "MUTATION -- no review gate (hand-authored). Mirrors POST /api/combat-planning/items/hand-add (status explicitly 'accepted', saveItem's own default is 'proposed'). No LLM call.",
+    inputSchema: { world: requiredWorldParam, name: z.string().min(1).max(200), type: z.string().optional(), description: z.string().optional() }
+  },
+  async ({ world, name, type, description }) => {
+    try {
+      const w = resolveWorld(world);
+      const trimmed = name.trim();
+      if (!trimmed) throw new Error("wf_add_item: `name` is required.");
+      return text({ item: saveItem(w, { name: trimmed, type: type?.trim() || null, description: description?.trim() || null, status: "accepted" }) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_add_stagecraft_asset",
+  {
+    title: "Hand-author a Stagecraft asset (map/splash/music, accepted immediately)",
+    description: "MUTATION -- no review gate (hand-authored, saveStagecraftAsset's own default is already status:'accepted'/source:'local'). Mirrors POST /api/session-planner/stagecraft/hand-add. No LLM call.",
+    inputSchema: { world: requiredWorldParam, name: z.string().min(1).max(200), kind: z.enum(["map", "splash", "music"]), desc: z.string().optional() }
+  },
+  async ({ world, name, kind, desc }) => {
+    try {
+      const w = resolveWorld(world);
+      const trimmed = name.trim();
+      if (!trimmed) throw new Error("wf_add_stagecraft_asset: `name` is required.");
+      return text({ asset: saveStagecraftAsset(w, { kind, name: trimmed, desc: desc?.trim() || null }) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- Chronicle: reads ------------------------------------------------------------------
+
+server.registerTool(
+  "wf_get_world_clock",
+  {
+    title: "Get a world's current in-fiction date/session number",
+    description: "READ. Mirrors GET /api/chronicle/world-clock -- session-planner/world-clock.mjs's getWorldClock(). To ADVANCE the clock, use wf_chronicle_run -- there is no standalone 'advance' tool (the single-source elapsedSessions rule: advancing only ever happens as part of a real Chronicle run).",
+    inputSchema: { world: requiredWorldParam }
+  },
+  async ({ world }) => {
+    try {
+      const w = resolveWorld(world);
+      return text(getWorldClock(w));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_get_fortune",
+  {
+    title: "Get a world's current Fortune Track state",
+    description: "READ. Mirrors GET /api/chronicle/fortune -- session-planner/fortune-track.mjs's getFortune().",
+    inputSchema: { world: requiredWorldParam }
+  },
+  async ({ world }) => {
+    try {
+      const w = resolveWorld(world);
+      return text(getFortune(w));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_list_chronicle_log",
+  {
+    title: "List a world's Chronicle run history",
+    description:
+      "READ. Mirrors GET /api/chronicle/log (wf-mcp-server/lib/chronicle-ops.mjs's chronicleLogPayload -- shared " +
+      "verbatim with that route): every batch, newest-first, with its friendly headline plus (for a batch actually " +
+      "created via wf_chronicle_run) its span/fortuneAtRun/promptSummary sidecar -- null for any other batch, a " +
+      "real valid state, never a thrown error.",
+    inputSchema: { world: requiredWorldParam }
+  },
+  async ({ world }) => {
+    try {
+      const w = resolveWorld(world);
+      return text(chronicleLogPayload(w));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_list_pending_intents",
+  {
+    title: "List a world's queued/deferred Chronicle intents",
+    description:
+      "READ. Mirrors GET /api/pending-entities (wf-mcp-server/lib/chronicle-ops.mjs's pendingEntitiesPayload -- " +
+      "shared verbatim with that route): every entity with an available pending-ledger backlog, plus a friendly " +
+      "name/type and its entries -- the same 'queued intents' list the Chronicle Composer shows for picking what " +
+      "to carry into the next wf_chronicle_run.",
+    inputSchema: { world: requiredWorldParam, dataDir: dataDirParam }
+  },
+  async ({ world, dataDir }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      return text({ world: w, entities: pendingEntitiesPayload(w, dir) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- Chronicle: mutations --------------------------------------------------------------
+
+server.registerTool(
+  "wf_chronicle_run",
+  {
+    title: "Run a Chronicle pass -- advance the world clock and propose consequences (through review gate)",
+    description:
+      "MUTATION -- THROUGH THE REVIEW GATE: creates a new mutation batch (status 'pending') requiring wf_accept/" +
+      "wf_reject before anything reaches the graph, exactly like wf_propose_mutations. Mirrors POST /api/chronicle/run " +
+      "EXACTLY (wf-mcp-server/lib/chronicle-ops.mjs's runChronicleOp, shared verbatim with that route) including: " +
+      "(1) the single-source elapsedSessions rule -- `span` is the ONLY input to the world clock's advance, " +
+      "computed exactly once per call, never re-derived from anything else you pass; (2) prompt-as-seed -- a typed " +
+      "`prompt` describing what happens is dedup-or-created as a real graph entity and seeded into the propagation " +
+      "pass, so a queued-intents run with nothing queued/carried still earns >=1 reviewable proposal instead of a " +
+      "zero-mutation batch. `scopeKind` ('queued-intents' default | 'branches' | 'whole-world') selects what the " +
+      "pass considers; 'branches' requires a non-empty `branchIds`. Requires ANTHROPIC_API_KEY in this server " +
+      "process's own environment for the texturing call, same latency caveat as wf_propose_mutations -- degrades " +
+      "to an honest offline placeholder if unset, never crashes.",
+    inputSchema: {
+      world: requiredWorldParam,
+      dataDir: dataDirParam,
+      scopeKind: z.enum(["queued-intents", "branches", "whole-world"]).optional().describe("Default 'queued-intents'."),
+      branchIds: z.array(z.string()).optional().describe("Required (non-empty) when scopeKind='branches'."),
+      carriedEntryIds: z.array(z.string()).optional().describe("scopeKind='queued-intents' only. Omit for 'everything currently queued'; an explicit [] means 'carry nothing this pass' (a real, distinct no-op run)."),
+      span: z.object({ days: z.number().optional(), spanId: z.string().optional() }).describe("How much in-fiction time this run covers -- THE single source for this run's elapsedSessions."),
+      prompt: z.string().optional().describe("Freeform 'say what happens' text -- seeded into the pass as a real entity (see description)."),
+      tags: z.array(z.string()).optional().describe("Nudge tags forwarded into the propagation pass.")
+    }
+  },
+  async ({ world, dataDir, scopeKind, branchIds, carriedEntryIds, span, prompt, tags }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      const result = await runChronicleOp(dir, w, { scopeKind, branchIds, carriedEntryIds, span, prompt, tags });
+      return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_queue_intent",
+  {
+    title: "Queue a manual Chronicle intent by hand (pending-ledger, manual sentinel)",
+    description:
+      "MUTATION -- direct write, no review gate (this only queues a THREAD for a future wf_chronicle_run to " +
+      "resolve; it does not itself touch the graph). Mirrors POST /api/chronicle/intents (wf-mcp-server/lib/" +
+      "chronicle-ops.mjs's queueIntentOp -- shared verbatim with that route): dedup-or-creates `name` as a graph " +
+      "entity, then writes a pending-ledger entry with the pinned `sourceBatchId:\"manual\"`/`cycleDescriptor:" +
+      "\"Manual\"` sentinel so it renders in the deferred lane exactly like a wrap-up intent.",
+    inputSchema: {
+      world: requiredWorldParam,
+      dataDir: dataDirParam,
+      name: z.string().min(1).max(200).describe("The intent's subject -- dedup-or-created as a graph entity."),
+      note: z.string().optional().describe("Default 'Added by hand.'"),
+      tags: z.array(z.string()).optional()
+    }
+  },
+  async ({ world, dataDir, name, note, tags }) => {
+    try {
+      const dir = resolveDir(dataDir);
+      const w = resolveWorld(world);
+      return text(queueIntentOp(dir, w, { name, note, tags }));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_set_fortune",
+  {
+    title: "Set a world's Fortune Track stop",
+    description: "MUTATION -- direct write, no review gate. Mirrors POST /api/chronicle/fortune -- session-planner/fortune-track.mjs's setFortune(). Affects the BIAS the next wf_chronicle_run's texturing pass uses -- does not itself touch the graph.",
+    inputSchema: { world: requiredWorldParam, stopId: z.string() }
+  },
+  async ({ world, stopId }) => {
+    try {
+      const w = resolveWorld(world);
+      return text(setFortune(w, stopId));
     } catch (err) {
       return errorText(err);
     }

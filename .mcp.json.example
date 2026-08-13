@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "world-fabric": {
+      "command": "node",
+      "args": [
+        "wf-mcp-server/index.mjs"
+      ],
+      "env": {
+        "WF_DATA_DIR": "/absolute/path/to/your/foundrydata/Data",
+        "ANTHROPIC_API_KEY": ""
+      }
+    }
+  }
+}
