@@ -142,6 +142,46 @@ test('D4: the scene page\'s prev/next controls render the NEIGHBOR SCENE\'S NAME
   await page.close();
 });
 
+// Phase 37.6 task 2: session-planner-view.js's OWN `entityInfoMapGlobal`
+// (resolveSceneDisplayName's fallback map, feeding the prev/next breadcrumb
+// above) used to never be populated at all -- its own doc comment admitted
+// "currently always empty" -- so an UNNAMED scene's neighbor-name fallback
+// silently degraded to the raw internal entity id (something like
+// `wf_<timestamp>_<n>`, interchange.mjs's own defaultMakeId shape) instead
+// of the anchor place's real name. Distinct from the D4 test above, which
+// uses BESPOKE scene names throughout (resolveSceneDisplayName's very first
+// branch, `if (scene.name) return scene.name`) and so never touches the
+// entityInfoMapGlobal fallback path at all -- this test deliberately leaves
+// every scene UNNAMED so the fallback is the only thing that can produce a
+// real name.
+test("scenes with NO bespoke name (real anchor places, no bespoke scene.name) render the PLACE's real name, not the raw entity id, in the prev/next breadcrumb", async () => {
+  const a = await createSceneViaRoute(base, WORLD, { locationEntityId: "p34d-root" }); // "The Salt Cistern"
+  const b = await createSceneViaRoute(base, WORLD, { locationEntityId: "p34d-mid" }); // "The Under-Cistern"
+  assert.ok(!a.name && !b.name, "test setup: neither scene may carry a bespoke name -- only the anchor-place fallback is under test");
+
+  const plan = await createPlanViaRoute(base, WORLD, "Unnamed-scenes Plan");
+  for (const s of [a, b]) await addSceneToPlanViaRoute(base, WORLD, plan.id, s.id);
+
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+  await page.goto(`${base}/#planner/scene/${a.id}`);
+  await page.locator(`[data-testid="planner-scene-view"][data-scene-id="${a.id}"]`).waitFor({ state: "visible", timeout: 15000 });
+
+  const nextBtn = page.locator('[data-testid="scene-breadcrumb-next-btn"]');
+  await nextBtn.waitFor({ state: "visible", timeout: 10000 });
+  const nextText = (await nextBtn.textContent()).trim();
+  assert.equal(nextText, "The Under-Cistern →", "the neighbor scene's own anchor PLACE name must render, not its raw entity id");
+  assert.ok(!nextText.includes("p34d-mid") && !/^wf_/.test(nextText), "must never leak the raw internal entity id into the UI");
+
+  // The persistent rail's own Scene library list (app-shell.js's OWN,
+  // independently-populated entityInfoMap -- confirmed working here too, not
+  // just the scene page).
+  const railItem = page.locator(`[data-testid="shell-scene-library-item"][data-scene-id="${b.id}"] [data-testid="shell-scene-library-item-name"]`);
+  await railItem.waitFor({ state: "visible", timeout: 10000 });
+  assert.equal((await railItem.textContent()).trim(), "The Under-Cistern");
+  await page.close();
+});
+
 test('D4: "Start of plan" / "End of plan" render DISABLED at the plan\'s ends (not omitted)', async () => {
   const a = await createSceneViaRoute(base, WORLD, { locationEntityId: "p34d-root" });
   const b = await createSceneViaRoute(base, WORLD, { locationEntityId: "p34d-root" });

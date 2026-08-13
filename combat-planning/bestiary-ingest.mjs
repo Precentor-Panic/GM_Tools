@@ -27,6 +27,19 @@
  * proposeWfiFromWriteup, factored into combat-planning/llm-extract.mjs so
  * this module and party-roster-ingest.mjs/thematic-filter.mjs don't each
  * carry their own drifting copy of that loop.
+ *
+ * Phase 37.6 task 4 (graph-context census) RATIONALE: this call site stays
+ * deliberately context-free — no World Fabric graph context (buildAdjacencyContext
+ * or otherwise) is threaded into this prompt, and that's intentional, not an
+ * oversight the census missed. This is stat-block PARSING: the input is a
+ * pasted block of monster mechanics (or a PDF page of one) with a fixed,
+ * self-contained field vocabulary (AC/HP/speed/actions/etc.) that means the
+ * same thing regardless of which world or campaign it's being added to.
+ * World-graph context would be pure noise here — it can't help extract a
+ * number or an ability text more accurately, and risks the model trying to
+ * (wrongly) reconcile the stat block against unrelated campaign lore instead
+ * of just transcribing what's on the page. party-roster-ingest.mjs's own
+ * extraction call is the same shape, same reasoning — see its own header.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

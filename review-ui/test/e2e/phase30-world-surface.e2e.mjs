@@ -181,3 +181,59 @@ test("route-level: POST .../nodes/:id/reparent is a real, live route performing 
   const newContainment = edges.find((e) => e.sourceId === "world-place-child" && e.targetId === "world-person-a" && e.relationshipType === "containment");
   assert.ok(newContainment, "reparent must produce a real containment edge in the live graph");
 });
+
+// Phase 37.6 task 3: "✦ develop this place" -- place-typed nodes only, beside
+// the description editor. Mocks the LLM-backed route (page.route, matching
+// this suite's sibling files' established pattern) so this stays a real
+// fetch-round-trip assertion with zero live API calls, per this project's
+// standing "no live API calls in tests" rule.
+test("✦ develop this place: place-only, hits the real route, and Accept merges the suggestion via the ordinary edit route (not a new write mechanism)", async () => {
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+
+  // Not offered on a non-place node.
+  await page.goto(`${base}/#world/world-person-a`);
+  await page.locator('[data-testid="world-detail"][data-entity-id="world-person-a"]').waitFor({ state: "visible", timeout: 15000 });
+  assert.equal(await page.locator('[data-testid="wv-develop-place-wrap"]').count(), 0, "a non-place node must not offer develop-this-place");
+
+  const devCalls = [];
+  const modelSuggestion = "A stair down to the lower stacks is bricked over, but recently -- the mortar is still pale.";
+  await page.route(`**/api/graph/nodes/world-place-root/develop-description`, (route) => {
+    devCalls.push(JSON.parse(route.request().postData() || "{}"));
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suggestion: modelSuggestion }) });
+  });
+
+  await page.goto(`${base}/#world/world-place-root`);
+  const detail = page.locator('[data-testid="world-detail"][data-entity-id="world-place-root"]');
+  await detail.waitFor({ state: "visible", timeout: 15000 });
+
+  const link = detail.locator('[data-testid="wv-develop-place-link"]');
+  await link.waitFor({ state: "visible", timeout: 10000 });
+  await link.click();
+
+  const input = detail.locator('[data-testid="wv-develop-place-input"]');
+  await input.waitFor({ state: "visible", timeout: 5000 });
+  await input.fill("what looks recently disturbed here?");
+  await detail.locator('[data-testid="wv-develop-place-go-btn"]').click();
+
+  const suggestion = detail.locator('[data-testid="wv-develop-place-suggestion"]');
+  await suggestion.waitFor({ state: "visible", timeout: 10000 });
+  assert.match(await suggestion.textContent(), /bricked over/, "the shown suggestion must be the MODEL's own returned text");
+
+  assert.equal(devCalls.length, 1, "must hit the real develop-description route exactly once");
+  assert.equal(devCalls[0].world, WORLD);
+  assert.equal(devCalls[0].vision, "what looks recently disturbed here?");
+
+  // Before Accept: nothing written to the graph yet (no-silent-auto-write).
+  const beforeAccept = await (await fetch(`${base}/api/graph?world=${WORLD}&filter=all`)).json();
+  const nodeBefore = beforeAccept.nodes.find((n) => n.id === "world-place-root");
+  assert.ok(!nodeBefore.description || !nodeBefore.description.includes("bricked over"), "the suggestion must NOT be written until Accept is clicked");
+
+  await detail.locator('[data-testid="wv-develop-place-accept-btn"]').click();
+  await page.waitForTimeout(400);
+
+  const afterAccept = await (await fetch(`${base}/api/graph?world=${WORLD}&filter=all`)).json();
+  const nodeAfter = afterAccept.nodes.find((n) => n.id === "world-place-root");
+  assert.match(nodeAfter.description || "", /bricked over/, "Accept must merge the suggestion into the node's description via the ordinary edit route");
+  await page.close();
+});

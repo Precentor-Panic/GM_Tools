@@ -125,6 +125,15 @@ export function groupByRegion(candidateDeltas, edges) {
   }));
 }
 
+// Phase 37.6 task 4 (graph-context census) doc-note: this stays a BESPOKE
+// region-scoped renderer (a whole propagation cluster's entities + their
+// internal edges, `[id=...]` embedded for the offline-client id-extraction
+// trick), not narrate.mjs's buildAdjacencyContext -- that builder is
+// entity-CENTRIC (one entity's own immediate neighbors), a genuinely
+// different shape than "every entity in this cluster + the edges between
+// them." buildAdjacencyContext is this project's default for any NEW
+// entity-centric call site going forward; this pre-existing, richer,
+// cluster-shaped builder is intentionally unchanged.
 function renderRegionContext(entities, entityIds, edges) {
   const idSet = new Set(entityIds);
   const entityMap = new Map(entities.map((e) => [e.id, e]));

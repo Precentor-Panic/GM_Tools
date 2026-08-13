@@ -100,7 +100,7 @@ async function test(name, fn) {
     console.log(`\n${passed} test(s) passed.`);
     return;
   }
-  const { quickGenerate, DEFAULT_QUICK_GEN_MODEL } = mod;
+  const { quickGenerate, DEFAULT_QUICK_GEN_MODEL, groundPromptWithAnchor } = mod;
 
   await test("SOURCE GREP: quick-gen.mjs calls into mutation-engine/llm-call.mjs's callModelDetailed rather than constructing its own client/plumbing", () => {
     const src = readFileSync(new URL("../../mutation-engine/quick-gen.mjs", import.meta.url), "utf8");
@@ -150,6 +150,43 @@ async function test(name, fn) {
     assert.equal(client.calls.length, 2);
     assert.equal(r1.text, "first");
     assert.equal(r2.text, "second");
+  });
+
+  // Phase 37.6 task 4 (graph-context census): groundPromptWithAnchor -- pure,
+  // no LLM call, additive/optional. quick-gen's route calls it when a caller
+  // supplies an anchorEntityId; a byte-for-byte no-op otherwise, so every
+  // EXISTING context-free call stays unaffected.
+  const entities = [
+    { id: "place-crossroads", name: "The Salt Crossroads", type: "place", description: "Where three trade roads meet." },
+    { id: "npc-tollkeeper", name: "Ren the Tollkeeper", type: "person" }
+  ];
+  const edges = [{ id: "edge-1", sourceId: "npc-tollkeeper", targetId: "place-crossroads", relationshipType: "containment" }];
+
+  await test("groundPromptWithAnchor: no anchorEntityId -> returns the prompt VERBATIM, byte-for-byte (every existing context-free call site unaffected)", () => {
+    const out = groundPromptWithAnchor("Describe a quick roadside landmark.", entities, edges, undefined);
+    assert.equal(out, "Describe a quick roadside landmark.");
+  });
+
+  await test("groundPromptWithAnchor: with an anchorEntityId -> prepends real graph context (entity name + its real neighbor) ahead of the caller's own prompt", () => {
+    const out = groundPromptWithAnchor("Describe a quick roadside landmark.", entities, edges, "place-crossroads");
+    assert.match(out, /The Salt Crossroads/, "the anchor entity's own label grounds the prompt");
+    assert.match(out, /Ren the Tollkeeper/, "the anchor's real graph neighbor grounds the prompt");
+    assert.ok(out.endsWith("Describe a quick roadside landmark."), "the caller's own prompt text survives verbatim, appended after the context block");
+  });
+
+  await test("groundPromptWithAnchor: an anchor with no recorded neighbors still grounds on its own label, no crash", () => {
+    const lonely = [{ id: "place-lonely", name: "An Unmarked Cairn", type: "place" }];
+    const out = groundPromptWithAnchor("prompt text", lonely, [], "place-lonely");
+    assert.match(out, /An Unmarked Cairn/);
+  });
+
+  await test("EXACTLY ONE call: grounding the prompt then calling quickGenerate still makes a single client call", async () => {
+    const client = mockClient([{ text: "A dusty crossroads shrine, half-collapsed." }]);
+    const grounded = groundPromptWithAnchor("Describe a quick roadside landmark.", entities, edges, "place-crossroads");
+    const result = await quickGenerate(grounded, { client });
+    assert.equal(client.calls.length, 1);
+    assert.match(client.calls[0].messages[0].content, /The Salt Crossroads/, "the grounded context actually reaches the model call");
+    assert.equal(result.text, "A dusty crossroads shrine, half-collapsed.");
   });
 
   console.log(`\n${passed} test(s) passed.`);

@@ -712,6 +712,11 @@ export async function renderChronicleSurface(arg) {
     }
     return null;
   }
+  // Phase 37.6 task 1 ✦-HONESTY AUDIT: this ✦ reaches a real LLM route --
+  // runAdvance() below posts to POST /api/chronicle/run, which calls the real
+  // orchestrateBatch texture pass (server.mjs; offline-deterministic client
+  // substituted only when no ANTHROPIC_API_KEY is configured, same honest
+  // degrade convention this wave's other ✦ affordances use).
   function buildRunRow() {
     runBtnEl = el("div", {
       testid: "chronicle-run-btn",

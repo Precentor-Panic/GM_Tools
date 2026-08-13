@@ -286,13 +286,21 @@ import { getCurrentSceneNarration, saveSceneNarration } from "../session-planner
 // NOT a graph write -- see element-assist.mjs's header).
 import { assistScenePrep } from "../session-planner/element-assist.mjs";
 
+// Phase 37.6 task 3 -- the "✦ develop this place" affordance beside BOTH
+// place-description editors (world-view.js's detail pane, session-planner-
+// view.js's buildPlaceDescriptionBlock). Same DI-seam/never-writes contract
+// as assistScenePrep above -- returns a suggestion, the frontend merges it
+// through the ordinary editNodeOp route (POST /api/graph/nodes/:entityId)
+// only if the GM explicitly accepts it.
+import { developDescription } from "../mutation-engine/develop-description.mjs";
+
 // Phase 26 task 26.10, §26.F -- "Drop this into Foundry". Lives directly
 // under review-ui/ (not wf-mcp-server/lib/) -- see foundry-push.mjs's own
 // header for why (playwright's runtime dependency only resolves from
 // review-ui's own node_modules).
 import { pushEntityToFoundry } from "./foundry-push.mjs";
 import { developScene } from "../mutation-engine/scene-develop.mjs";
-import { quickGenerate } from "../mutation-engine/quick-gen.mjs";
+import { quickGenerate, groundPromptWithAnchor } from "../mutation-engine/quick-gen.mjs";
 
 // Phase 22 ADDENDUM -- "Add Encounter" persistence (plans/phase-21-review.md
 // §6: equal-weight sibling of "Add Event"/session-notes.mjs's captureNote).
@@ -778,6 +786,31 @@ function offlineTextureClient(fortuneLabel) {
           ? { op: "upsert_entity", id, data: { description: desc }, rationale: "Deferred thread carried into this passage (offline deterministic pass — set ANTHROPIC_API_KEY for real texturing)." }
           : { op: "upsert_entity", data: { name: "An unnamed consequence", type: "concept", description: desc }, rationale: "Offline deterministic pass — set ANTHROPIC_API_KEY for real texturing." };
         return { content: [{ type: "text", text: JSON.stringify([mutation]) }], stop_reason: "end_turn" };
+      }
+    }
+  };
+}
+
+/**
+ * OFFLINE DETERMINISTIC develop-description client (see POST /api/graph/
+ * nodes/:entityId/develop-description). Same reasoning/shape as
+ * offlineTextureClient above -- used ONLY when no ANTHROPIC_API_KEY is set,
+ * so the "✦ develop this place" affordance degrades HONESTLY (a real,
+ * clearly-labelled placeholder suggestion the GM reviews and can dismiss)
+ * rather than the route throwing on client construction. Echoes the GM's own
+ * vision back inside an explicitly-labelled placeholder sentence rather than
+ * inventing prose, so it can never be mistaken for a real model suggestion.
+ * With a key present this is never constructed.
+ */
+function offlineDevelopDescriptionClient() {
+  return {
+    messages: {
+      create: async ({ messages } = {}) => {
+        const prompt = messages?.[0]?.content ?? "";
+        const m = /## The GM's own vision for this place, right now\s*\n\n([^\n]*)/.exec(String(prompt));
+        const vision = (m ? m[1] : "").trim() || "the GM's own vision";
+        const suggestion = `(Offline pass — no model configured; edit or dismiss before accepting.) Following the GM's own note (“${vision}”), this place could stand to gain detail along those lines — set ANTHROPIC_API_KEY for a real suggestion.`;
+        return { content: [{ type: "text", text: JSON.stringify({ suggestion }) }], stop_reason: "end_turn" };
       }
     }
   };
@@ -1729,6 +1762,30 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, result);
   }
 
+  // Phase 37.6 task 3 -- POST /api/graph/nodes/:entityId/develop-description
+  // { world, vision } -> { suggestion }. The "✦ develop this place" affordance:
+  // a GM's one-line vision + the node's current description + its real graph
+  // neighborhood (buildAdjacencyContext) go to the model; the SUGGESTION comes
+  // back for the frontend to show as a one-shot accept/dismiss card. NEVER
+  // writes -- accepting is a SEPARATE call to the existing PATCH-style
+  // POST /api/graph/nodes/:entityId route above, same no-silent-auto-write
+  // discipline as assist-prep's element drafts.
+  if (method === "POST" && parts.length === 5 && parts[1] === "graph" && parts[2] === "nodes" && parts[4] === "develop-description") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const { entities, edges } = loadSnapshot(dir, w).snapshot;
+    const result = await developDescription(entities, edges, parts[3], body.vision, {
+      // Same OFFLINE DETERMINISTIC degrade as POST /api/chronicle/run's
+      // texture call -- a key-less dev/demo environment (and this route's own
+      // e2e coverage) gets a real, honestly-labelled placeholder suggestion
+      // instead of a thrown "missing API key" from the Anthropic SDK
+      // constructor. With a key present this branch never fires.
+      ...(process.env.ANTHROPIC_API_KEY ? {} : { client: offlineDevelopDescriptionClient() })
+    });
+    return sendJson(res, 200, result);
+  }
+
   // POST /api/graph/nodes/:entityId/reparent  { world, dataDir, parentId }
   // Phase 30 task 30.1 -- atomic drag-drop reparent for the World
   // containment tree (manual-edit-ops.mjs's reparentNode): removes the
@@ -2628,12 +2685,31 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, result);
   }
 
-  // POST /api/scene-planning/quick-gen   { world, prompt }
+  // POST /api/scene-planning/quick-gen   { world, prompt, anchorEntityId? }
   // Makes a real LLM call -- world is resolved/validated FIRST, before any of that runs.
+  //
+  // Phase 37.6 task 4 (graph-context census): quick-gen's whole design point
+  // is the mid-session ad-hoc "+" flow for an UNTETHERED scene ("a quick-gen
+  // scene has no real-world anchor to chain to", scene-construction-fixture
+  // .mjs's own §8) -- as of this writing it has no live frontend caller at
+  // all (28.5's rework scrapped the chain/table UI that used to call it), so
+  // there is no "anchor entity in play" TODAY. `anchorEntityId` is added here
+  // additive/optional so this route's contract is ready the moment a caller
+  // (a revived quick-gen control, a wf-mcp tool) DOES have one in play: when
+  // supplied, the caller's own composed prompt is grounded with real graph
+  // context via the SAME shared `buildAdjacencyContext` (narrate.mjs) this
+  // project's other entity-centric LLM calls use, rather than quick-gen
+  // staying context-free by omission. Omitting it keeps today's exact
+  // behavior (quickGenerate still does no templating of its own).
   if (method === "POST" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "quick-gen") {
     const body = await readBody(req);
-    resolveWorld(body.world); // validated for security parity with every other route; quickGenerate itself carries no world concept
-    const result = await quickGenerate(body.prompt, {});
+    const w = resolveWorld(body.world); // validated for security parity with every other route; quickGenerate itself carries no world concept
+    let prompt = body.prompt;
+    if (body.anchorEntityId) {
+      const { entities, edges } = loadSnapshot(resolveDir(), w).snapshot;
+      prompt = groundPromptWithAnchor(body.prompt, entities, edges, body.anchorEntityId);
+    }
+    const result = await quickGenerate(prompt, {});
     return sendJson(res, 200, result);
   }
 
@@ -2895,8 +2971,14 @@ async function handleApi(req, res, url, parts) {
   }
 
   // Phase 28 task 28.4, §E -- POST /api/scene-planning/scenes/:sceneId/assist-prep
-  // { world, mode?, elementName? } -- the inline `✦` functional-prep assist.
-  // Returns { elements } (validated drafts, never persisted server-side).
+  // { world, mode?, elementName? } -- the inline `✦` scene assist, the ONE
+  // element-suggestion affordance on the scene page (Phase 37.6 task 1 retired
+  // "✦ Suggest dressing" into this same mode -- propose-elements now proposes
+  // a mix of functional AND mundane-dressing elements, not a separate control).
+  // mode "propose-elements" (default) / "draft-fields" -> { elements }
+  // (validated drafts, never persisted server-side). mode "draft-read-aloud"
+  // (also Phase 37.6 task 1 -- was a plain string concat, now a real LLM call)
+  // -> { narration }.
   if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "assist-prep") {
     const body = await readBody(req);
     const dir = resolveDir();

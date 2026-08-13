@@ -2158,12 +2158,12 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-add-element-row,
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .npc-creature-btn,
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .from-graph-btn,
-:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .suggest-dressing-btn,
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .add-element-btn,
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-wrap-toggle-btn,
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-assist-propose-link,
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-assist-draft-link,
-:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .draft-read-aloud-link,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .draft-read-aloud-wrap,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-develop-place-wrap,
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-extras-section {
   display: none !important;
 }
@@ -2209,7 +2209,8 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 
 /* =========================================================================
    §C (29.3) — objective, "The place" grid + missing-description banner,
-   draft-read-aloud ghost link, and the From-graph / Suggest-dressing actions.
+   draft-read-aloud ghost link, and the From-graph action. (Phase 37.6 task 1
+   retired "Suggest dressing" -- propose-elements now covers dressing rows.)
    ========================================================================= */
 
 /* Objective — the third body line, under the scene title. */
@@ -2280,6 +2281,33 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   color: var(--sp-ink-muted); font-style: italic;
 }
 
+/* "✦ develop this place" (Phase 37.6 task 3) -- beside the place-description
+   editor above. Own small chrome (not the world-view.js copy's borrowed
+   .wv-inline-panel look) since this file's scene page uses its own --sp-*
+   token set throughout, matching this section's established convention. */
+:is(#view-session-planner, #app-shell) .scene-develop-place-wrap { margin: 4px 0 22px; }
+:is(#view-session-planner, #app-shell) .scene-develop-place-link {
+  font-family: var(--sp-font-ui); font-size: 12px; color: var(--sp-accent-teal);
+}
+:is(#view-session-planner, #app-shell) .scene-develop-place-link:hover { text-decoration: underline; }
+:is(#view-session-planner, #app-shell) .scene-develop-place-panel { margin-top: 8px; }
+:is(#view-session-planner, #app-shell) .scene-develop-place-row { display: flex; gap: 8px; align-items: center; }
+:is(#view-session-planner, #app-shell) .scene-develop-place-input {
+  flex: 1; padding: 7px 10px; border: 1px solid var(--sp-border-control);
+  border-radius: var(--sp-radius-md); font: inherit; font-size: 12.5px;
+  background: var(--sp-surface-input); color: var(--sp-ink-primary);
+}
+:is(#view-session-planner, #app-shell) .scene-develop-place-status { margin-top: 6px; }
+:is(#view-session-planner, #app-shell) .scene-develop-place-suggestion {
+  margin-top: 10px; padding: 12px 14px; max-width: 62ch;
+  border: 1px solid var(--sp-border-control); border-left: 2px solid var(--sp-accent-teal);
+  border-radius: var(--sp-radius-md); background: var(--sp-surface-card);
+}
+:is(#view-session-planner, #app-shell) .scene-develop-place-suggestion-text {
+  font-size: 13px; line-height: 1.55; color: var(--sp-ink-primary); margin: 0 0 10px;
+}
+:is(#view-session-planner, #app-shell) .scene-develop-place-suggestion-actions { display: flex; gap: 10px; align-items: center; }
+
 /* Missing-description banner — amber, click-to-seed. */
 :is(#view-session-planner, #app-shell) .scene-missing-desc-banner {
   display: flex; align-items: baseline; gap: 10px; max-width: 62ch;
@@ -2296,13 +2324,22 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 }
 :is(#view-session-planner, #app-shell) .scene-missing-desc-cta { color: var(--sp-accent-teal); }
 
-/* Draft-read-aloud ghost link. */
+/* Draft-read-aloud ghost link. Phase 37.6 task 1: now a real LLM round trip
+   (was a plain string concat), so the wrap adds a quiet inline status span
+   next to the link for the same "✦ thinking…" pattern the other scene
+   assists use (buildProposeElementsGhostLink). */
+:is(#view-session-planner, #app-shell) .draft-read-aloud-wrap {
+  display: inline-flex; align-items: center; gap: 10px; margin: 6px 0 30px;
+}
 :is(#view-session-planner, #app-shell) .draft-read-aloud-link {
-  display: inline-flex; align-items: center; gap: 7px; margin: 6px 0 30px;
+  display: inline-flex; align-items: center; gap: 7px; margin: 0;
   font-family: var(--sp-font-ui); font-size: 12px; color: var(--sp-accent-teal); opacity: 1;
 }
 :is(#view-session-planner, #app-shell) .draft-read-aloud-link:hover { color: var(--sp-accent-teal); text-decoration: underline; }
 :is(#view-session-planner, #app-shell) .draft-read-aloud-glyph { font-family: var(--sp-font-mono); }
+:is(#view-session-planner, #app-shell) .draft-read-aloud-status {
+  font-family: var(--sp-font-ui); font-size: 11.5px; color: var(--sp-ink-secondary);
+}
 
 /* Actions row: dashed action buttons below the elements list. */
 :is(#view-session-planner, #app-shell) .scene-actions { margin-top: 14px; }
@@ -2957,6 +2994,21 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 #app-shell [contenteditable] { outline: none; border-radius: 3px; }
 #app-shell [contenteditable]:hover { box-shadow: 0 0 0 4px var(--sp-hover-halo); background: var(--sp-hover-halo); }
 #app-shell [contenteditable]:focus { box-shadow: 0 0 0 4px var(--sp-focus-halo); background: var(--sp-focus-halo); }
+
+/* "✦ develop this place" (Phase 37.6 task 3) -- reuses the existing
+   .wv-inline-panel/-row/-input/-commit look established below, no new panel
+   chrome invented for this one control. */
+#app-shell .wv-develop-place-wrap { margin: 2px 0 22px; }
+#app-shell .wv-develop-place-link { font-family: var(--sp-font-ui); font-size: 12px; color: var(--sp-accent-teal); }
+#app-shell .wv-develop-place-link:hover { text-decoration: underline; }
+#app-shell .wv-develop-place-panel { margin-top: 8px; }
+#app-shell .wv-develop-place-status { margin-top: 6px; }
+#app-shell .wv-develop-place-suggestion {
+  margin-top: 10px; padding: 12px 14px; border: 1px solid var(--sp-border-control);
+  border-left: 2px solid var(--sp-accent-teal); border-radius: var(--sp-radius-md); background: var(--sp-surface-card);
+}
+#app-shell .wv-develop-place-suggestion-text { font-size: 13px; line-height: 1.55; color: var(--sp-ink-primary); margin: 0 0 10px; }
+#app-shell .wv-develop-place-suggestion-actions { display: flex; gap: 10px; align-items: center; }
 
 #app-shell .wv-contents-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
 #app-shell .wv-contents-meta { font-family: var(--sp-font-mono); font-size: 10px; color: var(--sp-ink-muted); }

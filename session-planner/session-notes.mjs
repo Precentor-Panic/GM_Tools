@@ -31,7 +31,13 @@ import { fileURLToPath } from "node:url";
 import { withLock, ConcurrentWriteError, createBatch } from "../mutation-engine/review-state.mjs";
 import { summarizeBatch, renderHeadline } from "../mutation-engine/grain.mjs";
 import { attachDiffs } from "../time-skip/run.mjs";
-import { proposeMentionedEntities, applyFuzzyPrepass, previewMentionScan } from "../graph-import/scan-mentions.mjs";
+import { proposeMentionedEntities, applyFuzzyPrepass, previewMentionScan, renderNeighborhoodContext } from "../graph-import/scan-mentions.mjs";
+// Phase 37.6 task 4 (graph-context census): this module's own
+// proposeMentionedEntities call was context-free the same way scan-mentions
+// .mjs's own scanForMentionedEntities used to be -- grounded here the SAME
+// way (each group's anchorEntity's own real graph neighborhood), not a
+// second, drifting implementation.
+import { buildAdjacencyContext } from "../mutation-engine/narrate.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "session-notes");
@@ -212,10 +218,11 @@ export async function runBatchIntake(world, noteIds, existingSnapshot, opts = {}
     const anchorEntity = entityById.get(anchorEntityId);
     const combinedText = groupNotes.map((n) => n.text).join("\n\n");
 
+    const { neighborDescriptions } = buildAdjacencyContext(existingSnapshot.entities ?? [], existingSnapshot.edges ?? [], anchorEntityId);
     const { mentions } = await proposeMentionedEntities(
       combinedText,
       { name: anchorEntity.name, type: anchorEntity.type },
-      opts.llmOpts ?? {}
+      { ...(opts.llmOpts ?? {}), neighborhoodContext: renderNeighborhoodContext(neighborDescriptions) }
     );
     const hinted = applyAnchorHint(mentions, anchorEntity);
     const prepassed = applyFuzzyPrepass(hinted, existingSnapshot.entities ?? []);

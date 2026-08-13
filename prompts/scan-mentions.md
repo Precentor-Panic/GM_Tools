@@ -19,6 +19,10 @@ could plausibly become real, separate entries in the campaign's world graph.
 
 This text is about **{{sourceEntityName}}** ({{sourceEntityType}}).
 
+## Already nearby {{sourceEntityName}} in the world graph
+
+{{neighborhoodContext}}
+
 ## The text to scan
 
 {{scanText}}
@@ -31,7 +35,12 @@ concept a GM might want as its own real graph entry. Skip generic,
 un-nameable references ("a guard," "some townsfolk," "the weather") — only
 list things with an actual name or a specific-enough identity that a GM
 could meaningfully create an entity for it (e.g. "the Ashfall Consortium,"
-"Old Kellan the quartermaster," "the Sunken Bell tavern").
+"Old Kellan the quartermaster," "the Sunken Bell tavern"). If a mention is
+clearly one of {{sourceEntityName}}'s own real graph neighbors listed above,
+use that EXACT name and type — downstream matching against the real graph is
+name+type exact, and this is just a mention scan grounded in what's already
+known nearby, not a decision about whether to link it (that happens
+afterward, in code).
 
 For each one, give:
 - `name`: the name as it should appear in the graph (title case, no articles)

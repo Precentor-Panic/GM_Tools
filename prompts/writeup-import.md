@@ -11,11 +11,23 @@ given freeform text — a campaign pitch, prep notes, a wiki export, a session
 recap — and you extract a structured proposal of graph entities and edges
 that should exist in the campaign's knowledge graph as a result.
 
+## Entities already in this world's graph
+
+{{existingWorldSummary}}
+
 ## The writeup
 
 {{writeupText}}
 
 ## Your task
+
+Use the existing-entities list above for grounding and dedup hints: if the
+writeup is clearly describing someone/something already listed, reuse that
+EXACT name and type (case-sensitive) rather than a near-duplicate spelling or
+a different type guess — downstream matching is name+type exact, so a
+mismatch there creates an unwanted duplicate instead of updating the existing
+record. Still propose it normally (with its own rationale) if the writeup
+adds real new detail; don't skip it just because it already exists.
 
 Read the writeup and propose:
 

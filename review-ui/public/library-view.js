@@ -67,6 +67,13 @@ const SKILL_LABELS = {
   slt: "Sleight of Hand", ste: "Stealth", sur: "Survival"
 };
 
+// Phase 37.6 task 1 ✦-HONESTY COMMENT CONVENTION: the Bestiary tab's glyph
+// below is DECORATIVE-ONLY (one icon of a plain four-icon nav set, ✦/◉/◈/▦ --
+// no AI/LLM meaning at all, just this tab's chosen icon). Flagged explicitly
+// so a grep for "✦" across review-ui/public doesn't mistake it for an
+// unwired AI affordance -- the post-wave invariant is every ✦ that reads as
+// an AI indicator reaches a real LLM route; a glyph reused as plain iconography
+// is out of scope for that invariant by design, not an oversight.
 const TABS = [
   { id: "bestiary", label: "Bestiary", glyph: "✦" },
   { id: "hall", label: "Hero's Hall", glyph: "◉" },
@@ -535,7 +542,14 @@ function buildBestiary(ctx) {
     noteWrap.appendChild(note);
     scroll.appendChild(noteWrap);
 
-    // reskin-suggester — STUB this phase (flagged in its own copy)
+    // reskin-suggester — STUB this phase (flagged in its own copy). Phase
+    // 37.6 task 1 ✦-HONESTY COMMENT CONVENTION: this ✦ is a KNOWN, EXPLICITLY
+    // DEFERRED stub, not decorative and not yet reaching a real LLM route --
+    // the UI's own "not wired yet" copy already says so; this is the code-side
+    // half of that same honesty, for the grep-provable invariant. Wiring it to
+    // a real LLM reskin call is task 37.6b's own explicit scope ("'Wear it as
+    // something else' = a real LLM reskin... new bestiary entry source
+    // 'reskin'"), a separate wave from this one -- not touched here.
     scroll.appendChild(el("div", { style: "margin-top: 14px; border: 1px solid oklch(0.88 0.010 80); border-radius: 4px; background: oklch(0.965 0.006 85); padding: 11px 12px;" }, [
       el("div", { style: "display: flex; align-items: center; gap: 8px;" }, [
         el("span", { text: "✦", style: "font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.08 300);" }),
@@ -670,7 +684,12 @@ function buildHall(ctx) {
       resChips
     ]));
 
-    // skills + expertise markers
+    // skills + expertise markers. Phase 37.6 task 1 ✦-HONESTY COMMENT
+    // CONVENTION: `library-hero-expertise-marker` below is DECORATIVE-ONLY --
+    // a plain "this skill has expertise" indicator (D&D 5e rules concept,
+    // sourced straight from br.expertise), not an AI affordance and not
+    // wired to any LLM route. The addendum names this exact marker as the
+    // canonical decorative-✦ example; kept unchanged.
     const skills = br.skills || [];
     const expertise = new Set(br.expertise || []);
     if (skills.length) {
@@ -728,6 +747,8 @@ function buildHall(ctx) {
       ]);
       nameCell.addEventListener("dragstart", (ev) => { if (ev.dataTransfer) ev.dataTransfer.setData("text/plain", m.id); setTrayDragPayload({ kind: "hero", id: m.id }); });
       nameCell.addEventListener("dragend", () => setTrayDragPayload(null));
+      // Same decorative expertise-marker convention as heroCard's own ✦ above
+      // -- not an AI affordance, see that site's comment.
       const notable = el("div", { style: "padding: 11px; display: flex; flex-wrap: wrap; gap: 4px;" });
       for (const s of br.skills || []) notable.appendChild(miniChip((SKILL_LABELS[s] || s) + (expertise.has(s) ? " ✦" : "")));
       row.append(

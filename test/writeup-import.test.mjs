@@ -31,7 +31,10 @@ const {
   resolveRejectLoop,
   FramingRoundLimitError,
   QUICK_PICK_REASONS,
-  MAX_FRAMING_ROUNDS
+  MAX_FRAMING_ROUNDS,
+  // Phase 37.6 task 4 (graph-context census)
+  renderExistingWorldSummary,
+  EXISTING_WORLD_SUMMARY_CAP
 } = await import("../graph-import/writeup-import.mjs");
 const { loadBatch } = await import("../mutation-engine/review-state.mjs");
 
@@ -493,6 +496,62 @@ test("importWriteup: end-to-end (mocked LLM) creates a real review-state batch w
   assert.equal(batch.mutations[0].status, "pending");
   assert.ok(Array.isArray(batch.mutations[0].diff), "attachDiffs should have run");
   assert.equal(batch.mutations[0].diff[0].field, "(created)", "a brand-new entity against an empty snapshot should get the (created) marker");
+});
+
+// Phase 37.6 task 4 (graph-context census): writeup-import used to be
+// context-free -- proposeWfiFromWriteup's prompt never told the model
+// anything about what already exists in the target world. renderExistingWorldSummary
+// is the pure, deterministic formatter (unit-tested directly, no LLM call);
+// the two importWriteup tests below confirm it actually reaches the prompt.
+test("renderExistingWorldSummary: empty/absent entities -> the honest 'graph is empty' fallback", () => {
+  assert.match(renderExistingWorldSummary([]), /currently empty/);
+  assert.match(renderExistingWorldSummary(undefined), /currently empty/);
+});
+
+test("renderExistingWorldSummary: lists name + type, one per line, nothing else (no descriptions -- keeps this cheap and unbiased)", () => {
+  const out = renderExistingWorldSummary([
+    { id: "e1", name: "Gerdur", type: "person", description: "The miller — must NOT leak into the summary." },
+    { id: "e2", name: "Riverwood", type: "place" }
+  ]);
+  assert.match(out, /- Gerdur \(person\)/);
+  assert.match(out, /- Riverwood \(place\)/);
+  assert.ok(!out.includes("must NOT leak"), "descriptions must never appear in the compact summary");
+});
+
+test("renderExistingWorldSummary: caps at a small count, with an honest '...and N more' tail rather than silently truncating", () => {
+  const many = Array.from({ length: EXISTING_WORLD_SUMMARY_CAP + 15 }, (_, i) => ({ id: `e${i}`, name: `Entity ${i}`, type: "concept" }));
+  const out = renderExistingWorldSummary(many);
+  const lines = out.split("\n");
+  assert.equal(lines.length, EXISTING_WORLD_SUMMARY_CAP + 1, "cap-many lines plus one honest tail line");
+  assert.match(lines.at(-1), /\.\.\.and 15 more existing entities/);
+});
+
+test("proposeWfiFromWriteup: opts.existingEntities reaches the prompt as the existing-world-summary section", async () => {
+  const client = mockClient([JSON.stringify({ entities: [], edges: [] })]);
+  await proposeWfiFromWriteup("Gerdur runs the mill.", {
+    client,
+    existingEntities: [{ id: "e1", name: "Gerdur", type: "person" }, { id: "e2", name: "Alvor", type: "person" }]
+  });
+  const prompt = client.calls[0].messages[0].content;
+  assert.match(prompt, /- Gerdur \(person\)/);
+  assert.match(prompt, /- Alvor \(person\)/);
+});
+
+test("proposeWfiFromWriteup: omitting opts.existingEntities still renders the honest empty-graph fallback (no crash, pre-task-4 callers unaffected)", async () => {
+  const client = mockClient([JSON.stringify({ entities: [], edges: [] })]);
+  await proposeWfiFromWriteup("Some text.", { client });
+  assert.match(client.calls[0].messages[0].content, /currently empty/);
+});
+
+test("importWriteup: threads the live existingSnapshot's entities through into the prompt's existing-world summary (grounding + dedup hints)", async () => {
+  const client = mockClient([JSON.stringify({ entities: [], edges: [] })]);
+  const existingSnapshot = {
+    entities: [{ id: "existing-gerdur", name: "Gerdur", type: "person", description: "The miller.", importance: 0.4, tags: [], attributes: {} }],
+    edges: [],
+    entityTypes: EXISTING_ENTITY_TYPES
+  };
+  await importWriteup("wf-writeup-context-test", "Gerdur also runs the tavern now.", existingSnapshot, { llmOpts: { client } });
+  assert.match(client.calls[0].messages[0].content, /- Gerdur \(person\)/, "importWriteup must pass the live snapshot's entities through to the prompt");
 });
 
 test("importWriteup: an update against a real existing snapshot produces a genuine field-level diff (not just '(created)')", async () => {

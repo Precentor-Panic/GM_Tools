@@ -675,6 +675,13 @@ function renderDetail() {
   desc.addEventListener("blur", () => descSaver.onBlur(desc.textContent));
   target.appendChild(desc);
 
+  // Phase 37.6 task 3 -- "✦ develop this place", place-typed nodes only (this
+  // detail pane covers every entity type; this affordance is specifically
+  // Russell's "adding detail to a place I'm working on" use case).
+  if (sel.type === "place") {
+    target.appendChild(buildDevelopPlaceControl(sel));
+  }
+
   // Contents ("Inside <name>"), grouped by type.
   const kids = childIdsOf(sel.id).map((id) => node(id));
   const meta2 = el("div", { class: "wv-contents-head" });
@@ -1388,6 +1395,106 @@ async function saveDescription(id, value) {
   } catch (err) {
     showUndoToast(`Could not save: ${err.message}`, () => {});
   }
+}
+
+// ===========================================================================
+// Phase 37.6 task 3 -- "✦ develop this place". A quiet ghost control beside
+// the place-description editor: click to open a one-line vision input
+// ("What do you see here?"), POST to the new develop-description route
+// (mutation-engine/develop-description.mjs -- a real LLM call reading this
+// node's current description + its real graph neighborhood as inspiration +
+// the GM's own vision), and show the returned suggestion as a ONE-SHOT
+// accept/dismiss card. NEVER writes silently: accept merges the suggestion
+// onto the existing description through the SAME saveDescription()/editNodeOp
+// path the plain description field already uses; dismiss just discards it.
+// ===========================================================================
+function buildDevelopPlaceControl(entity) {
+  const wrap = document.createElement("div");
+  wrap.className = "wv-develop-place-wrap";
+  wrap.setAttribute("data-testid", "wv-develop-place-wrap");
+  wrap.setAttribute("data-entity-id", entity.id);
+
+  const link = document.createElement("button");
+  link.type = "button";
+  link.className = "link-btn wv-develop-place-link";
+  link.setAttribute("data-testid", "wv-develop-place-link");
+  link.textContent = "✦ develop this place";
+
+  const panel = el("div", { class: "wv-inline-panel wv-develop-place-panel", "data-testid": "wv-develop-place-panel" });
+  panel.hidden = true;
+
+  const row = el("div", { class: "wv-inline-row" });
+  const input = el("input", {
+    class: "wv-inline-input", type: "text",
+    placeholder: "What do you see here?", "data-testid": "wv-develop-place-input"
+  });
+  const goBtn = el("button", { class: "wv-inline-commit", type: "button", "data-testid": "wv-develop-place-go-btn" }, "Ask");
+  row.append(input, goBtn);
+
+  const status = el("div", { class: "hint wv-develop-place-status" });
+  const suggestionHost = el("div", { class: "wv-develop-place-suggestion-host" });
+
+  panel.append(row, status, suggestionHost);
+
+  link.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) setTimeout(() => input.focus(), 0);
+  });
+
+  async function ask() {
+    const vision = input.value.trim();
+    if (!vision) { status.textContent = "Type your vision first."; return; }
+    goBtn.disabled = true;
+    status.textContent = "✦ thinking…";
+    suggestionHost.innerHTML = "";
+    try {
+      const { suggestion } = await wApi(`/api/graph/nodes/${encodeURIComponent(entity.id)}/develop-description`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), vision })
+      });
+      status.textContent = "";
+      suggestionHost.appendChild(buildDevelopPlaceSuggestionCard(entity, suggestion, () => { input.value = ""; }));
+    } catch (err) {
+      status.textContent = `✦ could not develop this: ${err.message}`;
+    } finally {
+      goBtn.disabled = false;
+    }
+  }
+  goBtn.addEventListener("click", ask);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); ask(); } });
+
+  wrap.append(link, panel);
+  return wrap;
+}
+
+/** The one-shot suggestion card: accept merges into the description via the EXISTING saveDescription()/editNodeOp path (never a new write mechanism); dismiss just discards. Never auto-applies. */
+function buildDevelopPlaceSuggestionCard(entity, suggestion, onResolved) {
+  const card = el("div", { class: "wv-develop-place-suggestion", "data-testid": "wv-develop-place-suggestion" });
+  card.appendChild(el("p", { class: "wv-develop-place-suggestion-text" }, suggestion));
+
+  const actions = el("div", { class: "wv-develop-place-suggestion-actions" });
+  const acceptBtn = el("button", { class: "btn btn--accept", type: "button", "data-testid": "wv-develop-place-accept-btn" }, "Accept into description");
+  const dismissBtn = el("button", { class: "link-btn", type: "button", "data-testid": "wv-develop-place-dismiss-btn" }, "Dismiss");
+
+  acceptBtn.addEventListener("click", async () => {
+    acceptBtn.disabled = true;
+    dismissBtn.disabled = true;
+    const n = node(entity.id);
+    const current = ((n && n.description) || "").trim();
+    const merged = current ? `${current}\n\n${suggestion}` : suggestion;
+    await saveDescription(entity.id, merged); // same path/route the plain description field already uses; never a new write mechanism
+    onResolved();
+    renderDetail(); // description changed -- rebuild the pane so the grid shows the merged text
+  });
+  dismissBtn.addEventListener("click", () => {
+    card.remove();
+    onResolved();
+  });
+
+  actions.append(acceptBtn, dismissBtn);
+  card.appendChild(actions);
+  return card;
 }
 
 // ===========================================================================

@@ -1,32 +1,71 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   previewMentionScan,
   DEFAULT_MENTION_RELATIONSHIP,
   nameSimilarity,
   findFuzzyEntityMatch,
   applyFuzzyPrepass,
-  FUZZY_MATCH_THRESHOLD
+  FUZZY_MATCH_THRESHOLD,
+  proposeMentionedEntities,
+  scanForMentionedEntities,
+  renderNeighborhoodContext
 } from "../graph-import/scan-mentions.mjs";
+
+// Phase 37.6 task 4 added real scanForMentionedEntities coverage below (it
+// calls review-state.mjs's createBatch) -- isolate the store BEFORE that
+// runs, same pattern test/writeup-import.test.mjs's own top-of-file note
+// establishes (createBatch's root is read lazily at call time, so setting
+// this here, after the static imports above, is still safe).
+const scratchDir = mkdtempSync(join(tmpdir(), "gm-tools-scan-mentions-test-"));
+process.env.GM_TOOLS_REVIEW_STATE_DIR = scratchDir;
 
 /**
  * Phase 12 task 12.5 -- deterministic (no API call) coverage for
- * previewMentionScan(), the dedup + mutation-shaping step. proposeMentionedEntities
- * itself (the LLM call) is covered by graph-import/scan-mentions.smoke.mjs
- * (a real API call, per gm-tools-conventions' LLM-dependent-code testing
- * split), same as writeup-import.mjs's own test/smoke split.
+ * previewMentionScan(), the dedup + mutation-shaping step. proposeMentionedEntities's
+ * OWN output quality is covered by graph-import/scan-mentions.smoke.mjs (a
+ * real API call, per gm-tools-conventions' LLM-dependent-code testing
+ * split), same as writeup-import.mjs's own test/smoke split -- but Phase
+ * 37.6 task 4's own prompt-plumbing (does the source entity's real graph
+ * neighborhood actually reach the prompt?) is deterministic templating
+ * logic, not model output quality, so it gets a real mocked-client test
+ * below (the "texture-test precedent" the task's own QE section names).
  */
 
 let passed = 0;
+const pending = [];
 function test(name, fn) {
-  try {
-    fn();
-    passed++;
-    console.log(`  ok  ${name}`);
-  } catch (err) {
-    console.error(`FAIL  ${name}`);
-    console.error(err.stack || err.message);
-    process.exitCode = 1;
-  }
+  pending.push(
+    (async () => {
+      try {
+        await fn();
+        passed++;
+        console.log(`  ok  ${name}`);
+      } catch (err) {
+        console.error(`FAIL  ${name}`);
+        console.error(err.stack || err.message);
+        process.exitCode = 1;
+      }
+    })()
+  );
+}
+
+function mockClient(responses) {
+  let call = 0;
+  const calls = [];
+  return {
+    calls,
+    messages: {
+      create: async (params) => {
+        calls.push(params);
+        const resp = responses[Math.min(call, responses.length - 1)];
+        call++;
+        return { content: [{ type: "text", text: resp }], stop_reason: "end_turn" };
+      }
+    }
+  };
 }
 
 const EXISTING_ENTITY_TYPES = [
@@ -243,4 +282,47 @@ test("applyFuzzyPrepass: an already-exact match is left completely untouched (no
   assert.deepEqual(prepassed, mentions, "an exact match must pass through byte-identical -- the pre-pass has nothing to add here");
 });
 
+// Phase 37.6 task 4 (graph-context census): mocked-client, deterministic
+// coverage of the NEW prompt-plumbing -- scan-mentions was context-free
+// (only the raw scan text + the source entity's bare name/type ever reached
+// the prompt); the source entity's own real graph neighborhood now grounds
+// it too, via the shared buildAdjacencyContext (narrate.mjs).
+
+test("renderNeighborhoodContext: no neighbors -> the honest fallback string", () => {
+  assert.equal(renderNeighborhoodContext([]), "(no recorded graph connections)");
+});
+
+test("renderNeighborhoodContext: renders each neighbor description as its own bullet", () => {
+  const out = renderNeighborhoodContext(["Gerdur (containment)", "Alvor (kinship)"]);
+  assert.equal(out, "- Gerdur (containment)\n- Alvor (kinship)");
+});
+
+test("proposeMentionedEntities: opts.neighborhoodContext reaches the prompt; omitted falls back to the honest 'no connections' string", async () => {
+  const client = mockClient([JSON.stringify({ mentions: [] })]);
+  await proposeMentionedEntities("Some text.", { name: "Riverwood", type: "place" }, {
+    client,
+    neighborhoodContext: "- Gerdur (containment)"
+  });
+  assert.match(client.calls[0].messages[0].content, /- Gerdur \(containment\)/);
+
+  const client2 = mockClient([JSON.stringify({ mentions: [] })]);
+  await proposeMentionedEntities("Some text.", { name: "Riverwood", type: "place" }, { client: client2 });
+  assert.match(client2.calls[0].messages[0].content, /no recorded graph connections/, "omitting it must not crash -- honest fallback, matching pre-task-4 callers");
+});
+
+test("scanForMentionedEntities: grounds the prompt in the REAL source entity's graph neighborhood pulled from the live snapshot", async () => {
+  const client = mockClient([JSON.stringify({ mentions: [] })]);
+  const snapshot = {
+    entities: [
+      { id: "riverwood-1", name: "Riverwood", type: "place", importance: 0.8, tags: [], attributes: {} },
+      { id: "gerdur-1", name: "Gerdur", type: "person", importance: 0.6, tags: [], attributes: {} }
+    ],
+    edges: [{ id: "e1", sourceId: "gerdur-1", targetId: "riverwood-1", relationshipType: "containment" }],
+    entityTypes: EXISTING_ENTITY_TYPES
+  };
+  await scanForMentionedEntities("scan-context-test-world", "riverwood-1", "Some prep content about the village.", snapshot, { llmOpts: { client } });
+  assert.match(client.calls[0].messages[0].content, /Gerdur/, "riverwood-1's real graph neighbor (Gerdur) must ground the prompt");
+});
+
+await Promise.all(pending);
 console.log(`\n${passed} test(s) passed.`);

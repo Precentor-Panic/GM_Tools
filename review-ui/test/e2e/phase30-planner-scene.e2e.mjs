@@ -7,8 +7,11 @@
 // retired assertion is reproduced -- just the behaviors that actually matter:
 // element add / edit-persist / promote / remove+undo, the add-field chip,
 // Page<->Cards, Prep<->Run, stat-block edit-persist, place-description edit,
-// Suggest-dressing, From-graph, objective/read-aloud edit-persist, and the
-// Wrap rail (propose -> accept -> apply, no silent auto-write).
+// From-graph, objective/read-aloud edit-persist, and the Wrap rail (propose
+// -> accept -> apply, no silent auto-write). Phase 37.6 task 1 retired the
+// old "Suggest dressing" coverage (a superseded client-only control) in favor
+// of real assist-prep-route coverage for `✦ propose elements here` and
+// `✦ Draft this from the place description` (both now genuinely LLM-backed).
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import { chromium } from "playwright";
@@ -252,15 +255,112 @@ test("place-description edits write back to the graph node and survive reload", 
   await page.close();
 });
 
-test("Suggest dressing appends MUNDANE elements matched from the place name/description", async () => {
+// Phase 37.6 task 3: "✦ develop this place" beside the scene page's own
+// place-description block -- mocks the LLM-backed route (page.route, no live
+// API calls) and pins the no-silent-auto-write contract: the suggestion is
+// shown but NOT written until Accept, which merges it via the SAME
+// POST /api/graph/nodes/:id route the plain description field already uses.
+test("✦ develop this place (scene page): hits the real route, and Accept merges via the ordinary edit route (not a new write mechanism)", async () => {
+  const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "p30-forge" });
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+
+  const devCalls = [];
+  const modelSuggestion = "A second, smaller forge in the back corner has gone cold -- ash but no coal in it.";
+  await page.route(`**/api/graph/nodes/p30-forge/develop-description`, (route) => {
+    devCalls.push(JSON.parse(route.request().postData() || "{}"));
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suggestion: modelSuggestion }) });
+  });
+
+  await page.goto(`${base}/#planner/scene/${scene.id}`);
+  const root = page.locator(`[data-testid="planner-scene-view"][data-scene-id="${scene.id}"]`);
+  await root.waitFor({ state: "visible", timeout: 15000 });
+
+  const link = root.locator('[data-testid="scene-develop-place-link"]');
+  await link.waitFor({ state: "visible", timeout: 10000 });
+  await link.click();
+
+  const input = root.locator('[data-testid="scene-develop-place-input"]');
+  await input.waitFor({ state: "visible", timeout: 5000 });
+  await input.fill("does anything here look cold or unused?");
+  await root.locator('[data-testid="scene-develop-place-go-btn"]').click();
+
+  const suggestion = root.locator('[data-testid="scene-develop-place-suggestion"]');
+  await suggestion.waitFor({ state: "visible", timeout: 10000 });
+  assert.match(await suggestion.textContent(), /gone cold/);
+
+  assert.equal(devCalls.length, 1, "must hit the real develop-description route exactly once");
+  assert.equal(devCalls[0].vision, "does anything here look cold or unused?");
+
+  const beforeAccept = await (await fetch(`${base}/api/graph?world=${WORLD}&filter=all`)).json();
+  const forgeBefore = beforeAccept.nodes.find((n) => n.id === "p30-forge");
+  assert.ok(!(forgeBefore.description || "").includes("gone cold"), "the suggestion must NOT be written until Accept is clicked");
+
+  await root.locator('[data-testid="scene-develop-place-accept-btn"]').click();
+  await page.waitForTimeout(400);
+
+  const afterAccept = await (await fetch(`${base}/api/graph?world=${WORLD}&filter=all`)).json();
+  const forgeAfter = afterAccept.nodes.find((n) => n.id === "p30-forge");
+  assert.match(forgeAfter.description || "", /gone cold/, "Accept must merge the suggestion into the place's description via the ordinary edit route");
+  await page.close();
+});
+
+// Phase 37.6 task 1 RECONCILIATION (superseded): the old "Suggest dressing
+// appends MUNDANE elements matched from the place name/description" test
+// exercised a retired client-side keyword-matched control (session-planner-
+// view.js's suggestDressing + its DRESSING tables) that never called the
+// model at all despite wearing the `✦` glyph. It is retired, not reproduced
+// -- "✦ propose elements here" (scene-assist-propose-link) is now the ONE
+// element-suggestion affordance, genuinely LLM-backed, and is what the two
+// tests below cover instead.
+
+test("Suggest dressing is GONE -- propose-elements is the one ✦ element-suggestion affordance", async () => {
   const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "p30-forge" });
   const { page, root } = await openScene(scene.id);
+  // planner-scene-view (root) is the OUTER wrapper, appended synchronously
+  // before renderScenePage's own async content build -- wait for the actual
+  // elements section (which the propose-elements link lives inside) before
+  // asserting either presence or absence, same as this file's own "scene
+  // page renders the designer sub-roots..." test does.
+  await root.locator('[data-testid="planner-scene-elements"]').waitFor({ state: "visible", timeout: 15000 });
 
-  const before = (await listEls(scene.id)).length;
-  await root.locator('[data-testid="suggest-dressing-btn"]').click();
-  await page.waitForTimeout(600);
-  const after = (await listEls(scene.id)).length;
-  assert.ok(after > before, "Suggest dressing must add at least one MUNDANE element");
+  assert.equal(await root.locator('[data-testid="suggest-dressing-btn"]').count(), 0, "the retired dressing button must not exist anywhere in the DOM");
+  assert.equal(await root.locator('[data-testid="scene-assist-propose-link"]').count(), 1, "propose-elements is the one surviving ✦ element-suggestion link");
+  await page.close();
+});
+
+test("✦ propose elements here hits the real assist-prep route (mocked) and persists a functional + a dressing-shaped element", async () => {
+  const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "p30-forge" });
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+
+  const assistCalls = [];
+  await page.route(`**/api/scene-planning/scenes/${scene.id}/assist-prep`, (route) => {
+    assistCalls.push(JSON.parse(route.request().postData() || "{}"));
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      elements: [
+        { name: "The bellows chain", fields: { trigger: "PCs pull it", gives: "the forge roars to life" } },
+        // a dressing-shaped row: name + gives only, no trigger/checks -- the
+        // exact shape the retired keyword table used to hardcode, now model-
+        // proposed alongside the functional rows in the SAME response.
+        { name: "A rack of cooling tongs", fields: { gives: "every size but one" } }
+      ]
+    }) });
+  });
+
+  await page.goto(`${base}/#planner/scene/${scene.id}`);
+  const root = page.locator(`[data-testid="planner-scene-view"][data-scene-id="${scene.id}"]`);
+  await root.waitFor({ state: "visible", timeout: 15000 });
+
+  await root.locator('[data-testid="scene-assist-propose-link"]').click();
+  await page.waitForTimeout(500);
+
+  assert.equal(assistCalls.length, 1, "propose-elements must hit assist-prep exactly once, a real fetch");
+  assert.equal(assistCalls[0].mode, "propose-elements");
+
+  const persisted = await listEls(scene.id);
+  assert.ok(persisted.some((e) => e.name === "The bellows chain" && e.fields.trigger), "the functional row persisted");
+  assert.ok(persisted.some((e) => e.name === "A rack of cooling tongs" && e.fields.gives && !e.fields.trigger), "the dressing-shaped row (gives, no trigger) persisted too");
   await page.close();
 });
 
@@ -294,6 +394,42 @@ test("objective and read-aloud edits autosave and survive reload", async () => {
   assert.match(sceneAfter.scene.objectiveNote, /vault key/);
   const narrAfter = await (await fetch(`${base}/api/scene-planning/scenes/${scene.id}/narration?world=${WORLD}`)).json();
   assert.match(narrAfter.narration.text, /Heat rolls off the forge/);
+  await page.close();
+});
+
+// Phase 37.6 task 1: "Draft this from the place description and the
+// objective" used to be a plain JS string concat (`${desc} ${objective}`)
+// wearing the `✦` glyph, never a fetch. It now hits the SAME assist-prep
+// route the other `✦` scene assists use, mode "draft-read-aloud" -- this
+// pins that it's a REAL round trip (asserts a fetch actually fires, with the
+// right mode) and that the narration field ends up holding the MODEL's
+// returned prose, not the client-composed string.
+test("✦ Draft this from the place description hits assist-prep (mode draft-read-aloud), not a client-side concat", async () => {
+  const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "p30-forge" });
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+
+  const assistCalls = [];
+  const modelNarration = "Heat shimmers off the forge in waves that smell of hot iron and old coal.";
+  await page.route(`**/api/scene-planning/scenes/${scene.id}/assist-prep`, (route) => {
+    assistCalls.push(JSON.parse(route.request().postData() || "{}"));
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ narration: modelNarration }) });
+  });
+
+  await page.goto(`${base}/#planner/scene/${scene.id}`);
+  const root = page.locator(`[data-testid="planner-scene-view"][data-scene-id="${scene.id}"]`);
+  await root.waitFor({ state: "visible", timeout: 15000 });
+
+  const link = root.locator('[data-testid="draft-read-aloud-link"]');
+  await link.waitFor({ state: "visible", timeout: 5000 });
+  await link.click();
+  await page.waitForTimeout(500);
+
+  assert.equal(assistCalls.length, 1, "the draft-read-aloud link must hit assist-prep exactly once, a real fetch");
+  assert.equal(assistCalls[0].mode, "draft-read-aloud");
+
+  const narrAfter = await (await fetch(`${base}/api/scene-planning/scenes/${scene.id}/narration?world=${WORLD}`)).json();
+  assert.equal(narrAfter.narration.text, modelNarration, "the saved narration must be the MODEL's own prose, not a client-composed description+objective string");
   await page.close();
 });
 

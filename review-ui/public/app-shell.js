@@ -283,7 +283,7 @@ function renderRail(sub) {
   const libHeader = el("div", { class: "shell-rail-section-header" });
   const libTitle = el("div", { class: "shell-rail-section-title" });
   libTitle.textContent = "Scene library";
-  const libCount = el("div", { class: "shell-rail-section-count" });
+  const libCount = el("div", { class: "shell-rail-section-count", "data-testid": "shell-scene-library-count" });
   libHeader.append(libTitle, libCount);
 
   const libList = el("div", { class: "shell-rail-list", "data-testid": "shell-scene-library-list" });
@@ -297,6 +297,23 @@ function renderRail(sub) {
 
   fillRailPlans(plansList);
   fillRailScenes(libList, libCount);
+}
+
+// Phase 37.6 task 2: the persistent rail (Scene library + its entity-name
+// join) is only ever built once per NAVIGATION (renderRail, called from
+// renderShell) -- an in-place create flow that refreshes just the main
+// column (e.g. buildAddScenePanel's onSceneAdded -> renderPlanSurface below)
+// never touched it, so a place created moments ago inside that flow stayed
+// missing from the rail's own entityInfoMap join until the next real
+// navigation ("the just-created-place gap"). Call this after any such flow
+// lands so the rail's name join is current without requiring a full
+// renderShell re-route.
+async function refreshPlannerRail() {
+  const plansList = document.querySelector('[data-testid="shell-plans-list"]');
+  const libList = document.querySelector('[data-testid="shell-scene-library-list"]');
+  const libCount = document.querySelector('[data-testid="shell-scene-library-count"]');
+  if (plansList) await fillRailPlans(plansList);
+  if (libList) await fillRailScenes(libList, libCount);
 }
 
 async function fillRailPlans(listEl) {
@@ -761,6 +778,10 @@ async function renderPlanSurface(planId) {
       onSceneAdded: async () => {
         panelHost.innerHTML = ""; addOpen = false;
         await renderPlanSurface(plan.id);
+        // The just-created-place gap (see refreshPlannerRail's own note): a
+        // brand-new place/scene from this flow needs the rail's Scene
+        // library list + its name join refreshed too, not just the runsheet.
+        await refreshPlannerRail();
       }
     }));
   });

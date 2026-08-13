@@ -18,6 +18,13 @@
  * against the real API in that task) and the same retry-once-on-truncation /
  * retry-once-on-validation-failure / typed-error convention, via
  * combat-planning/llm-extract.mjs.
+ *
+ * Phase 37.6 task 4 (graph-context census) RATIONALE: same as
+ * bestiary-ingest.mjs's own note — deliberately context-free. This is
+ * character-SHEET parsing (AC/HP/class/level/spell slots/etc.), a
+ * self-contained field vocabulary that means the same thing regardless of
+ * which world/campaign it's being added to; World Fabric graph context would
+ * be noise, not grounding, for transcribing what's on the sheet.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

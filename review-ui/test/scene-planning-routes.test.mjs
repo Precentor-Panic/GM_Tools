@@ -77,11 +77,17 @@ import { test, before, after } from "node:test";
  * companion *.smoke.mjs, not here).
  *
  * ---------------------------------------------------------------------------
- * POST /api/scene-planning/quick-gen   { world, prompt }
+ * POST /api/scene-planning/quick-gen   { world, prompt, anchorEntityId? }
  * ---------------------------------------------------------------------------
  * Thin wrapper over mutation-engine/quick-gen.mjs's quickGenerate(prompt,
  * {}). Makes a real LLM call -- SECURITY-only coverage here, same reasoning
- * as the develop route above.
+ * as the develop route above. Phase 37.6 task 4 added the optional
+ * `anchorEntityId` field: when present, the route grounds the caller's
+ * prompt with real graph context via quick-gen.mjs's own
+ * `groundPromptWithAnchor` (pure, unit-tested directly in
+ * test/scene-planning/quick-gen.test.mjs -- not re-tested here) before ever
+ * calling quickGenerate; omitted, the route's behavior is byte-for-byte
+ * unchanged.
  *
  * ---------------------------------------------------------------------------
  * SECURITY (every route above, per review-ui/test/routes.test.mjs's own
@@ -346,6 +352,16 @@ test("SECURITY: POST /api/scene-planning/scenes/:id/develop rejects a path-trave
 
 test("SECURITY: POST /api/scene-planning/quick-gen rejects a path-traversal-shaped world id with 400, checked BEFORE any LLM call is ever made", async () => {
   const { status, body } = await postJson("/api/scene-planning/quick-gen", { world: MALICIOUS_WORLD, prompt: "x" });
+  assert.equal(status, 400);
+  assert.match(body.error, /Invalid world id/);
+});
+
+// Phase 37.6 task 4: `anchorEntityId` is a new, OPTIONAL field on this same
+// route (groundPromptWithAnchor, mutation-engine/quick-gen.mjs) -- world
+// validation must still happen BEFORE it's ever read, same as every other
+// field on this route.
+test("SECURITY: POST /api/scene-planning/quick-gen rejects a path-traversal-shaped world id with 400 even when anchorEntityId is ALSO supplied, checked BEFORE any LLM call or graph read", async () => {
+  const { status, body } = await postJson("/api/scene-planning/quick-gen", { world: MALICIOUS_WORLD, prompt: "x", anchorEntityId: "sp-anchor" });
   assert.equal(status, 400);
   assert.match(body.error, /Invalid world id/);
 });

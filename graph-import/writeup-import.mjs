@@ -80,6 +80,36 @@ export const DEFAULT_FRAMING_MODEL = "claude-haiku-4-5";
 // export, not literally exceeding context.
 export const MAX_WRITEUP_CHARS = 40000;
 
+// Phase 37.6 task 4 (graph-context census): writeup-import was one of the
+// audit's context-FREE call sites -- proposeWfiFromWriteup previously saw
+// only the raw writeup text, nothing about what already exists in the
+// target world's graph. NAMES/TYPES only (never descriptions -- keeps this
+// cheap and avoids biasing extraction toward already-recorded prose), capped
+// at a small count, for grounding + dedup hints: the model can recognize
+// "Gerdur" in the writeup is probably the SAME Gerdur already in the graph
+// rather than a coincidental namesake, and match her exact name/type rather
+// than mint a near-duplicate. This is a WHOLE-WORLD census, not an
+// entity-centric neighborhood walk, so it does NOT reuse narrate.mjs's
+// buildAdjacencyContext (there is no anchor entity for a holistic
+// extraction pass to walk outward from) -- buildAdjacencyContext stays this
+// project's default for any NEW entity-centric call site; this is a
+// different shape of context for a genuinely different kind of call.
+export const EXISTING_WORLD_SUMMARY_CAP = 60;
+
+/**
+ * @param {object[]} [entities]  the live snapshot's entities (existingSnapshot.entities)
+ * @param {number} [cap]
+ * @returns {string}
+ */
+export function renderExistingWorldSummary(entities, cap = EXISTING_WORLD_SUMMARY_CAP) {
+  const list = Array.isArray(entities) ? entities : [];
+  if (!list.length) return "(this world's graph is currently empty -- every entity here will be new)";
+  const shown = list.slice(0, cap);
+  const lines = shown.map((e) => `- ${e.name} (${e.type})`);
+  if (list.length > cap) lines.push(`...and ${list.length - cap} more existing entities not shown here.`);
+  return lines.join("\n");
+}
+
 // All mutations from one writeup-import call land in a single synthetic
 // region — there is no BFS/connectivity clustering concept for a holistic
 // text-extraction pass the way there is for texture.mjs's propagated
@@ -234,6 +264,11 @@ function fillFramingTemplate(vars) {
  * @param {object} [opts]
  * @param {string} [opts.note]  steering note for a regenerate (folded into the
  *                                same {{retryNote}} template slot texture.mjs uses)
+ * @param {object[]} [opts.existingEntities]  Phase 37.6 task 4: the target world's live
+ *   snapshot entities, rendered into the prompt's compact existing-world-summary section
+ *   (renderExistingWorldSummary above) for grounding + dedup hints. Omitted entirely ->
+ *   the prompt just states the graph as empty, matching pre-task-4 behavior for any caller
+ *   that doesn't (yet) pass a snapshot through.
  * @param {object} [opts.client]  injectable Anthropic-SDK-shaped client (for tests/DI)
  * @param {string} [opts.apiKey]
  * @param {string} [opts.model]
@@ -256,6 +291,7 @@ export async function proposeWfiFromWriteup(writeupText, opts = {}) {
 
   const basePrompt = fillTemplate({
     writeupText,
+    existingWorldSummary: renderExistingWorldSummary(opts.existingEntities),
     retryNote: opts.note ? `Additional note from the reviewer: ${opts.note}` : ""
   });
 
@@ -631,7 +667,11 @@ export function previewWriteupImport(proposal, existingSnapshot, opts = {}) {
  * @returns {Promise<{batchId:string, mutationCount:number, importSummary:object, suggestions:Array, headline:string}>}
  */
 export async function importWriteup(world, text, existingSnapshot, opts = {}) {
-  const proposal = await proposeWfiFromWriteup(text, opts.llmOpts ?? {});
+  // Phase 37.6 task 4: thread the live snapshot's entities through for the
+  // prompt's existing-world-summary section (grounding + dedup hints) --
+  // this function already has existingSnapshot for the dry-run merge below,
+  // so no new fetch, just reusing what's already in hand.
+  const proposal = await proposeWfiFromWriteup(text, { ...(opts.llmOpts ?? {}), existingEntities: existingSnapshot.entities });
   const { mutations, summary, suggestions } = previewWriteupImport(proposal, existingSnapshot, { mode: opts.mode });
   const diffed = attachDiffs(mutations, existingSnapshot.entities ?? [], existingSnapshot.edges ?? []);
 
@@ -691,7 +731,7 @@ export async function regenerateWriteupImport(batch, note, existingSnapshot, opt
       `hand-authored or predates Phase 5, regeneration isn't possible.)`
     );
   }
-  const proposal = await proposeWfiFromWriteup(originalText, { ...(opts.llmOpts ?? {}), note });
+  const proposal = await proposeWfiFromWriteup(originalText, { ...(opts.llmOpts ?? {}), note, existingEntities: existingSnapshot.entities });
   const { mutations, summary, suggestions } = previewWriteupImport(proposal, existingSnapshot, { mode: opts.mode });
   const diffed = attachDiffs(mutations, existingSnapshot.entities ?? [], existingSnapshot.edges ?? []);
   return { mutations: diffed, summary, suggestions };

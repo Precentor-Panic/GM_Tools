@@ -8,6 +8,16 @@ good one-page-dungeon / adventure-module craft (loottheroom's "Form and
 Structure", the roleplaygoblin one-room-dungeon, Arcane Library's "how to
 write a D&D adventure").
 
+Phase 37.6 task 1 folded the old "✦ Suggest dressing" affordance into THIS
+one — that control used to match a canned client-side keyword table against
+the place's name/description and append up to 3 generic items from whichever
+bucket matched (a "forge" always got the same four forge items, regardless of
+what the GM actually wrote). `propose-elements` mode below now asks for a MIX
+of functional AND mundane/set-dressing elements in one call, both genuinely
+grounded in THIS place's own recorded description and its real graph
+neighbors — nothing a keyword table could produce. There is now exactly ONE
+`✦` element-suggestion affordance on the scene page.
+
 A scene ≈ a room: one place plus the things in it the party can engage with.
 Each element is authored the way a well-made one-page dungeon keys a numbered
 object — tell the GM what it looks like, what it MEANS to the party, what

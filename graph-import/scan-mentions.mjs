@@ -46,6 +46,13 @@ import { createBatch } from "../mutation-engine/review-state.mjs";
 import { summarizeBatch, renderHeadline } from "../mutation-engine/grain.mjs";
 import { attachDiffs } from "../time-skip/run.mjs";
 import { previewWriteupImport } from "./writeup-import.mjs";
+// Phase 37.6 task 4 (graph-context census): scan-mentions was one of the
+// audit's context-FREE call sites -- the source entity's own real graph
+// neighborhood (buildAdjacencyContext, narrate.mjs's shared entity-centric
+// builder, this project's default for a NEW call site like this one) is now
+// grounding for the mention scan, same reasoning as the other entity-centric
+// LLM calls that already reuse it.
+import { buildAdjacencyContext } from "../mutation-engine/narrate.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPT_TEMPLATE = readFileSync(join(__dirname, "..", "prompts", "scan-mentions.md"), "utf8");
@@ -107,14 +114,22 @@ function fillTemplate(vars) {
   return fillTemplateShared(PROMPT_TEMPLATE, vars);
 }
 
+/** Renders buildAdjacencyContext's neighborDescriptions into the prompt's bullet-list shape, same convention element-assist.mjs's describeNeighborhood uses for its own (bespoke, richer) neighborhood section. */
+export function renderNeighborhoodContext(neighborDescriptions) {
+  if (!neighborDescriptions.length) return "(no recorded graph connections)";
+  return neighborDescriptions.map((d) => `- ${d}`).join("\n");
+}
+
 /**
  * Task 12.5's LLM call: extract entity mentions from `scanText`, grounded in
- * whose content it is (`sourceEntity`). Same retry-once-then-typed-error
- * convention as proposeWfiFromWriteup/proposeFramingsFromWriteup.
+ * whose content it is (`sourceEntity`) and, as of Phase 37.6 task 4, that
+ * source entity's own real graph neighborhood. Same retry-once-then-typed-
+ * error convention as proposeWfiFromWriteup/proposeFramingsFromWriteup.
  *
  * @param {string} scanText
  * @param {{name:string, type:string}} sourceEntity
  * @param {object} [opts]  same DI shape (client/apiKey/model/maxTokens) as every other LLM call site in this codebase
+ * @param {string} [opts.neighborhoodContext]  pre-rendered graph-neighbor bullet list (renderNeighborhoodContext below); omit for "(no recorded graph connections)" -- scanForMentionedEntities always supplies this from the live snapshot, so this only defaults for a caller invoking proposeMentionedEntities directly without one
  * @returns {Promise<{mentions: Array<{name:string, type:string, description?:string}>}>}
  * @throws {ScanTextTooLargeError}
  * @throws {ScanValidationError}
@@ -137,6 +152,7 @@ export async function proposeMentionedEntities(scanText, sourceEntity, opts = {}
     scanText,
     sourceEntityName: sourceEntity.name,
     sourceEntityType: sourceEntity.type,
+    neighborhoodContext: opts.neighborhoodContext ?? "(no recorded graph connections)",
     retryNote: opts.note ? `Additional note: ${opts.note}` : ""
   });
 
@@ -466,7 +482,14 @@ export async function scanForMentionedEntities(world, sourceEntityId, scanText, 
   if (!sourceEntity) {
     throw new Error(`No entity "${sourceEntityId}" found in the live graph — cannot scan its content for mentions.`);
   }
-  const { mentions } = await proposeMentionedEntities(scanText, sourceEntity, opts.llmOpts ?? {});
+  // Phase 37.6 task 4: ground the scan in the source entity's own real graph
+  // neighborhood (buildAdjacencyContext), same shared builder narrate.mjs's
+  // other entity-centric callers already use.
+  const { neighborDescriptions } = buildAdjacencyContext(existingSnapshot.entities ?? [], existingSnapshot.edges ?? [], sourceEntityId);
+  const { mentions } = await proposeMentionedEntities(scanText, sourceEntity, {
+    ...(opts.llmOpts ?? {}),
+    neighborhoodContext: renderNeighborhoodContext(neighborDescriptions)
+  });
   const { mutations, linkCount, newCount } = previewMentionScan(mentions, sourceEntityId, existingSnapshot, opts);
   const diffed = attachDiffs(mutations, existingSnapshot.entities ?? [], existingSnapshot.edges ?? []);
 

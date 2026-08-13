@@ -145,4 +145,59 @@ await testAsync("already-keyed elements are surfaced to the model as context (do
   // clean up so this test is order-independent-ish (store is scratch anyway)
 });
 
+// Phase 37.6 task 1: "✦ Suggest dressing" (a client-side keyword table) is
+// retired -- propose-elements is the ONE `✦` element-suggestion affordance,
+// so its prompt now asks for (and its own validation/shaping accepts) a MIX
+// of functional AND mundane set-dressing rows in the SAME response. Dressing
+// rows are just elements with a `gives` (and maybe `looks`) but no `trigger`
+// -- the schema doesn't need a new "kind" marker, the shape itself says it.
+await testAsync("propose-elements: a dressing-shaped row (gives/looks only, no trigger) survives validation alongside a functional one", async () => {
+  const capture = {};
+  const client = fakeClient({
+    elements: [
+      { name: "The blood-stamped ledger", fields: { trigger: "PCs read it", gives: "the heir was disinherited" } },
+      { name: "A guttering wall sconce", fields: { looks: "black wax, half-melted", gives: "a wavering half-light that makes shadows lie" } }
+    ]
+  }, capture);
+
+  const out = await assistScenePrep(dataDir, WORLD, scene.id, { mode: "propose-elements" }, { client });
+
+  assert.equal(out.elements.length, 2);
+  const dressing = out.elements.find((e) => e.name === "A guttering wall sconce");
+  assert.ok(dressing, "the dressing-shaped row survives");
+  assert.equal(dressing.fields.trigger, undefined, "a dressing row has no trigger");
+  assert.equal(dressing.fields.gives, "a wavering half-light that makes shadows lie");
+
+  // The prompt itself must actually ask for the mix (not just tolerate it if
+  // the model happens to return one) -- this is what replaces the retired
+  // DRESSING keyword table's job.
+  assert.match(capture.prompt, /MUNDANE SET DRESSING/, "the prompt instructs the model to include mundane dressing rows, grounded in the real place");
+});
+
+// Phase 37.6 task 1: "Draft this from the place description and the
+// objective" used to be a plain JS string concat with no model call at all.
+// mode "draft-read-aloud" is the real replacement -- same context (place +
+// objective + neighborhood), a DIFFERENT response shape ({narration}, not
+// {elements}).
+await testAsync("draft-read-aloud: returns {narration}, grounded in place description, objective, and neighborhood", async () => {
+  const capture = {};
+  const client = fakeClient({ narration: "Heat rolls off the forge in waves that smell of hot iron." }, capture);
+  const sceneWithObjective = createScene(WORLD, { locationEntityId: "place-crypt", objectiveNote: "Find the missing acolyte." }, { makeId: () => "scene-crypt-ra-1" });
+
+  const out = await assistScenePrep(dataDir, WORLD, sceneWithObjective.id, { mode: "draft-read-aloud" }, { client });
+
+  assert.equal(out.narration, "Heat rolls off the forge in waves that smell of hot iron.");
+  assert.equal(out.elements, undefined, "draft-read-aloud returns {narration}, not {elements}");
+  assert.match(capture.prompt, /The Drowned Crypt/, "the room name grounds the prompt");
+  assert.match(capture.prompt, /Old Maur the Sexton/, "the one-hop graph neighbor grounds the prompt");
+  assert.match(capture.prompt, /Find the missing acolyte/, "the scene's own objective grounds the prompt");
+});
+
+await testAsync("draft-read-aloud: tolerates a scene with no objective set", async () => {
+  const client = fakeClient({ narration: "A flooded burial vault, silent but for dripping water." });
+  const sceneNoObjective = createScene(WORLD, { locationEntityId: "place-crypt" }, { makeId: () => "scene-crypt-ra-2" });
+  const out = await assistScenePrep(dataDir, WORLD, sceneNoObjective.id, { mode: "draft-read-aloud" }, { client });
+  assert.equal(out.narration, "A flooded burial vault, silent but for dripping water.");
+});
+
 console.log(`\nelement-assist: ${passed} passed`);

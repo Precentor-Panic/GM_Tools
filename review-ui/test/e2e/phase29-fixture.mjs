@@ -300,7 +300,15 @@ export const setupPhase29Env = setupPhase28Env;
 //       text changed in the DOM without a page reload.
 //
 // ===========================================================================
-// 6. SUGGEST DRESSING (29.3)
+// 6. SUGGEST DRESSING (29.3) -- RETIRED, Phase 37.6 task 1 (superseded, not
+//    reproduced). This whole section documents the ORIGINAL 29.3 contract for
+//    the historical record; the control itself, its DRESSING/DRESSING_FALLBACK
+//    keyword tables, and its suggest-dressing-btn/-toast testids are GONE from
+//    session-planner-view.js as of that task -- "✦ propose elements here"
+//    (§5.C above) is now the one `✦` element-suggestion affordance, genuinely
+//    LLM-backed and reading the SAME place description this section's keyword
+//    match used to. See review-ui/test/e2e/phase30-planner-scene.e2e.mjs's own
+//    reconciliation note for the surviving coverage.
 // ===========================================================================
 //   NO NEW ROUTE -- purely client-side keyword matching (README §C, "Below
 //   the elements": "Suggest dressing appends up to 3 MUNDANE elements chosen
@@ -354,7 +362,9 @@ export const setupPhase29Env = setupPhase28Env;
 //     - every edit-chrome control this suite already has a testid for
 //       (`scene-element-remove-btn`, `scene-element-key-toggle`, the
 //       add-field chips, `scene-add-element-row`, `npc-creature-btn`,
-//       `from-graph-btn`, `suggest-dressing-btn`) becomes ABSENT from an
+//       `from-graph-btn`, `suggest-dressing-btn` at the time this suite was
+//       written -- RETIRED Phase 37.6 task 1, see §6's own note above)
+//       becomes ABSENT from an
 //       accessibility/interaction standpoint -- this suite asserts via
 //       Playwright's own `.isVisible()` check (matching this project's
 //       established "hidden, not removed" convention for chrome that must
