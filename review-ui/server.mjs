@@ -2340,6 +2340,17 @@ async function handleApi(req, res, url, parts) {
     // extraction call and the rubber-duck-on framing call -- see that
     // client's own doc comment) instead of throwing on client construction.
     const result = await proposeFromWriteupOp(dir, w, { text: body.text, mode: body.mode }, { llmOpts: offlineOpts(offlineWriteupClient) });
+    // QA W3 finding 2: rubber-duck OFF means a real batch landed in one
+    // shot -- give it the SAME chronicle-run sidecar a Composer-run batch
+    // gets (span/fortuneAtRun/elapsedSessions null -- an intake has no
+    // duration/fortune concept), sourced from the writeup's own first line,
+    // so Chronicle's history rail can title it instead of falling back to a
+    // raw scope label. Rubber-duck ON (result.phase === "framing") has no
+    // batch yet -- nothing to record here; selectFramingForNewBatch below
+    // covers that case once the batch actually exists.
+    if (result && result.batchId) {
+      recordChronicleRun(w, result.batchId, { span: null, fortuneAtRun: null, elapsedSessions: null, promptSummary: firstLineTruncated(body.text, 80) });
+    }
     return sendJson(res, 200, result);
   }
 
@@ -2371,6 +2382,12 @@ async function handleApi(req, res, url, parts) {
       selection: body.selection,
       rubberDuck: body.rubberDuck
     }, { llmOpts: offlineOpts(offlineWriteupClient) });
+    // QA W3 finding 2: the rubber-duck-ON new-batch path -- same sidecar as
+    // the rubber-duck-OFF path above, titled from the ORIGINAL writeup text
+    // (not the composed framing note), same reasoning.
+    if (result && result.batchId) {
+      recordChronicleRun(w, result.batchId, { span: null, fortuneAtRun: null, elapsedSessions: null, promptSummary: firstLineTruncated(body.writeupText, 80) });
+    }
     return sendJson(res, 200, result);
   }
 

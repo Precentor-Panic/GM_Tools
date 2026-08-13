@@ -22,6 +22,11 @@
 // specified route/store contract" (all routes live as of 34.1).
 "use strict";
 import { isValidWorldId, slugifyWorldId } from "./world-id.js";
+// QA W3 finding 2: the one-shot hash/session handoff into Chronicle's own
+// "Receive new information" -- see chronicle-view.js's own header comment
+// for the full idiom this mirrors (34.2's queued-open-request pattern +
+// 37.3's #chronicle/<arg> hash routing).
+import { stashChronicleReceiveText } from "./chronicle-view.js";
 
 // ---------------------------------------------------------------------------
 // local helpers (same standalone convention as the sibling view modules)
@@ -525,32 +530,30 @@ async function doReadLore() {
   };
   if (!w) { statusText("Select or create a world first."); return; }
 
+  // QA W3 finding 2: paste intake is now a THIN SHORTCUT into Chronicle's own
+  // "Receive new information" -- the real read (and, when rubber-duck mode
+  // is on, the framing step) happens there, not in this compact panel. This
+  // is the only branch that changed; World Anvil intake is untouched (out of
+  // scope for this finding, no rubber-duck dead-end to route around since
+  // that route bypasses the two-phase gate entirely).
+  if (panelState.source === "paste") {
+    if (!panelState.pasteText.trim()) { statusText("Paste some lore first."); return; }
+    stashChronicleReceiveText(panelState.pasteText);
+    closeConnectionPanel();
+    location.hash = "chronicle/receive";
+    return;
+  }
+
+  if (!panelState.url.trim()) { statusText("Enter a World Anvil URL first."); return; }
+
   panelState.reading = true; panelState.result = null;
   renderPanel(); statusText("Reading…");
   try {
-    let result;
-    if (panelState.source === "paste") {
-      if (!panelState.pasteText.trim()) { panelState.reading = false; renderPanel(); statusText("Paste some lore first."); return; }
-      result = await cmApi("/api/writeup-propose", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ world: w, text: panelState.pasteText })
-      });
-    } else {
-      if (!panelState.url.trim()) { panelState.reading = false; renderPanel(); statusText("Enter a World Anvil URL first."); return; }
-      result = await cmApi("/api/lore/worldanvil", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ world: w, url: panelState.url })
-      });
-    }
+    const result = await cmApi("/api/lore/worldanvil", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: w, url: panelState.url })
+    });
     panelState.reading = false;
-    if (result && result.phase === "framing") {
-      // Rubber-duck mode is on for this world — the interpretive-framing step
-      // lives in the full importer, not this compact panel. Stub handoff.
-      panelState.result = null;
-      renderPanel();
-      statusText("Rubber-duck mode is on for this world — pick a framing in the full importer (New Import).");
-      return;
-    }
     panelState.result = result;
     renderPanel();
   } catch (err) {

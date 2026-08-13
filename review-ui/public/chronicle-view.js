@@ -27,6 +27,29 @@
 import { renderProposalCard, RISK_BUCKETS } from "./proposal-card.js";
 
 // ---------------------------------------------------------------------------
+// QA W3 finding 2: one-shot hash/session handoff for the Connection-Menu
+// paste-lore shortcut -- mirrors connection-menu.js's own `pendingRequest`
+// queued-open-request idiom (34.2's #settings/#import redirects: a
+// module-level variable set by the SENDER, consumed and cleared exactly
+// once by the RECEIVER) combined with Chronicle's own `#chronicle/<arg>`
+// hash-routing idiom (37.3). The text itself is too large/arbitrary to ride
+// in the hash, so the hash just carries INTENT (`#chronicle/receive`) while
+// this in-memory stash carries the PAYLOAD for the one navigation that
+// follows -- a fresh page load (no stash set) is a real, valid "nothing
+// handed off" state, never an error.
+// ---------------------------------------------------------------------------
+let stashedReceiveText = null;
+/** Called by connection-menu.js's paste-lore "Read it in" submit, right before `location.hash = "chronicle/receive"`. */
+export function stashChronicleReceiveText(text) {
+  stashedReceiveText = typeof text === "string" ? text : null;
+}
+function consumeStashedReceiveText() {
+  const t = stashedReceiveText;
+  stashedReceiveText = null; // one-shot -- a later plain #chronicle/receive visit starts blank
+  return t;
+}
+
+// ---------------------------------------------------------------------------
 // Palette / seed tables -- copied from Chronicle.dc.html's own logic class.
 // ---------------------------------------------------------------------------
 const TEAL = "oklch(0.55 0.075 185)";
@@ -176,7 +199,14 @@ export async function renderChronicleSurface(arg) {
     pickerOpen: false,
     running: false,
     proposals: [],             // region entities from the last run's batch detail
-    batchId: null
+    batchId: null,
+    // QA W3 finding 2: "Receive new information" -- the Composer's second
+    // primary action. `phase` mirrors the two-phase writeup-propose contract
+    // (null | "framing"); `framings`/`writeupText`/`mode`/`rubberDuck` are
+    // only meaningful while phase === "framing" (the settings snapshot
+    // echoed back by phase A, carried forward unchanged -- the read-once
+    // invariant selectFramingForNewBatch itself enforces server-side).
+    receive: { text: "", submitting: false, status: "", phase: null, framings: null, writeupText: null, mode: "merge", rubberDuck: null }
   };
 
   // Repaint registries (elements refreshed on state change without a full
@@ -193,6 +223,8 @@ export async function renderChronicleSurface(arg) {
   const runMetaEl = el("div", { testid: "chronicle-run-meta", style: "font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.58 0.012 70);" });
   let runBtnEl = null; // set by buildRunRow; refreshRunMeta dims it when a run can't succeed
   let historyListHost = null;
+  let receiveHost = null; // QA W3 finding 2: rebuilt fresh each buildReceiveSection() call; paintReceiveSection() repaints in place
+  let historyRefreshToken = 0; // QA W3 finding 3(a): generation token, see refreshHistoryAfterDecision below
 
   // ---- initial data ------------------------------------------------------
   let clock, fortune, pending, log;
@@ -320,6 +352,17 @@ export async function renderChronicleSurface(arg) {
     refreshRunMeta();
   } else if (route.kind === "batch" && route.batchId) {
     await loadBatchDetail(route.batchId);
+  } else if (route.kind === "receive") {
+    // QA W3 finding 2: the Connection-Menu paste-lore shortcut's handoff --
+    // land in Composer mode (Receive lives at its top) with the handed-off
+    // text already in the textarea, then submit it immediately (the user
+    // already clicked "Read it in" once, over there; this isn't a second
+    // decision point).
+    state.advMode = "composer";
+    const handoff = consumeStashedReceiveText();
+    if (handoff) state.receive.text = handoff;
+    paintAdvMode();
+    if (handoff && handoff.trim()) doReceiveSubmit();
   }
 
   // -----------------------------------------------------------------------
@@ -434,9 +477,22 @@ export async function renderChronicleSurface(arg) {
   }
 
   // ---- Composer ---------------------------------------------------------
+  // QA W3 finding 2 (Russell's pass): Composer gains a SECOND primary
+  // action, "Receive new information", alongside "Let time pass". DESIGN
+  // CHOICE (flagged per the finding's own instruction): a second SECTION on
+  // the same page, not a third segmented-control entry on the existing
+  // "Advance" toggle -- Russell's own description ("Receive new information
+  // as the other [primary way]... Let time pass at the bottom") describes a
+  // single page with Receive first and Let-time-pass below it, and a third
+  // toggle entry would also mislabel "Advance" for an action that doesn't
+  // advance time at all. This is the quieter fit: zero changes to the
+  // existing Composer/Timeline toggle, both primary actions visible without
+  // an extra click.
   function buildComposer() {
     const c = el("div", { testid: "chronicle-composer" });
     c.append(
+      buildReceiveSection(),
+      el("div", { style: "height: 1px; background: oklch(0.89 0.010 80); margin: 30px 0;" }),
       el("div", { style: "font-family: Spectral, serif; font-size: 27px; font-weight: 500; margin-bottom: 6px;", text: "Let time pass" }),
       el("div", { style: "font-size: 13.5px; line-height: 1.5; color: oklch(0.48 0.014 65); max-width: 62ch; margin-bottom: 18px;", text: "Say what happens in the world's own words. Everything checked at left rides along, so the graph moves once instead of eleven times." }),
       promptTextarea("Three months pass. The Compact's blockade of the causeway holds, barely — and the vault has been dry for six weeks."),
@@ -450,6 +506,191 @@ export async function renderChronicleSurface(arg) {
       buildNudgeTags()
     );
     return c;
+  }
+
+  // ---- Receive new information (QA W3 finding 2) ------------------------
+  function buildReceiveSection() {
+    const sec = el("div", { testid: "chronicle-receive-section" });
+    sec.append(
+      el("div", { style: "font-family: Spectral, serif; font-size: 27px; font-weight: 500; margin-bottom: 6px;", text: "Receive new information" }),
+      el("div", { style: "font-size: 13.5px; line-height: 1.5; color: oklch(0.48 0.014 65); max-width: 62ch; margin-bottom: 18px;", text: "Paste a session write-up, a PC's backstory, or anything else that just came in. It's read once and reviewed right here, like any other change." })
+    );
+    receiveHost = el("div", {});
+    sec.appendChild(receiveHost);
+    paintReceiveSection();
+    return sec;
+  }
+
+  function paintReceiveSection() {
+    if (!receiveHost) return;
+    receiveHost.innerHTML = "";
+    const r = state.receive;
+
+    const ta = el("textarea", {
+      testid: "chronicle-receive-input",
+      placeholder: "What came in?",
+      style: "width: 100%; min-height: 96px; padding: 13px 14px; border: 1px solid oklch(0.84 0.010 80); border-radius: 5px; font-size: 15px; line-height: 1.5; background: oklch(1 0 0); color: inherit; resize: vertical; font-family: inherit;"
+    });
+    ta.value = r.text;
+    ta.disabled = r.submitting;
+    ta.addEventListener("input", () => { r.text = ta.value; });
+    receiveHost.appendChild(ta);
+
+    const actionRow = el("div", { style: "display: flex; align-items: center; gap: 14px; margin-top: 12px;" });
+    const btn = el("div", {
+      testid: "chronicle-receive-btn",
+      role: "button",
+      "aria-disabled": r.submitting ? "true" : "false",
+      style: `display: flex; align-items: center; gap: 9px; padding: 9px 18px; border-radius: 5px; cursor: ${r.submitting ? "default" : "pointer"}; opacity: ${r.submitting ? "0.55" : "1"}; background: ${TEAL}; color: oklch(0.99 0.005 185); font-size: 13px; font-weight: 500;`
+    }, [el("span", { text: "✦", style: "font-family: 'IBM Plex Mono', monospace; font-size: 11px;" }), el("span", { text: r.submitting ? "Reading…" : "Read it in" })]);
+    if (!r.submitting) btn.addEventListener("click", doReceiveSubmit);
+    const meta = el("div", { style: "font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.58 0.012 70);", text: "one call · read once, reviewed like any other change" });
+    actionRow.append(btn, meta);
+    receiveHost.appendChild(actionRow);
+
+    if (r.status) {
+      receiveHost.appendChild(el("div", { testid: "chronicle-receive-status", style: "font-size: 12px; color: oklch(0.50 0.014 65); margin-top: 8px;", text: r.status }));
+    }
+
+    if (r.phase === "framing" && Array.isArray(r.framings)) {
+      receiveHost.appendChild(buildFramingPicker(r));
+    }
+  }
+
+  function setReceiveStatus(text) {
+    state.receive.status = text;
+    paintReceiveSection();
+  }
+
+  async function doReceiveSubmit() {
+    const r = state.receive;
+    if (r.submitting) return;
+    const text = (r.text || "").trim();
+    if (!text) { setReceiveStatus("Paste something first."); return; }
+    r.submitting = true;
+    r.phase = null;
+    r.framings = null;
+    r.status = "Reading…";
+    paintReceiveSection();
+    try {
+      const result = await apiPost("/api/writeup-propose", { text });
+      r.submitting = false;
+      if (result && result.phase === "framing") {
+        r.phase = "framing";
+        r.framings = result.framings;
+        r.writeupText = result.writeupText;
+        r.mode = result.mode;
+        r.rubberDuck = result.rubberDuck;
+        r.status = "Pick a framing, or write your own, to steer the real read.";
+        paintReceiveSection();
+        return;
+      }
+      // Rubber-duck off: a real batch landed in one shot -- straight to the
+      // shared What-changed cards, exactly like a Composer run.
+      await applyBatchAsProposals(result.batchId);
+      resetReceiveState();
+      paintReceiveSection();
+      proposalsWrap.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    } catch (err) {
+      r.submitting = false;
+      r.status = `Could not read that in: ${err.message}`;
+      paintReceiveSection();
+    }
+  }
+
+  async function doReceiveSelectFraming(selection) {
+    const r = state.receive;
+    r.submitting = true;
+    r.status = "Running the real read… this can take a while.";
+    paintReceiveSection();
+    try {
+      const result = await apiPost("/api/writeup-select-framing", {
+        writeupText: r.writeupText,
+        mode: r.mode,
+        framings: r.framings,
+        selection,
+        rubberDuck: r.rubberDuck
+      });
+      await applyBatchAsProposals(result.batchId);
+      resetReceiveState();
+      paintReceiveSection();
+      proposalsWrap.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    } catch (err) {
+      r.submitting = false;
+      r.status = `Could not complete the read: ${err.message}`;
+      paintReceiveSection();
+    }
+  }
+
+  function resetReceiveState() {
+    Object.assign(state.receive, { text: "", submitting: false, status: "", phase: null, framings: null, writeupText: null, rubberDuck: null });
+  }
+
+  // The "First reactions" framing picker -- Phase 8's own three-quick-
+  // readings idea, rendered INLINE here (not the retired #framing screen).
+  // Radio-card selection is hand-repainted (matching this file's own
+  // chip/stop repaint convention) rather than relying on CSS `:has()`, kept
+  // in the Chronicle visual language (oklch + Spectral/IBM Plex) rather than
+  // the old app.js screen's `.framing-card` CSS (a different design system).
+  function buildFramingPicker(r) {
+    const wrap = el("div", { testid: "chronicle-receive-framing", style: "margin-top: 16px; padding: 15px 16px; border: 1px solid oklch(0.82 0.040 185); border-radius: 6px; background: oklch(0.975 0.010 185);" });
+    wrap.append(
+      el("div", { style: "font-family: Spectral, serif; font-size: 17px; font-weight: 500; margin-bottom: 4px; color: oklch(0.34 0.060 185);", text: "First reactions" }),
+      el("div", { style: "font-size: 12.5px; color: oklch(0.45 0.050 185); margin-bottom: 12px;", text: "Three quick readings of what came in. Pick one — or write your own — to steer the real read." })
+    );
+
+    const pick = { id: null, customText: "" };
+    const cardEls = [];
+    const cardsHost = el("div", { style: "display: flex; flex-direction: column; gap: 7px;" });
+
+    function paintCards() {
+      for (const c of cardEls) {
+        const on = c.getAttribute("data-framing-id") === pick.id;
+        c.setAttribute("style", framingCardStyle(on));
+      }
+    }
+
+    for (const f of r.framings || []) {
+      const card = el("div", { testid: "chronicle-receive-framing-card", "data-framing-id": f.id, role: "button", style: framingCardStyle(false) }, [
+        el("span", { text: `(${f.id})`, style: "font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.55 0.060 185); flex: none;" }),
+        el("span", { text: f.sentence, style: "font-size: 13px; line-height: 1.45;" })
+      ]);
+      card.addEventListener("click", () => { pick.id = f.id; paintCards(); });
+      cardEls.push(card);
+      cardsHost.appendChild(card);
+    }
+    const customInput = el("input", { type: "text", testid: "chronicle-receive-framing-custom", placeholder: "None of these — describe your own direction", style: framingCustomInputStyle() });
+    customInput.addEventListener("click", (e) => e.stopPropagation());
+    customInput.addEventListener("input", () => { pick.id = "__custom__"; pick.customText = customInput.value; paintCards(); });
+    const customCard = el("div", { testid: "chronicle-receive-framing-card", "data-framing-id": "__custom__", role: "button", style: framingCardStyle(false) }, [
+      el("span", { text: "(d)", style: "font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.55 0.060 185); flex: none;" }),
+      customInput
+    ]);
+    customCard.addEventListener("click", () => { pick.id = "__custom__"; customInput.focus(); paintCards(); });
+    cardEls.push(customCard);
+    cardsHost.appendChild(customCard);
+
+    const blendInput = el("input", { type: "text", testid: "chronicle-receive-framing-blend", placeholder: "Optional — also bring in a bit of another framing", style: framingCustomInputStyle() + "margin-top: 10px;" });
+
+    const submitBtn = el("div", {
+      testid: "chronicle-receive-framing-submit", role: "button",
+      style: `display: inline-block; margin-top: 12px; padding: 7px 16px; border-radius: 5px; cursor: pointer; background: ${TEAL}; color: oklch(0.99 0.005 185); font-size: 12.5px; font-weight: 500;`
+    }, [el("span", { text: "Use this framing" })]);
+    submitBtn.addEventListener("click", () => {
+      if (!pick.id) { setReceiveStatus("Pick a framing first."); return; }
+      let primary;
+      if (pick.id === "__custom__") {
+        if (!pick.customText.trim()) { setReceiveStatus("Write your own direction first."); return; }
+        primary = { id: "d", sentence: pick.customText.trim() };
+      } else {
+        primary = (r.framings || []).find((f) => f.id === pick.id);
+      }
+      const blend = blendInput.value.trim();
+      doReceiveSelectFraming({ primary, ...(blend ? { blend } : {}) });
+    });
+
+    wrap.append(cardsHost, blendInput, submitBtn);
+    return wrap;
   }
 
   function promptTextarea(placeholder) {
@@ -830,6 +1071,10 @@ export async function renderChronicleSurface(arg) {
     if (mode === "seed") return "Queued-intents pass";
     if (mode === "branches") return "Branch pass";
     if (mode === "ambient") return "Whole-world pass";
+    // QA W3 finding 2: a writeup-import batch reached without a chronicle-run
+    // sidecar (e.g. one created via the MCP surface, sidecar-less by design)
+    // still deserves a legible fallback rather than the generic "Batch".
+    if (mode === "writeup-import") return "Received information";
     return "Batch";
   }
   function historyEntry(e) {
@@ -880,9 +1125,25 @@ export async function renderChronicleSurface(arg) {
     proposalsWrap.style.display = "block";
     proposalsWrap.style.marginTop = "30px";
 
+    // QA W3 finding 3(c): a quiet bulk-resolve affordance -- "Accept all
+    // shown" drives each currently-rendered card's OWN accept button (the
+    // Wrap rail's `wrap-accept-all-btn` precedent, session-planner-view.js's
+    // buildWrapProposalRail: one accept path, never a second bulk-write
+    // route). DESIGN CHOICE (flagged per the finding's own instruction): no
+    // per-card select-checkbox -- "Accept all shown" plus each card's own
+    // existing per-card Reject already covers "resolve or accept
+    // selections" without a second selection mechanism to keep in sync with
+    // the cards' own accept/reject state.
+    const acceptAllBtn = el("div", {
+      testid: "chronicle-accept-all-btn", role: "button",
+      style: "padding: 4px 12px; border: 1px solid oklch(0.72 0.055 185); border-radius: 20px; cursor: pointer; font-size: 11.5px; color: oklch(0.33 0.060 185); background: oklch(0.96 0.012 185); flex: none;"
+    }, [el("span", { text: "Accept all shown" })]);
+
     proposalsWrap.appendChild(el("div", { style: "display: flex; align-items: baseline; gap: 11px; margin-bottom: 4px;" }, [
       el("div", { style: "font-family: Spectral, serif; font-size: 21px; font-weight: 500;", text: "What changed" }),
-      el("div", { style: "font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.58 0.012 70);", text: `${state.proposals.length} proposed` })
+      el("div", { style: "font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.58 0.012 70);", text: `${state.proposals.length} proposed` }),
+      el("div", { style: "flex: 1;" }),
+      acceptAllBtn
     ]));
     proposalsWrap.appendChild(el("div", { style: "font-size: 12.5px; color: oklch(0.52 0.014 65); margin-bottom: 16px;", text: "Nothing is written until you accept. The old values stay in the chronicle either way." }));
 
@@ -890,6 +1151,16 @@ export async function renderChronicleSurface(arg) {
     proposalsWrap.appendChild(container);
 
     const opts = { world: currentWorld(), batchId: state.batchId, onDecided: () => refreshHistoryAfterDecision() };
+
+    acceptAllBtn.addEventListener("click", () => {
+      acceptAllBtn.setAttribute("aria-disabled", "true");
+      const cards = container.querySelectorAll('[data-testid="proposal-card"][data-decided=""]');
+      for (const card of cards) card.querySelector('[data-testid="proposal-card-accept-btn"]')?.click();
+      // Each accept resolves independently (proposal-card's own decide()) and
+      // reports back via onDecided; re-enable once the clicks are dispatched,
+      // same settle-tick convention as the Wrap rail's own Accept all.
+      setTimeout(() => acceptAllBtn.removeAttribute("aria-disabled"), 400);
+    });
     if (state.reviewMode === "triage") {
       for (const bucket of RISK_BUCKETS) {
         const items = state.proposals.filter((p) => (p.risk || "safe") === bucket.id);
@@ -913,11 +1184,38 @@ export async function renderChronicleSurface(arg) {
     }
   }
 
+  // QA W3 finding 3(a): a generation token so an OUT-OF-ORDER-resolving
+  // refresh can never overwrite a fresher one's render -- e.g. "Accept all
+  // shown" (or two quick individual clicks) fires several overlapping
+  // accept->refresh chains at once, and nothing previously guaranteed the
+  // LAST one to RESOLVE was also the last one ISSUED. Same pattern as
+  // connection-menu.js's `connectionChipRefreshToken` (that file's own
+  // "two overlapping calls" race, one level over). This is also what keeps
+  // the rail's "awaiting review (N)" count from ever going stale after a
+  // real decision lands, and what pushes a just-run/just-received batch to
+  // the top of its section immediately (finding 3(c)) -- always the
+  // FRESHEST fetch, never a frozen pre-decision snapshot.
   async function refreshHistoryAfterDecision() {
+    const token = ++historyRefreshToken;
     try {
       const fresh = await api(`/api/chronicle/log${withWorld()}`);
+      if (token !== historyRefreshToken) return; // superseded by a newer refresh -- drop this stale one
       if (historyListHost) fillHistory(historyListHost, fresh);
     } catch { /* leave history as-is */ }
+  }
+
+  // Shared by runAdvance, loadBatchDetail, and the Receive flow (QA W3
+  // finding 2): land a batch's region entities into the shared What-changed
+  // panel AND push the rail's history entry to the top of its section
+  // immediately -- one path, so every way a batch can land in this panel
+  // gets the same rail-freshness guarantee.
+  async function applyBatchAsProposals(batchId) {
+    state.batchId = batchId;
+    const detail = await api(`/api/batches/${encodeURIComponent(batchId)}${withWorld()}`);
+    state.proposals = (detail.regions || []).flatMap((r) => r.entities || []);
+    state.scope = detail.batch?.scope; // QA W2 fix (Group B #7): scope for the zero-proposal notice
+    paintProposals();
+    await refreshHistoryAfterDecision();
   }
 
   // ---- run --------------------------------------------------------------
@@ -941,17 +1239,9 @@ export async function renderChronicleSurface(arg) {
 
     try {
       const run = await apiPost("/api/chronicle/run", payload);
-      state.batchId = run.batchId;
-      // Fetch the freshly-created batch detail -> its region entities (which now
-      // carry type/risk) feed the SHARED proposal-card.
-      const detail = await api(`/api/batches/${encodeURIComponent(run.batchId)}${withWorld()}`);
-      state.proposals = (detail.regions || []).flatMap((r) => r.entities || []);
-      state.scope = detail.batch?.scope; // QA W2 fix (Group B #7): scope for the zero-proposal notice
       // World clock advanced -> refresh the sub-bar line from the run's own clock.
       if (run.clock) worldClockLine.textContent = formatWorldClock({ ...clock, currentDate: run.clock.currentDate, sessionNumber: run.clock.sessionNumber });
-      paintProposals();
-      const fresh = await api(`/api/chronicle/log${withWorld()}`);
-      if (historyListHost) fillHistory(historyListHost, fresh);
+      await applyBatchAsProposals(run.batchId);
     } catch (err) {
       console.error("chronicle run failed:", err);
       spinner.querySelector('[data-testid="chronicle-run-spinner-text"]').textContent = `The pass could not complete: ${err.message}`;
@@ -968,11 +1258,7 @@ export async function renderChronicleSurface(arg) {
   // second review surface. Used by the `#chronicle/batch/<id>` route.
   async function loadBatchDetail(batchId) {
     try {
-      const detail = await api(`/api/batches/${encodeURIComponent(batchId)}${withWorld()}`);
-      state.batchId = batchId;
-      state.proposals = (detail.regions || []).flatMap((r) => r.entities || []);
-      state.scope = detail.batch?.scope; // QA W2 fix (Group B #7): scope for the zero-proposal notice
-      paintProposals();
+      await applyBatchAsProposals(batchId);
       proposalsWrap.scrollIntoView?.({ behavior: "smooth", block: "start" });
     } catch (err) {
       // QA W2 fix (Group B #9): an unknown batch id used to fail silently
@@ -1021,6 +1307,7 @@ export async function renderChronicleSurface(arg) {
 function parseChronicleArg(arg) {
   if (!arg) return { kind: "default" };
   if (arg === "compose") return { kind: "compose" };
+  if (arg === "receive") return { kind: "receive" };
   if (arg.startsWith("batch/")) return { kind: "batch", batchId: arg.slice("batch/".length) };
   return { kind: "default" };
 }
@@ -1051,4 +1338,11 @@ function intentRowStyle(carried, accent) {
 }
 function fortuneStopStyle(on, hue) {
   return `flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 4px 9px; border-radius: 4px; cursor: pointer; background: ${on ? `oklch(0.90 0.055 ${hue})` : "transparent"};`;
+}
+// QA W3 finding 2: the inline "First reactions" framing-picker card style.
+function framingCardStyle(on) {
+  return `display: flex; align-items: flex-start; gap: 10px; padding: 9px 11px; border: 1px solid ${on ? "oklch(0.72 0.055 185)" : "oklch(0.86 0.010 80)"}; border-radius: 5px; cursor: pointer; background: ${on ? "oklch(0.90 0.030 185)" : "oklch(1 0 0)"};`;
+}
+function framingCustomInputStyle() {
+  return "width: 100%; padding: 7px 10px; border: 1px solid oklch(0.85 0.010 80); border-radius: 4px; font-family: inherit; font-size: 12.5px; background: oklch(1 0 0); color: inherit;";
 }

@@ -28,10 +28,24 @@
  * Written EXACTLY ONCE, by POST /api/chronicle/run, in the same request that
  * calls createBatch (via orchestrateBatch/orchestrateCycle). A batch created
  * by ANY OTHER path (a bare wf_propose_mutations/wf_run_cycle MCP call, a
- * writeup-import, a mention-scan) has NO sidecar — getChronicleRun returns
- * `null`, a real, valid, distinguishable state ("this batch didn't come from
- * Chronicle's own composer"), never a thrown error or a synthetic guessed
- * value.
+ * writeup-import reached via the MCP surface, a mention-scan) has NO
+ * sidecar — getChronicleRun returns `null`, a real, valid, distinguishable
+ * state ("this batch didn't come from Chronicle's own composer"), never a
+ * thrown error or a synthetic guessed value.
+ *
+ * QA W3 finding 2: Chronicle's own "Receive new information" intake (POST
+ * /api/writeup-propose rubber-duck-off, POST /api/writeup-select-framing's
+ * new-batch path) ALSO writes this sidecar now, from review-ui/server.mjs's
+ * own route handlers (never from wf-mcp-server/lib/mutation-ops.mjs's shared
+ * proposeFromWriteupOp/selectFramingForNewBatch -- an MCP-driven writeup
+ * import stays sidecar-less, matching the pre-existing "only the ONE
+ * UI-composed path gets a sidecar" rule). An intake batch has no duration or
+ * fortune concept, so `span`/`fortuneAtRun`/`elapsedSessions` are now
+ * NULLABLE (widened, not narrowed -- every pre-existing record still
+ * validates, since a real chronicle/run always supplies all three) --
+ * `promptSummary` is the one field an intake batch always has (the pasted
+ * text's own first line), which is exactly what the history rail needs to
+ * title it.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -47,9 +61,12 @@ export const SCHEMA_VERSION = 1;
 const ChronicleRunRecord = z
   .object({
     batchId: z.string(),
-    span: z.record(z.string(), z.any()),
-    fortuneAtRun: z.string(),
-    elapsedSessions: z.number(),
+    // QA W3 finding 2: nullable -- an intake batch (no time-skip involved)
+    // has no real span/fortune/elapsedSessions to report. `null` for those
+    // three is a real, valid "not a time-advancing run" state, never a guess.
+    span: z.record(z.string(), z.any()).nullable(),
+    fortuneAtRun: z.string().nullable(),
+    elapsedSessions: z.number().nullable(),
     createdAt: z.string(),
     // Phase 37 task 37.5: additive, defaults to null (absent on any sidecar
     // written before this task) -- a real, valid "no described event"
@@ -71,7 +88,7 @@ function filePath(world, batchId) {
  * by POST /api/chronicle/run, right after the batch it describes is created.
  * @param {string} world
  * @param {string} batchId
- * @param {{span:object, fortuneAtRun:string, elapsedSessions:number, promptSummary?:string|null}} meta
+ * @param {{span:object|null, fortuneAtRun:string|null, elapsedSessions:number|null, promptSummary?:string|null}} meta
  * @returns {object} the persisted record
  */
 export function recordChronicleRun(world, batchId, { span, fortuneAtRun, elapsedSessions, promptSummary = null }) {
