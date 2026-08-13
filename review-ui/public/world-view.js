@@ -1536,13 +1536,17 @@ function buildDevelopPlaceControl(entity) {
     status.textContent = "✦ thinking…";
     suggestionHost.innerHTML = "";
     try {
-      const { suggestion } = await wApi(`/api/graph/nodes/${encodeURIComponent(entity.id)}/develop-description`, {
+      // QA W1 Fix 4: `offline` is a machine flag on the response, never
+      // baked into `suggestion` itself -- the suggestion card renders it as
+      // CHROME (a small note above the text), and Accept persists ONLY
+      // `suggestion` (the clean body), unchanged from before this fix.
+      const { suggestion, offline } = await wApi(`/api/graph/nodes/${encodeURIComponent(entity.id)}/develop-description`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ world: currentWorld(), vision })
       });
       status.textContent = "";
-      suggestionHost.appendChild(buildDevelopPlaceSuggestionCard(entity, suggestion, () => { input.value = ""; }));
+      suggestionHost.appendChild(buildDevelopPlaceSuggestionCard(entity, suggestion, offline, () => { input.value = ""; }));
     } catch (err) {
       status.textContent = `✦ could not develop this: ${err.message}`;
     } finally {
@@ -1556,9 +1560,19 @@ function buildDevelopPlaceControl(entity) {
   return wrap;
 }
 
-/** The one-shot suggestion card: accept merges into the description via the EXISTING saveDescription()/editNodeOp path (never a new write mechanism); dismiss just discards. Never auto-applies. */
-function buildDevelopPlaceSuggestionCard(entity, suggestion, onResolved) {
+/**
+ * The one-shot suggestion card: accept merges into the description via the EXISTING saveDescription()/editNodeOp path (never a new write mechanism); dismiss just discards. Never auto-applies.
+ *
+ * QA W1 Fix 4: when `offline` is true, a small CHROME note renders above the
+ * suggestion text -- the disclaimer lives HERE, never inside `suggestion`
+ * itself (which Accept persists verbatim as real entity content).
+ */
+function buildDevelopPlaceSuggestionCard(entity, suggestion, offline, onResolved) {
   const card = el("div", { class: "wv-develop-place-suggestion", "data-testid": "wv-develop-place-suggestion" });
+  if (offline) {
+    card.appendChild(el("p", { class: "wv-develop-place-suggestion-chrome", "data-testid": "wv-develop-place-offline-note" },
+      "✦ Offline pass — no model configured. This is a placeholder, not a real suggestion; edit it before accepting."));
+  }
   card.appendChild(el("p", { class: "wv-develop-place-suggestion-text" }, suggestion));
 
   const actions = el("div", { class: "wv-develop-place-suggestion-actions" });

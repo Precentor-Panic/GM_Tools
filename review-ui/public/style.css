@@ -2306,6 +2306,10 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 :is(#view-session-planner, #app-shell) .scene-develop-place-suggestion-text {
   font-size: 13px; line-height: 1.55; color: var(--sp-ink-primary); margin: 0 0 10px;
 }
+/* QA W1 Fix 4: same chrome-not-body convention as world-view.js's own copy. */
+:is(#view-session-planner, #app-shell) .scene-develop-place-suggestion-chrome {
+  font-size: 11px; color: var(--sp-ink-muted); margin: 0 0 8px; font-style: italic;
+}
 :is(#view-session-planner, #app-shell) .scene-develop-place-suggestion-actions { display: flex; gap: 10px; align-items: center; }
 
 /* Missing-description banner — amber, click-to-seed. */
@@ -3020,6 +3024,12 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   border-left: 2px solid var(--sp-accent-teal); border-radius: var(--sp-radius-md); background: var(--sp-surface-card);
 }
 #app-shell .wv-develop-place-suggestion-text { font-size: 13px; line-height: 1.55; color: var(--sp-ink-primary); margin: 0 0 10px; }
+/* QA W1 Fix 4: the offline-degrade disclaimer renders as CHROME, separate
+   from the suggestion text it sits above -- never baked into the text
+   itself, which Accept persists verbatim as real entity content. */
+#app-shell .wv-develop-place-suggestion-chrome {
+  font-size: 11px; color: var(--sp-ink-muted); margin: 0 0 8px; font-style: italic;
+}
 #app-shell .wv-develop-place-suggestion-actions { display: flex; gap: 10px; align-items: center; }
 
 #app-shell .wv-contents-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }

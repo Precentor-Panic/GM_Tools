@@ -2221,7 +2221,10 @@ function buildDevelopPlaceControl(place, onAccepted) {
         body: JSON.stringify({ world: currentWorld(), vision })
       });
       status.textContent = "";
-      suggestionHost.appendChild(buildDevelopPlaceSuggestionCard(place, data.suggestion, () => { input.value = ""; }, onAccepted));
+      // QA W1 Fix 4: `offline` is chrome, never baked into `data.suggestion`
+      // itself (the clean body Accept persists verbatim) -- same convention
+      // world-view.js's own copy of this control already uses.
+      suggestionHost.appendChild(buildDevelopPlaceSuggestionCard(place, data.suggestion, data.offline, () => { input.value = ""; }, onAccepted));
     } catch (err) {
       status.textContent = `✦ could not develop this: ${err.message}`;
     } finally {
@@ -2235,11 +2238,25 @@ function buildDevelopPlaceControl(place, onAccepted) {
   return wrap;
 }
 
-/** The one-shot suggestion card: accept merges into the description via the EXISTING savePlaceDescription()/editNodeOp path (never a new write mechanism), then calls `onAccepted` to re-render; dismiss just discards. Never auto-applies. */
-function buildDevelopPlaceSuggestionCard(place, suggestion, onResolved, onAccepted) {
+/**
+ * The one-shot suggestion card: accept merges into the description via the EXISTING savePlaceDescription()/editNodeOp path (never a new write mechanism), then calls `onAccepted` to re-render; dismiss just discards. Never auto-applies.
+ *
+ * QA W1 Fix 4: when `offline` is true, a small CHROME note renders above the
+ * suggestion text -- the disclaimer lives HERE, never inside `suggestion`
+ * itself (which Accept persists verbatim as real entity content).
+ */
+function buildDevelopPlaceSuggestionCard(place, suggestion, offline, onResolved, onAccepted) {
   const card = document.createElement("div");
   card.className = "scene-develop-place-suggestion";
   card.setAttribute("data-testid", "scene-develop-place-suggestion");
+
+  if (offline) {
+    const chrome = document.createElement("p");
+    chrome.className = "scene-develop-place-suggestion-chrome";
+    chrome.setAttribute("data-testid", "scene-develop-place-offline-note");
+    chrome.textContent = "✦ Offline pass — no model configured. This is a placeholder, not a real suggestion; edit it before accepting.";
+    card.appendChild(chrome);
+  }
 
   const text = document.createElement("p");
   text.className = "scene-develop-place-suggestion-text";

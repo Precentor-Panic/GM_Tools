@@ -60,10 +60,15 @@ function loadEntityAndContext(dir, w, entityId) {
   return { entity, ctx };
 }
 
-/** wf_propose_prep_framings / review-ui's propose-framings route: the initial, round-1 framing call for a single entity. */
-export async function proposePrepFramingsOp(dir, w, { entityId }) {
+/**
+ * wf_propose_prep_framings / review-ui's propose-framings route: the initial, round-1 framing call for a single entity.
+ * QA W1 Fix 3: `opts` (default `{}`) forwards to proposeFramingsForEntity's own opts -- the
+ * offline-degrade injection seam. Omitted -> real client construction, byte-identical to
+ * every pre-fix caller.
+ */
+export async function proposePrepFramingsOp(dir, w, { entityId }, opts = {}) {
   const { entity, ctx } = loadEntityAndContext(dir, w, entityId);
-  const { framings } = await proposeFramingsForEntity(entity, ctx, {});
+  const { framings } = await proposeFramingsForEntity(entity, ctx, opts);
   return { entityId, entityType: entity.type, entityName: entity.name, framings, framingRound: 1 };
 }
 
@@ -75,9 +80,9 @@ export async function proposePrepFramingsOp(dir, w, { entityId }) {
  * flow) since there is no persisted object yet at this stage to carry a
  * round counter server-side.
  */
-export async function reframePrepFramingsOp(dir, w, { entityId, priorRoundCount }) {
+export async function reframePrepFramingsOp(dir, w, { entityId, priorRoundCount }, opts = {}) {
   const { entity, ctx } = loadEntityAndContext(dir, w, entityId);
-  const { framings } = await requestPrepReframing(entity, ctx, priorRoundCount ?? 1, {});
+  const { framings } = await requestPrepReframing(entity, ctx, priorRoundCount ?? 1, opts);
   return { entityId, entityType: entity.type, entityName: entity.name, framings, framingRound: (priorRoundCount ?? 1) + 1 };
 }
 
@@ -90,10 +95,10 @@ export async function reframePrepFramingsOp(dir, w, { entityId, priorRoundCount 
  * accept step is still required, matching the design doc's "propose ->
  * review -> accept" gate.
  */
-export async function generatePrepContentOp(dir, w, { entityId, selection }) {
+export async function generatePrepContentOp(dir, w, { entityId, selection }, opts = {}) {
   const { entity, ctx } = loadEntityAndContext(dir, w, entityId);
   const note = composePrepFramingNote(selection);
-  const { fields } = await generatePrepContent(entity, ctx, note, {});
+  const { fields } = await generatePrepContent(entity, ctx, note, opts);
   return savePrepContent(w, entityId, { entityType: entity.type, framingUsed: note, fields });
 }
 
@@ -135,13 +140,13 @@ export function discardPrepContentOp(w, { entityId }) {
  * document), regenerates just the one named field, and persists it via
  * updatePrepField (which itself only ever touches that one key).
  */
-export async function regeneratePrepFieldOp(dir, w, { entityId, fieldName, note }) {
+export async function regeneratePrepFieldOp(dir, w, { entityId, fieldName, note }, opts = {}) {
   const existing = getPrepContent(w, entityId);
   if (!existing) {
     throw new Error(`No prep content for entity "${entityId}" in world "${w}" -- generate it first before regenerating a field.`);
   }
   const { entity, ctx } = loadEntityAndContext(dir, w, entityId);
-  const newValue = await regeneratePrepField(entity, ctx, existing.fields, fieldName, note, {});
+  const newValue = await regeneratePrepField(entity, ctx, existing.fields, fieldName, note, opts);
   return updatePrepField(w, entityId, fieldName, newValue);
 }
 

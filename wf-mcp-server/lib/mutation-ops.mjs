@@ -325,7 +325,14 @@ export function rejectOp(w, { batchId, scope, id }) {
 
 // --- regenerate ------------------------------------------------------------
 
-export async function regenerateOp(dir, w, { batchId, scope, id, note }) {
+// QA W1 Fix 3: `opts` (default `{}`) is a NEW trailing param, split into
+// `opts.writeupOpts` (forwarded to regenerateWriteupImport) and
+// `opts.textureOpts` (forwarded to textureRegion) -- regenerateOp can take
+// EITHER dispatch branch depending on the batch's own sourceKind, so both
+// injection seams are threaded through even though only one fires per call.
+// Omitted -> real client construction on both, byte-identical to every
+// pre-fix caller.
+export async function regenerateOp(dir, w, { batchId, scope, id, note }, opts = {}) {
   const batch = loadBatch(w, batchId);
   const mutationIds = resolveMutationIds(batch, scope, id);
   if (!mutationIds.length) throw new Error(`No mutations matched scope="${scope}" id="${id ?? ""}"`);
@@ -359,7 +366,7 @@ export async function regenerateOp(dir, w, { batchId, scope, id, note }) {
       batch,
       note,
       { entities, edges, entityTypes },
-      {}
+      opts.writeupOpts ?? {}
     );
 
     let nextIdx = nextMutationIndex(batch);
@@ -409,7 +416,7 @@ export async function regenerateOp(dir, w, { batchId, scope, id, note }) {
     const regionMutations = await textureRegion(
       { regionId, entityIds, deltas },
       { entities, edges, world: w, batchId, sourceKind, elapsedTimeDescriptor: batch.elapsedTimeDescriptor, note },
-      {}
+      opts.textureOpts ?? {}
     );
     for (const rm of regionMutations) {
       newMutations.push({ ...rm, mutationId: `m${nextIdx++}`, status: "pending" });
@@ -452,16 +459,23 @@ export async function regenerateOp(dir, w, { batchId, scope, id, note }) {
  * @param {string} dir
  * @param {string} w
  * @param {{text:string, mode?:"merge"|"replace"}} args
+ * @param {object} [opts]
+ * @param {object} [opts.llmOpts]  QA W1 Fix 3: forwarded verbatim to whichever LLM call this
+ *   dispatch takes (importWriteup's own `llmOpts`, or proposeFramingsFromWriteup directly) --
+ *   the caller's (review-ui/server.mjs's) seam for injecting an offline-degrade client when
+ *   no ANTHROPIC_API_KEY is configured. Omitted -> real client construction, byte-identical
+ *   to this function's pre-fix behavior (every existing MCP-surface caller, which never
+ *   passes this).
  * @returns {Promise<object>} either importWriteup()'s own result shape (rubber-duck off) or
  *   {phase:'framing', framings, writeupText, mode, rubberDuck} (rubber-duck on)
  */
-export async function proposeFromWriteupOp(dir, w, { text: writeupText, mode }) {
+export async function proposeFromWriteupOp(dir, w, { text: writeupText, mode }, opts = {}) {
   const settings = getUserSettings(); // READ ONCE -- see this function's own doc comment
   if (!settings.rubberDuckMode.enabled) {
     const { entities, edges, entityTypes } = loadSnapshot(dir, w).snapshot;
-    return importWriteup(w, writeupText, { entities, edges, entityTypes }, { mode });
+    return importWriteup(w, writeupText, { entities, edges, entityTypes }, { mode, llmOpts: opts.llmOpts });
   }
-  const { framings } = await proposeFramingsFromWriteup(writeupText, {});
+  const { framings } = await proposeFramingsFromWriteup(writeupText, opts.llmOpts ?? {});
   return {
     phase: "framing",
     framings,
@@ -487,7 +501,7 @@ export async function proposeFromWriteupOp(dir, w, { text: writeupText, mode }) 
  * @param {string} w
  * @param {{writeupText:string, mode?:string, framings:Array, selection:object, rubberDuck:{enabled:boolean, updatedAt:string|null}}} args
  */
-export async function selectFramingForNewBatch(dir, w, { writeupText, mode, framings, selection, rubberDuck }) {
+export async function selectFramingForNewBatch(dir, w, { writeupText, mode, framings, selection, rubberDuck }, opts = {}) {
   if (!rubberDuck || typeof rubberDuck.enabled !== "boolean") {
     throw new Error(
       "selectFramingForNewBatch requires `rubberDuck` -- the settings snapshot echoed back by " +
@@ -498,7 +512,7 @@ export async function selectFramingForNewBatch(dir, w, { writeupText, mode, fram
   const { entities, edges, entityTypes } = loadSnapshot(dir, w).snapshot;
   const result = await importWriteup(w, writeupText, { entities, edges, entityTypes }, {
     mode,
-    llmOpts: { note },
+    llmOpts: { ...(opts.llmOpts ?? {}), note },
     extraScope: { rubberDuck }
   });
   const batch = loadBatch(w, result.batchId);
@@ -532,7 +546,7 @@ export async function selectFramingForNewBatch(dir, w, { writeupText, mode, fram
  * @param {string} w
  * @param {{batchId:string, framings:Array, selection:object}} args
  */
-export async function selectFramingForExistingBatch(dir, w, { batchId, framings, selection }) {
+export async function selectFramingForExistingBatch(dir, w, { batchId, framings, selection }, opts = {}) {
   const preBatch = loadBatch(w, batchId);
   if (!preBatch.scope?.rubberDuck?.enabled) {
     throw new Error(
@@ -548,7 +562,7 @@ export async function selectFramingForExistingBatch(dir, w, { batchId, framings,
     );
   }
   const note = composeFramingNote(selection);
-  const regenResult = await regenerateOp(dir, w, { batchId, scope: "batch", note });
+  const regenResult = await regenerateOp(dir, w, { batchId, scope: "batch", note }, { writeupOpts: opts.llmOpts ? { llmOpts: opts.llmOpts } : {} });
   const batch = loadBatch(w, batchId);
   recordFramingRound(batch, { framings, selection, note });
   const saved = saveBatch(w, batch);
@@ -585,7 +599,7 @@ export async function selectFramingForExistingBatch(dir, w, { batchId, framings,
  * @param {string} w
  * @param {{batchId:string, scope:'batch'|'region'|'entity', id?:string, note?:string, quickPickReason?:string}} args
  */
-export async function rejectWithLoopOp(dir, w, { batchId, scope, id, note, quickPickReason }) {
+export async function rejectWithLoopOp(dir, w, { batchId, scope, id, note, quickPickReason }, opts = {}) {
   const batch = loadBatch(w, batchId);
   const isRubberDuckWriteupBatch =
     !!batch.scope?.rubberDuck?.enabled &&
@@ -612,10 +626,10 @@ export async function rejectWithLoopOp(dir, w, { batchId, scope, id, note, quick
   }
 
   const baseResult = rejectOp(w, { batchId, scope, id });
-  const decision = await resolveRejectLoop(batch, { note, quickPickReason }, {});
+  const decision = await resolveRejectLoop(batch, { note, quickPickReason }, { llmOpts: opts.llmOpts });
 
   if (decision.kind === "regenerate") {
-    const regenResult = await regenerateOp(dir, w, { batchId, scope: "batch", note: decision.note });
+    const regenResult = await regenerateOp(dir, w, { batchId, scope: "batch", note: decision.note }, { writeupOpts: opts.llmOpts ? { llmOpts: opts.llmOpts } : {} });
     return {
       ...baseResult,
       rubberDuckLoop: {
@@ -643,10 +657,13 @@ export async function rejectWithLoopOp(dir, w, { batchId, scope, id, note, quick
  * @param {string} dir
  * @param {string} w
  * @param {{entityId:string, text:string}} args
+ * @param {object} [opts]  QA W1 Fix 3: forwarded to scanForMentionedEntities' own opts
+ *   (the offline-degrade injection seam) -- omitted -> real client construction,
+ *   byte-identical to this function's pre-fix behavior.
  */
-export async function scanMentionsOp(dir, w, { entityId, text }) {
+export async function scanMentionsOp(dir, w, { entityId, text }, opts = {}) {
   const { entities, edges, entityTypes } = loadSnapshot(dir, w).snapshot;
-  return scanForMentionedEntities(w, entityId, text, { entities, edges, entityTypes });
+  return scanForMentionedEntities(w, entityId, text, { entities, edges, entityTypes }, opts);
 }
 
 /**
@@ -767,9 +784,15 @@ export function redirectMentionScanRowToExistingOp(dir, w, { batchId, mutationId
 
 // --- narrate ---------------------------------------------------------------
 
-export async function narrateOp(w, { batchId, note, currentLocation, reachableAreas }) {
+// QA W1 Fix 3: `opts` (default `{}`) is a NEW trailing param on all three
+// narrate ops below, forwarded verbatim to narrateBatch/narrateEntity's own
+// opts -- the offline-degrade injection seam for a client-supplied
+// (server.mjs's) offline narration client when no ANTHROPIC_API_KEY is
+// configured. Omitted -> real client construction, byte-identical to every
+// pre-fix caller (every existing MCP-surface caller, which never passes this).
+export async function narrateOp(w, { batchId, note, currentLocation, reachableAreas }, opts = {}) {
   const batch = loadBatch(w, batchId);
-  return narrateBatch(batch, { world: w, note, currentLocation, reachableAreas }, {});
+  return narrateBatch(batch, { world: w, note, currentLocation, reachableAreas }, opts);
 }
 
 // --- Phase 10: per-entity narration -----------------------------------------
@@ -786,10 +809,10 @@ export async function narrateOp(w, { batchId, note, currentLocation, reachableAr
  * its own, matching "front-ends are thin wrappers" even though this module
  * itself is shared library code, not a front-end.
  */
-export async function narrateEntityOp(dir, w, { batchId, mutationId, note }) {
+export async function narrateEntityOp(dir, w, { batchId, mutationId, note }, opts = {}) {
   const batch = loadBatch(w, batchId);
   const { entities, edges } = loadSnapshot(dir, w).snapshot;
-  return narrateEntity(batch, mutationId, { world: w, entities, edges, note }, {});
+  return narrateEntity(batch, mutationId, { world: w, entities, edges, note }, opts);
 }
 
 // --- Task 14.7: "Narrate This" from the standalone entity page --------------
@@ -845,7 +868,7 @@ function findMostRecentAcceptedMutationForEntity(w, entityId) {
  * second, simpler-but-different kind of narration). No MCP tool wraps this
  * -- review-ui/server.mjs's standalone entity route is the only caller.
  */
-export async function narrateEntityStandaloneOp(dir, w, { entityId, note }) {
+export async function narrateEntityStandaloneOp(dir, w, { entityId, note }, opts = {}) {
   const found = findMostRecentAcceptedMutationForEntity(w, entityId);
   if (!found) {
     throw new NoNarratableBatchError(
@@ -856,7 +879,7 @@ export async function narrateEntityStandaloneOp(dir, w, { entityId, note }) {
     );
   }
   const { entities, edges } = loadSnapshot(dir, w).snapshot;
-  return narrateEntity(found.batch, found.mutationId, { world: w, entities, edges, note }, {});
+  return narrateEntity(found.batch, found.mutationId, { world: w, entities, edges, note }, opts);
 }
 
 /** wf_get_entity_narration / review-ui's per-row narration fetch: the one entry with status:'current', or null if never narrated (or superseded with nothing to replace it yet). */

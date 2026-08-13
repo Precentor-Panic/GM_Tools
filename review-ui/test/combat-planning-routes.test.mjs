@@ -296,14 +296,24 @@ test("encounter-suggest: omitted themeText field entirely (not just blank) also 
   assert.ok(Array.isArray(body.suggestion.combination) && body.suggestion.combination.length > 0);
 });
 
-test("encounter-suggest: non-empty themeText still calls proposeThematicTags for real -- the original shipped behavior, unchanged (502, no API key configured)", async () => {
-  const { status } = await postJson("/api/combat-planning/encounter-suggest", {
+// QA fix-wave W1, Fix 3: this route's own proposeThematicTags call used to
+// throw the raw Anthropic SDK's "Could not resolve authentication method"
+// error keyless (a real, confirmed bug this test used to pin as "the
+// original shipped behavior") -- it now degrades to the honest offline
+// thematic-filter client (server.mjs's offlineThematicFilterClient: passes
+// the whole candidate pool through unfiltered rather than throwing), so a
+// genuinely non-blank themeText now succeeds even with no ANTHROPIC_API_KEY
+// configured, the SAME invariant every other LLM-backed route in this
+// project now holds to.
+test("encounter-suggest: non-empty themeText degrades to the offline thematic-filter client keyless -- 200, never a 5xx, real suggestion returned", async () => {
+  const { status, body } = await postJson("/api/combat-planning/encounter-suggest", {
     world: WORLD,
     targetDifficulty: 5,
     themeText: "undead crypt",
     sceneEntityId: "cp-route-test-scene"
   });
-  assert.equal(status, 502, "a genuinely non-blank themeText must still attempt the real LLM call");
+  assert.equal(status, 200, "a genuinely non-blank themeText must succeed keyless via the offline degrade, not throw an auth error");
+  assert.ok(Array.isArray(body.suggestion.combination) && body.suggestion.combination.length > 0);
 });
 
 test("encounter-suggest: the blank-themeText deterministic candidate pool only draws from status:'accepted' bestiary entries", async () => {
@@ -379,8 +389,29 @@ test("encounter-suggest: manualCombination skips the auto-fill entirely -- targe
 // graph-backed (see combat-planning-fixture.mjs's own header), so a real DM
 // world may genuinely have no world-fabric-snapshot.json on disk at all.
 const WORLD_NO_SNAPSHOT = "combat-planning-routes-test-world-no-snapshot";
+// QA W1 Fix 3 side-discovery (NOT part of this fix-wave's own scope, flagged
+// in the closing report rather than fixed here): combat-planning/
+// snowball-delta.mjs's computeSnowballDelta does `partyMembers.reduce(...)`
+// with NO initial value, and its own doc comment requires "at least 2
+// members" -- a world with a genuinely EMPTY party roster (a real, valid
+// state for a fresh/standalone Encounter Builder world, the exact scenario
+// this test block is about) crashes encounter-suggest with a raw
+// "Reduce of empty array with no initial value" TypeError. This was
+// PRE-EXISTING and completely unrelated to API keys -- it was simply masked
+// until now: before Fix 3, a keyless themed request crashed on the auth
+// check first and never reached this code path at all. Seeding a real
+// (2-member, per that module's own documented minimum) roster here keeps
+// this test focused on ITS OWN subject (the 20.5 snapshot-less-world root
+// cause plus this fix-wave's offline degrade), not this separate bug.
+savePartyMember(WORLD_NO_SNAPSHOT, { name: "Standalone Test Fighter", combatRelevant: { hp: 25, ac: 14, damagePerRoundEstimate: 8 }, buildRelevant: {} });
+savePartyMember(WORLD_NO_SNAPSHOT, { name: "Standalone Test Cleric", combatRelevant: { hp: 20, ac: 13, damagePerRoundEstimate: 5 }, buildRelevant: {} });
 
-test("encounter-suggest: 20.5 REGRESSION -- non-empty themeText for a world with NO WF snapshot on disk no longer 400s with \"No World Fabric snapshot found\" (the confirmed root cause); it degrades to an ungrounded scene context and still genuinely attempts the real LLM call (502, no API key configured) -- the SAME failure shape as a themed request against a world that DOES have a snapshot", async () => {
+// QA fix-wave W1, Fix 3: the 502-on-no-API-key half of this REGRESSION test's
+// old assertion pinned the exact bug this fix-wave closes (see the sibling
+// test above) -- updated to the new, honest, always-succeeds-keyless
+// behavior. The 20.5 root cause itself (must not 400 just because the world
+// has no WF snapshot) is unrelated to this fix-wave and stays asserted.
+test("encounter-suggest: 20.5 REGRESSION -- non-empty themeText for a world with NO WF snapshot on disk no longer 400s with \"No World Fabric snapshot found\" (the confirmed root cause); it degrades to an ungrounded scene context and, keyless, further degrades to the offline thematic-filter client -- 200, never a 5xx", async () => {
   const { status, body } = await postJson("/api/combat-planning/encounter-suggest", {
     world: WORLD_NO_SNAPSHOT,
     targetDifficulty: 5,
@@ -392,8 +423,8 @@ test("encounter-suggest: 20.5 REGRESSION -- non-empty themeText for a world with
     status, 400,
     "must not throw 'No World Fabric snapshot found' just because narrowing-by-theme was requested for a world that has never been graph-backed -- Encounter Builder is deliberately NOT graph-backed"
   );
-  assert.equal(status, 502, "having skipped the snapshot-load gate, the request must still genuinely reach proposeThematicTags and fail on the expected missing-API-key reason, not some other new error");
-  assert.doesNotMatch(body.error ?? "", /No World Fabric snapshot found/);
+  assert.equal(status, 200, "having skipped the snapshot-load gate, the request must still genuinely reach proposeThematicTags, which now degrades offline instead of throwing keyless");
+  assert.ok(Array.isArray(body.suggestion.combination) && body.suggestion.combination.length > 0);
 });
 
 void __dirname;

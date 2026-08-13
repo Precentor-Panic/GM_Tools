@@ -142,6 +142,12 @@ import {
   regeneratePrepFieldOp,
   markPrepContentStaleOp
 } from "../wf-mcp-server/lib/prep-content-ops.mjs";
+// QA W1 Fix 3: `fieldsSchemaForType` builds the offline prep-content client's
+// "generate" response GENERICALLY off the real per-entity-type zod schema
+// (each of the six templates is `.strict()` -- extra/missing keys fail
+// validation) instead of hand-duplicating each type's own field list here.
+import { z } from "zod";
+import { fieldsSchemaForType } from "../mutation-engine/prep-content.mjs";
 
 // Phase 16 -- Session Planner engine (task 16.6). Thin wrappers only, same
 // convention as every other route in this file: resolveWorld/resolveDir()
@@ -769,6 +775,66 @@ function firstLineTruncated(text, maxLen) {
  * real valid state, never a thrown error or a guessed value. ZERO new
  * persisted history of its own.
  */
+// =============================================================================
+// QA fix-wave W1, Fix 3/Fix 4 -- OFFLINE DEGRADE for every LLM-backed route.
+//
+// FIX 3 (offline degrade): three-plus routes (writeup-propose, assist-prep,
+// propose-updates, bestiary/ingest -- plus a fuller grep-driven audit below)
+// threw the raw Anthropic SDK's own "Could not resolve authentication
+// method" construction-time error keyless, instead of degrading like
+// develop-description/reskin-suggest/chronicle-run already did. `offlineOpts`
+// is the ONE shared helper every LLM-backed route below now goes through --
+// grep `offlineOpts(` for the exhaustive, greppable list. Post-fix invariant:
+// no LLM route can throw an auth error keyless.
+//
+// FIX 4 (offline body must never carry disclaimer boilerplate that gets
+// SAVED verbatim as real content): every offline client below returns a
+// CLEAN body -- no "Offline pass"/"ANTHROPIC_API_KEY" text inside any field
+// that a GM's Accept persists as real world/prep/bestiary/party-roster data.
+// Where a route's response shape has a genuine "why" sibling that is REVIEW
+// METADATA, never itself written into an entity/content field (a mutation's
+// own `rationale`), the honest offline label lives THERE instead. Every
+// route below that returns a one-shot suggestion card ALSO stamps a
+// top-level `offline:true` machine flag on its JSON response, so the
+// frontend can render the disclaimer as CHROME (a small note above the
+// text) rather than baking it into the text itself.
+// =============================================================================
+
+/**
+ * Shared "offline degrade" wrapper: `{}` when a real ANTHROPIC_API_KEY is
+ * configured (every call below is completely unaffected, byte-identical to
+ * before this fix-wave), or `{ client: makeOfflineClient() }` when it isn't
+ * -- an LLM-backed route degrades to an honest, clearly-labelled placeholder
+ * response instead of the raw Anthropic SDK's own construction-time throw.
+ * `makeOfflineClient` is a thunk (not the client itself) so it's only ever
+ * constructed on the keyless path, never uselessly built alongside a real key.
+ */
+function offlineOpts(makeOfflineClient) {
+  return process.env.ANTHROPIC_API_KEY ? {} : { client: makeOfflineClient() };
+}
+
+/** True exactly when the offline-degrade path above is active for this process -- used to stamp response-level `offline:true` flags (Fix 4). */
+function isOffline() {
+  return !process.env.ANTHROPIC_API_KEY;
+}
+
+/** Extract the first user-role text content out of an Anthropic-SDK-shaped `messages.create({messages})` call -- every offline client below reads its prompt this same way. */
+function firstPromptText(messages) {
+  return String(messages?.[0]?.content ?? "");
+}
+
+/** Wrap a parsed JSON body as the Anthropic-SDK-shaped response every offline client below returns. */
+function offlineTextResponse(bodyObj) {
+  return { content: [{ type: "text", text: JSON.stringify(bodyObj) }], stop_reason: "end_turn" };
+}
+
+// A generic, honest, disclaimer-free placeholder for any persisted STRING
+// content field this file's offline clients need to fill (prep-content
+// fields, scene-element fields, etc.) -- deliberately free of "Offline
+// pass"/"ANTHROPIC_API_KEY" (Fix 4): short and honest, but never an
+// instruction aimed at the GM, so it reads sanely even if accepted verbatim.
+const OFFLINE_CONTENT_PLACEHOLDER = "Not detailed yet — a model wasn't available when this was generated.";
+
 /**
  * OFFLINE DETERMINISTIC texture client (see POST /api/chronicle/run). An
  * Anthropic-SDK-shaped stub used ONLY when no ANTHROPIC_API_KEY is set, so a
@@ -778,19 +844,24 @@ function firstLineTruncated(text, maxLen) {
  * embeds `[id=…]` per renderRegionContext) and returns a single honest,
  * clearly-labelled placeholder field-edit for that entity -- never pretending
  * to be model-authored prose. With a key present it is never constructed.
+ *
+ * FIX 4: `data.description` (the field a GM's Accept persists verbatim as
+ * real entity content) stays a short, clean, disclaimer-free placeholder;
+ * the "offline pass" label itself lives only in `rationale` -- review
+ * metadata (Batch Review's own "why" text), never written into the entity.
  */
 function offlineTextureClient(fortuneLabel) {
   return {
     messages: {
       create: async ({ messages } = {}) => {
-        const prompt = messages?.[0]?.content ?? "";
-        const m = /\[id=([^\]]+)\]/.exec(String(prompt));
+        const prompt = firstPromptText(messages);
+        const m = /\[id=([^\]]+)\]/.exec(prompt);
         const id = m ? m[1] : null;
-        const desc = `Time passed under a ${fortuneLabel} fortune. (Offline pass — no model configured; edit or reject before applying.)`;
+        const desc = `Time passed under a ${fortuneLabel} fortune.`;
         const mutation = id
-          ? { op: "upsert_entity", id, data: { description: desc }, rationale: "Deferred thread carried into this passage (offline deterministic pass — set ANTHROPIC_API_KEY for real texturing)." }
-          : { op: "upsert_entity", data: { name: "An unnamed consequence", type: "concept", description: desc }, rationale: "Offline deterministic pass — set ANTHROPIC_API_KEY for real texturing." };
-        return { content: [{ type: "text", text: JSON.stringify([mutation]) }], stop_reason: "end_turn" };
+          ? { op: "upsert_entity", id, data: { description: desc }, rationale: "Deferred thread carried into this passage (offline pass -- no model configured; edit or reject before applying)." }
+          : { op: "upsert_entity", data: { name: "An unnamed consequence", type: "concept", description: desc }, rationale: "Offline pass -- no model configured; edit or reject before applying." };
+        return offlineTextResponse([mutation]);
       }
     }
   };
@@ -803,19 +874,24 @@ function offlineTextureClient(fortuneLabel) {
  * so the "✦ develop this place" affordance degrades HONESTLY (a real,
  * clearly-labelled placeholder suggestion the GM reviews and can dismiss)
  * rather than the route throwing on client construction. Echoes the GM's own
- * vision back inside an explicitly-labelled placeholder sentence rather than
- * inventing prose, so it can never be mistaken for a real model suggestion.
- * With a key present this is never constructed.
+ * vision back as the suggestion. With a key present this is never constructed.
+ *
+ * FIX 4 (the persona finding this was built to close): `suggestion` is now a
+ * CLEAN, minimal echo of the GM's own vision line -- usable-as-is if
+ * accepted verbatim, carrying NEITHER the "Offline pass" disclaimer NOR any
+ * instruction to set ANTHROPIC_API_KEY. The route (below) stamps the
+ * disclaimer onto a separate `offline:true` response flag instead, which the
+ * frontend renders as chrome above the suggestion text, never inside it.
  */
 function offlineDevelopDescriptionClient() {
   return {
     messages: {
       create: async ({ messages } = {}) => {
-        const prompt = messages?.[0]?.content ?? "";
-        const m = /## The GM's own vision for this place, right now\s*\n\n([^\n]*)/.exec(String(prompt));
+        const prompt = firstPromptText(messages);
+        const m = /## The GM's own vision for this place, right now\s*\n\n([^\n]*)/.exec(prompt);
         const vision = (m ? m[1] : "").trim() || "the GM's own vision";
-        const suggestion = `(Offline pass — no model configured; edit or dismiss before accepting.) Following the GM's own note (“${vision}”), this place could stand to gain detail along those lines — set ANTHROPIC_API_KEY for a real suggestion.`;
-        return { content: [{ type: "text", text: JSON.stringify({ suggestion }) }], stop_reason: "end_turn" };
+        const suggestion = vision.charAt(0).toUpperCase() + vision.slice(1) + (/[.!?]$/.test(vision) ? "" : ".");
+        return offlineTextResponse({ suggestion });
       }
     }
   };
@@ -829,27 +905,240 @@ function offlineDevelopDescriptionClient() {
  * HONESTLY (real, clearly-labelled placeholder suggestions the GM reviews
  * and can accept/dismiss) rather than the route throwing on client
  * construction. Reads the creature's own name straight out of the prompt's
- * "## The creature being reskinned" section rather than inventing one, and
- * echoes the GM's own vision line back the same way
- * offlineDevelopDescriptionClient already does, so the placeholder can
- * never be mistaken for a real model suggestion. Returns exactly
- * MIN_RESKIN_SUGGESTIONS (2) suggestions -- combat-planning/reskin-
- * suggest.mjs's own validation requires at least that many. With a key
- * present this is never constructed.
+ * "## The creature being reskinned" section rather than inventing one.
+ * Returns exactly MIN_RESKIN_SUGGESTIONS (2) suggestions -- combat-planning/
+ * reskin-suggest.mjs's own validation requires at least that many. With a
+ * key present this is never constructed.
+ *
+ * FIX 4: `description`/`habitatHint` (the fields reskin-accept persists
+ * verbatim into a brand-new bestiary entry) stay clean and disclaimer-free;
+ * the route stamps `offline:true` on the response instead (same convention
+ * as develop-description above).
  */
 function offlineReskinSuggestClient() {
   return {
     messages: {
       create: async ({ messages } = {}) => {
-        const prompt = messages?.[0]?.content ?? "";
-        const nameMatch = /## The creature being reskinned\s*\n\n([^\n—]*)/.exec(String(prompt));
+        const prompt = firstPromptText(messages);
+        const nameMatch = /## The creature being reskinned\s*\n\n([^\n—]*)/.exec(prompt);
         const creatureName = (nameMatch ? nameMatch[1] : "").trim() || "this creature";
         const suggestions = [1, 2].map((n) => ({
-          name: `${creatureName} (offline reskin ${n})`,
-          description: `(Offline pass — no model configured; edit or dismiss before accepting.) A reskinned take on ${creatureName} — set ANTHROPIC_API_KEY for a real suggestion.`,
-          habitatHint: "(offline pass — no habitat suggested)"
+          name: `${creatureName} (variant ${n})`,
+          description: `A reskinned take on ${creatureName}, not yet detailed.`,
+          habitatHint: "Not yet suggested."
         }));
-        return { content: [{ type: "text", text: JSON.stringify({ suggestions }) }], stop_reason: "end_turn" };
+        return offlineTextResponse({ suggestions });
+      }
+    }
+  };
+}
+
+/**
+ * OFFLINE DETERMINISTIC writeup-import client (see POST /api/writeup-propose,
+ * POST /api/scene-planning/scenes|plans/:id/propose-updates -- all three
+ * routes ultimately call graph-import/writeup-import.mjs's importWriteup or
+ * proposeFramingsFromWriteup with this same injected client). Detects WHICH
+ * of the two prompt shapes it's answering by a marker unique to each
+ * template (the extraction prompt always renders a "## Source text" section;
+ * the framing prompt never does) rather than needing two separate DI seams
+ * threaded through importWriteup's own dispatch.
+ *
+ * FIX 4: the extraction branch returns ZERO entities/edges -- the only
+ * HONEST answer for "what did this text contain" without a real model (this
+ * project has no non-LLM text-extraction fallback, and inventing placeholder
+ * entities from unstructured prose would be actively misleading, not merely
+ * unpolished). This still produces a real batch (mutationCount 0), so the
+ * route returns 200 with a genuine, honestly-empty result rather than a
+ * fabricated one -- the caller sees "nothing extracted (offline)" in the
+ * batch summary, never phantom content. The framing branch returns 3 honest,
+ * clearly-offline framing sentences (the schema requires exactly 3
+ * non-empty strings) -- framings are throwaway UI copy, never persisted as
+ * entity content, so no Fix-4 concern applies to them.
+ *
+ * Marker choice: BOTH prompts/writeup-import.md and prompts/writeup-
+ * framing.md render a "## The writeup" section (confirmed by reading both
+ * files directly, not assumed), so that heading alone can't distinguish
+ * them -- prompts/writeup-import.md's own "## Entities already in this
+ * world's graph" section is the one heading unique to the extraction
+ * prompt, checked instead.
+ */
+function offlineWriteupClient() {
+  return {
+    messages: {
+      create: async ({ messages } = {}) => {
+        const prompt = firstPromptText(messages);
+        if (/^##\s*Entities already in this world's graph/m.test(prompt)) {
+          return offlineTextResponse({ entities: [], edges: [] });
+        }
+        const framings = ["a", "b", "c"].map((id) => ({
+          id,
+          sentence: "Offline pass -- no model configured, so no real interpretation is available yet."
+        }));
+        return offlineTextResponse({ framings });
+      }
+    }
+  };
+}
+
+/**
+ * OFFLINE DETERMINISTIC assist-prep client (see POST /api/scene-planning/
+ * scenes/:sceneId/assist-prep). Chosen by the ROUTE per its own already-known
+ * `mode` (propose-elements / draft-fields / draft-read-aloud) rather than
+ * content-sniffing the prompt -- the route already branches on `mode` before
+ * calling assistScenePrep, so this is simpler and more honest than a second,
+ * regex-based dispatch of the same information.
+ *
+ * FIX 4: every returned field is clean/disclaimer-free (OFFLINE_CONTENT_PLACEHOLDER,
+ * defined above) -- scene-element fields persist directly into the scene-elements
+ * store on save, with no separate "rationale" sibling to carry a disclaimer instead.
+ */
+function offlineAssistPrepClient(mode, elementName) {
+  return {
+    messages: {
+      create: async () => {
+        if (mode === "draft-read-aloud") {
+          return offlineTextResponse({ narration: OFFLINE_CONTENT_PLACEHOLDER });
+        }
+        const name = mode === "draft-fields" ? (elementName || "Untitled element") : "An unnamed detail";
+        const elements = [{ name, fields: { gives: OFFLINE_CONTENT_PLACEHOLDER } }];
+        return offlineTextResponse({ elements });
+      }
+    }
+  };
+}
+
+/**
+ * OFFLINE DETERMINISTIC bestiary-ingest client (see POST /api/combat-
+ * planning/bestiary/ingest). RawBestiaryFields requires {name, type, hp, ac}
+ * -- an honest, obviously-placeholder stat block (hp/ac deliberately
+ * implausible round numbers, not a guessed real value) the GM reviews and
+ * edits/discards before it's ever promoted to the graph or used in combat
+ * planning (bestiary entries are 'proposed' until an explicit accept).
+ */
+function offlineBestiaryIngestClient() {
+  return {
+    messages: {
+      create: async () => offlineTextResponse({
+        name: "Unidentified creature",
+        type: "unknown",
+        hp: 1,
+        ac: 10
+      })
+    }
+  };
+}
+
+/** OFFLINE DETERMINISTIC party-roster-ingest client (see POST /api/combat-planning/party-roster/ingest). RawPartyMemberFields requires only a non-empty `name`; everything else is optional, so an honest placeholder name alone is a fully valid, reviewable proposal. */
+function offlinePartyRosterIngestClient() {
+  return {
+    messages: {
+      create: async () => offlineTextResponse({ name: "Unidentified character" })
+    }
+  };
+}
+
+/**
+ * OFFLINE DETERMINISTIC thematic-filter client (see the encounter-suggest
+ * pipeline's POST route). Reads every `"entryId": "..."` out of the rendered
+ * candidatePoolJson section of the prompt and returns the WHOLE pool
+ * unfiltered (never narrows it) -- the honest "no thematic judgment was
+ * possible offline" answer, and the only response guaranteed to pass
+ * proposeThematicTags' own "never invent an id outside the input pool"
+ * validation without seeing the real pool object directly.
+ */
+function offlineThematicFilterClient() {
+  return {
+    messages: {
+      create: async ({ messages } = {}) => {
+        const prompt = firstPromptText(messages);
+        const ids = [...prompt.matchAll(/"entryId":\s*"([^"]+)"/g)].map((m) => m[1]);
+        return offlineTextResponse({ filteredEntryIds: ids, rationale: "Offline pass -- no thematic filtering applied; the full candidate pool was passed through unfiltered." });
+      }
+    }
+  };
+}
+
+/** OFFLINE DETERMINISTIC quick-gen client (see POST /api/scene-planning/quick-gen). quickGenerate has no JSON/schema contract at all -- it returns raw model text verbatim -- so the offline body itself must already be the final, clean, disclaimer-free text a caller could use as-is. */
+function offlineQuickGenClient() {
+  return {
+    messages: {
+      create: async () => ({ content: [{ type: "text", text: OFFLINE_CONTENT_PLACEHOLDER }], stop_reason: "end_turn" })
+    }
+  };
+}
+
+/**
+ * OFFLINE DETERMINISTIC narration client (see POST .../narrate,
+ * .../mutations/:id/narrate, and the standalone entity "Narrate This"
+ * route). Narration has no JSON schema -- it's plain prose, persisted
+ * verbatim by entity-narration.mjs's saveEntityNarration on success -- so,
+ * per Fix 4, the returned text must already be the clean, honest,
+ * disclaimer-free body a GM could read at the table as-is (short and
+ * plainly a placeholder, never an instruction to configure anything).
+ */
+function offlineNarrateClient() {
+  return {
+    messages: {
+      create: async () => ({ content: [{ type: "text", text: OFFLINE_CONTENT_PLACEHOLDER }], stop_reason: "end_turn" })
+    }
+  };
+}
+
+/** OFFLINE DETERMINISTIC scan-mentions client (see POST /api/entities/:id/scan-mentions). MentionsResponse's `mentions` array has no minimum length -- the honest offline answer is "no mentions found," never an invented one. */
+function offlineScanMentionsClient() {
+  return {
+    messages: {
+      create: async () => offlineTextResponse({ mentions: [] })
+    }
+  };
+}
+
+/**
+ * A single field's own offline placeholder value, honest to its real zod
+ * type (an empty array for an array-typed field -- e.g. every template's
+ * shared `potentialRolls` -- OFFLINE_CONTENT_PLACEHOLDER for a string one).
+ * Generic over WHICH field, not hardcoded to `potentialRolls` by name, so
+ * this stays correct even if a future template adds a second array field.
+ */
+function offlinePrepFieldValue(fieldSchema) {
+  return fieldSchema instanceof z.ZodArray ? [] : OFFLINE_CONTENT_PLACEHOLDER;
+}
+
+/**
+ * OFFLINE DETERMINISTIC prep-content client (see the "develop this node"
+ * propose-framings/reframe/generate/regenerate-field routes). `kind`
+ * selects the response shape the ROUTE already knows it's asking for
+ * (framing vs. a full field set vs. a single field), same "route already
+ * knows, don't content-sniff" reasoning as offlineAssistPrepClient above.
+ *
+ * `entityType` (required for kind "generate") drives the response OFF THE
+ * REAL per-type zod schema (fieldsSchemaForType) -- each of the six
+ * templates is `.strict()`, so a generic "fill every field name from every
+ * type" response would fail validation for any type whose schema doesn't
+ * contain some other type's field. Reading the schema directly means this
+ * client can never drift out of sync with a template's real field list,
+ * unlike a hand-duplicated field-name list would.
+ */
+function offlinePrepContentClient(kind, { fieldName, entityType } = {}) {
+  return {
+    messages: {
+      create: async () => {
+        if (kind === "framing") {
+          const framings = ["a", "b", "c"].map((id) => ({ id, sentence: "Offline pass -- no real framing available without a model." }));
+          return offlineTextResponse({ framings });
+        }
+        if (kind === "field") {
+          const schema = fieldsSchemaForType(entityType);
+          return offlineTextResponse({ value: offlinePrepFieldValue(schema.shape[fieldName]) });
+        }
+        // kind === "generate": every key this entity type's own schema
+        // actually declares, each filled with its own type-honest placeholder.
+        const schema = fieldsSchemaForType(entityType);
+        const fields = {};
+        for (const [key, fieldSchema] of Object.entries(schema.shape)) {
+          fields[key] = offlinePrepFieldValue(fieldSchema);
+        }
+        return offlineTextResponse({ fields });
       }
     }
   };
@@ -1283,13 +1572,16 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const dir = resolveDir();
     const w = resolveWorld(body.world);
+    // QA W1 Fix 3 (grep-driven audit): the rubber-duck-mode reject-loop's
+    // OWN reframe/regenerate calls degrade offline too, same as every other
+    // writeup-import-backed call site.
     const result = await rejectWithLoopOp(dir, w, {
       batchId: parts[2],
       scope: body.scope,
       id: body.id,
       note: body.note,
       quickPickReason: body.quickPickReason
-    });
+    }, { llmOpts: offlineOpts(offlineWriteupClient) });
     return sendJson(res, 200, result);
   }
 
@@ -1339,11 +1631,18 @@ async function handleApi(req, res, url, parts) {
   }
 
   // POST /api/batches/:batchId/regenerate  { world, dataDir, scope, id, note }
+  // QA W1 Fix 3 (grep-driven audit): can dispatch to EITHER a writeup-import
+  // re-extraction OR a per-region texture regenerate depending on the
+  // batch's own sourceKind -- both injection seams are threaded, only one
+  // fires per call.
   if (method === "POST" && parts.length === 4 && parts[1] === "batches" && parts[3] === "regenerate") {
     const body = await readBody(req);
     const dir = resolveDir();
     const w = resolveWorld(body.world);
-    const result = await regenerateOp(dir, w, { batchId: parts[2], scope: body.scope, id: body.id, note: body.note });
+    const result = await regenerateOp(dir, w, { batchId: parts[2], scope: body.scope, id: body.id, note: body.note }, {
+      writeupOpts: { llmOpts: offlineOpts(offlineWriteupClient) },
+      textureOpts: offlineOpts(() => offlineTextureClient("regenerated"))
+    });
     return sendJson(res, 200, result);
   }
 
@@ -1355,7 +1654,9 @@ async function handleApi(req, res, url, parts) {
   if (method === "POST" && parts.length === 4 && parts[1] === "batches" && parts[3] === "narrate") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
-    const result = await narrateOp(w, { batchId: parts[2], note: body.note });
+    // QA W1 Fix 3 (grep-driven audit): degrades to a clean placeholder
+    // narration instead of throwing keyless.
+    const result = await narrateOp(w, { batchId: parts[2], note: body.note }, offlineOpts(offlineNarrateClient));
     return sendJson(res, 200, result);
   }
 
@@ -1377,7 +1678,7 @@ async function handleApi(req, res, url, parts) {
     const dir = resolveDir();
     const w = resolveWorld(body.world);
     if (!body.mutationId) throw new Error("POST .../narrate-entity requires a `mutationId`.");
-    const result = await narrateEntityOp(dir, w, { batchId: parts[2], mutationId: body.mutationId, note: body.note });
+    const result = await narrateEntityOp(dir, w, { batchId: parts[2], mutationId: body.mutationId, note: body.note }, offlineOpts(offlineNarrateClient));
     return sendJson(res, 200, result);
   }
 
@@ -1408,7 +1709,7 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const dir = resolveDir();
     const w = resolveWorld(body.world);
-    const result = await narrateEntityStandaloneOp(dir, w, { entityId: parts[2], note: body.note });
+    const result = await narrateEntityStandaloneOp(dir, w, { entityId: parts[2], note: body.note }, offlineOpts(offlineNarrateClient));
     return sendJson(res, 200, result);
   }
 
@@ -1716,11 +2017,17 @@ async function handleApi(req, res, url, parts) {
     const dir = resolveDir();
     const w = resolveWorld(body.world);
     const { entities, edges } = loadSnapshot(dir, w).snapshot;
+    // QA W1 Fix 3 (grep-driven audit): resolvePending's own textureRegion
+    // call is the SAME LLM shape as POST /api/chronicle/run's texture pass
+    // -- reuses offlineTextureClient, not a second texture-shaped stub.
     const result = await resolvePending(
       w,
       parts[2],
       { depth: body.depth, maxNeighbors: body.maxNeighbors },
-      { entities, edges, elapsedTimeDescriptor: body.elapsedTimeDescriptor }
+      {
+        entities, edges, elapsedTimeDescriptor: body.elapsedTimeDescriptor,
+        textureOpts: offlineOpts(() => offlineTextureClient("resolved-pending"))
+      }
     );
     return sendJson(res, 200, result);
   }
@@ -1814,15 +2121,17 @@ async function handleApi(req, res, url, parts) {
     const dir = resolveDir();
     const w = resolveWorld(body.world);
     const { entities, edges } = loadSnapshot(dir, w).snapshot;
-    const result = await developDescription(entities, edges, parts[3], body.vision, {
-      // Same OFFLINE DETERMINISTIC degrade as POST /api/chronicle/run's
-      // texture call -- a key-less dev/demo environment (and this route's own
-      // e2e coverage) gets a real, honestly-labelled placeholder suggestion
-      // instead of a thrown "missing API key" from the Anthropic SDK
-      // constructor. With a key present this branch never fires.
-      ...(process.env.ANTHROPIC_API_KEY ? {} : { client: offlineDevelopDescriptionClient() })
-    });
-    return sendJson(res, 200, result);
+    // Same OFFLINE DETERMINISTIC degrade as POST /api/chronicle/run's
+    // texture call -- a key-less dev/demo environment (and this route's own
+    // e2e coverage) gets a real, honestly-labelled placeholder suggestion
+    // instead of a thrown "missing API key" from the Anthropic SDK
+    // constructor. With a key present this branch never fires.
+    //
+    // QA W1 Fix 4: `offline:true` is stamped on the RESPONSE (never inside
+    // `suggestion` itself, which is the clean body Accept persists verbatim)
+    // so the frontend can render the disclaimer as chrome above the text.
+    const result = await developDescription(entities, edges, parts[3], body.vision, offlineOpts(offlineDevelopDescriptionClient));
+    return sendJson(res, 200, { ...result, offline: isOffline() });
   }
 
   // POST /api/graph/nodes/:entityId/reparent  { world, dataDir, parentId }
@@ -1956,7 +2265,7 @@ async function handleApi(req, res, url, parts) {
     if (typeof body.text !== "string" || !body.text.trim()) {
       throw new Error("POST .../scan-mentions requires a non-empty `text` field.");
     }
-    const result = await dedupedScan(w, parts[2], body.text, () => scanMentionsOp(dir, w, { entityId: parts[2], text: body.text }));
+    const result = await dedupedScan(w, parts[2], body.text, () => scanMentionsOp(dir, w, { entityId: parts[2], text: body.text }, { llmOpts: offlineOpts(offlineScanMentionsClient) }));
     return sendJson(res, 200, result);
   }
 
@@ -2022,7 +2331,11 @@ async function handleApi(req, res, url, parts) {
     if (typeof body.text !== "string" || !body.text.trim()) {
       throw new Error("POST /api/writeup-propose requires a non-empty `text` field.");
     }
-    const result = await proposeFromWriteupOp(dir, w, { text: body.text, mode: body.mode });
+    // QA W1 Fix 3 (the flagship onboarding AI route): a keyless environment
+    // degrades to offlineWriteupClient (handles both the rubber-duck-off
+    // extraction call and the rubber-duck-on framing call -- see that
+    // client's own doc comment) instead of throwing on client construction.
+    const result = await proposeFromWriteupOp(dir, w, { text: body.text, mode: body.mode }, { llmOpts: offlineOpts(offlineWriteupClient) });
     return sendJson(res, 200, result);
   }
 
@@ -2034,12 +2347,14 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const dir = resolveDir();
     const w = resolveWorld(body.world);
+    // QA W1 Fix 3 (grep-driven audit): both branches degrade offline, same
+    // offlineWriteupClient as writeup-propose's own extraction call.
     if (body.batchId) {
       const result = await selectFramingForExistingBatch(dir, w, {
         batchId: body.batchId,
         framings: body.framings,
         selection: body.selection
-      });
+      }, { llmOpts: offlineOpts(offlineWriteupClient) });
       return sendJson(res, 200, result);
     }
     if (!body.writeupText) {
@@ -2051,7 +2366,7 @@ async function handleApi(req, res, url, parts) {
       framings: body.framings,
       selection: body.selection,
       rubberDuck: body.rubberDuck
-    });
+    }, { llmOpts: offlineOpts(offlineWriteupClient) });
     return sendJson(res, 200, result);
   }
 
@@ -2075,7 +2390,7 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const dir = resolveDir();
     const w = resolveWorld(body.world);
-    const result = await proposePrepFramingsOp(dir, w, { entityId: parts[2] });
+    const result = await proposePrepFramingsOp(dir, w, { entityId: parts[2] }, offlineOpts(() => offlinePrepContentClient("framing")));
     return sendJson(res, 200, result);
   }
 
@@ -2084,7 +2399,7 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const dir = resolveDir();
     const w = resolveWorld(body.world);
-    const result = await reframePrepFramingsOp(dir, w, { entityId: parts[2], priorRoundCount: body.priorRoundCount });
+    const result = await reframePrepFramingsOp(dir, w, { entityId: parts[2], priorRoundCount: body.priorRoundCount }, offlineOpts(() => offlinePrepContentClient("framing")));
     return sendJson(res, 200, result);
   }
 
@@ -2094,7 +2409,13 @@ async function handleApi(req, res, url, parts) {
     const dir = resolveDir();
     const w = resolveWorld(body.world);
     if (!body.selection) throw new Error("POST .../prep/generate requires a `selection` field.");
-    const result = await generatePrepContentOp(dir, w, { entityId: parts[2], selection: body.selection });
+    // QA W1 Fix 3: the offline client's response must validate against THIS
+    // entity's own `.strict()` field schema (fieldsSchemaForType) -- a cheap
+    // extra read-only lookup (generatePrepContentOp does the exact same
+    // findEntity internally; this doesn't duplicate any WRITE logic).
+    const entityTypeForOffline = isOffline() ? findEntity(loadSnapshot(dir, w).snapshot.entities, parts[2])?.type : null;
+    const result = await generatePrepContentOp(dir, w, { entityId: parts[2], selection: body.selection },
+      offlineOpts(() => offlinePrepContentClient("generate", { entityType: entityTypeForOffline })));
     return sendJson(res, 200, result);
   }
 
@@ -2118,7 +2439,9 @@ async function handleApi(req, res, url, parts) {
     const dir = resolveDir();
     const w = resolveWorld(body.world);
     if (!body.fieldName) throw new Error("POST .../prep/regenerate-field requires a `fieldName` field.");
-    const result = await regeneratePrepFieldOp(dir, w, { entityId: parts[2], fieldName: body.fieldName, note: body.note });
+    const entityTypeForOffline = isOffline() ? findEntity(loadSnapshot(dir, w).snapshot.entities, parts[2])?.type : null;
+    const result = await regeneratePrepFieldOp(dir, w, { entityId: parts[2], fieldName: body.fieldName, note: body.note },
+      offlineOpts(() => offlinePrepContentClient("field", { fieldName: body.fieldName, entityType: entityTypeForOffline })));
     return sendJson(res, 200, result);
   }
 
@@ -2258,12 +2581,15 @@ async function handleApi(req, res, url, parts) {
   // POST /api/session-planner/notes/intake  { world, noteIds }
   // Makes a real LLM call via proposeMentionedEntities (runBatchIntake) --
   // world format is validated (resolveWorld) BEFORE any of that runs.
+  // QA W1 Fix 3 (found via the grep-driven audit, not one of the four
+  // originally-named routes -- same underlying `{mentions:[]}` shape as the
+  // scan-mentions route, so the same offline client is reused).
   if (method === "POST" && parts.length === 4 && parts[1] === "session-planner" && parts[2] === "notes" && parts[3] === "intake") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     const dir = resolveDir();
     const { entities, edges, entityTypes } = loadSnapshot(dir, w).snapshot;
-    const result = await runBatchIntake(w, body.noteIds ?? [], { entities, edges, entityTypes }, {});
+    const result = await runBatchIntake(w, body.noteIds ?? [], { entities, edges, entityTypes }, { llmOpts: offlineOpts(offlineScanMentionsClient) });
     return sendJson(res, 200, result);
   }
 
@@ -2278,12 +2604,14 @@ async function handleApi(req, res, url, parts) {
 
   // POST /api/combat-planning/bestiary/ingest   { text } or { pdfBase64 }
   // Library-wide -- deliberately no `world` parameter. Makes a real LLM
-  // call via bestiary-ingest.mjs's extraction.
+  // call via bestiary-ingest.mjs's extraction. QA W1 Fix 3: degrades to an
+  // honest placeholder stat block (status 'proposed' -- reviewed/edited
+  // before ever being usable) instead of throwing keyless.
   if (method === "POST" && parts.length === 4 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[3] === "ingest") {
     const body = await readBody(req);
     const raw = body.pdfBase64
-      ? await proposeBestiaryEntryFromPdf(body.pdfBase64, {})
-      : await proposeBestiaryEntryFromText(body.text, {});
+      ? await proposeBestiaryEntryFromPdf(body.pdfBase64, offlineOpts(offlineBestiaryIngestClient))
+      : await proposeBestiaryEntryFromText(body.text, offlineOpts(offlineBestiaryIngestClient));
     const entry = saveBestiaryEntry({
       rawFields: raw,
       sourceText: body.pdfBase64 ? null : body.text,
@@ -2311,13 +2639,15 @@ async function handleApi(req, res, url, parts) {
 
   // POST /api/combat-planning/party-roster/ingest   { world, text } or { world, pdfBase64 }
   // World-scoped -- resolveWorld(body.world), no client-supplied dataDir.
-  // Makes a real LLM call via party-roster-ingest.mjs's extraction.
+  // Makes a real LLM call via party-roster-ingest.mjs's extraction. QA W1
+  // Fix 3 (grep-driven audit): degrades to an honest placeholder name
+  // instead of throwing keyless.
   if (method === "POST" && parts.length === 4 && parts[1] === "combat-planning" && parts[2] === "party-roster" && parts[3] === "ingest") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     const raw = body.pdfBase64
-      ? await proposePartyMemberFromPdf(body.pdfBase64, {})
-      : await proposePartyMemberFromText(body.text, {});
+      ? await proposePartyMemberFromPdf(body.pdfBase64, offlineOpts(offlinePartyRosterIngestClient))
+      : await proposePartyMemberFromText(body.text, offlineOpts(offlinePartyRosterIngestClient));
     const member = savePartyMember(w, {
       name: raw.name,
       combatRelevant: raw.combatRelevant,
@@ -2556,7 +2886,9 @@ async function handleApi(req, res, url, parts) {
         sceneContext = buildAdjacencyContext(entities, edges, body.sceneEntityId, DEFAULT_ENTITY_NARRATE_DEPTH);
       }
       const fullPool = listBestiaryEntries().map((e) => ({ entryId: e.id, rawFields: e.rawFields, derivedScore: e.derivedScore }));
-      const { filteredEntryIds } = await proposeThematicTags(sceneContext, fullPool, {});
+      // QA W1 Fix 3 (grep-driven audit): degrades to "pass the whole pool
+      // through unfiltered" instead of throwing keyless.
+      const { filteredEntryIds } = await proposeThematicTags(sceneContext, fullPool, offlineOpts(offlineThematicFilterClient));
       const filteredIdSet = new Set(filteredEntryIds);
       candidatePool = fullPool.filter((c) => filteredIdSet.has(c.entryId));
     } else {
@@ -2748,7 +3080,9 @@ async function handleApi(req, res, url, parts) {
       const { entities, edges } = loadSnapshot(resolveDir(), w).snapshot;
       prompt = groundPromptWithAnchor(body.prompt, entities, edges, body.anchorEntityId);
     }
-    const result = await quickGenerate(prompt, {});
+    // QA W1 Fix 3 (grep-driven audit): degrades to a clean placeholder text
+    // instead of throwing keyless.
+    const result = await quickGenerate(prompt, offlineOpts(offlineQuickGenClient));
     return sendJson(res, 200, result);
   }
 
@@ -3005,7 +3339,10 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const dir = resolveDir();
     const w = resolveWorld(body.world);
-    const result = await proposeUpdatesForScene(dir, w, parts[3]);
+    // QA W1 Fix 3 ("Wrap" -- the Session Planner's post-session graph
+    // update): same offlineWriteupClient degrade as /api/writeup-propose
+    // (this route delegates straight to the same importWriteup() call).
+    const result = await proposeUpdatesForScene(dir, w, parts[3], { llmOpts: offlineOpts(offlineWriteupClient) });
     return sendJson(res, 200, result);
   }
 
@@ -3022,7 +3359,11 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const dir = resolveDir();
     const w = resolveWorld(body.world);
-    const result = await assistScenePrep(dir, w, parts[3], { mode: body.mode, elementName: body.elementName });
+    // QA W1 Fix 3 (the Session Planner's headline "✦" affordance): all three
+    // modes degrade offline -- offlineAssistPrepClient picks its response
+    // shape from the SAME `mode` this route already branches on.
+    const result = await assistScenePrep(dir, w, parts[3], { mode: body.mode, elementName: body.elementName },
+      offlineOpts(() => offlineAssistPrepClient(body.mode ?? "propose-elements", body.elementName)));
     return sendJson(res, 200, result);
   }
 
@@ -3037,16 +3378,19 @@ async function handleApi(req, res, url, parts) {
   // ---------------------------------------------------------------------
 
   // POST /api/scene-planning/plans/:planId/propose-updates   { world }
-  // NOTE: `llmOpts.client` injection is NOT threaded through this HTTP route
-  // (same established limitation as /api/writeup-propose, per rubber-duck-
-  // routes.test.mjs's own documented reasoning -- a live function reference
-  // cannot survive a real HTTP JSON round trip). Tests wanting a genuinely
-  // working injected client call proposeUpdatesForPlan directly, in-process.
+  // NOTE: a TEST-INJECTED `llmOpts.client` is NOT threaded through this HTTP
+  // route (same established limitation as /api/writeup-propose, per
+  // rubber-duck-routes.test.mjs's own documented reasoning -- a live
+  // function reference cannot survive a real HTTP JSON round trip). Tests
+  // wanting a genuinely working injected client call proposeUpdatesForPlan
+  // directly, in-process. QA W1 Fix 3's offline client is a DIFFERENT thing
+  // -- it's constructed SERVER-SIDE off `process.env.ANTHROPIC_API_KEY`,
+  // never supplied by the HTTP caller, so that limitation doesn't apply to it.
   if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "plans" && parts[4] === "propose-updates") {
     const body = await readBody(req);
     const dir = resolveDir();
     const w = resolveWorld(body.world);
-    const result = await proposeUpdatesForPlan(dir, w, parts[3]);
+    const result = await proposeUpdatesForPlan(dir, w, parts[3], { llmOpts: offlineOpts(offlineWriteupClient) });
     return sendJson(res, 200, result);
   }
 
@@ -3381,16 +3725,15 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world);
     const entry = getBestiaryEntry(parts[3]); // throws "No bestiary entry found" -> 404
     const { entities, edges } = loadSnapshot(dir, w).snapshot;
-    const result = await suggestReskins(entry, entities, edges, body.vision, {
-      // Same OFFLINE DETERMINISTIC degrade as POST /api/graph/nodes/:id/
-      // develop-description's own texture-adjacent call -- a key-less
-      // dev/demo environment (and this route's own e2e coverage) gets real,
-      // honestly-labelled suggestions instead of a thrown "missing API key"
-      // from the Anthropic SDK constructor. With a key present this branch
-      // never fires.
-      ...(process.env.ANTHROPIC_API_KEY ? {} : { client: offlineReskinSuggestClient() })
-    });
-    return sendJson(res, 200, result);
+    // Same OFFLINE DETERMINISTIC degrade as POST /api/graph/nodes/:id/
+    // develop-description's own texture-adjacent call -- a key-less
+    // dev/demo environment (and this route's own e2e coverage) gets real,
+    // honestly-labelled suggestions instead of a thrown "missing API key"
+    // from the Anthropic SDK constructor. With a key present this branch
+    // never fires. QA W1 Fix 4: `offline:true` on the response, clean
+    // suggestion bodies (see offlineReskinSuggestClient's own comment).
+    const result = await suggestReskins(entry, entities, edges, body.vision, offlineOpts(offlineReskinSuggestClient));
+    return sendJson(res, 200, { ...result, offline: isOffline() });
   }
 
   // POST /api/combat-planning/bestiary/:id/reskin-accept   {suggestion:{name,description,habitatHint}}   -> {entry}
