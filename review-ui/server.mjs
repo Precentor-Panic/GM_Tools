@@ -193,11 +193,12 @@ import {
 } from "../combat-planning/party-roster-store.mjs";
 // Phase 35 task 35.1, §1/§4/§8 -- item store (Reliquary) + the shared tags
 // helper API. Thin route wrappers only, per gm-tools-conventions.
-import { listItems, getItem, acceptItem, discardItem, addItemTag, removeItemTag, promoteItemToGraph } from "../combat-planning/item-store.mjs";
+import { listItems, getItem, saveItem, acceptItem, discardItem, addItemTag, removeItemTag, promoteItemToGraph } from "../combat-planning/item-store.mjs";
 // Phase 35 task 35.1, §2/§8 -- stagecraft asset store (map/splash/music).
 import {
   listStagecraftAssets,
   getStagecraftAsset,
+  saveStagecraftAsset,
   acceptStagecraftAsset,
   discardStagecraftAsset,
   addStagecraftTag,
@@ -1985,6 +1986,9 @@ async function handleApi(req, res, url, parts) {
     const dir = resolveDir();
     const name = typeof body.name === "string" ? body.name.trim() : "";
     if (!name) throw new Error("POST /api/chronicle/intents: `name` is required (the intent's subject).");
+    // QA W2 fix (Group B #12): same cap as wf-mcp-server/lib/manual-edit-ops.mjs's
+    // MAX_NAME_LENGTH (kept in step deliberately, not re-derived).
+    if (name.length > 200) throw new Error("POST /api/chronicle/intents: `name` must be 200 characters or fewer.");
 
     const snapPath = snapshotFilePath(dir, w);
     const { entities } = loadSnapshot(dir, w).snapshot;
@@ -2620,6 +2624,37 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { entry });
   }
 
+  // QA W2 fix (Group D #19): POST /api/combat-planning/bestiary/hand-add
+  // { name, challengeRating?, ac?, hp?, notes? } -> {entry}. The "write one
+  // by hand" affordance -- a real minimal form, not the dead div it used to
+  // be. No LLM call anywhere on this path (unlike /ingest above): saves
+  // rawFields straight through, ACCEPTS IMMEDIATELY (a hand-typed entry is a
+  // deliberate authorship act, not a proposal needing review -- same
+  // reasoning stagecraft-store.mjs's own header comment documents for its
+  // hand-added rows), then attaches the optional note. deriveSourcePill
+  // (bestiary-store.mjs) reads "mine" automatically -- no foundryActorRef,
+  // no reskinOfEntryId, no "SRD" text anywhere on the entry.
+  if (method === "POST" && parts.length === 4 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[3] === "hand-add") {
+    const body = await readBody(req);
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) throw new Error("POST /api/combat-planning/bestiary/hand-add: `name` is required.");
+    if (name.length > 200) throw new Error("POST /api/combat-planning/bestiary/hand-add: `name` must be 200 characters or fewer.");
+    let entry = saveBestiaryEntry({
+      rawFields: {
+        name,
+        type: typeof body.type === "string" && body.type.trim() ? body.type.trim() : "Custom",
+        ac: typeof body.ac === "number" ? body.ac : (body.ac ? Number(body.ac) : undefined),
+        hp: typeof body.hp === "number" ? body.hp : (body.hp ? Number(body.hp) : undefined),
+        challengeRating: body.challengeRating != null && body.challengeRating !== "" ? body.challengeRating : undefined
+      }
+    });
+    entry = acceptBestiaryEntry(entry.id);
+    if (typeof body.notes === "string" && body.notes.trim()) {
+      entry = updateBestiaryEntryNote(entry.id, body.notes.trim());
+    }
+    return sendJson(res, 200, { entry });
+  }
+
   // GET /api/combat-planning/bestiary   -- no `world` parameter (library-wide)
   if (method === "GET" && parts.length === 3 && parts[1] === "combat-planning" && parts[2] === "bestiary") {
     return sendJson(res, 200, { entries: listBestiaryEntries() });
@@ -2655,6 +2690,28 @@ async function handleApi(req, res, url, parts) {
       sourceText: body.pdfBase64 ? null : body.text,
       sourcePdfName: body.pdfBase64 ? (body.sourcePdfName ?? null) : null
     });
+    return sendJson(res, 200, { member });
+  }
+
+  // QA W2 fix (Group D #19): POST /api/combat-planning/party-roster/hand-add
+  // { world, name, class?, level?, ac?, hp? } -> {member}. Same "write one
+  // by hand" pattern as the bestiary route above -- no LLM call,
+  // savePartyMember's own default status:'accepted' already lands it
+  // immediately (no separate accept step needed), and foundryActorRef stays
+  // null so it reads as "mine" (heroCard's own `m.foundryActorRef ? ... :
+  // "mine"` projection).
+  if (method === "POST" && parts.length === 4 && parts[1] === "combat-planning" && parts[2] === "party-roster" && parts[3] === "hand-add") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) throw new Error("POST /api/combat-planning/party-roster/hand-add: `name` is required.");
+    if (name.length > 200) throw new Error("POST /api/combat-planning/party-roster/hand-add: `name` must be 200 characters or fewer.");
+    const combatRelevant = {};
+    if (typeof body.class === "string" && body.class.trim()) combatRelevant.class = body.class.trim();
+    if (body.level != null && body.level !== "") combatRelevant.level = Number(body.level);
+    if (body.ac != null && body.ac !== "") combatRelevant.ac = Number(body.ac);
+    if (body.hp != null && body.hp !== "") combatRelevant.hp = Number(body.hp);
+    const member = savePartyMember(w, { name, combatRelevant, buildRelevant: {} });
     return sendJson(res, 200, { member });
   }
 
@@ -3161,6 +3218,13 @@ async function handleApi(req, res, url, parts) {
   }
 
   // GET /api/scene-planning/plans?world=
+  // QA W2 skip (documented, not built -- representative of every list route
+  // in this file): an unknown/never-created world id returns 200 + [] here,
+  // same as everywhere else, DELIBERATELY -- a world only ever exists as an
+  // on-disk snapshot/store file, so "no rows yet" and "world doesn't exist"
+  // are indistinguishable at the storage layer, and treating an unknown
+  // world as a 404 would also 404 every legitimate first-ever list call for
+  // a brand-new world before its first write. Not revisited this wave.
   if (method === "GET" && parts.length === 3 && parts[1] === "scene-planning" && parts[2] === "plans") {
     const w = resolveWorld(q.get("world"));
     return sendJson(res, 200, { plans: listPlansForWorld(w) });
@@ -3413,6 +3477,28 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { items: listItems(w) });
   }
 
+  // QA W2 fix (Group D #19): POST /api/combat-planning/items/hand-add
+  // { world, name, type?, description? } -> {item}. Same "write one by
+  // hand" pattern as bestiary/party-roster above -- accepted immediately
+  // (status:'accepted', explicit -- saveItem's own default is 'proposed'),
+  // no Foundry refs anywhere (foundryItemRef/ownerFoundryActorUuid/
+  // ownerPartyMemberId all stay null -- normalizeShelf's own `r.foundryItemRef
+  // ? "foundry" : "mine"` projection reads "mine").
+  if (method === "POST" && parts.length === 4 && parts[1] === "combat-planning" && parts[2] === "items" && parts[3] === "hand-add") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) throw new Error("POST /api/combat-planning/items/hand-add: `name` is required.");
+    if (name.length > 200) throw new Error("POST /api/combat-planning/items/hand-add: `name` must be 200 characters or fewer.");
+    const item = saveItem(w, {
+      name,
+      type: typeof body.type === "string" && body.type.trim() ? body.type.trim() : null,
+      description: typeof body.description === "string" && body.description.trim() ? body.description.trim() : null,
+      status: "accepted"
+    });
+    return sendJson(res, 200, { item });
+  }
+
   // POST /api/combat-planning/items/:id/accept   {world}   -> {item}
   if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "items" && parts[4] === "accept") {
     const body = await readBody(req);
@@ -3467,6 +3553,30 @@ async function handleApi(req, res, url, parts) {
   if (method === "GET" && parts.length === 3 && parts[1] === "session-planner" && parts[2] === "stagecraft") {
     const w = resolveWorld(q.get("world"));
     return sendJson(res, 200, { assets: listStagecraftAssets(w, q.get("kind") || undefined) });
+  }
+
+  // QA W2 fix (Group D #19): POST /api/session-planner/stagecraft/hand-add
+  // { world, name, kind, desc? } -> {asset}. Same "write one by hand"
+  // pattern -- this store's OWN pre-existing "hand-added splash/music row IS
+  // the deliberate authorship act" convention (stagecraft-store.mjs's header
+  // comment) already defaults saveStagecraftAsset to status:'accepted' and
+  // source:'local' with foundryRef:null, so this route is a thin wrapper,
+  // not a new policy.
+  if (method === "POST" && parts.length === 4 && parts[1] === "session-planner" && parts[2] === "stagecraft" && parts[3] === "hand-add") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) throw new Error("POST /api/session-planner/stagecraft/hand-add: `name` is required.");
+    if (name.length > 200) throw new Error("POST /api/session-planner/stagecraft/hand-add: `name` must be 200 characters or fewer.");
+    if (!["map", "splash", "music"].includes(body.kind)) {
+      throw new Error('POST /api/session-planner/stagecraft/hand-add: `kind` must be "map", "splash", or "music".');
+    }
+    const asset = saveStagecraftAsset(w, {
+      kind: body.kind,
+      name,
+      desc: typeof body.desc === "string" && body.desc.trim() ? body.desc.trim() : null
+    });
+    return sendJson(res, 200, { asset });
   }
 
   // POST /api/session-planner/stagecraft/:id/accept   {world}   -> {asset}
@@ -3590,6 +3700,14 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world);
     const sceneId = parts[3];
     const { kind, id } = body;
+
+    // QA W2 fix (Group A #4): a missing `id` used to fall straight through
+    // into getBestiaryEntry(undefined), surfacing a confusing "No bestiary
+    // entry found: \"undefined\"" 404 instead of a clear validation error --
+    // this is a genuinely malformed request (400), not an unresolvable id.
+    if (!id) {
+      throw new Error("id is required");
+    }
 
     if (kind === "creature") {
       const entry = getBestiaryEntry(id); // throws "No bestiary entry found" -> 404

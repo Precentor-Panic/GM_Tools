@@ -111,6 +111,29 @@ test("GET /api/combat-planning/items?world= for an unknown itemId accept/discard
   assert.notEqual(status, 500);
 });
 
+// QA W2 fix (Group D #19): POST /api/combat-planning/items/hand-add -- the
+// Reliquary's "write one by hand" form. Lands immediately accepted, no
+// Foundry refs.
+test("POST /api/combat-planning/items/hand-add creates an ACCEPTED item with no foundryItemRef, immediately visible via GET", async () => {
+  const { status, body } = await postJson("/api/combat-planning/items/hand-add", {
+    world: WORLD, name: "Hand-Forged Dagger", type: "weapon", description: "A GM-authored blade."
+  });
+  assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+  assert.equal(body.item.name, "Hand-Forged Dagger");
+  assert.equal(body.item.type, "weapon");
+  assert.equal(body.item.description, "A GM-authored blade.");
+  assert.equal(body.item.status, "accepted");
+  assert.equal(body.item.foundryItemRef, null);
+
+  const list = await getJson(`/api/combat-planning/items?world=${WORLD}`);
+  assert.ok(list.body.items.some((i) => i.id === body.item.id));
+});
+
+test("POST /api/combat-planning/items/hand-add rejects a blank name with a clean 400", async () => {
+  const { status } = await postJson("/api/combat-planning/items/hand-add", { world: WORLD, name: "  " });
+  assert.equal(status, 400);
+});
+
 // --------------------------------------------------------- §2 stagecraft
 
 test("GET /api/session-planner/stagecraft?world=[&kind=] returns assets, optionally kind-filtered", async () => {
@@ -141,6 +164,35 @@ test("POST/DELETE /api/session-planner/stagecraft/:id/tags round trip", async ()
   assert.deepEqual(tagged.body.asset.tags, ["cover"]);
   const untagged = await deleteJson(`/api/session-planner/stagecraft/${asset.id}/tags/cover`, { world: WORLD });
   assert.deepEqual(untagged.body.asset.tags, []);
+});
+
+// QA W2 fix (Group D #19): POST /api/session-planner/stagecraft/hand-add --
+// Stagecraft's "write one by hand" form, reusing the store's own
+// pre-existing hand-added convention (default status:'accepted', source:'local').
+test("POST /api/session-planner/stagecraft/hand-add creates an ACCEPTED, source:'local' asset with no foundryRef", async () => {
+  const { status, body } = await postJson("/api/session-planner/stagecraft/hand-add", {
+    world: WORLD, name: "Hand-Drawn Tavern Map", kind: "map", desc: "Sketched on a napkin."
+  });
+  assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+  assert.equal(body.asset.name, "Hand-Drawn Tavern Map");
+  assert.equal(body.asset.kind, "map");
+  assert.equal(body.asset.desc, "Sketched on a napkin.");
+  assert.equal(body.asset.status, "accepted");
+  assert.equal(body.asset.source, "local");
+  assert.equal(body.asset.foundryRef, null);
+
+  const list = await getJson(`/api/session-planner/stagecraft?world=${WORLD}`);
+  assert.ok(list.body.assets.some((a) => a.id === body.asset.id));
+});
+
+test("POST /api/session-planner/stagecraft/hand-add rejects an unknown kind with a clean 400", async () => {
+  const { status } = await postJson("/api/session-planner/stagecraft/hand-add", { world: WORLD, name: "Bad Kind", kind: "video" });
+  assert.equal(status, 400);
+});
+
+test("POST /api/session-planner/stagecraft/hand-add rejects a blank name with a clean 400", async () => {
+  const { status } = await postJson("/api/session-planner/stagecraft/hand-add", { world: WORLD, name: " ", kind: "music" });
+  assert.equal(status, 400);
 });
 
 // -------------------------------------------------------- §3 token-index
@@ -186,6 +238,60 @@ test("POST /api/combat-planning/party-roster/:id/passive + /conditions: status-I
   assert.equal(withConditions.status, 200);
   assert.equal(withConditions.body.member.conditions, "Prone");
   assert.equal(withConditions.body.member.status, "accepted", "conditions edit must not touch status");
+});
+
+// QA W2 fix (Group D #19): the Bestiary + Hero's Hall "write one by hand"
+// forms. Both land immediately accepted, no LLM call, no Foundry ref, and
+// derive/read as "mine".
+test("POST /api/combat-planning/bestiary/hand-add creates an ACCEPTED entry, sourcePill 'mine', notes attached", async () => {
+  const { status, body } = await postJson("/api/combat-planning/bestiary/hand-add", {
+    name: "Hand-Drawn Ooze", challengeRating: "1/2", ac: 8, hp: 22, notes: "Splits when hit by fire."
+  });
+  assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+  assert.equal(body.entry.rawFields.name, "Hand-Drawn Ooze");
+  assert.equal(body.entry.rawFields.ac, 8);
+  assert.equal(body.entry.rawFields.hp, 22);
+  assert.equal(body.entry.rawFields.challengeRating, "1/2");
+  assert.equal(body.entry.status, "accepted");
+  assert.equal(body.entry.sourcePill, "mine");
+  assert.equal(body.entry.note, "Splits when hit by fire.");
+
+  const list = await getJson("/api/combat-planning/bestiary");
+  assert.ok(list.body.entries.some((e) => e.id === body.entry.id));
+});
+
+test("POST /api/combat-planning/bestiary/hand-add works with just a name (CR/AC/HP/notes all optional)", async () => {
+  const { status, body } = await postJson("/api/combat-planning/bestiary/hand-add", { name: "Bare Minimum Beast" });
+  assert.equal(status, 200);
+  assert.equal(body.entry.rawFields.name, "Bare Minimum Beast");
+  assert.equal(body.entry.status, "accepted");
+});
+
+test("POST /api/combat-planning/bestiary/hand-add rejects a blank name with a clean 400", async () => {
+  const { status } = await postJson("/api/combat-planning/bestiary/hand-add", { name: "" });
+  assert.equal(status, 400);
+});
+
+test("POST /api/combat-planning/party-roster/hand-add creates an ACCEPTED member with no foundryActorRef", async () => {
+  const { status, body } = await postJson("/api/combat-planning/party-roster/hand-add", {
+    world: WORLD, name: "Hand-Added Hero", class: "Ranger", level: 4, ac: 15, hp: 32
+  });
+  assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+  assert.equal(body.member.name, "Hand-Added Hero");
+  assert.equal(body.member.combatRelevant.class, "Ranger");
+  assert.equal(body.member.combatRelevant.level, 4);
+  assert.equal(body.member.combatRelevant.ac, 15);
+  assert.equal(body.member.combatRelevant.hp, 32);
+  assert.equal(body.member.status, "accepted");
+  assert.equal(body.member.foundryActorRef, null);
+
+  const list = await getJson(`/api/combat-planning/party-roster?world=${WORLD}`);
+  assert.ok(list.body.members.some((m) => m.id === body.member.id));
+});
+
+test("POST /api/combat-planning/party-roster/hand-add rejects a blank name with a clean 400", async () => {
+  const { status } = await postJson("/api/combat-planning/party-roster/hand-add", { world: WORLD, name: "   " });
+  assert.equal(status, 400);
 });
 
 void __dirname;

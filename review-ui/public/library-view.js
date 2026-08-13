@@ -242,6 +242,80 @@ function pullButton(label) {
   return b;
 }
 
+// QA W2 fix (Group D #19): a shared, quiet inline "write one by hand" form --
+// a toggle link that reveals a minimal labeled-input panel -- used by all
+// four Library tabs (Bestiary/Hero's Hall/Reliquary/Stagecraft), each with
+// its own field list and submit handler. No modal, no redesign: matches the
+// shelf idiom's existing "or write one by hand" text (now a real
+// affordance) sitting beside pullButton's own inline-panel precedent above.
+function buildHandAddForm({ fields, onSubmit, toggleLabel = "or write one by hand", rootTestid }) {
+  const wrap = el("div", { testid: rootTestid, style: "display: flex; flex-direction: column; align-items: flex-start;" });
+  const toggle = el("span", {
+    testid: "library-hand-add-toggle",
+    text: toggleLabel,
+    style: "font-size: 12px; color: oklch(0.44 0.070 185); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px;"
+  });
+  const panelHost = el("div", {});
+  wrap.append(toggle, panelHost);
+
+  let open = false;
+  toggle.addEventListener("click", () => {
+    open = !open;
+    panelHost.innerHTML = "";
+    if (open) panelHost.appendChild(buildPanel());
+  });
+
+  function buildPanel() {
+    const panel = el("div", {
+      testid: "library-hand-add-form",
+      style: "display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin-top: 10px; padding: 12px 14px; border: 1px solid oklch(0.80 0.040 185); border-radius: 5px; background: oklch(0.965 0.014 185); max-width: 640px;"
+    });
+    const inputs = {};
+    for (const f of fields) {
+      const box = el("div", { style: "display: flex; flex-direction: column; gap: 3px;" });
+      box.appendChild(el("label", {
+        text: f.label,
+        style: "font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; color: oklch(0.53 0.012 70);"
+      }));
+      let input;
+      const boxStyle = `padding: 5px 7px; border: 1px solid oklch(0.84 0.010 80); border-radius: 4px; font: inherit; font-size: 12px; background: oklch(1 0 0); color: inherit; width: ${f.width || "120px"};`;
+      if (f.type === "select") {
+        input = el("select", { testid: `library-hand-add-${f.key}`, style: boxStyle });
+        for (const opt of f.options) input.appendChild(el("option", { value: opt.value, text: opt.label }));
+      } else {
+        input = el("input", { testid: `library-hand-add-${f.key}`, type: f.type || "text", placeholder: f.placeholder || "", style: boxStyle });
+      }
+      inputs[f.key] = input;
+      box.appendChild(input);
+      panel.appendChild(box);
+    }
+    const submitBtn = el("button", {
+      type: "button", testid: "library-hand-add-submit-btn", text: "Add",
+      style: "padding: 6px 14px; border: none; border-radius: 4px; cursor: pointer; font: inherit; font-size: 12px; background: oklch(0.55 0.075 185); color: oklch(0.99 0.005 185);"
+    });
+    const status = el("div", { testid: "library-hand-add-status", style: "font-size: 11.5px; color: oklch(0.55 0.012 70); min-height: 14px; flex-basis: 100%;" });
+    submitBtn.addEventListener("click", async () => {
+      const values = {};
+      for (const k in inputs) values[k] = inputs[k].value;
+      if (!String(values.name || "").trim()) { status.textContent = "Name is required."; return; }
+      submitBtn.disabled = true;
+      status.textContent = "Adding…";
+      try {
+        await onSubmit(values);
+        status.textContent = "";
+        open = false;
+        panelHost.innerHTML = "";
+      } catch (err) {
+        status.textContent = `Could not add: ${err.message}`;
+        submitBtn.disabled = false;
+      }
+    });
+    panel.append(submitBtn, status);
+    return panel;
+  }
+  return wrap;
+}
+
 // ===========================================================================
 // BESTIARY
 // ===========================================================================
@@ -297,9 +371,32 @@ function buildBestiary(ctx) {
   const centerScroll = el("div", { style: "flex: 1; overflow-y: auto; padding: 22px 26px 40px;" });
   const header = el("div", {});
   const grid = el("div", { testid: "library-creature-grid", style: "display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 10px;" });
+  // QA W2 fix (Group D #19): "or write one by hand" used to be a dead label
+  // with nothing behind it -- now a real minimal form (name/CR/AC/HP/notes)
+  // -> POST .../bestiary/hand-add, lands immediately with the "mine" pill.
+  const handAddForm = buildHandAddForm({
+    rootTestid: "library-bestiary-hand-add",
+    fields: [
+      { key: "name", label: "Name", width: "180px" },
+      { key: "challengeRating", label: "CR", width: "60px", placeholder: "e.g. 1/2" },
+      { key: "ac", label: "AC", width: "56px", type: "number" },
+      { key: "hp", label: "HP", width: "56px", type: "number" },
+      { key: "notes", label: "Notes", width: "220px" }
+    ],
+    onSubmit: async (v) => {
+      await api("/api/combat-planning/bestiary/hand-add", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: v.name, challengeRating: v.challengeRating || undefined,
+          ac: v.ac || undefined, hp: v.hp || undefined, notes: v.notes || undefined
+        })
+      });
+      await renderLibrarySurface("bestiary"); // a NEW catalogue entry now exists -- full reload picks it up
+    }
+  });
   const importRow = el("div", { style: "display: flex; align-items: center; gap: 12px; margin-top: 16px;" }, [
     pullButton("Import from Foundry compendium"),
-    el("div", { text: "or write one by hand", style: "font-size: 12px; color: oklch(0.56 0.012 70);" })
+    handAddForm
   ]);
   centerScroll.append(header, grid, importRow);
   centerCol.appendChild(centerScroll);
@@ -730,7 +827,35 @@ function buildHall(ctx) {
     el("div", { text: "What's spent, what they'll save against, and the few skills good enough to matter. Conditions are one click away, always visible.", style: "font-size: 12.5px; color: oklch(0.52 0.014 65); margin-bottom: 18px; max-width: 72ch; line-height: 1.5;" })
   ]);
   const bodyHost = el("div", {});
-  main.append(header, bodyHost);
+  // QA W2 fix (Group D #19): Hero's Hall previously had NO hand-authoring
+  // path at all (unlike Bestiary/Reliquary/Stagecraft, which at least had a
+  // dead "write one by hand" label) -- a real, always-visible (not just in
+  // the empty state, matching the other three tabs' own importRow/footer
+  // idiom) minimal form -> POST .../party-roster/hand-add.
+  const handAddRow = el("div", { style: "display: flex; align-items: center; gap: 12px; margin-top: 16px;" }, [
+    buildHandAddForm({
+      rootTestid: "library-hall-hand-add",
+      toggleLabel: "or add a character by hand",
+      fields: [
+        { key: "name", label: "Name", width: "170px" },
+        { key: "class", label: "Class", width: "120px" },
+        { key: "level", label: "Level", width: "56px", type: "number" },
+        { key: "ac", label: "AC", width: "56px", type: "number" },
+        { key: "hp", label: "HP", width: "56px", type: "number" }
+      ],
+      onSubmit: async (v) => {
+        await api("/api/combat-planning/party-roster/hand-add", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            world, name: v.name, class: v.class || undefined,
+            level: v.level || undefined, ac: v.ac || undefined, hp: v.hp || undefined
+          })
+        });
+        await renderLibrarySurface("hall"); // a NEW party member now exists -- full reload picks it up
+      }
+    })
+  ]);
+  main.append(header, bodyHost, handAddRow);
   root.append(main, trayRail(world, 306));
   bodyRow.appendChild(root);
 
@@ -957,9 +1082,50 @@ function buildShelf(ctx, which) {
   const header = el("div", {});
   const rowsHost = el("div", { style: "display: flex; flex-direction: column; gap: 6px;" });
   const emptyHost = el("div", {});
+  // QA W2 fix (Group D #19): "write one by hand" for both shelves sharing
+  // this renderer -- Reliquary (name/type/description -> item-store,
+  // accepted, no Foundry refs) and Stagecraft (name/kind/desc -> the store's
+  // own pre-existing hand-added convention, see saveStagecraftAsset's
+  // default status:'accepted'/source:'local'). `reload()` (below) is the
+  // SAME refresh this shelf already uses after a tag add/remove -- no new
+  // refresh mechanism.
+  const handAddForm = isReliquary
+    ? buildHandAddForm({
+        rootTestid: "library-reliquary-hand-add",
+        fields: [
+          { key: "name", label: "Name", width: "170px" },
+          { key: "type", label: "Type", width: "120px" },
+          { key: "description", label: "Description", width: "240px" }
+        ],
+        onSubmit: async (v) => {
+          await api("/api/combat-planning/items/hand-add", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ world, name: v.name, type: v.type || undefined, description: v.description || undefined })
+          });
+          await reload();
+        }
+      })
+    : buildHandAddForm({
+        rootTestid: "library-stagecraft-hand-add",
+        fields: [
+          { key: "name", label: "Name", width: "170px" },
+          { key: "kind", label: "Kind", width: "110px", type: "select", options: [
+            { value: "map", label: "Map" }, { value: "splash", label: "Splash art" }, { value: "music", label: "Music" }
+          ] },
+          { key: "desc", label: "Description", width: "240px" }
+        ],
+        onSubmit: async (v) => {
+          await api("/api/session-planner/stagecraft/hand-add", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ world, name: v.name, kind: v.kind, desc: v.desc || undefined })
+          });
+          await reload();
+        }
+      });
   const footer = el("div", { style: "display: flex; align-items: center; gap: 12px; margin-top: 16px;" }, [
     pullButton(isReliquary ? "Pull items from Foundry" : "Pull scenes, art, and playlists from Foundry"),
-    el("div", { text: isReliquary ? "Descriptions come across from Foundry when the item has one." : "Files stay in Foundry; these are refs.", style: "font-size: 11.5px; color: oklch(0.60 0.012 70);" })
+    el("div", { text: isReliquary ? "Descriptions come across from Foundry when the item has one." : "Files stay in Foundry; these are refs.", style: "font-size: 11.5px; color: oklch(0.60 0.012 70);" }),
+    handAddForm
   ]);
   main.append(header, rowsHost, emptyHost, footer);
 

@@ -388,3 +388,10 @@ test("POST /api/chronicle/intents rejects a blank name cleanly (no silent no-op)
   assert.equal(status, 400);
   assert.ok(body.error && /name/i.test(body.error));
 });
+
+// QA W2 fix (Group B #12): same 200-char name cap as POST /api/graph/nodes.
+test("POST /api/chronicle/intents rejects a name over 200 characters with a clear 400", async () => {
+  const { status, body } = await postJson("/api/chronicle/intents", { world: WORLD, name: "x".repeat(201) });
+  assert.equal(status, 400);
+  assert.ok(/200 characters/.test(body.error), `expected a clear length-cap message, got: ${body.error}`);
+});
