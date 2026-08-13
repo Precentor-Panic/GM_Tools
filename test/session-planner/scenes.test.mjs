@@ -246,6 +246,31 @@ const WORLD = "session-planner-scenes-test-world";
     assert.throws(() => renameScene(WORLD, "does-not-exist-rename", "X"), /does-not-exist-rename/);
   });
 
+  // QA W2 fix (Group B #12): a name-length cap, matching manual-edit-ops.mjs's
+  // MAX_NAME_LENGTH, applies to every scene name-accepting write.
+  test("createScene rejects a name over 200 characters with a clear error, never persists it", () => {
+    const tooLong = "x".repeat(201);
+    assert.throws(() => createScene(WORLD, { name: tooLong }, { makeId: () => "scene-toolong-1" }), /200 characters/);
+    assert.throws(() => getScene(WORLD, "scene-toolong-1"), /No scene found/, "the rejected create must not have persisted a scene");
+  });
+
+  test("createScene accepts a name of exactly 200 characters (boundary)", () => {
+    const exact = "x".repeat(200);
+    const scene = createScene(WORLD, { name: exact }, { makeId: () => "scene-exactly-200" });
+    assert.equal(scene.name.length, 200);
+  });
+
+  test("renameScene rejects a name over 200 characters, leaving the prior name untouched", () => {
+    createScene(WORLD, { locationEntityId: "stadium-1", name: "Original" }, { makeId: () => "scene-rename-toolong" });
+    assert.throws(() => renameScene(WORLD, "scene-rename-toolong", "y".repeat(201)), /200 characters/);
+    assert.equal(getScene(WORLD, "scene-rename-toolong").name, "Original", "rejected rename must not have persisted");
+  });
+
+  test("updateScene rejects a name over 200 characters via its `name` patch key", () => {
+    createScene(WORLD, {}, { makeId: () => "scene-update-toolong" });
+    assert.throws(() => updateScene(WORLD, "scene-update-toolong", { name: "z".repeat(500) }), /200 characters/);
+  });
+
   test("Phase 26 task 26.2: forkScene does NOT inherit the parent's bespoke name by default (would produce two identically-named scenes)", () => {
     const parent = createScene(WORLD, { locationEntityId: "stadium-1", name: "Opening Ceremony" }, {
       makeId: () => "scene-name-fork-parent",

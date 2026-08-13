@@ -202,6 +202,26 @@ test("Phase 30 task 30.5: renamePlan throws a clear error for an unknown planId"
   assert.throws(() => renamePlan("plans-rename-world", "does-not-exist-rename", "X"), /does-not-exist-rename/);
 });
 
+// QA W2 fix (Group B #12): same name-length cap as scenes/manual-edit-ops.
+test("createPlan rejects a name over 200 characters with a clear error, never persists it", () => {
+  const world = "plans-toolong-world";
+  assert.throws(() => createPlan(world, { name: "x".repeat(201) }, { makeId: () => "plan-toolong-1" }), /200 characters/);
+  assert.throws(() => getPlan(world, "plan-toolong-1"), /No plan found/, "the rejected create must not have persisted a plan");
+});
+
+test("createPlan accepts a name of exactly 200 characters (boundary)", () => {
+  const world = "plans-toolong-world";
+  const plan = createPlan(world, { name: "x".repeat(200) }, { makeId: () => "plan-exactly-200" });
+  assert.equal(plan.name.length, 200);
+});
+
+test("renamePlan rejects a name over 200 characters, leaving the prior name untouched", () => {
+  const world = "plans-toolong-world";
+  createPlan(world, { name: "Original" }, { makeId: () => "plan-rename-toolong" });
+  assert.throws(() => renamePlan(world, "plan-rename-toolong", "y".repeat(201)), /200 characters/);
+  assert.equal(getPlan(world, "plan-rename-toolong").name, "Original", "rejected rename must not have persisted");
+});
+
 test("no write in this file leaked into the repo's real default session-plans/ directory", () => {
   const after = existsSync(REPO_DEFAULT_ROOT) ? new Set(readdirSync(REPO_DEFAULT_ROOT)) : new Set();
   const added = [...after].filter((f) => !before.has(f));

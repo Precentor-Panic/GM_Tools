@@ -63,9 +63,15 @@ function resolveSceneName(dir, world, scene) {
       if (entity?.name) return entity.name;
     } catch {
       // No live snapshot for this world (or a read error) -- fall through
-      // to the raw id rather than letting a display-name lookup fail the push.
+      // to the same "(place removed)" guard below rather than letting a
+      // display-name lookup fail the push.
     }
-    return scene.locationEntityId;
+    // QA W2 fix (Group B #10): a deleted anchor place (or a lookup that
+    // failed above) used to fall back to the raw wf_ id -- never a good
+    // display string, and now especially visible since this name gets
+    // pushed straight into a live Foundry scene document. Same guard as
+    // every other copy of this resolver.
+    return "(place removed)";
   }
   return scene.objectiveNote || "Ad-hoc scene";
 }

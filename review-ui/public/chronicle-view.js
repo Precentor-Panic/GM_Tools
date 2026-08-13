@@ -728,7 +728,16 @@ export async function renderChronicleSurface(arg) {
       runAdvance();
     });
     refreshRunMeta();
-    return el("div", { style: "display: flex; align-items: center; gap: 14px; margin-top: 20px; padding-top: 16px; border-top: 1px solid oklch(0.89 0.010 80);" }, [runBtnEl, runMetaEl]);
+    const row = el("div", { style: "display: flex; align-items: center; gap: 14px; margin-top: 20px; padding-top: 16px; border-top: 1px solid oklch(0.89 0.010 80);" }, [runBtnEl, runMetaEl]);
+    // QA W2 fix (Group B #8): clock advance is deliberate at RUN time (before
+    // any accept) -- declaring the skip IS the commitment -- but that was
+    // never explained anywhere. Pure copy, no behavior change.
+    const clockNote = el("div", {
+      testid: "chronicle-run-clock-note",
+      style: "font-size: 11px; color: oklch(0.58 0.012 70); margin-top: 6px;",
+      text: "Time passes when you run — proposals decide what it meant."
+    });
+    return el("div", {}, [row, clockNote]);
   }
   function refreshRunMeta() {
     const reason = runDisabledReason();
@@ -847,7 +856,27 @@ export async function renderChronicleSurface(arg) {
   // ---- proposals ("What changed") ---------------------------------------
   function paintProposals() {
     proposalsWrap.innerHTML = "";
-    if (!state.proposals.length) { proposalsWrap.style.display = "none"; return; }
+    if (!state.proposals.length) {
+      // QA W2 fix (Group B #7): a run/deep-link that genuinely completed with
+      // ZERO mutations used to leave this panel hidden -- invisible in the
+      // rail (fillHistory's own gating hides zero-mutation batches there too)
+      // and silent here, so there was no confirmation the pass even ran.
+      // `state.batchId` is only ever set together with a real run/deep-link
+      // (never on initial page load), so its presence is what distinguishes
+      // "genuinely ran, changed nothing" from "hasn't run yet".
+      if (state.batchId) {
+        proposalsWrap.style.display = "block";
+        proposalsWrap.style.marginTop = "30px";
+        proposalsWrap.appendChild(el("div", {
+          testid: "chronicle-zero-proposals-notice",
+          style: "font-size: 13px; color: oklch(0.52 0.014 65); padding: 14px 16px; border: 1px solid oklch(0.89 0.010 80); border-radius: 5px; background: oklch(0.975 0.006 85);",
+          text: `This pass changed nothing — the world held steady. (${scopeLabel(state.scope)})`
+        }));
+      } else {
+        proposalsWrap.style.display = "none";
+      }
+      return;
+    }
     proposalsWrap.style.display = "block";
     proposalsWrap.style.marginTop = "30px";
 
@@ -917,6 +946,7 @@ export async function renderChronicleSurface(arg) {
       // carry type/risk) feed the SHARED proposal-card.
       const detail = await api(`/api/batches/${encodeURIComponent(run.batchId)}${withWorld()}`);
       state.proposals = (detail.regions || []).flatMap((r) => r.entities || []);
+      state.scope = detail.batch?.scope; // QA W2 fix (Group B #7): scope for the zero-proposal notice
       // World clock advanced -> refresh the sub-bar line from the run's own clock.
       if (run.clock) worldClockLine.textContent = formatWorldClock({ ...clock, currentDate: run.clock.currentDate, sessionNumber: run.clock.sessionNumber });
       paintProposals();
@@ -941,10 +971,28 @@ export async function renderChronicleSurface(arg) {
       const detail = await api(`/api/batches/${encodeURIComponent(batchId)}${withWorld()}`);
       state.batchId = batchId;
       state.proposals = (detail.regions || []).flatMap((r) => r.entities || []);
+      state.scope = detail.batch?.scope; // QA W2 fix (Group B #7): scope for the zero-proposal notice
       paintProposals();
       proposalsWrap.scrollIntoView?.({ behavior: "smooth", block: "start" });
     } catch (err) {
-      console.error("chronicle batch deep-link failed:", err);
+      // QA W2 fix (Group B #9): an unknown batch id used to fail silently
+      // (no card, no message) with only a console.error leaking the batch
+      // store's own local filesystem path (review-state.mjs's loadBatch
+      // embeds "(looked at <path>)" in its error message) -- render the SAME
+      // inline "Could not load ..." message family the sibling views use
+      // (session-planner-view.js's scene load, world-view.js's graph load,
+      // etc.), and never echo the raw err.message (which may carry that
+      // path) into either the UI or the console.
+      console.error("chronicle batch deep-link failed", { status: err.status ?? null });
+      proposalsWrap.innerHTML = "";
+      proposalsWrap.style.display = "block";
+      proposalsWrap.style.marginTop = "30px";
+      proposalsWrap.appendChild(el("div", {
+        testid: "chronicle-batch-load-error",
+        style: "font-size: 13px; color: oklch(0.52 0.014 65); padding: 14px 16px; border: 1px solid oklch(0.89 0.010 80); border-radius: 5px; background: oklch(0.975 0.006 85);",
+        text: "Could not load this passage — it may have been removed or never existed."
+      }));
+      proposalsWrap.scrollIntoView?.({ behavior: "smooth", block: "start" });
     }
   }
 

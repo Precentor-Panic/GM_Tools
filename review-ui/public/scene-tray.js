@@ -197,7 +197,11 @@ export function mountSceneTray(host, opts = {}) {
     if (scene.name) return scene.name;
     if (scene.locationEntityId) {
       const place = state.entityNames.get(scene.locationEntityId);
-      if (place) return place;
+      // QA W2 fix (Group B #10): a deleted (or not-yet-loaded) anchor place
+      // used to fall through to the plain objectiveNote/"Ad-hoc scene"
+      // fallback below, masking that this scene DOES have an anchor id that
+      // just isn't resolving -- say so explicitly instead.
+      return place || "(place removed)";
     }
     return scene.objectiveNote || "Ad-hoc scene";
   }

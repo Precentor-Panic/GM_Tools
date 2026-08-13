@@ -138,6 +138,34 @@ const WORLD = "scene-tray-test-world";
     assert.equal(result.xpBudget, null);
   });
 
+  // QA W2 fix (Group B #11): xpBudget used to accept ANYTHING -- a negative
+  // number or a plain string ("lots") round-tripped and persisted verbatim.
+  test("setSceneTrayXpBudget: rejects a negative number with a clear error", () => {
+    assert.throws(() => setSceneTrayXpBudget(WORLD, "scene-budget-invalid", -50, {}), /Invalid xpBudget/);
+  });
+
+  test("setSceneTrayXpBudget: rejects a non-numeric string with a clear error", () => {
+    assert.throws(() => setSceneTrayXpBudget(WORLD, "scene-budget-invalid", "lots", {}), /Invalid xpBudget/);
+  });
+
+  test("setSceneTrayXpBudget: rejects NaN/Infinity with a clear error", () => {
+    assert.throws(() => setSceneTrayXpBudget(WORLD, "scene-budget-invalid", NaN, {}), /Invalid xpBudget/);
+    assert.throws(() => setSceneTrayXpBudget(WORLD, "scene-budget-invalid", Infinity, {}), /Invalid xpBudget/);
+  });
+
+  test("setSceneTrayXpBudget: an invalid value never persists (the prior valid budget survives a rejected call)", () => {
+    setSceneTrayXpBudget(WORLD, "scene-budget-guarded", 500, {});
+    assert.throws(() => setSceneTrayXpBudget(WORLD, "scene-budget-guarded", -1, {}));
+    assert.equal(getSceneTray(WORLD, "scene-budget-guarded").xpBudget, 500, "rejected call must not have written anything");
+  });
+
+  test("setSceneTrayXpBudget: 0 is a valid budget (boundary), and undefined clears the same as null", () => {
+    const zero = setSceneTrayXpBudget(WORLD, "scene-budget-zero", 0, {});
+    assert.equal(zero.xpBudget, 0);
+    const cleared = setSceneTrayXpBudget(WORLD, "scene-budget-zero", undefined, {});
+    assert.equal(cleared.xpBudget, null);
+  });
+
   test("no write in this file leaked into the repo's real default scene-tray/ directory", () => {
     const after = existsSync(REPO_DEFAULT_ROOT) ? new Set(readdirSync(REPO_DEFAULT_ROOT)) : new Set();
     const added = [...after].filter((f) => !before.has(f));

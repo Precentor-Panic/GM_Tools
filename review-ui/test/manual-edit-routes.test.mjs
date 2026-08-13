@@ -91,6 +91,17 @@ test("POST /api/graph/nodes with an empty name is a clean 400", async () => {
   assert.equal(status, 400);
 });
 
+// QA W2 fix (Group B #12): a 5M-char name used to round-trip straight into
+// the graph -- no length cap at all.
+test("POST /api/graph/nodes with a 5M-char name is a clean 400, creates no entity", async () => {
+  const before = await fetchEntities();
+  const { status, body } = await postJson("/api/graph/nodes", { world: WORLD, name: "x".repeat(5_000_000), type: "person" });
+  assert.equal(status, 400);
+  assert.ok(/200 characters/.test(body.error), `expected a clear length-cap message, got: ${body.error}`);
+  const after = await fetchEntities();
+  assert.equal(after.length, before.length, "a rejected create must not persist a partial entity");
+});
+
 test("POST /api/manual-undo undoes the most recent manual edit (add node)", async () => {
   const before = await fetchEntities();
   const { body: createBody } = await postJson("/api/graph/nodes", { world: WORLD, name: "Undo-Me", type: "concept" });

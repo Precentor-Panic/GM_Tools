@@ -120,6 +120,21 @@ await test("pushSceneToFoundry: falls back to the scene's own resolved display n
   assert.equal(onDiskOps[0].data.name, "The old mill at dusk");
 });
 
+// QA W2 fix (Group B #10): a scene anchored to a place that no longer
+// resolves (deleted, or no live snapshot at all for the world) used to push
+// the raw wf_ id as the Foundry scene's name -- never a good display string.
+await test("pushSceneToFoundry: a locationEntityId that misses the live-snapshot lookup falls back to \"(place removed)\", never the raw id", async () => {
+  const WORLD = "push-dangling-place-world";
+  // No bootstrapSnapshot/entity for this world at all -- loadSnapshot throws,
+  // exercising the SAME guard as a genuinely deleted place.
+  const scene = createScene(WORLD, { locationEntityId: "wf_deleted_place_1" });
+
+  await pushSceneToFoundry(dataDir, WORLD, scene.id, { mapSrc: "scenes/dangling.webp" }, { pollMs: 5, timeoutMs: 20 });
+  const onDiskOps = JSON.parse(readFileSync(foundryOpsPath(dataDir, WORLD), "utf8"));
+  assert.equal(onDiskOps[0].data.name, "(place removed)");
+  assert.doesNotMatch(onDiskOps[0].data.name, /wf_/, "must never leak the raw entity id");
+});
+
 await test("pushSceneToFoundry: ok:true applied result writes foundryUuid onto the scene's foundrySceneRef", async () => {
   const WORLD = "push-applied-ok-world";
   const scene = createScene(WORLD, { objectiveNote: "Ambush site" });

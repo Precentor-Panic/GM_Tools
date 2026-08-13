@@ -124,6 +124,19 @@ await test("addNodeOp: rejects an empty name", async () => {
   await assert.rejects(() => addNodeOp(dataDir, WORLD, { name: "  ", type: "person" }));
 });
 
+// QA W2 fix (Group B #12): POST /api/graph/nodes had NO name length cap --
+// a multi-megabyte name round-tripped straight into the graph.
+await test("addNodeOp: rejects a name over 200 characters with a clear error, creates no entity", async () => {
+  const before = entities().length;
+  await assert.rejects(() => addNodeOp(dataDir, WORLD, { name: "x".repeat(5_000_000), type: "person" }), /200 characters/);
+  assert.equal(entities().length, before, "a rejected create must not persist a partial entity");
+});
+
+await test("addNodeOp: accepts a name of exactly 200 characters (boundary)", async () => {
+  const result = await addNodeOp(dataDir, WORLD, { name: "x".repeat(200), type: "concept" });
+  assert.equal(result.name.length, 200);
+});
+
 // QA W1 Fix 2 (data-integrity root cause): a same-name+type "create" doesn't
 // create a second entity at all -- importGraph's merge-mode findExisting()
 // folds it into the EXISTING one, keeping ITS id. addNodeOp must hand back

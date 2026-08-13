@@ -171,9 +171,20 @@ function makeManualId() {
   return `wf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function requireNonEmptyString(value, label) {
+// QA W2 fix (Group B #12): POST /api/graph/nodes had no name length cap at
+// all -- a 5M-char name round-tripped straight into the graph. 200 is a sane
+// ceiling for a display name (still generous for anything a GM would
+// actually type). Exported so the OTHER name-accepting creates (scenes,
+// plans, chronicle intents) share the exact same cap rather than each
+// picking their own number.
+export const MAX_NAME_LENGTH = 200;
+
+function requireNonEmptyString(value, label, { maxLength } = {}) {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(`${label} must be a non-empty string.`);
+  }
+  if (maxLength && value.trim().length > maxLength) {
+    throw new Error(`${label} must be ${maxLength} characters or fewer (got ${value.trim().length}).`);
   }
   return value.trim();
 }
@@ -218,7 +229,7 @@ function pickFields(source, fields) {
  * @returns {Promise<{entityId:string, name:string, type:string}>}
  */
 export async function addNodeOp(dir, w, fields = {}) {
-  const name = requireNonEmptyString(fields.name, "name");
+  const name = requireNonEmptyString(fields.name, "name", { maxLength: MAX_NAME_LENGTH });
   const type = requireNonEmptyString(fields.type, "type");
   const id = makeManualId();
   const data = { id, name, type, ...pickFields(fields, ENTITY_EDITABLE_FIELDS.filter((f) => f !== "name" && f !== "type")) };

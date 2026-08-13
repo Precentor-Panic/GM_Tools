@@ -69,6 +69,14 @@ import { listPlansForWorld, removeSceneFromPlan } from "./plans.mjs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "session-scenes");
 
+// QA W2 fix (Group B #12): same value as wf-mcp-server/lib/manual-edit-ops.mjs's MAX_NAME_LENGTH.
+const MAX_NAME_LENGTH = 200;
+function validateSceneName(name) {
+  if (typeof name === "string" && name.trim().length > MAX_NAME_LENGTH) {
+    throw new Error(`name must be ${MAX_NAME_LENGTH} characters or fewer (got ${name.trim().length}).`);
+  }
+}
+
 export function sessionScenesRoot() {
   return process.env.GM_TOOLS_SESSION_SCENES_DIR || DEFAULT_ROOT;
 }
@@ -108,6 +116,7 @@ export function makeSceneId() {
  * @returns {object}   the created Scene
  */
 export function createScene(world, { locationEntityId = null, objectiveNote = null, name = null } = {}, opts = {}) {
+  validateSceneName(name); // QA W2 fix (Group B #12)
   const makeId = opts.makeId ?? makeSceneId;
   const now = opts.now ?? new Date().toISOString();
   const scene = {
@@ -201,6 +210,7 @@ export function getScene(world, sceneId) {
  * @returns {object}   the updated Scene
  */
 export function renameScene(world, sceneId, name, opts = {}) {
+  validateSceneName(name); // QA W2 fix (Group B #12)
   const scenes = readScenes(world);
   const scene = scenes.find((s) => s.id === sceneId);
   if (!scene) {
@@ -257,6 +267,7 @@ export function renameScene(world, sceneId, name, opts = {}) {
  * that field is written ONLY by the new, narrower `markScenePushed` below.
  */
 export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneRef, locationEntityId, stagedForFoundry } = {}, opts = {}) {
+  if (name !== undefined) validateSceneName(name); // QA W2 fix (Group B #12)
   const scenes = readScenes(world);
   const scene = scenes.find((s) => s.id === sceneId);
   if (!scene) {

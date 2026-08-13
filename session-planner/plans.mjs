@@ -31,6 +31,14 @@ export function plansRoot() {
   return process.env.GM_TOOLS_PLANS_DIR || DEFAULT_ROOT;
 }
 
+// QA W2 fix (Group B #12): same value as wf-mcp-server/lib/manual-edit-ops.mjs's MAX_NAME_LENGTH.
+const MAX_NAME_LENGTH = 200;
+function validatePlanName(name) {
+  if (typeof name === "string" && name.trim().length > MAX_NAME_LENGTH) {
+    throw new Error(`name must be ${MAX_NAME_LENGTH} characters or fewer (got ${name.trim().length}).`);
+  }
+}
+
 function worldFilePath(world) {
   return join(plansRoot(), `${world}.json`);
 }
@@ -64,6 +72,7 @@ export function makePlanId() {
  * @returns {object}   the created Plan, `sceneIds` starts empty.
  */
 export function createPlan(world, { name } = {}, opts = {}) {
+  validatePlanName(name); // QA W2 fix (Group B #12)
   const makeId = opts.makeId ?? makePlanId;
   const now = opts.now ?? new Date().toISOString();
   const plan = {
@@ -92,6 +101,7 @@ export function createPlan(world, { name } = {}, opts = {}) {
  * @returns {object}   the updated Plan
  */
 export function renamePlan(world, planId, name) {
+  validatePlanName(name); // QA W2 fix (Group B #12)
   const plans = readPlans(world);
   const plan = plans.find((p) => p.id === planId);
   if (!plan) {

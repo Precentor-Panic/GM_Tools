@@ -149,6 +149,16 @@ export function removeFromSceneTray(world, sceneId, kind, id) {
  * @returns {{roster:object[], xpBudget:number|null}}
  */
 export function setSceneTrayXpBudget(world, sceneId, xpBudget, opts = {}) {
+  // QA W2 fix (Group B #11): a negative number or a plain string (e.g.
+  // "lots") used to round-trip silently -- this store just persisted
+  // whatever value it was handed, with zero validation. `null`/`undefined`
+  // still explicitly clears the budget; everything else must be a finite
+  // number >= 0.
+  if (xpBudget !== null && xpBudget !== undefined) {
+    if (typeof xpBudget !== "number" || !Number.isFinite(xpBudget) || xpBudget < 0) {
+      throw new Error(`Invalid xpBudget: must be a finite number >= 0, or null to clear (got ${JSON.stringify(xpBudget)})`);
+    }
+  }
   const now = opts.now ?? new Date().toISOString();
   const records = readTray(world);
   const rec = findOrCreateRecord(world, sceneId, records, now);
