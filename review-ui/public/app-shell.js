@@ -223,6 +223,14 @@ async function populateWorldSelect() {
 // Breadcrumb (planner-surface only). Segments appear progressively per view;
 // Plans + plan are clickable, scene is a non-navigating leaf. `null` clears
 // the slot entirely so its DOM count is 0 on the World surface.
+//
+// QA W3 finding 1: the "Plans" crumb is redundant on the plans-list route
+// itself (the Session planner tab, immediately to its left, already says
+// where you are) -- it only earns its place as a clickable parent once
+// there's something deeper to distinguish it from (a plan or scene open).
+// So it's omitted entirely on the bare shelf and appears only ahead of the
+// plan/scene segments, matching the design mock's "Plans / Plan / Scene"
+// crumb trail for those deeper views.
 // ---------------------------------------------------------------------------
 let railOpenPlanId = null; // the "currently open plan" context (Decision 5)
 
@@ -240,16 +248,20 @@ function renderBreadcrumb(sub) {
 
   const bc = el("nav", { class: "shell-breadcrumb", "data-testid": "shell-breadcrumb" });
 
-  const plansCrumb = el("span", { class: "shell-crumb shell-crumb--link", "data-testid": "shell-breadcrumb-plans" });
-  plansCrumb.textContent = "Plans";
-  plansCrumb.addEventListener("click", () => goto("planner/plans"));
-  bc.appendChild(plansCrumb);
-
   // The plan segment shows for view=plan, and for a scene reached WITH a plan
   // context (an orphaned/deep-linked scene omits it -- "never a dead link").
   let planIdForCrumb = null;
   if (sub.kind === "plan") planIdForCrumb = sub.id;
   else if (sub.kind === "scene" && railOpenPlanId) planIdForCrumb = railOpenPlanId;
+
+  // Standalone "Plans" crumb only when there's a deeper segment to lead --
+  // never on the bare plans-list route itself (QA W3 finding 1).
+  if (sub.kind !== "plans") {
+    const plansCrumb = el("span", { class: "shell-crumb shell-crumb--link", "data-testid": "shell-breadcrumb-plans" });
+    plansCrumb.textContent = "Plans";
+    plansCrumb.addEventListener("click", () => goto("planner/plans"));
+    bc.appendChild(plansCrumb);
+  }
 
   if (planIdForCrumb) {
     bc.appendChild(crumbSep());

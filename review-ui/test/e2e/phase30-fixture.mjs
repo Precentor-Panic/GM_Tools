@@ -146,9 +146,12 @@
 //       `[data-testid="planner-plans-view"]` appears while
 //       `[data-testid="world-surface-root"]` disappears.
 //     - `[data-testid="shell-breadcrumb"]`:
-//         - `[data-testid="shell-breadcrumb-plans"]` -- ALWAYS present on
-//           the planner surface (any of the three planner views), clicking
-//           it navigates to `#planner/plans`.
+//         - `[data-testid="shell-breadcrumb-plans"]` -- present on the
+//           planner surface EXCEPT on the bare plans-list view (`view ===
+//           "plans"`), where it's redundant with the Session planner tab
+//           immediately to its left and is omitted entirely (QA W3 finding
+//           1). Present once a plan or scene is open; clicking it navigates
+//           to `#planner/plans`.
 //         - `[data-testid="shell-breadcrumb-plan"][data-plan-id]` -- present
 //           iff `view` is `plan` or `scene` (and, for `scene`, iff the scene
 //           has a plan context -- an orphaned scene reached with no plan in

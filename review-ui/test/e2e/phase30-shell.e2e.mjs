@@ -89,7 +89,7 @@ test("surface toggle switches planner <-> world, updating the hash and swapping 
   await page.close();
 });
 
-test("breadcrumb: Plans always present, plan segment appears on #planner/plan, scene segment is a non-navigating leaf", async () => {
+test("breadcrumb: no standalone Plans crumb on the bare plans-list route; Plans leads once a plan/scene is open; scene segment is a non-navigating leaf", async () => {
   const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
   await primeWorldSelection(page, base, WORLD);
 
@@ -98,16 +98,23 @@ test("breadcrumb: Plans always present, plan segment appears on #planner/plan, s
   await addSceneToPlanViaRoute(base, WORLD, plan.id, scene.id);
 
   await page.goto(`${base}/#planner/plans`);
-  await page.locator('[data-testid="shell-breadcrumb-plans"]').waitFor({ state: "visible", timeout: 15000 });
+  await page.locator('[data-testid="planner-plans-view"]').waitFor({ state: "visible", timeout: 15000 });
+  // QA W3 finding 1: the standalone "Plans" crumb is redundant on the
+  // plans-list route itself (the Session planner tab already says where you
+  // are) -- it no longer renders here at all.
+  assert.equal(await page.locator('[data-testid="shell-breadcrumb-plans"]').count(), 0, "no standalone Plans crumb on the bare shelf");
   assert.equal(await page.locator('[data-testid="shell-breadcrumb-plan"]').count(), 0, "no plan segment on the bare shelf");
 
   await page.goto(`${base}/#planner/plan/${plan.id}`);
   const planCrumb = page.locator(`[data-testid="shell-breadcrumb-plan"][data-plan-id="${plan.id}"]`);
   await planCrumb.waitFor({ state: "visible", timeout: 15000 });
+  // Once a plan is open, "Plans" leads the trail as a clickable parent again.
+  await page.locator('[data-testid="shell-breadcrumb-plans"]').waitFor({ state: "visible", timeout: 15000 });
 
   await page.goto(`${base}/#planner/scene/${scene.id}`);
   const sceneCrumb = page.locator(`[data-testid="shell-breadcrumb-scene"][data-scene-id="${scene.id}"]`);
   await sceneCrumb.waitFor({ state: "visible", timeout: 15000 });
+  await page.locator('[data-testid="shell-breadcrumb-plans"]').waitFor({ state: "visible", timeout: 15000 });
   await sceneCrumb.click();
   await page.waitForTimeout(300);
   assert.equal(page.url().includes(`#planner/scene/${scene.id}`) || (await page.evaluate(() => location.hash)) === `#planner/scene/${scene.id}`, true, "clicking the leaf scene crumb must not navigate away");
