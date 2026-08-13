@@ -17,6 +17,14 @@
  * Reuses review-state.mjs's withLock rather than a second file-locking
  * implementation.
  *
+ * Phase 37 task 37.5 (Russell's pass-cleanup): adds `promptSummary` --
+ * additive, optional (defaults to `null` so a pre-37.5 sidecar file still
+ * parses unchanged; no SCHEMA_VERSION bump needed for an optional-with-
+ * default field). The chronicle-log history rail (review-ui/server.mjs's
+ * `chronicleLogPayload`) reads this as its entry title so the rail never
+ * renders a raw batch id as the headline -- see review-ui/public/
+ * chronicle-view.js's `historyTitle`.
+ *
  * Written EXACTLY ONCE, by POST /api/chronicle/run, in the same request that
  * calls createBatch (via orchestrateBatch/orchestrateCycle). A batch created
  * by ANY OTHER path (a bare wf_propose_mutations/wf_run_cycle MCP call, a
@@ -42,7 +50,11 @@ const ChronicleRunRecord = z
     span: z.record(z.string(), z.any()),
     fortuneAtRun: z.string(),
     elapsedSessions: z.number(),
-    createdAt: z.string()
+    createdAt: z.string(),
+    // Phase 37 task 37.5: additive, defaults to null (absent on any sidecar
+    // written before this task) -- a real, valid "no described event"
+    // state, never a guess.
+    promptSummary: z.string().nullable().default(null)
   })
   .strict();
 
@@ -59,16 +71,17 @@ function filePath(world, batchId) {
  * by POST /api/chronicle/run, right after the batch it describes is created.
  * @param {string} world
  * @param {string} batchId
- * @param {{span:object, fortuneAtRun:string, elapsedSessions:number}} meta
+ * @param {{span:object, fortuneAtRun:string, elapsedSessions:number, promptSummary?:string|null}} meta
  * @returns {object} the persisted record
  */
-export function recordChronicleRun(world, batchId, { span, fortuneAtRun, elapsedSessions }) {
+export function recordChronicleRun(world, batchId, { span, fortuneAtRun, elapsedSessions, promptSummary = null }) {
   const path = filePath(world, batchId);
   const record = ChronicleRunRecord.parse({
     batchId,
     span,
     fortuneAtRun,
     elapsedSessions,
+    promptSummary,
     createdAt: new Date().toISOString()
   });
   withLock(path, () => {

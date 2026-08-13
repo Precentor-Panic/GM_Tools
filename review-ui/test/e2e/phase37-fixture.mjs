@@ -576,6 +576,82 @@
 // batch-review capability a deep link or an API client still depends on.
 //
 // ===========================================================================
+// ADDENDUM -- 37.5 pass-cleanup (orchestrator, Russell's hands-on pass,
+// 2026-08-12). His real session hit three defects the original 37.0-37.4
+// contract above didn't anticipate; all three amended here (and implemented
+// in the same commit), reconciling the affected shape tests below rather
+// than leaving them asserting stale behavior:
+//   1. A DESCRIBED EVENT MUST ALWAYS SEED A REAL REGION. §6's original
+//      `scopeKind:"queued-intents"` contract forwarded `body.prompt` to
+//      `orchestrateBatch` ONLY as GM-note flavor text -- the actual regions
+//      came solely from carried intents/branches/ambient. With nothing
+//      queued/carried, a queued-intents run produced a real batch with ZERO
+//      regions and the typed event evaporated (four such batches from
+//      Russell's own session -- "I described an event... they all say 0
+//      things changed"). Amended: when `body.prompt` is non-empty, POST
+//      /api/chronicle/run dedup-or-creates a concept entity FROM the
+//      prompt's own first line (~60 chars, via the SAME
+//      `resolveOrCreateIntentEntity` machinery §5's manual-intent route
+//      already used -- extracted into a shared helper, not copy-pasted) and
+//      adds it as a seed exactly like a carried intent (impactScore floor
+//      0.5+, needsLLM) -- checked intents still ride along per the
+//      Composer's own copy. The client (chronicle-view.js) additively
+//      extends the 37.4-cleanup `runDisabledReason` pattern: a
+//      queued-intents run with BOTH an empty prompt AND zero carried
+//      intents is structurally empty and now deflects client-side with
+//      "describe an event or carry a thread first" -- an empty prompt with
+//      real carried intents, or a real prompt with nothing carried, are
+//      BOTH still valid runs and are never blocked.
+//   2. THE HISTORY RAIL MUST BE READABLE. grain.mjs's `renderHeadline`
+//      (reused, unmodified -- it still serves the MCP/conversational
+//      surface correctly) embeds the raw batch id in its own headline text
+//      ("Batch <id>: N regions, M mutations...") -- the rail rendered THAT
+//      text as its entry title, which is exactly the "batch
+//      batch_msqs27sp_ss9e6r or whatever... I can't understand" Russell hit.
+//      Amended: the chronicle-run sidecar (session-planner/chronicle-run.mjs)
+//      additively gains `promptSummary` (the prompt's own first line, ~80
+//      chars, `null` when none -- same real-valid-null convention as
+//      `span`/`fortuneAtRun`, no SCHEMA_VERSION bump since the field is
+//      optional-with-default and every pre-37.5 sidecar still parses
+//      unchanged), written once by POST /api/chronicle/run alongside the
+//      existing sidecar fields, and surfaced additively on `GET
+//      /api/chronicle/log`'s entries. The rail's own `historyTitle` (client-
+//      side, chronicle-view.js) picks `promptSummary`, else "N queued
+//      threads resolved" (only meaningful for a real seed-mode batch with no
+//      typed event), else a plain scope label -- the raw batch id is
+//      demoted to a small mono sub-line (`chronicle-history-batch-id`) plus
+//      a native tooltip (the row's own `title` attribute), NEVER the
+//      headline. `mutationCount`/`pendingCount`/`acceptedCount` were
+//      ALREADY additive fields on `chronicleLogPayload` as of 37.1 (no
+//      change needed there) -- the rail's meta line now reads "N accepted ·
+//      M pending · <fortune> · <span>" from those real counts.
+//   3. THE CHRONICLE = WHAT ACTUALLY HAPPENED. Entries previously appeared
+//      in the rail immediately on run, before any review -- "we should only
+//      put that in the chronicle after its been accepted using the menu
+//      below." Amended, CLIENT-SIDE ONLY (chronicle-log itself stays an
+//      unfiltered read layer over listBatches, per its own "no new event
+//      store" charter -- the gating is a rail-rendering rule, not a second
+//      persisted state): `fillHistory` partitions `GET /api/chronicle/log`'s
+//      entries into a quiet "Awaiting review (N)" section at the TOP
+//      (`chronicle-history-awaiting`, `acceptedCount:0 && mutationCount>0`,
+//      each entry deep-linking to `#chronicle/batch/<id>` on click) and the
+//      main list (`chronicle-history-accepted`, `acceptedCount>=1`).
+//      Zero-mutation entries (`mutationCount:0`) are hidden from BOTH
+//      sections entirely -- pure noise, and fix 1 above prevents new ones on
+//      the queued-intents path going forward; they remain reachable via the
+//      batch routes directly (§9's green guard). This gating applies to the
+//      RAIL only -- the just-run flow's own "What changed" panel
+//      (`state.batchId`/`paintProposals`) is unaffected and still shows its
+//      proposals immediately regardless of accept state.
+// RECONCILED: phase37-chronicle-surface.e2e.mjs's "running the Composer...
+// the history rail gains a matching entry" test (line ~163) still passes
+// unchanged -- `.first()` on `[data-testid="chronicle-history-entry"]` finds
+// the entry wherever gating places it (that scenario's batch has real
+// mutations and zero accepts, so it lands in the awaiting-review section,
+// still present in the DOM with the same testid). No RETIRE-as-superseded
+// was needed; no prior test asserted the OLD headline-as-title text or an
+// ungated flat list, so nothing had to be deleted, only extended.
+// ===========================================================================
 // Implementation below: setup + route helpers, mirroring phase34/36/38-
 // fixture.mjs's own "helpers do not assert res.status -- a non-200/404 here
 // IS the expected red-for-the-right-reason signal" convention. Nothing here

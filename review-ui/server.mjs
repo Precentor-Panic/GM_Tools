@@ -703,14 +703,58 @@ function pendingEntitiesPayload(w, dir) {
 }
 
 /**
+ * Resolve a free-typed name into an entity id -- the SHARED "dedup-or-create"
+ * machinery Phase 37 task 37.5 extracts out of POST /api/chronicle/intents so
+ * POST /api/chronicle/run's prompt-seed (see the run route below) can reuse
+ * it byte-for-byte rather than re-deriving a second copy. Case-insensitive
+ * exact-name dedup against the live graph; no match -> create ONE minimal
+ * `concept`-typed entity via the existing headless-apply path (mirrors
+ * writeup-import's own dedup-or-create convention). `entities` is mutated IN
+ * PLACE with the newly-created record when one is made, so a caller that
+ * goes on to pass this SAME array into orchestrateBatch/textureRegion (the
+ * run route does) sees the new entity immediately -- no second snapshot
+ * reload, and texture.mjs's own region-context rendering + entityContext
+ * stamping pick up its real name for free.
+ * @param {string} snapPath
+ * @param {object[]} entities  the live snapshot's entities (mutated on create)
+ * @param {string} name
+ * @returns {{entityId:string, entityType:string, created:boolean}}
+ */
+function resolveOrCreateIntentEntity(snapPath, entities, name) {
+  const lower = name.toLowerCase();
+  const match = entities.find((e) => typeof e.name === "string" && e.name.toLowerCase() === lower);
+  if (match) return { entityId: match.id, entityType: match.type ?? "concept", created: false };
+  const entityId = `intent-${randomUUID()}`;
+  applyHeadless(snapPath, [{ op: "upsert_entity", data: { id: entityId, name, type: "concept", importance: 0.4 } }]);
+  entities.push({ id: entityId, name, type: "concept", importance: 0.4 });
+  return { entityId, entityType: "concept", created: true };
+}
+
+/**
+ * `name = first line, truncated to ~maxLen chars` -- the ONE truncation rule
+ * Phase 37 task 37.5 uses both for a prompt-derived entity's name (60 chars)
+ * and the chronicle-log history rail's `promptSummary` (80 chars), so the
+ * two never drift out of sync with each other's idea of "the first line."
+ * @param {string} text
+ * @param {number} maxLen
+ * @returns {string}
+ */
+function firstLineTruncated(text, maxLen) {
+  const line = text.split("\n")[0].trim();
+  return line.length > maxLen ? `${line.slice(0, maxLen).trimEnd()}…` : line;
+}
+
+/**
  * GET /api/chronicle/log payload -- Phase 37 task 37.1, §4 of
  * review-ui/test/e2e/phase37-fixture.mjs: a READ layer composing the
- * EXISTING listBatches(world) (already newest-first) with grain.mjs's
- * EXISTING summarizeBatch/renderHeadline for the friendly one-line headline,
- * plus chronicle-run.mjs's per-batch sidecar for the two fields listBatches
- * has no source for (`span`/`fortuneAtRun`) -- null/null for a batch NOT
- * created via Chronicle's own composer, a real valid state, never a thrown
- * error or a guessed value. ZERO new persisted history of its own.
+ * EXISTING listBatches(world) (already newest-first, already carrying
+ * mutationCount/pendingCount/acceptedCount) with grain.mjs's EXISTING
+ * summarizeBatch/renderHeadline for the friendly one-line headline, plus
+ * chronicle-run.mjs's per-batch sidecar for the fields listBatches has no
+ * source for (`span`/`fortuneAtRun`/`promptSummary`, the last one added by
+ * task 37.5) -- null for a batch NOT created via Chronicle's own composer, a
+ * real valid state, never a thrown error or a guessed value. ZERO new
+ * persisted history of its own.
  */
 /**
  * OFFLINE DETERMINISTIC texture client (see POST /api/chronicle/run). An
@@ -750,6 +794,10 @@ function chronicleLogPayload(w) {
       span: run?.span ?? null,
       scope: b.scope,
       fortuneAtRun: run?.fortuneAtRun ?? null,
+      // Phase 37 task 37.5: the history rail's readable title, never a raw
+      // batch id -- null for any batch without a Chronicle-run sidecar
+      // (same real-valid-null convention as span/fortuneAtRun above).
+      promptSummary: run?.promptSummary ?? null,
       at: b.createdAt,
       headline: renderHeadline(summary),
       mutationCount: b.mutationCount,
@@ -1436,6 +1484,17 @@ async function handleApi(req, res, url, parts) {
       );
     }
 
+    // Phase 37 task 37.5 (Russell's pass): the Composer's typed "say what
+    // happens" prompt was previously forwarded to orchestrateBatch ONLY as
+    // GM-note flavor text -- the actual regions came solely from carried
+    // intents/branches/ambient. A queued-intents run with nothing
+    // queued/carried therefore produced a real batch with ZERO regions and
+    // the described event evaporated (four zero-mutation batches from his
+    // session). `promptSummary` (first line, ~80 chars, null when none) is
+    // also the chronicle-run sidecar's readable-rail title (§B below).
+    const promptText = typeof body.prompt === "string" ? body.prompt.trim() : "";
+    const promptSummary = promptText ? firstLineTruncated(promptText, 80) : null;
+
     // THE single call site permitted to compute this run's elapsedSessions.
     const clock = advanceWorldClock(w, body.span);
 
@@ -1453,6 +1512,20 @@ async function handleApi(req, res, url, parts) {
           if (carriedIds && !carriedIds.has(entry.entryId)) continue;
           seeds.push({ entityId, magnitude: Math.min(1, Math.abs(entry.impactScore)) });
         }
+      }
+      // The typed event is the PRIMARY seed (matches the Composer's own copy,
+      // "Everything checked at left rides along" -- the prompt is what rides,
+      // checked intents ALONG with it). Dedup-or-create via the SAME
+      // machinery POST /api/chronicle/intents uses, then add it as a seed
+      // exactly like a carried intent -- this alone guarantees a described
+      // event always earns >=1 reviewable proposal, even with nothing
+      // queued/carried. `entities` is mutated in place on create so the
+      // texturing pass below sees (and names) the new entity for free.
+      if (promptText) {
+        const snapPath = snapshotFilePath(dir, w);
+        const promptName = firstLineTruncated(promptText, 60);
+        const { entityId: promptEntityId } = resolveOrCreateIntentEntity(snapPath, entities, promptName);
+        seeds.push({ entityId: promptEntityId, magnitude: 1 });
       }
       scopeSpec = { mode: "seed", seeds, elapsedSessions: clock.elapsedSessions };
       // The deferred thread ITSELF is the primary thing a queued-intents pass
@@ -1510,7 +1583,7 @@ async function handleApi(req, res, url, parts) {
       ...(process.env.ANTHROPIC_API_KEY ? {} : { textureOpts: { client: offlineTextureClient(fortune.stopId) } })
     });
 
-    recordChronicleRun(w, result.batchId, { span: body.span, fortuneAtRun: fortune.stopId, elapsedSessions: clock.elapsedSessions });
+    recordChronicleRun(w, result.batchId, { span: body.span, fortuneAtRun: fortune.stopId, elapsedSessions: clock.elapsedSessions, promptSummary });
 
     return sendJson(res, 200, {
       batchId: result.batchId,
@@ -1526,13 +1599,13 @@ async function handleApi(req, res, url, parts) {
   //   -> { entityId, name, type, entries: [...] }  (one pendingEntitiesPayload row)
   //
   // The "add a manual intent by hand" flow (phase37-fixture.mjs §5, the piece
-  // 37.1 deferred): resolve a free-typed NAME into an entityId (dedup against
-  // the live graph by case-insensitive exact name match, else create ONE
-  // minimal `concept`-typed entity via the existing headless-apply path,
-  // mirroring writeup-import's dedup-or-create convention), then writePending
-  // with the pinned `sourceBatchId:"manual"` sentinel + `cycleDescriptor:
-  // "Manual"` so the deferred lane renders it exactly like a wrap-up intent.
-  // No new store: pending-ledger.mjs's EXISTING writePending does the work.
+  // 37.1 deferred): resolve a free-typed NAME into an entityId via the
+  // SHARED resolveOrCreateIntentEntity (task 37.5 extracted this out so the
+  // run route's prompt-seed below reuses the exact same machinery), then
+  // writePending with the pinned `sourceBatchId:"manual"` sentinel +
+  // `cycleDescriptor: "Manual"` so the deferred lane renders it exactly like
+  // a wrap-up intent. No new store: pending-ledger.mjs's EXISTING
+  // writePending does the work.
   if (method === "POST" && parts.length === 3 && parts[1] === "chronicle" && parts[2] === "intents") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
@@ -1542,22 +1615,11 @@ async function handleApi(req, res, url, parts) {
 
     const snapPath = snapshotFilePath(dir, w);
     const { entities } = loadSnapshot(dir, w).snapshot;
-    // Dedup: case-insensitive exact name match (v1 -- a deliberately simple
-    // matcher, flagged; a fuzzier match like scan-mentions' nameSimilarity is
-    // a future refinement, not needed to hang a hand-typed intent on a graph
-    // anchor). No match -> create one minimal concept entity headlessly.
-    const lower = name.toLowerCase();
-    let match = entities.find((e) => typeof e.name === "string" && e.name.toLowerCase() === lower);
-    let entityId;
-    let entityType;
-    if (match) {
-      entityId = match.id;
-      entityType = match.type ?? "concept";
-    } else {
-      entityId = `intent-${randomUUID()}`;
-      entityType = "concept";
-      applyHeadless(snapPath, [{ op: "upsert_entity", data: { id: entityId, name, type: "concept", importance: 0.4 } }]);
-    }
+    // Dedup-or-create: SHARED with POST /api/chronicle/run's prompt-seed
+    // (Phase 37 task 37.5) via resolveOrCreateIntentEntity -- see its own
+    // doc comment for the (deliberately simple, v1) case-insensitive
+    // exact-name matcher rationale.
+    const { entityId, entityType } = resolveOrCreateIntentEntity(snapPath, entities, name);
 
     writePending(w, entityId, {
       causeTag: typeof body.note === "string" && body.note.trim() ? body.note.trim() : "Added by hand.",

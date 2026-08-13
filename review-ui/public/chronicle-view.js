@@ -459,7 +459,7 @@ export async function renderChronicleSurface(arg) {
       style: "width: 100%; min-height: 96px; padding: 13px 14px; border: 1px solid oklch(0.84 0.010 80); border-radius: 5px; font-size: 15px; line-height: 1.5; background: oklch(1 0 0); color: inherit; resize: vertical; font-family: inherit;"
     });
     ta.value = state.prompt;
-    ta.addEventListener("input", () => { state.prompt = ta.value; });
+    ta.addEventListener("input", () => { state.prompt = ta.value; refreshRunMeta(); });
     return ta;
   }
   function promptValue() { return state.prompt; }
@@ -700,6 +700,16 @@ export async function renderChronicleSurface(arg) {
     if (state.scopeKind === "branches" && state.branchIds.length === 0) {
       return "pick at least one place or faction first";
     }
+    // Cleanup (Russell's pass, task 37.5): a queued-intents run with NO
+    // typed event AND nothing carried is structurally empty -- it can never
+    // produce a reviewable proposal (the server-side fix makes a typed
+    // prompt a real seed, but an empty prompt with zero carried intents is
+    // still a true no-op). Deflect client-side, same pattern as the
+    // branches guard above; the empty-carried case with a REAL prompt is a
+    // valid, intentional run and must NOT be blocked here.
+    if (state.scopeKind === "queued-intents" && !promptValue().trim() && state.carried.size === 0) {
+      return "describe an event or carry a thread first";
+    }
     return null;
   }
   function buildRunRow() {
@@ -750,37 +760,83 @@ export async function renderChronicleSurface(arg) {
     historyListHost = list;
     return h;
   }
+  // Cleanup (Russell's pass, task 37.5): the chronicle = what actually
+  // happened, so the MAIN list shows only batches with >=1 ACCEPTED
+  // mutation. Batches with pending-but-unaccepted mutations group under a
+  // quiet "awaiting review" section at the TOP (deep-linking to
+  // #chronicle/batch/<id> -- fix A prevents new ZERO-mutation batches on the
+  // queued-intents path going forward). Zero-mutation batches are HIDDEN
+  // from the rail entirely (they remain reachable via batch routes; here
+  // they're pure noise). This gating applies to the RAIL only -- the
+  // just-run flow's "What changed" panel (paintProposals/state.batchId)
+  // shows its own proposals immediately, unaffected.
   function fillHistory(list, logData) {
     list.innerHTML = "";
     const entries = (logData && logData.entries) || [];
-    if (!entries.length) {
+    const awaiting = entries.filter((e) => (e.mutationCount ?? 0) > 0 && (e.acceptedCount ?? 0) === 0);
+    const accepted = entries.filter((e) => (e.acceptedCount ?? 0) > 0);
+    if (!awaiting.length && !accepted.length) {
       list.appendChild(el("div", { style: "padding: 10px 4px; font-size: 11.5px; color: oklch(0.58 0.012 70); line-height: 1.45;", text: "No passages yet. Compose one at the centre and it lands here." }));
       return;
     }
-    for (const e of entries) list.appendChild(historyEntry(e));
+    if (awaiting.length) {
+      list.appendChild(el("div", {
+        testid: "chronicle-history-awaiting-header",
+        style: "font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.55 0.070 60); padding: 2px 2px 5px;",
+        text: `Awaiting review (${awaiting.length})`
+      }));
+      const awaitingHost = el("div", { testid: "chronicle-history-awaiting", style: "display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px;" });
+      for (const e of awaiting) awaitingHost.appendChild(historyEntry(e));
+      list.appendChild(awaitingHost);
+    }
+    if (accepted.length) {
+      const acceptedHost = el("div", { testid: "chronicle-history-accepted", style: "display: flex; flex-direction: column; gap: 8px;" });
+      for (const e of accepted) acceptedHost.appendChild(historyEntry(e));
+      list.appendChild(acceptedHost);
+    }
+  }
+
+  // Cleanup (Russell's pass): "batch batch_msqs27sp_ss9e6r or whatever... I
+  // can't understand" -- grain.mjs's own renderHeadline embeds the raw
+  // batch id ("Batch <id>: N regions, M mutations...") for the MCP/
+  // conversational surface; the history rail must never use that text as
+  // its title. historyTitle picks the first legible thing: the typed
+  // event's own promptSummary, else "N queued threads resolved" (only
+  // meaningful for a seed-mode batch with real seeds and no prompt), else a
+  // plain scope label -- the batch id is demoted to a small mono sub-line +
+  // native tooltip (title attribute) on the row itself.
+  function historyTitle(e) {
+    if (e.promptSummary) return e.promptSummary;
+    const seedCount = e.scope && e.scope.mode === "seed" && Array.isArray(e.scope.seeds) ? e.scope.seeds.length : 0;
+    if (seedCount > 0) return `${seedCount} queued thread${seedCount === 1 ? "" : "s"} resolved`;
+    return scopeLabel(e.scope);
+  }
+  function scopeLabel(scope) {
+    const mode = scope && scope.mode;
+    if (mode === "seed") return "Queued-intents pass";
+    if (mode === "branches") return "Branch pass";
+    if (mode === "ambient") return "Whole-world pass";
+    return "Batch";
   }
   function historyEntry(e) {
     const spanLabel = e.span ? (SPANS.find((s) => s.id === (e.span.spanId || e.span))?.head || spanText(e.span)) : null;
-    const kind = e.span ? "advance" : (e.scope && e.scope.mode === "seed" ? "advance" : "batch");
     const applied = e.acceptedCount ?? 0;
     const pendingN = e.pendingCount ?? 0;
-    const metaBits = [`${e.mutationCount} change${e.mutationCount === 1 ? "" : "s"}`];
-    if (applied) metaBits.push(`${applied} applied`);
-    if (pendingN) metaBits.push(`${pendingN} pending`);
+    const metaBits = [`${applied} accepted`, `${pendingN} pending`];
     if (e.fortuneAtRun) metaBits.push(e.fortuneAtRun);
-    return el("div", {
+    if (spanLabel) metaBits.push(spanLabel);
+    const entry = el("div", {
       testid: "chronicle-history-entry",
       "data-batch-id": e.batchRef,
+      title: e.batchRef,
       style: "padding: 10px 11px; border: 1px solid oklch(0.89 0.010 80); border-radius: 4px; background: oklch(0.975 0.006 85); cursor: pointer;"
     }, [
-      el("div", { style: "display: flex; align-items: baseline; gap: 8px;" }, [
-        el("span", { text: kind, style: `font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.05em; color: ${TEAL};` }),
-        el("span", { style: "flex: 1;" }),
-        el("span", { text: spanLabel || "—", style: "font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.62 0.012 70);" })
-      ]),
-      el("div", { style: "font-family: Spectral, serif; font-size: 14.5px; line-height: 1.35; margin-top: 5px;", text: e.headline || `Batch ${e.batchRef}` }),
-      el("div", { style: "font-size: 11.5px; color: oklch(0.55 0.012 70); margin-top: 4px;", text: metaBits.join(" · ") })
+      el("div", { style: "font-family: Spectral, serif; font-size: 14.5px; line-height: 1.35;", text: historyTitle(e) }),
+      el("div", { style: "font-size: 11.5px; color: oklch(0.55 0.012 70); margin-top: 4px;", text: metaBits.join(" · ") }),
+      el("div", { testid: "chronicle-history-batch-id", style: "font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; color: oklch(0.74 0.010 80); margin-top: 4px;", text: e.batchRef })
     ]);
+    entry.addEventListener("click", () => { location.hash = `#chronicle/batch/${encodeURIComponent(e.batchRef)}`; });
+    return entry;
   }
 
   // ---- proposals ("What changed") ---------------------------------------

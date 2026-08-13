@@ -18,7 +18,10 @@ import {
   setupPhase37Env,
   cleanupScratchEnv,
   primeWorldSelection,
-  DESKTOP_VIEWPORT
+  DESKTOP_VIEWPORT,
+  runChronicleViaRoute,
+  fetchBatchDetailViaRoute,
+  acceptMutationViaRoute
 } from "./phase37-fixture.mjs";
 
 const { scratchDir, dataDir } = setupPhase37Env("gm-tools-e2e-p37surface-");
@@ -181,4 +184,111 @@ test("running the Composer produces proposals rendered as the SHARED proposal-ca
 
   const historyEntry = page.locator('[data-testid="chronicle-history-entry"]').first();
   await historyEntry.waitFor({ state: "visible", timeout: 10000 });
+});
+
+// ---------------------------------------------------------------------------
+// 37.5 pass-cleanup ADDENDUM (see phase37-fixture.mjs's own ADDENDUM for the
+// full pinned reasoning) -- fix A's client-side deflect guard (mirrors the
+// 37.4 branches-scope force-click pattern), fix B's readable rail title, and
+// fix C's accept-gated rail placement.
+// ---------------------------------------------------------------------------
+
+test("queued-intents scope with an EMPTY prompt AND zero carried intents DEFLECTS the run with a quiet hint (never fires a structurally-empty run); typing a real event un-blocks it", async () => {
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+  await page.goto(`${base}/#chronicle`);
+  await page.locator('[data-testid="chronicle-surface-root"]').waitFor({ state: "visible", timeout: 15000 });
+
+  // Both p37s-ring and p37s-gorrim start carried -- uncheck every row (click
+  // the row itself, not the checkbox, per intentRow's own click-anywhere
+  // handler) so both prompt AND carried intents are empty.
+  let remaining = await page.locator('[data-testid="chronicle-intent-row"][data-carried="true"]').count();
+  while (remaining > 0) {
+    await page.locator('[data-testid="chronicle-intent-row"][data-carried="true"]').first().click();
+    remaining = await page.locator('[data-testid="chronicle-intent-row"][data-carried="true"]').count();
+  }
+
+  const meta = page.locator('[data-testid="chronicle-run-meta"]');
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="chronicle-run-meta"]')?.getAttribute("data-run-blocked") === "true",
+    null,
+    { timeout: 5000 }
+  );
+  assert.match((await meta.textContent()) ?? "", /describe an event or carry a thread/, "the hint explains what is missing");
+  assert.equal(await page.locator('[data-testid="chronicle-run-btn"]').getAttribute("aria-disabled"), "true", "the Run button reads disabled");
+
+  const failed = [];
+  page.on("response", (r) => { if (r.url().includes("/api/chronicle/run") && r.status() >= 400) failed.push(r.status()); });
+  // force:true bypasses Playwright's own actionability refusal (aria-disabled)
+  // so the JS-side guard is what's actually exercised, same as the 37.4
+  // branches-scope pin.
+  await page.locator('[data-testid="chronicle-run-btn"]').click({ force: true });
+  await page.waitForTimeout(800);
+  assert.deepEqual(failed, [], "a blocked run must never reach the server");
+
+  // Typing a real event -- with STILL zero carried intents -- must
+  // immediately un-block Run: a described event alone is a valid run (fix 1).
+  await page.locator('[data-testid="chronicle-prompt-input"]').fill("A courier arrives from the coast: the harbor watch has gone quiet.");
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="chronicle-run-meta"]')?.getAttribute("data-run-blocked") === "false",
+    null,
+    { timeout: 5000 }
+  );
+  assert.equal(await page.locator('[data-testid="chronicle-run-btn"]').getAttribute("aria-disabled"), "false", "a typed event alone must unblock Run even with nothing carried");
+  await page.close();
+});
+
+test("history rail: readable title (never the raw batch id) + accept-gated placement -- zero-mutation hidden, unaccepted under 'awaiting review', accepted in the main list", async () => {
+  const promptText = "The vault beneath Gorrim's Forge is finally pried open by the desperate.";
+
+  // A zero-mutation batch (carry nothing, no prompt) -- must never appear in the rail.
+  const zero = await runChronicleViaRoute(base, WORLD, { scopeKind: "queued-intents", span: { spanId: "week" }, carriedEntryIds: [] });
+  assert.equal(zero.status, 200, `expected 200, got ${zero.status}: ${JSON.stringify(zero.body)}`);
+  assert.equal(zero.body.mutationCount, 0, "sanity: this really is the zero-mutation no-op case");
+
+  // A described-event run -- fix A guarantees >=1 mutation, unaccepted so far.
+  const described = await runChronicleViaRoute(base, WORLD, {
+    scopeKind: "queued-intents",
+    span: { spanId: "week" },
+    carriedEntryIds: [],
+    prompt: promptText
+  });
+  assert.ok(described.body.mutationCount >= 1);
+
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+  await page.goto(`${base}/#chronicle`);
+  await page.locator('[data-testid="chronicle-surface-root"]').waitFor({ state: "visible", timeout: 15000 });
+
+  const zeroRow = page.locator(`[data-testid="chronicle-history-entry"][data-batch-id="${zero.body.batchId}"]`);
+  assert.equal(await zeroRow.count(), 0, "a zero-mutation batch must never appear in the rail");
+
+  const describedRow = page.locator(
+    `[data-testid="chronicle-history-awaiting"] [data-testid="chronicle-history-entry"][data-batch-id="${described.body.batchId}"]`
+  );
+  await describedRow.waitFor({ state: "visible", timeout: 10000 });
+  const rowText = (await describedRow.textContent()) ?? "";
+  assert.ok(rowText.includes("The vault beneath Gorrim's Forge"), `history entry must show the typed event's own words -- got: ${rowText}`);
+  assert.ok(!rowText.includes(`Batch ${described.body.batchId}`), "must never render grain.mjs's raw-id-embedding headline text");
+  const idSubline = describedRow.locator('[data-testid="chronicle-history-batch-id"]');
+  assert.equal(await idSubline.textContent(), described.body.batchId, "the raw batch id is demoted to a small sub-line, not the title");
+
+  // Accept its first mutation -- the batch must move OUT of awaiting-review
+  // and INTO the accepted (main) section.
+  const detail = await fetchBatchDetailViaRoute(base, WORLD, described.body.batchId);
+  const firstMutation = (detail.body.regions || []).flatMap((r) => r.entities || [])[0];
+  assert.ok(firstMutation, "expected at least one mutation to accept");
+  await acceptMutationViaRoute(base, WORLD, described.body.batchId, { scope: "entity", id: firstMutation.mutationId });
+
+  await page.reload();
+  await page.locator('[data-testid="chronicle-surface-root"]').waitFor({ state: "visible", timeout: 15000 });
+  const acceptedRow = page.locator(
+    `[data-testid="chronicle-history-accepted"] [data-testid="chronicle-history-entry"][data-batch-id="${described.body.batchId}"]`
+  );
+  await acceptedRow.waitFor({ state: "visible", timeout: 10000 });
+  const stillAwaiting = page.locator(
+    `[data-testid="chronicle-history-awaiting"] [data-testid="chronicle-history-entry"][data-batch-id="${described.body.batchId}"]`
+  );
+  assert.equal(await stillAwaiting.count(), 0, "an accepted batch must move OUT of awaiting-review, never appear in both sections");
+  await page.close();
 });

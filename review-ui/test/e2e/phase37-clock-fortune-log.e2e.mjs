@@ -30,7 +30,9 @@ import {
   fetchFortuneViaRoute,
   setFortuneViaRoute,
   fetchChronicleLogViaRoute,
-  fetchPendingEntitiesViaRoute
+  fetchPendingEntitiesViaRoute,
+  runChronicleViaRoute,
+  fetchBatchDetailViaRoute
 } from "./phase37-fixture.mjs";
 
 const { scratchDir, dataDir } = setupPhase37Env("gm-tools-e2e-p37clock-");
@@ -218,4 +220,79 @@ test("attachDiffs stamps `risk` per the pinned v1 heuristic: delete -> contradic
   assert.equal(deleteMutation.risk, "contradict", "an outright delete must always be 'contradict', no exceptions");
   assert.equal(createMutation.risk, "look", "a brand-new node/edge must default to 'look'");
   assert.equal(editMutation.risk, "safe", "a plain, low-impact, non-flagged edit must be 'safe'");
+});
+
+// ---------------------------------------------------------------------------
+// 37.5 pass-cleanup ADDENDUM (see phase37-fixture.mjs's own ADDENDUM for the
+// full pinned reasoning) -- fix 1 (a typed event always seeds a real
+// region) + fix 2 (promptSummary on the chronicle-log entry).
+// ---------------------------------------------------------------------------
+
+let promptSeedBatchId;
+
+test("POST /api/chronicle/run (queued-intents, prompt-only, nothing queued/carried) always yields >=1 mutation, and the mutation's entity derives from the prompt's own first line", async () => {
+  const promptText = "A sudden frost kills the last of Gorrim's harvest overnight.";
+  const { status, body } = await runChronicleViaRoute(base, WORLD, {
+    scopeKind: "queued-intents",
+    span: { spanId: "week" },
+    carriedEntryIds: [], // explicit "carry nothing" -- the prompt alone must still seed a region
+    prompt: promptText
+  });
+  assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+  assert.ok(
+    body.mutationCount >= 1,
+    "a described event must always earn at least one reviewable proposal, even with nothing queued/carried"
+  );
+  promptSeedBatchId = body.batchId;
+
+  const detail = await fetchBatchDetailViaRoute(base, WORLD, body.batchId);
+  const entities = (detail.body.regions || []).flatMap((r) => r.entities || []);
+  assert.ok(
+    entities.some((e) => typeof e.name === "string" && e.name.startsWith("A sudden frost kills")),
+    `expected a mutation whose entity name derives from the prompt -- got names: ${JSON.stringify(entities.map((e) => e.name))}`
+  );
+});
+
+test("GET /api/chronicle/log's entry for that batch carries promptSummary (sourced from the chronicle-run sidecar) plus real mutation/pending/accepted counts", async () => {
+  const { body } = await fetchChronicleLogViaRoute(base, WORLD);
+  const entry = body.entries.find((e) => e.batchRef === promptSeedBatchId);
+  assert.ok(entry, `expected a chronicle-log entry for ${promptSeedBatchId} -- entries: ${JSON.stringify(body.entries.map((e) => e.batchRef))}`);
+  assert.equal(entry.promptSummary, "A sudden frost kills the last of Gorrim's harvest overnight.");
+  assert.ok(entry.mutationCount >= 1);
+  assert.equal(entry.pendingCount, entry.mutationCount, "nothing accepted yet -- every mutation is still pending");
+  assert.equal(entry.acceptedCount, 0);
+});
+
+test("promptSummary truncates a long first line to ~80 chars with an ellipsis, never the full prose", async () => {
+  const longPrompt =
+    "The blockade at the causeway finally breaks under its own weight, and everything the Compact " +
+    "was holding back comes through all at once, faster than anyone in the garrison expected it to.";
+  const { body } = await runChronicleViaRoute(base, WORLD, {
+    scopeKind: "queued-intents",
+    span: { spanId: "week" },
+    carriedEntryIds: [],
+    prompt: longPrompt
+  });
+  const log = await fetchChronicleLogViaRoute(base, WORLD);
+  const entry = log.body.entries.find((e) => e.batchRef === body.batchId);
+  assert.ok(entry, `expected a chronicle-log entry for ${body.batchId}`);
+  assert.ok(
+    entry.promptSummary.length <= 81,
+    `expected promptSummary truncated to ~80 chars (+ellipsis), got length ${entry.promptSummary.length}: "${entry.promptSummary}"`
+  );
+  assert.ok(entry.promptSummary.endsWith("…"), "a truncated summary must be flagged with an ellipsis, not silently cut");
+  assert.notEqual(entry.promptSummary, longPrompt, "the summary must actually be shorter than the full prose");
+});
+
+test("a queued-intents run with real carried entries but NO typed prompt renders promptSummary:null in the log -- a real valid state, never a guess", async () => {
+  // p37-gorrim was written to the pending ledger by the earlier `type`-decoration
+  // test above and is still available (POST /api/chronicle/run never consumes
+  // pending entries -- that's a separate /resolve route) -- omitting
+  // carriedEntryIds carries everything currently queued.
+  const { body } = await runChronicleViaRoute(base, WORLD, { scopeKind: "queued-intents", span: { spanId: "week" } });
+  assert.ok(body.mutationCount >= 1, "expected the carried p37-gorrim entry to earn a real mutation");
+  const log = await fetchChronicleLogViaRoute(base, WORLD);
+  const entry = log.body.entries.find((e) => e.batchRef === body.batchId);
+  assert.ok(entry, `expected a chronicle-log entry for ${body.batchId}`);
+  assert.equal(entry.promptSummary, null, "no prompt was typed -- promptSummary must be null, never a guessed value");
 });
