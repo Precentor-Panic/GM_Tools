@@ -60,11 +60,11 @@ async function fetchEntityInfoMap() {
   }
 }
 
-/** Verbatim mirror of session-planner-view.js's own resolveSceneDisplayName: a scene's own bespoke name wins; falls back to its anchor place's real name; falls back to its objective note; falls back to "Ad-hoc scene". */
-function resolveSceneDisplayName(scene, entityInfoMap) {
+/** Verbatim mirror of session-planner-view.js's own resolveSceneDisplayName: a scene's own bespoke name wins; falls back to its anchor place's real name; falls back to its objective note; falls back to "Ad-hoc scene". QA W2 fix (Group B #10): a set locationEntityId that misses the lookup (deleted anchor place) shows "(place removed)", never the raw wf_ id. Exported (additive) so review-ui/test/resolve-scene-display-name.test.mjs can pin this without a DOM. */
+export function resolveSceneDisplayName(scene, entityInfoMap) {
   if (scene.name) return scene.name;
   if (scene.locationEntityId) {
-    return entityInfoMap.get(scene.locationEntityId)?.name ?? scene.locationEntityId;
+    return entityInfoMap.get(scene.locationEntityId)?.name ?? "(place removed)";
   }
   return scene.objectiveNote || "Ad-hoc scene";
 }
@@ -588,6 +588,8 @@ export function buildAddScenePanel(planId, { onSceneAdded }) {
       return;
     }
     newSubmitBtn.disabled = true;
+    newNameInput.disabled = true;
+    newSubmitBtn.textContent = "Creating…";
     status.textContent = "Creating place…";
     try {
       const result = await plApi("/api/graph/nodes", {
@@ -596,11 +598,19 @@ export function buildAddScenePanel(planId, { onSceneAdded }) {
         body: JSON.stringify({ world: currentWorld(), name, type: "place" })
       });
       status.textContent = "";
+      // QA W2 fix (Group A #6): step 1 visibly advances instead of quietly
+      // reverting to its original "Create place" label + enabled input --
+      // that reset made the click look like it did nothing, since the real
+      // next step (the Yes/No contained-in question below) is easy to miss
+      // on a first glance. Stay disabled with a "done" label through the
+      // contained-in step so a second click can't double-create a place.
+      newSubmitBtn.textContent = `✓ Created "${name}" — answer below`;
       offerContainedIn(result.entityId);
     } catch (err) {
       status.textContent = `Could not create place: ${err.message}`;
-    } finally {
       newSubmitBtn.disabled = false;
+      newNameInput.disabled = false;
+      newSubmitBtn.textContent = "Create place";
     }
   });
   newSubpanel.append(newNameInput, newSubmitBtn);

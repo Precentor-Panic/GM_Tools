@@ -385,6 +385,9 @@ await testAsync("promoteElement: creates a REAL graph node + a REAL containment 
   const node = after.entities.find((e) => e.id === promoted.graphEntityId);
   assert.ok(node, "the promoted element's new node must be a real entity in the live graph");
   assert.equal(node.name, "An ornate mirror");
+  // QA W2 fix (Group A #5): a plain prop (no stat block) still promotes as
+  // "object" -- unchanged default for the non-NPC case.
+  assert.equal(node.type, "object");
 
   const containmentEdge = after.edges.find(
     (e) => e.sourceId === promoted.graphEntityId && e.targetId === "place-anchor-1" && e.relationshipType === "containment"
@@ -403,6 +406,35 @@ await testAsync("promoteElement: re-promoting an already-graph element is a no-o
   assert.equal(second.graphEntityId, first.graphEntityId);
   const after = loadSnapshot(dataDir, WORLD).snapshot.entities.length;
   assert.equal(after, before, "no new entity created on the redundant promote");
+});
+
+// QA W2 fix (Group A #5): promoteElement used to hard-code type "object" for
+// EVERY element, including NPCs/creatures that carry a real stat block --
+// they now infer type "person" instead, keyed off the same `element.stat`
+// signal the scene page's own row already uses (`data-has-stat`).
+await testAsync("promoteElement: an element carrying a stat block infers type \"person\", not \"object\"", async () => {
+  const element = createElement(
+    WORLD, anchoredScene.id, { name: "Groundskeeper Ilsa", stat: { count: 1, ac: "13", hp: "22", speed: "", cr: "1/4", raw: "", foundryActor: "" } },
+    { makeId: () => "elem-promote-npc-1" }
+  );
+  assert.ok(element.stat, "fixture element must actually carry a stat block");
+
+  const promoted = await promoteElement(dataDir, WORLD, anchoredScene.id, "elem-promote-npc-1");
+  const node = loadSnapshot(dataDir, WORLD).snapshot.entities.find((e) => e.id === promoted.graphEntityId);
+  assert.ok(node, "the promoted element's new node must be a real entity in the live graph");
+  assert.equal(node.type, "person");
+});
+
+await testAsync("promoteElement: an explicit opts.type always wins over the stat-based inference", async () => {
+  const element = createElement(
+    WORLD, anchoredScene.id, { name: "A trained hawk", stat: { count: 1, ac: "", hp: "", speed: "", cr: "", raw: "", foundryActor: "" } },
+    { makeId: () => "elem-promote-npc-explicit-1" }
+  );
+  assert.ok(element.stat);
+
+  const promoted = await promoteElement(dataDir, WORLD, anchoredScene.id, "elem-promote-npc-explicit-1", { type: "creature" });
+  const node = loadSnapshot(dataDir, WORLD).snapshot.entities.find((e) => e.id === promoted.graphEntityId);
+  assert.equal(node.type, "creature");
 });
 
 await testAsync("promoteElement: throws a clear error when the scene has no anchor place (locationEntityId null)", async () => {

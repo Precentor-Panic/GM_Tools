@@ -736,10 +736,14 @@ async function refreshSavedEncountersListInPlace(sceneId) {
 // ---------------------------------------------------------------------------
 
 /** Shared "what do we call this scene" resolution -- Phase 26 task 26.2: a scene's own bespoke `name`, when set, wins over everything else (what makes two scenes at the same anchor, e.g. two scenes both at "Grand Stadium", distinguishable). Falls back, when unset, to the pre-26 behavior: an anchored scene shows its anchor entity's real name; an untethered (quick-gen) scene falls back to its own objective note. Used by both the construction chain's own scene-chain-toggle summary text and Table Mode's nav-zone items/search (task 25.2). */
-function resolveSceneDisplayName(scene) {
+// Exported (additive) so review-ui/test/resolve-scene-display-name.test.mjs
+// can pin the "(place removed)" guard without a DOM.
+export function resolveSceneDisplayName(scene) {
   if (scene.name) return scene.name;
   if (scene.locationEntityId) {
-    return entityInfoMapGlobal.get(scene.locationEntityId)?.name ?? scene.locationEntityId;
+    // QA W2 fix (Group B #10): a deleted (or not-yet-loaded) anchor place
+    // used to fall back to the raw wf_ id -- never a good display string.
+    return entityInfoMapGlobal.get(scene.locationEntityId)?.name ?? "(place removed)";
   }
   return scene.objectiveNote || "Ad-hoc scene";
 }
@@ -788,14 +792,27 @@ let activeSceneKeydownHandler = null;
 let sceneRenderToken = 0;
 
 // Phase 29 task 29.5: Page|Cards layout + Prep|Run mode. View-local state only
-// -- NOT persisted (no localStorage), reset per scene render. The URL stays the
-// single source of truth for LOCATION; these are pure presentation toggles.
+// -- NOT persisted (no localStorage). The URL stays the single source of truth
+// for LOCATION; these are pure presentation toggles.
 // Driven by a `data-layout` attribute on the scene-elements-list and a
 // `data-mode` attribute on the scene-page root + CSS, so toggling never
 // full-re-renders the element rows (edit state is preserved), matching this
 // app's "never full-re-render on keystroke" ethos.
 let scenePageLayout = "page"; // "page" | "cards"
 let scenePageMode = "prep";   // "prep" | "run"
+// QA W2 fix (Group A #1): Prep|Run must survive prev/next/rail navigation
+// between scenes -- it only resets when the world changes underneath it, or
+// when the caller explicitly leaves the planner surface (resetScenePageMode,
+// called by app-shell.js when it switches to World/Chronicle/Library).
+let scenePageModeWorld = null;
+
+// Exported so app-shell.js can reset Prep|Run when the shell navigates away
+// from the planner surface entirely (World/Chronicle/Library) -- scene
+// navigation WITHIN the planner must never call this.
+export function resetScenePageMode() {
+  scenePageMode = "prep";
+  scenePageModeWorld = null;
+}
 
 function detachSceneKeydownHandler() {
   if (activeSceneKeydownHandler) {
@@ -826,7 +843,15 @@ const SCENE_FIELD_LABELS = {
  *
  * @returns {{el:HTMLElement, enterEdit:()=>void, setValue:(v:string)=>void}}
  */
-function makeClickToEditField({ tag = "div", className = "", testid, dataAttrs = {}, inputTestid, inputDataAttrs = {}, value = "", placeholder = "", emptyText = "", save, onSaved }) {
+// QA W2 fix (Group A #2): trims only TRAILING whitespace/newlines (never
+// leading, never internal) before a value reaches `save()` -- the backstop
+// half of the Enter-commits fix below, since a paste or a multi-line field's
+// own legitimate newlines can still leave trailing junk on save.
+function trimTrailingWhitespace(v) {
+  return typeof v === "string" ? v.replace(/[ \t\r\n]+$/, "") : v;
+}
+
+function makeClickToEditField({ tag = "div", className = "", testid, dataAttrs = {}, inputTestid, inputDataAttrs = {}, value = "", placeholder = "", emptyText = "", save, onSaved, multiline = false }) {
   const el = document.createElement(tag);
   if (className) el.className = className;
   el.setAttribute("data-testid", testid);
@@ -867,14 +892,26 @@ function makeClickToEditField({ tag = "div", className = "", testid, dataAttrs =
       ta.style.height = "auto";
       ta.style.height = `${ta.scrollHeight}px`;
     }
-    ta.addEventListener("input", () => { autoGrow(); debounce.onInput(ta.value); });
+    ta.addEventListener("input", () => { autoGrow(); debounce.onInput(trimTrailingWhitespace(ta.value)); });
     ta.addEventListener("keydown", (e) => {
       if (e.key === "Escape") { e.stopPropagation(); ta.blur(); }
+      else if (e.key === "Enter" && !multiline) {
+        // QA W2 fix (Group A #2): single-line fields commit on Enter (matches
+        // the World-tab name field's existing preventDefault+blur behavior)
+        // instead of inserting a literal newline -- previously a bare Enter
+        // in e.g. an element name field saved a value like "Name\n", which
+        // then landed verbatim in the graph via promote. Genuinely multi-line
+        // fields (narration/objective/place description/statblock raw paste)
+        // pass `multiline: true` and keep normal newline-on-Enter.
+        e.preventDefault();
+        ta.blur();
+      }
     });
     ta.addEventListener("blur", () => {
-      debounce.onBlur(ta.value); // flush the pending save immediately
+      const v = trimTrailingWhitespace(ta.value);
+      debounce.onBlur(v); // flush the pending save immediately
       sceneEditDebounces.delete(debounce);
-      currentValue = ta.value;
+      currentValue = v;
       editing = false;
       renderRest();
     });
@@ -1163,6 +1200,7 @@ function buildStatBlock(scene, element, refreshList) {
     inputDataAttrs: { "data-element-id": element.id },
     value: stat.raw || "",
     emptyText: "",
+    multiline: true, // free-text paste block, genuinely multi-line
     save: (v) => patchStat({ stat: { raw: v } })
   });
   panel.appendChild(rawField.el);
@@ -2324,6 +2362,7 @@ function buildPlaceDescriptionBlock(scene, place) {
       value: place.description ?? "",
       placeholder: "Describe this place…",
       emptyText: "Click to describe this place…",
+      multiline: true, // free-text prose description, genuinely multi-line
       save: (v) => { place.description = v; return savePlaceDescription(place.id, v); }
     });
     grid.append(label, valueField.el);
@@ -3034,10 +3073,17 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   if (stale()) return;
 
   container.innerHTML = "";
-  // Phase 29 task 29.5: a fresh scene render always opens in Page + Prep (the
-  // toggles are view-local and never persisted across a navigation).
+  // Phase 29 task 29.5: layout always opens fresh in Page. QA W2 fix (Group A
+  // #1): Prep|Run mode does NOT reset on every scene render any more -- only
+  // when the world has changed since the mode was last set (or the caller
+  // explicitly left the planner surface via resetScenePageMode). This is what
+  // makes prev/next/rail navigation between scenes preserve Run mode.
   scenePageLayout = "page";
-  scenePageMode = "prep";
+  const activeWorld = currentWorld();
+  if (scenePageModeWorld !== activeWorld) {
+    scenePageMode = "prep";
+    scenePageModeWorld = activeWorld;
+  }
   const root = document.createElement("div");
   root.className = "scene-page";
   root.setAttribute("data-testid", rootTestid);
@@ -3066,8 +3112,8 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     { key: "cards", label: "Cards", testid: "layout-cards-btn", active: false }
   ]);
   const modeControl = buildSegmentedControl(scene.id, [
-    { key: "prep", label: "Prep", testid: "mode-prep-btn", active: true },
-    { key: "run", label: "Run", testid: "mode-run-btn", active: false }
+    { key: "prep", label: "Prep", testid: "mode-prep-btn", active: scenePageMode === "prep" },
+    { key: "run", label: "Run", testid: "mode-run-btn", active: scenePageMode === "run" }
   ]);
   subBarRight.append(layoutControl.group, modeControl.group);
 
@@ -3144,6 +3190,7 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     value: scene.objectiveNote ?? "",
     placeholder: "What has to happen here?",
     emptyText: "Click to set this scene's objective…",
+    multiline: true, // free-text objective note, genuinely multi-line
     save: (v) => {
       scene.objectiveNote = v;
       return spApi(`/api/session-planner/scenes/${encodeURIComponent(scene.id)}`, {
@@ -3289,6 +3336,7 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     value: narration?.text ?? "",
     placeholder: "Read-aloud narration for this scene…",
     emptyText: "Click to add this scene's read-aloud narration…",
+    multiline: true, // free-text read-aloud narration, genuinely multi-line
     save: (v) => spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/narration`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -378,7 +378,7 @@ export function attachExistingNodeAsElement(dir, world, sceneId, entityId, { nam
  * @param {string} sceneId
  * @param {string} elementId
  * @param {object} [opts]
- * @param {string} [opts.type]   entity type for the new graph node (default "object" — the contract does not pin this string)
+ * @param {string} [opts.type]   entity type for the new graph node — when omitted, INFERRED from the element (see below) rather than a fixed default
  * @returns {Promise<object>}   the updated element
  */
 export async function promoteElement(dir, world, sceneId, elementId, opts = {}) {
@@ -393,7 +393,17 @@ export async function promoteElement(dir, world, sceneId, elementId, opts = {}) 
     throw new Error(`Scene "${sceneId}" has no anchor place set -- cannot promote an element into the graph without one.`);
   }
 
-  const type = opts.type ?? "object";
+  // QA W2 fix (Group A #5): promoting used to hard-code type "object" no
+  // matter what the element actually was, so an NPC/creature scene element
+  // promoted to the graph as an "object". Inference rule: `element.stat`
+  // (a non-null StatBlock) is the SAME signal the scene page's own row
+  // already keys off (`data-has-stat`, session-planner-view.js) to tell an
+  // NPC/creature element (attached via the "+ STAT BLOCK" chip or a
+  // bestiary/creature-drop) apart from a plain prop -- only elements
+  // carrying a stat block promote as "person"; everything else (props with
+  // no stat) keeps the prior "object" default. An explicit `opts.type`
+  // always wins over the inference, unchanged from before.
+  const type = opts.type ?? (element.stat ? "person" : "object");
   const { entityId } = await addNodeOp(dir, world, { name: element.name, type });
   await addEdgeOp(dir, world, { sourceId: entityId, targetId: scene.locationEntityId, relationshipType: "containment" });
 
