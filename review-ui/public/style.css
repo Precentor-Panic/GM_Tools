@@ -2925,6 +2925,18 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 #app-shell .wv-tree-head { padding: 13px 14px 8px; display: flex; align-items: center; gap: 8px; }
 #app-shell .wv-expand-toggle { font-family: var(--sp-font-mono); font-size: 10px; color: var(--sp-ink-muted); cursor: pointer; }
 #app-shell .wv-expand-toggle:hover { color: var(--sp-accent-teal); }
+/* Fix 1 (QA W1 BLOCKER): the always-available tree-head "+ add" affordance --
+   same quiet mono-label treatment as .wv-expand-toggle right beside it, not
+   the heavier dashed/teal .wv-action idiom the detail pane uses (this header
+   has far less room and must stay unobtrusive for the common
+   already-populated-world case). */
+#app-shell .wv-tree-add-btn { font-family: var(--sp-font-mono); font-size: 10px; color: var(--sp-ink-muted); cursor: pointer; white-space: nowrap; }
+#app-shell .wv-tree-add-btn:hover { color: var(--sp-accent-teal); }
+#app-shell .wv-tree-add-host:not(:empty) { padding: 0 14px 10px; }
+#app-shell .wv-tree-empty-hint {
+  margin: 6px 6px 0; padding: 10px; font-size: 12px; color: var(--sp-ink-muted); line-height: 1.5;
+  border: 1px dashed var(--sp-border-dashed); border-radius: 5px;
+}
 /* Phase 38 task 38.3: the Spatial|Loyalty segmented toggle -- same idiom as
    .sp-segmented/.sp-segmented-btn (session-planner-view.js), mirrored
    locally rather than shared (world-view.js has no existing cross-view

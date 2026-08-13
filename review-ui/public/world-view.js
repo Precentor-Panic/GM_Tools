@@ -297,15 +297,33 @@ function buildSkeleton() {
   treeHead.appendChild(el("div", { class: "wv-mono-label" }, "Where things are"));
   treeHead.appendChild(buildTreeModeToggle());
   const spacer = el("div", { style: "flex:1" });
+  // Fix 1 (QA W1 BLOCKER): an always-available, quiet "+ add" affordance --
+  // unlike buildActions(sel)'s "Add something here" (only ever rendered once
+  // a node is SELECTED), this lives in the tree pane header itself, so a
+  // completely empty world's tree still offers a way to create the very
+  // first entity. Opens the SAME kind of add-node flow (name + type picker,
+  // POST /api/graph/nodes) but UNANCHORED -- no reparent call, no selected
+  // node required -- so it also doubles as the only way to create a
+  // standalone Person/Faction/etc. with no containing place. Deliberately
+  // quiet (mirrors .wv-expand-toggle's own mono-label treatment, not a
+  // heavy button) rather than the dashed/teal action-row idiom the detail
+  // pane uses, since this header has far less room and needs to stay out of
+  // the way for the (much more common) already-populated-world case.
+  const addBtn = el("div", {
+    class: "wv-tree-add-btn", "data-testid": "world-tree-add-btn",
+    title: "Add a new place or person to the world"
+  }, "+ add");
+  addBtn.addEventListener("click", () => toggleTreeAddPanel());
   const expandToggle = el("div", { class: "wv-expand-toggle" });
   expandToggle.addEventListener("click", toggleExpandAll);
-  treeHead.append(spacer, expandToggle);
+  treeHead.append(spacer, addBtn, expandToggle);
+  const treeAddHost = el("div", { class: "wv-tree-add-host" });
   const treeScroll = el("div", { class: "wv-tree-scroll" });
   const tree = el("div", { class: "wv-tree", "data-testid": "world-tree", "data-tree-mode": ui.treeMode });
   const treeHint = el("div", { class: "wv-tree-hint" },
     "Drag any node onto a place to put it inside. That single edge is all the detail you owe it.");
   treeScroll.append(tree, treeHint);
-  treePane.append(treeHead, treeScroll);
+  treePane.append(treeHead, treeAddHost, treeScroll);
 
   // Center: detail + contents + actions + loose threads.
   const centerPane = el("section", { class: "wv-center-pane" });
@@ -442,9 +460,79 @@ function renderTree() {
   if (!tree) return;
   tree.setAttribute("data-tree-mode", ui.treeMode);
   tree.innerHTML = "";
-  for (const r of visibleRows()) tree.appendChild(buildTreeRow(r));
+  const rows = visibleRows();
+  for (const r of rows) tree.appendChild(buildTreeRow(r));
+  // Fix 1: a genuinely empty world (no rows, and not just filtered down to
+  // nothing) gets an inline hint pointing at the new header "+ add"
+  // affordance -- previously an empty tree was just blank, with no clue
+  // anywhere that creation was even possible.
+  if (!rows.length) {
+    const filtering = !!ui.query.trim() || ui.types.size > 0;
+    tree.appendChild(el("div", { class: "wv-tree-empty-hint", "data-testid": "world-tree-empty-hint" },
+      filtering ? "Nothing matches." : "Nothing here yet — add your first place or person."));
+  }
   const toggle = root().querySelector(".wv-expand-toggle");
   if (toggle) toggle.textContent = ui.expanded.size > 6 ? "collapse all" : "expand all";
+}
+
+// ---------------------------------------------------------------------------
+// Fix 1: the unanchored add panel -- toggled by the tree-head "+ add"
+// button. Deliberately a near-mirror of toggleAddPanel(host, sel) below (the
+// existing selected-node "Add something here" flow) so the two idioms stay
+// visually/behaviorally consistent, but with the reparent step removed
+// entirely: the created node is left as a graph ROOT (no containment edge),
+// exactly like rootIds()/treeRootIds()'s own "no containment edge = root"
+// definition already treats any node with no parent. The existing
+// selected-node add flow (toggleAddPanel) is completely untouched.
+// ---------------------------------------------------------------------------
+function toggleTreeAddPanel() {
+  const host = root() && root().querySelector(".wv-tree-add-host");
+  if (!host) return;
+  if (host.getAttribute("data-mode") === "add") { host.innerHTML = ""; host.removeAttribute("data-mode"); return; }
+  host.innerHTML = ""; host.setAttribute("data-mode", "add");
+  let addType = "place";
+  const panel = el("div", { class: "wv-inline-panel", "data-testid": "wv-tree-add-panel" });
+  const topRow = el("div", { class: "wv-inline-row" });
+  const input = el("input", {
+    class: "wv-inline-input", type: "text",
+    placeholder: "Name it — detail can come later…", "data-testid": "wv-tree-add-input"
+  });
+  const commit = el("div", { class: "wv-inline-commit", "data-testid": "wv-tree-add-commit" }, "Add to the world");
+  const refreshCommit = () => commit.classList.toggle("wv-inline-commit--ready", !!input.value.trim());
+  input.addEventListener("input", refreshCommit);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") doAdd(); });
+  commit.addEventListener("click", doAdd);
+  topRow.append(input, commit);
+  const pills = el("div", { class: "wv-type-pills" });
+  for (const t of TYPE_ORDER) {
+    const meta = TYPES[t];
+    const pill = el("div", { class: "wv-type-pill" + (addType === t ? " wv-type-pill--on" : ""), "data-type": t });
+    pill.append(el("span", { class: "wv-mono", style: `color:${meta.accent}` }, meta.glyph), el("span", null, meta.label));
+    pill.addEventListener("click", () => {
+      addType = t;
+      for (const p of pills.children) p.classList.toggle("wv-type-pill--on", p.getAttribute("data-type") === t);
+    });
+    pills.appendChild(pill);
+  }
+  panel.append(topRow, pills);
+  host.appendChild(panel);
+  input.focus();
+
+  async function doAdd() {
+    const name = input.value.trim();
+    if (!name) return;
+    try {
+      const created = await wApi("/api/graph/nodes", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), name, type: addType })
+      });
+      host.innerHTML = ""; host.removeAttribute("data-mode");
+      await reload();
+      select(created.entityId);
+    } catch (err) {
+      showUndoToast(`Could not add: ${err.message}`, () => {});
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
