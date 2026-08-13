@@ -354,6 +354,64 @@ test("applyHeadless: multiple genuine creates in one call each get distinct, non
   assert.equal(new Set(allIds).size, allIds.length, "no id collisions anywhere on disk");
 });
 
+// ------------------------------------------------------- idResolution (QA W1 Fix 2)
+
+test("applyHeadless: idResolution reports the requested id itself when there's no name+type collision (the common case)", () => {
+  const snapshotPath = join(scratchDir, "worlds", "id-resolution-no-collision", "world-fabric-snapshot.json");
+  writePopulatedFixture(snapshotPath);
+
+  const result = applyHeadless(snapshotPath, [
+    { op: "upsert_entity", id: "wf_preassigned_1", data: { id: "wf_preassigned_1", name: "A Brand New Thing", type: "concept" } }
+  ]);
+
+  assert.equal(result.idResolution["0"], "wf_preassigned_1");
+  const onDisk = JSON.parse(readFileSync(snapshotPath, "utf8"));
+  assert.ok(onDisk.snapshot.entities.some((e) => e.id === "wf_preassigned_1"), "the requested id must be the one actually persisted");
+});
+
+test("applyHeadless: idResolution reports the SURVIVOR entity's real id -- not the requested id -- when a name+type collision folds the create into an existing entity", () => {
+  const snapshotPath = join(scratchDir, "worlds", "id-resolution-collision", "world-fabric-snapshot.json");
+  writePopulatedFixture(snapshotPath); // has an existing {id:"alvor", name:"Alvor", type:"person"}
+
+  const result = applyHeadless(snapshotPath, [
+    // A genuine create's own pre-assigned id, but same type+name (case/whitespace-insensitive, mirroring
+    // interchange.mjs's own findExisting()) as the fixture's pre-existing "alvor" entity.
+    { op: "upsert_entity", id: "wf_phantom_id", data: { id: "wf_phantom_id", name: "  alvor  ", type: "person", description: "A second Alvor?" } }
+  ]);
+
+  assert.equal(result.idResolution["0"], "alvor", "must report the EXISTING entity's real id, not the discarded phantom");
+  assert.notEqual(result.idResolution["0"], "wf_phantom_id");
+
+  const onDisk = JSON.parse(readFileSync(snapshotPath, "utf8"));
+  assert.equal(onDisk.snapshot.entities.length, 3, "no second entity should have been created");
+  assert.equal(onDisk.snapshot.entities.some((e) => e.id === "wf_phantom_id"), false, "the phantom id must not exist anywhere on disk");
+  const survivor = onDisk.snapshot.entities.find((e) => e.id === "alvor");
+  assert.equal(survivor.description, "A second Alvor?", "the collision still merges the incoming fields onto the survivor, same as before this fix");
+});
+
+test("applyHeadless: idResolution covers an id-less (assignedId) genuine create too, not just a pre-supplied id", () => {
+  const snapshotPath = join(scratchDir, "worlds", "id-resolution-assigned", "world-fabric-snapshot.json");
+  writePopulatedFixture(snapshotPath);
+
+  const result = applyHeadless(snapshotPath, [
+    { op: "upsert_entity", data: { name: "Something Else Entirely", type: "object" } }
+  ]);
+
+  const assignedId = result.idAssignments["0"];
+  assert.equal(result.idResolution["0"], assignedId);
+});
+
+test("applyHeadless: idResolution has no entry for upsert_edge mutations (edges never merge-fold by name)", () => {
+  const snapshotPath = join(scratchDir, "worlds", "id-resolution-edge", "world-fabric-snapshot.json");
+  writePopulatedFixture(snapshotPath);
+
+  const result = applyHeadless(snapshotPath, [
+    { op: "upsert_edge", data: { sourceId: "alvor", targetId: "riverwood", relationshipType: "social" } }
+  ]);
+
+  assert.equal(Object.hasOwn(result.idResolution, "0"), false);
+});
+
 test("applyHeadless: throws for an unknown mutation op", () => {
   const snapshotPath = join(scratchDir, "worlds", "populated-bad-op", "world-fabric-snapshot.json");
   writePopulatedFixture(snapshotPath);

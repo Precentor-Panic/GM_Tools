@@ -223,16 +223,43 @@ export async function addNodeOp(dir, w, fields = {}) {
   const id = makeManualId();
   const data = { id, name, type, ...pickFields(fields, ENTITY_EDITABLE_FIELDS.filter((f) => f !== "name" && f !== "type")) };
 
-  applyManualMutation(dir, w, { op: "upsert_entity", id, data, rationale: `Manual edit: node "${name}" created.` });
-  markHumanReviewed(w, [id]);
+  const { headlessResult } = applyManualMutation(dir, w, { op: "upsert_entity", id, data, rationale: `Manual edit: node "${name}" created.` });
 
-  setUndoSlot(w, {
-    kind: "add_node",
-    description: `Node "${name}" created.`,
-    graphMutations: [{ op: "delete_entity", id }]
-  });
+  // QA W1 Fix 2: `id` above is only a REQUEST -- importGraph's merge-mode
+  // findExisting() can fold a name+type collision into an EXISTING entity
+  // and keep ITS id instead (headless-apply.mjs's own idResolution comment
+  // has the full mechanism). Read the ACTUAL persisted id back rather than
+  // trusting the pre-assigned one, or every caller of this function (the
+  // World tab's unanchored add, the create-place-in-planner flow, chronicle
+  // intents, item/bestiary promotes, transit entities -- all of which
+  // destructure `entityId` straight off this return value) hands back a
+  // phantom id that was never written to the graph.
+  const resolvedId = headlessResult.idResolution?.[0] ?? id;
+  const merged = resolvedId !== id;
 
-  return { entityId: id, name, type };
+  markHumanReviewed(w, [resolvedId]);
+
+  if (merged) {
+    // A create that turned out to be a no-op (it matched and merged into an
+    // already-existing entity) has nothing new to undo -- the survivor
+    // entity predates this call and must not be deleted by "Undo". Recorded
+    // as an explicit empty-mutations action (not skipped) so the undo
+    // toolbar reports something honest rather than silently leaving a
+    // stale, unrelated prior action in the slot.
+    setUndoSlot(w, {
+      kind: "add_node",
+      description: `"${name}" matched an existing ${type} and merged into it -- nothing new to undo.`,
+      graphMutations: []
+    });
+  } else {
+    setUndoSlot(w, {
+      kind: "add_node",
+      description: `Node "${name}" created.`,
+      graphMutations: [{ op: "delete_entity", id: resolvedId }]
+    });
+  }
+
+  return { entityId: resolvedId, name, type, merged };
 }
 
 /**

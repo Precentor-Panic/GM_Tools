@@ -124,6 +124,38 @@ await test("addNodeOp: rejects an empty name", async () => {
   await assert.rejects(() => addNodeOp(dataDir, WORLD, { name: "  ", type: "person" }));
 });
 
+// QA W1 Fix 2 (data-integrity root cause): a same-name+type "create" doesn't
+// create a second entity at all -- importGraph's merge-mode findExisting()
+// folds it into the EXISTING one, keeping ITS id. addNodeOp must hand back
+// that REAL, persisted id, never its own pre-assigned one -- the exact
+// mechanism a dangling scene.locationEntityId root-caused to.
+await test("addNodeOp: a name+type collision returns the EXISTING entity's real persisted id, not a phantom pre-assigned one", async () => {
+  const before = entities().length;
+  const first = await addNodeOp(dataDir, WORLD, { name: "Colliding Node", type: "concept" });
+  assert.equal(entities().length, before + 1);
+  assert.equal(first.merged, false, "a genuinely fresh name+type must not report merged");
+
+  const second = await addNodeOp(dataDir, WORLD, { name: "Colliding Node", type: "concept" });
+  assert.equal(second.merged, true, "a colliding name+type must be reported as a merge, not a fresh create");
+  assert.notEqual(second.entityId, undefined);
+  // The critical assertion: the returned id must be a REAL, currently-
+  // persisted entity -- not a phantom that importGraph discarded in favor
+  // of the survivor's own id.
+  assert.ok(findEntity(second.entityId), "the returned id must resolve to a real, persisted entity");
+  assert.equal(entities().length, before + 1, "a colliding create must not add a second entity");
+  assert.equal(second.entityId, first.entityId, "the collision must fold into the SAME survivor entity the first create made");
+});
+
+await test("addNodeOp: a merged (no-op) create leaves an honest, non-destructive undo slot -- Undo must never delete the pre-existing survivor entity", async () => {
+  const before = entities().length;
+  const result = await undoLastManualEditOp(dataDir, WORLD);
+  assert.equal(result.status, "undone");
+  assert.equal(result.kind, "add_node");
+  // Nothing should have been deleted -- the "create" that merged never
+  // created anything new to undo, and the survivor entity predates it.
+  assert.equal(entities().length, before, "undo of a merged create must not delete the survivor entity");
+});
+
 // ---------------------------------------------------------------- add edge
 
 let newEdgeId;

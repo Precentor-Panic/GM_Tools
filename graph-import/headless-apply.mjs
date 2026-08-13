@@ -174,7 +174,7 @@ function mergedWfiRecord(m, currentMap, assignedId) {
  *
  * @param {string} snapshotPath
  * @param {object[]} mutations
- * @returns {{summary:object, deletedEntityCount:number, deletedEdgeCount:number, skipped:Array<{op:string,id:string,reason:string}>, idAssignments:Object<string,string>}}
+ * @returns {{summary:object, deletedEntityCount:number, deletedEdgeCount:number, skipped:Array<{op:string,id:string,reason:string}>, idAssignments:Object<string,string>, idResolution:Object<string,string>}}
  *   `idAssignments` (Phase 4 task 4.1): for every id-less upsert_entity/
  *   upsert_edge mutation (a genuine create), maps its position (index, as a
  *   string object key) in the `mutations` array this call received to the
@@ -183,6 +183,15 @@ function mergedWfiRecord(m, currentMap, assignedId) {
  *   write the assigned id back onto the originating batch's stored mutation
  *   entry, so mutation-engine/rollback.mjs's later delete-based rollback has
  *   an id to target instead of skipping the entry as unresolvable.
+ *
+ *   `idResolution` (QA W1 Fix 2): for every upsert_entity mutation, maps its
+ *   position (index) to the id its record ACTUALLY landed under after
+ *   import -- see this function's own inline comment above the computation
+ *   for the exact merge-fold mechanism this exists to make honest. For the
+ *   common case (no name+type collision) this is identical to the id the
+ *   mutation targeted/was assigned; callers that need the true persisted id
+ *   of a create (manual-edit-ops.mjs's addNodeOp) must read this, not their
+ *   own pre-assigned id.
  *
  * Locking (found missing during a QA pass, not part of the original design):
  * every other data store in this codebase (review-state.mjs, pending-ledger.mjs,
@@ -229,6 +238,12 @@ function runApplyHeadless(snapshotPath, mutations) {
   const deletedEdgeIds = new Set();
   const skipped = [];
   const idAssignments = {};
+  // QA W1 Fix 2: every upsert_entity mutation's REQUESTED id (whatever the
+  // caller/pre-assignment above targeted), keyed by its index in `mutations`
+  // -- tracked so idResolution (below, after importGraph runs) can report
+  // back the id the record actually landed under, which is NOT always the
+  // same id (see idResolution's own comment).
+  const requestedEntityIds = {};
   const makeId = makeIdGenerator();
 
   mutations.forEach((m, index) => {
@@ -239,6 +254,7 @@ function runApplyHeadless(snapshotPath, mutations) {
           assignedId = makeId();
           idAssignments[index] = assignedId;
         }
+        requestedEntityIds[index] = { targetId: m.id ?? m.data?.id ?? assignedId, name: m.data?.name, type: m.data?.type };
         wfiEntities.push(mergedWfiRecord(m, entityMap, assignedId));
         break;
       }
@@ -288,6 +304,44 @@ function runApplyHeadless(snapshotPath, mutations) {
   const wfi = { version: 1, entities: wfiEntities, edges: wfiEdges, entityTypes: wfiEntityTypes };
   const result = importGraph(wfi, existing, { mode: "merge", makeId });
 
+  // QA W1 Fix 2 (data-integrity root cause): interchange.mjs's importGraph()
+  // findExisting() matches an incoming entity by `${type}::${name}` BEFORE
+  // this call's own requested id is ever consulted, and when it matches,
+  // forces the merged record's id to the EXISTING entity's id, discarding
+  // the id this call requested/pre-assigned entirely -- a name+type
+  // collision silently folds a "create" into an update of a DIFFERENT
+  // entity than the one the caller thinks it just made. idResolution
+  // reports, for every id-carrying upsert_entity mutation (by its index in
+  // `mutations`), the id the record ACTUALLY landed under after that merge
+  // -- callers (manual-edit-ops.mjs's addNodeOp, the actual fix site) MUST
+  // read this instead of trusting their own pre-assigned id, or they hand
+  // back a phantom id that was never persisted (the dangling
+  // scene.locationEntityId this was built to close). Computed post-import
+  // by re-deriving the SAME `${type}::${name}` match interchange.mjs's own
+  // findExisting() uses -- not a second traversal of import semantics, just
+  // reading back its one observable outcome (which id survived) rather than
+  // threading a new return value through the sibling repo. Edges never
+  // merge-fold by name (importGraph keys edges strictly by id, no
+  // name-based edge index -- confirmed by reading its edges loop directly)
+  // so no equivalent lookup is needed for upsert_edge.
+  const idResolution = {};
+  for (const [index, req] of Object.entries(requestedEntityIds)) {
+    if (result.entities.some((e) => e.id === req.targetId)) {
+      idResolution[index] = req.targetId; // landed under the id we requested -- the common case
+      continue;
+    }
+    const nameKey = (req.name ?? "").trim().toLowerCase();
+    const survivor = nameKey && req.type
+      ? result.entities.find((e) => e.type === req.type && (e.name ?? "").trim().toLowerCase() === nameKey)
+      : undefined;
+    // Fallback to req.targetId (never worse than the old blind-trust
+    // behavior) only in the defensive case where even the name+type lookup
+    // can't recover a survivor -- shouldn't happen given importGraph's own
+    // "every incoming entity either matches or creates" contract, but this
+    // must never itself throw.
+    idResolution[index] = survivor ? survivor.id : req.targetId;
+  }
+
   // importGraph() has no delete concept of its own -- apply deletes as a
   // separate pass afterward, including cascading edge deletes for a deleted
   // entity's own edges (matching graph-service.mjs's delete_entity behavior).
@@ -321,6 +375,7 @@ function runApplyHeadless(snapshotPath, mutations) {
     // (matching graph-service.mjs's delete_entity behavior).
     deletedEdgeCount: result.edges.length - finalEdges.length,
     skipped,
-    idAssignments
+    idAssignments,
+    idResolution
   };
 }
