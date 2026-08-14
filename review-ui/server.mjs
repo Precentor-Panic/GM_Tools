@@ -103,7 +103,8 @@ import {
   patchPendingMutationDataOp,
   redirectMentionScanRowToExistingOp,
   nearMatchesForBatch,
-  convertCreateToUpdateOfExistingOp
+  convertCreateToUpdateOfExistingOp,
+  revertMutationsToPending
 } from "../wf-mcp-server/lib/mutation-ops.mjs";
 
 // Phase 12 tasks 12.3/12.4/12.6 -- manual node/edge create/edit/delete,
@@ -1177,6 +1178,17 @@ async function handleApi(req, res, url, parts) {
       edges,
       reviewedMutationIds: body.reviewedMutationIds ?? []
     });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/batches/:batchId/revert-to-pending  { world, mutationIds }
+  // Friction Wave 1 (W1d): the reject-cascade's undo -- rejected mutations
+  // (typically edges auto-greyed when their endpoint create was rejected)
+  // flipped back to pending. Rejected-only; see revertMutationsToPending.
+  if (method === "POST" && parts.length === 4 && parts[1] === "batches" && parts[3] === "revert-to-pending") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const result = revertMutationsToPending(w, { batchId: parts[2], mutationIds: body.mutationIds });
     return sendJson(res, 200, result);
   }
 

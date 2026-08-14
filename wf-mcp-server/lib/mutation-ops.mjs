@@ -354,10 +354,51 @@ export function rejectMutationIds(w, batchId, mutationIds, opts = {}) {
   const batch = loadBatch(w, batchId);
   let updated;
   for (const mutationId of mutationIds) updated = updateMutationStatus(w, batchId, mutationId, "rejected");
+
+  // Friction Wave 1 (W1d): rejecting a CREATE auto-rejects every still-
+  // pending edge in the batch that references its would-be-new id -- those
+  // edges would otherwise be individually acceptable and land as orphans
+  // (the Kilmarn batch accepted 6 edges onto the rejected "Master Vane"
+  // create, exactly this failure). Applied HERE, at the one shared choke
+  // point every reject path funnels through (rejectOp / rejectWithLoopOp /
+  // bulk-reject, MCP and HTTP alike), so no surface can produce orphan
+  // edges by rejecting a create. UNDOABLE: cascaded edges are ordinary
+  // rejected mutations stamped with `entityContext.cascadeRejectedWith`
+  // (the causing create's mutationId), revertible via
+  // revertMutationsToPending -- greyed, not destroyed.
+  const explicitlyRejected = new Set(mutationIds);
+  const cascadePairs = []; // {mutationId, causedBy}
+  for (const mid of mutationIds) {
+    const m = batch.mutations.find((x) => x.mutationId === mid);
+    // No snapshot in hand at this choke point -- the diff's own "(created)"
+    // marker is the create signal (see isCreateEntityMutation).
+    if (!m || !isCreateEntityMutation(m) || !m.id) continue;
+    for (const edge of batch.mutations) {
+      if (explicitlyRejected.has(edge.mutationId)) continue;
+      if (cascadePairs.some((c) => c.mutationId === edge.mutationId)) continue;
+      if (edge.op !== "upsert_edge" && edge.op !== "delete_edge") continue;
+      if (edge.status !== "pending") continue;
+      if (edge.data?.sourceId === m.id || edge.data?.targetId === m.id) {
+        cascadePairs.push({ mutationId: edge.mutationId, causedBy: mid });
+      }
+    }
+  }
+  if (cascadePairs.length) {
+    const fresh = loadBatch(w, batchId);
+    for (const { mutationId: mid, causedBy } of cascadePairs) {
+      const entry = fresh.mutations.find((x) => x.mutationId === mid);
+      entry.status = "rejected";
+      entry.entityContext = { ...(entry.entityContext ?? {}), cascadeRejectedWith: causedBy };
+    }
+    updated = saveBatch(w, fresh);
+  }
+  const cascadeRejected = cascadePairs.map((c) => c.mutationId);
+
   // Phase 3.5 task 3.5.4: reject reverts any resolved ledger entries back to
   // 'pending' — the underlying debt is real and must not silently vanish
-  // just because this particular resolution attempt was rejected.
-  const ledgerReverted = applyLedgerOutcome(updated, mutationIds, "rejected");
+  // just because this particular resolution attempt was rejected. Cascaded
+  // edges are genuinely rejected too, so they take the same ledger path.
+  const ledgerReverted = applyLedgerOutcome(updated, [...mutationIds, ...cascadeRejected], "rejected");
 
   const reviewedSet = new Set(reviewedMutationIds ?? mutationIds);
   const reviewedIds = mutationIds.filter((id) => reviewedSet.has(id));
@@ -367,8 +408,42 @@ export function rejectMutationIds(w, batchId, mutationIds, opts = {}) {
     batchId,
     rejected: mutationIds,
     batchStatus: updated.status,
+    ...(cascadeRejected.length ? { cascadeRejected } : {}),
     ...(ledgerReverted.length ? { ledgerReverted } : {})
   };
+}
+
+/**
+ * Friction Wave 1 (W1d): the cascade's undo -- flip REJECTED mutations back
+ * to pending (and clear any cascade stamp). Deliberately rejected-only:
+ * un-accepting would have to unwind preState capture, narration supersede,
+ * and human-review marks (acceptMutationIds' side effects), which is
+ * rollback's job, not this one's.
+ *
+ * @param {string} w
+ * @param {{batchId:string, mutationIds:string[]}} args
+ */
+export function revertMutationsToPending(w, { batchId, mutationIds }) {
+  if (!Array.isArray(mutationIds) || !mutationIds.length) {
+    throw new Error("revertMutationsToPending requires a non-empty mutationIds array.");
+  }
+  const batch = loadBatch(w, batchId);
+  for (const mid of mutationIds) {
+    const entry = batch.mutations.find((m) => m.mutationId === mid);
+    if (!entry) throw new Error(`No mutation "${mid}" in batch "${batchId}".`);
+    if (entry.status !== "rejected") {
+      throw new Error(`Mutation "${mid}" is "${entry.status}", not "rejected" -- only a rejected mutation can be reverted to pending.`);
+    }
+  }
+  for (const mid of mutationIds) {
+    const entry = batch.mutations.find((m) => m.mutationId === mid);
+    entry.status = "pending";
+    if (entry.entityContext && "cascadeRejectedWith" in entry.entityContext) {
+      delete entry.entityContext.cascadeRejectedWith;
+    }
+  }
+  const saved = saveBatch(w, batch);
+  return { batchId, revertedToPending: mutationIds, batchStatus: saved.status };
 }
 
 /** MCP-tool-shaped wrapper: resolves scope -> mutationIds, preserves wf_reject's exact original behavior. */

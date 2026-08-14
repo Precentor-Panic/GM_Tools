@@ -372,10 +372,13 @@ export function renderProposalCard(m, opts = {}) {
     // by the accept/reject routes, so we only ever move forward here (the card
     // reflects the persisted status; a mis-click is corrected by the other btn).
     try {
-      await postDecision(world, batchId, mid, kind);
+      // W1d: the server result is forwarded to onDecided -- a reject on a
+      // CREATE may carry `cascadeRejected` (edge mutationIds auto-greyed
+      // alongside it) that the host surface must reflect on OTHER cards.
+      const result = await postDecision(world, batchId, mid, kind);
       decided = target;
       paint();
-      onDecided?.(decided, m);
+      onDecided?.(decided, m, result);
     } catch (err) {
       // Surface loudly in the console; leave the card visually unchanged.
       console.error("proposal-card decision failed:", err);
@@ -383,6 +386,23 @@ export function renderProposalCard(m, opts = {}) {
   }
   acceptBtn.addEventListener("click", () => decide("accept"));
   rejectBtn.addEventListener("click", () => decide("reject"));
+
+  // W1d/W1g: external repaint hook. A host surface that needs to flip THIS
+  // card's decided state from outside (a sibling create's reject cascading
+  // onto this edge, an undo restoring it, or a twin instance of the same
+  // mutation rendered elsewhere) registers for it here. `setDecided` mirrors
+  // the persisted-status vocabulary ("yes"/"no"/"") and keeps `m.status` in
+  // sync so a later re-render from the same objects stays truthful.
+  if (typeof opts.registerCard === "function" && mid) {
+    opts.registerCard(mid, {
+      el: root,
+      setDecided(next) {
+        decided = next === "yes" || next === "no" ? next : "";
+        m.status = decided === "yes" ? "accepted" : decided === "no" ? "rejected" : "pending";
+        paint();
+      }
+    });
+  }
 
   const btns = el("div", { style: "display: flex; gap: 6px; flex: none;" }, [acceptBtn, rejectBtn]);
   const footer = el("div", { style: "display: flex; align-items: flex-end; gap: 12px;" }, [why, btns]);

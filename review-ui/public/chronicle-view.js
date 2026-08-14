@@ -1099,7 +1099,119 @@ export async function renderChronicleSurface(arg) {
   }
 
   // ---- proposals ("What changed") ---------------------------------------
+  // W1d/W1g: every rendered proposal-card instance registers here, keyed by
+  // mutationId -- a mutation can render as MORE THAN ONE card (W1g nests an
+  // edge under each node card it touches), and cascade/undo/twin decisions
+  // must repaint every instance, never just the clicked one.
+  const cardRegistry = new Map(); // mutationId -> [{el, setDecided}]
+
+  function findProposal(mid) {
+    return state.proposals.find((p) => p.mutationId === mid);
+  }
+  /** Flip a mutation's decided state everywhere it renders + in state.proposals. */
+  function setProposalDecided(mid, word) {
+    const p = findProposal(mid);
+    if (p) p.status = word === "yes" ? "accepted" : word === "no" ? "rejected" : "pending";
+    for (const api of cardRegistry.get(mid) ?? []) api.setDecided(word);
+  }
+  function cardIsUndecided(p) {
+    const api = (cardRegistry.get(p.mutationId) ?? [])[0];
+    const visual = api?.el?.getAttribute("data-decided");
+    if (visual === "yes" || visual === "no") return false;
+    return (p.status ?? "pending") === "pending";
+  }
+  function removeInlineNotice(forMid, kind) {
+    proposalsWrap.querySelector(`[data-testid="${kind}"][data-for="${forMid}"]`)?.remove();
+  }
+
+  /** W1d: a reject on a CREATE came back with auto-greyed edges -- reflect it. */
+  function handleCascadeResult(m, result) {
+    const ids = result?.cascadeRejected ?? [];
+    if (!ids.length) return;
+    for (const mid of ids) setProposalDecided(mid, "no");
+    const anchor = (cardRegistry.get(m.mutationId) ?? [])[0]?.el;
+    removeInlineNotice(m.mutationId, "chronicle-cascade-notice");
+    const notice = el("div", {
+      testid: "chronicle-cascade-notice",
+      "data-for": m.mutationId,
+      style: "display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid oklch(0.85 0.060 25); border-radius: 4px; background: oklch(0.968 0.026 25); font-size: 12px; color: oklch(0.36 0.09 25);"
+    }, [
+      el("span", { text: `Also greyed ${ids.length} connected edge${ids.length === 1 ? "" : "s"} — ${ids.length === 1 ? "it" : "they"} pointed at the rejected "${m.name ?? m.entityId ?? "create"}".`, style: "flex: 1;" }),
+      (() => {
+        const undo = el("div", {
+          testid: "chronicle-cascade-undo-btn",
+          role: "button",
+          text: "Undo",
+          style: "padding: 2px 10px; border: 1px solid oklch(0.76 0.080 25); border-radius: 4px; cursor: pointer; background: oklch(1 0 0); font-size: 11.5px;"
+        });
+        undo.addEventListener("click", async () => {
+          try {
+            await apiPost(`/api/batches/${encodeURIComponent(state.batchId)}/revert-to-pending`, { mutationIds: ids });
+            for (const mid of ids) setProposalDecided(mid, "");
+            notice.remove();
+            refreshHistoryAfterDecision();
+          } catch (err) {
+            console.error("cascade undo failed:", err);
+          }
+        });
+        return undo;
+      })()
+    ]);
+    if (anchor) anchor.insertAdjacentElement("afterend", notice);
+    else proposalsWrap.appendChild(notice);
+  }
+
+  /** W1d: accepting a CREATE offers one-click accept of its pending connections. */
+  function maybeOfferAcceptConnections(decided, m) {
+    if (decided !== "yes") return;
+    const created = Array.isArray(m.diff) && m.diff[0]?.field === "(created)";
+    if (!created || !m.entityId) return;
+    const pendingEdges = state.proposals.filter(
+      (p) => p.op === "upsert_edge" && (p.data?.sourceId === m.entityId || p.data?.targetId === m.entityId) && cardIsUndecided(p)
+    );
+    removeInlineNotice(m.mutationId, "chronicle-accept-connections-notice");
+    if (!pendingEdges.length) return;
+    const ids = pendingEdges.map((p) => p.mutationId);
+    const anchor = (cardRegistry.get(m.mutationId) ?? [])[0]?.el;
+    const notice = el("div", {
+      testid: "chronicle-accept-connections-notice",
+      "data-for": m.mutationId,
+      style: "display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid oklch(0.86 0.045 150); border-radius: 4px; background: oklch(0.968 0.020 150); font-size: 12px; color: oklch(0.30 0.05 150);"
+    }, [
+      el("span", { text: `"${m.name ?? m.entityId}" has ${ids.length} pending connection${ids.length === 1 ? "" : "s"} in this batch.`, style: "flex: 1;" }),
+      (() => {
+        const btn = el("div", {
+          testid: "chronicle-accept-connections-btn",
+          role: "button",
+          text: `Accept ${ids.length === 1 ? "its connection" : `all ${ids.length} connections`}`,
+          style: "padding: 2px 10px; border: 1px solid oklch(0.70 0.080 150); border-radius: 4px; cursor: pointer; background: oklch(0.86 0.070 150); color: oklch(0.28 0.07 150); font-size: 11.5px;"
+        });
+        btn.addEventListener("click", async () => {
+          btn.setAttribute("aria-disabled", "true");
+          try {
+            await apiPost(`/api/batches/${encodeURIComponent(state.batchId)}/bulk-accept`, { mutationIds: ids, reviewedMutationIds: [] });
+            for (const mid of ids) setProposalDecided(mid, "yes");
+            notice.remove();
+            refreshHistoryAfterDecision();
+          } catch (err) {
+            btn.removeAttribute("aria-disabled");
+            console.error("accept connections failed:", err);
+          }
+        });
+        return btn;
+      })(),
+      (() => {
+        const dismiss = el("div", { role: "button", text: "Dismiss", style: "padding: 2px 10px; border: 1px solid oklch(0.86 0.010 80); border-radius: 4px; cursor: pointer; background: oklch(1 0 0); font-size: 11.5px; color: oklch(0.52 0.014 65);" });
+        dismiss.addEventListener("click", () => notice.remove());
+        return dismiss;
+      })()
+    ]);
+    if (anchor) anchor.insertAdjacentElement("afterend", notice);
+    else proposalsWrap.appendChild(notice);
+  }
+
   function paintProposals() {
+    cardRegistry.clear();
     proposalsWrap.innerHTML = "";
     if (!state.proposals.length) {
       // QA W2 fix (Group B #7): a run/deep-link that genuinely completed with
@@ -1153,7 +1265,15 @@ export async function renderChronicleSurface(arg) {
     const opts = {
       world: currentWorld(),
       batchId: state.batchId,
-      onDecided: () => refreshHistoryAfterDecision(),
+      registerCard: (mid, api) => {
+        if (!cardRegistry.has(mid)) cardRegistry.set(mid, []);
+        cardRegistry.get(mid).push(api);
+      },
+      onDecided: (decided, m, result) => {
+        refreshHistoryAfterDecision();
+        handleCascadeResult(m, result);
+        maybeOfferAcceptConnections(decided, m);
+      },
       // W1b: convert a pending CREATE into an update of a chosen existing
       // entity (near-match chip button or the card's own search fallback),
       // then re-fetch the whole batch -- the conversion also re-points
