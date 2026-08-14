@@ -839,6 +839,34 @@ export function redirectMentionScanRowToExistingOp(dir, w, { batchId, mutationId
 }
 
 /**
+ * Friction Wave 1 (W1c): patchPendingMutationData plus a re-diff against the
+ * live snapshot, so the card's before/after (and its risk triage) always
+ * reflects what accepting would ACTUALLY apply after the reviewer's hand
+ * edit -- the "yes, but" merge editor's server half. Degrades to a plain
+ * patch (no re-diff) when the world has no readable snapshot yet.
+ *
+ * @param {string} dir
+ * @param {string} w
+ * @param {{batchId:string, mutationId:string, data:object}} args
+ * @returns {{batchId:string, mutationId:string, mutation:object}}
+ */
+export function patchPendingMutationDataOp(dir, w, { batchId, mutationId, data }) {
+  patchPendingMutationData(w, { batchId, mutationId, data });
+  const batch = loadBatch(w, batchId);
+  const entry = batch.mutations.find((m) => m.mutationId === mutationId);
+  try {
+    const { entities, edges } = loadSnapshot(dir, w).snapshot;
+    const { diff: _d, type: _t, risk: _r, ...stripped } = entry;
+    const [rediffed] = attachDiffs([stripped], entities, edges);
+    entry.diff = rediffed.diff;
+    entry.type = rediffed.type;
+    entry.risk = rediffed.risk;
+    saveBatch(w, batch);
+  } catch { /* no snapshot yet -- the patch itself already persisted */ }
+  return { batchId, mutationId, mutation: entry };
+}
+
+/**
  * Friction Wave 1 (W1b): "This is not a new node — it's an update to THIS
  * node." Converts a still-PENDING proposed CREATE (any batch kind; the
  * Kilmarn friction hit it hardest on writeup-import batches) into an UPDATE

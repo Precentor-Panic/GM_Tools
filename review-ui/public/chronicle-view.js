@@ -1161,6 +1161,12 @@ export async function renderChronicleSurface(arg) {
       onConvertToExisting: async (m, existingEntityId) => {
         await apiPost(`/api/batches/${encodeURIComponent(state.batchId)}/mutations/${encodeURIComponent(m.mutationId)}/convert-to-existing`, { existingEntityId });
         await applyBatchAsProposals(state.batchId);
+      },
+      // W1c: the "yes, but" merge editor's save -- patch the staged data,
+      // then re-fetch so the card's diff reflects what accept would apply.
+      onPatchData: async (m, data) => {
+        await apiPost(`/api/batches/${encodeURIComponent(state.batchId)}/mutations/${encodeURIComponent(m.mutationId)}/patch-data`, { data });
+        await applyBatchAsProposals(state.batchId);
       }
     };
 

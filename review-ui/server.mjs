@@ -100,7 +100,7 @@ import {
   getEntityNarrationOp,
   getEntityNarrationHistoryOp,
   scanMentionsOp,
-  patchPendingMutationData,
+  patchPendingMutationDataOp,
   redirectMentionScanRowToExistingOp,
   nearMatchesForBatch,
   convertCreateToUpdateOfExistingOp
@@ -1703,13 +1703,17 @@ async function handleApi(req, res, url, parts) {
   // POST /api/batches/:batchId/mutations/:mutationId/patch-data  { world, data:{...} }
   // The "editable relationship-type dropdown" primitive (task 12.5's
   // [DECIDED] shape) for a still-PENDING mutation -- generalized as a small
-  // reusable capability rather than scan-mentions-specific, but only ever
-  // wired into the frontend for scan-mention rows in this phase.
+  // reusable capability rather than scan-mentions-specific. Friction Wave 1
+  // (W1c): now the "yes, but" merge editor's write path too, upgraded to
+  // patchPendingMutationDataOp so the mutation's diff/risk are recomputed
+  // against the live snapshot after the reviewer's hand edit -- the card
+  // must always show what accepting would ACTUALLY apply.
   if (method === "POST" && parts.length === 6 && parts[1] === "batches" && parts[3] === "mutations" && parts[5] === "patch-data") {
     const body = await readBody(req);
+    const dir = resolveDir();
     const w = resolveWorld(body.world);
-    const result = patchPendingMutationData(w, { batchId: parts[2], mutationId: parts[4], data: body.data });
-    return sendJson(res, 200, { ok: true, batchId: result.id });
+    const result = patchPendingMutationDataOp(dir, w, { batchId: parts[2], mutationId: parts[4], data: body.data });
+    return sendJson(res, 200, { ok: true, ...result });
   }
 
   // POST /api/batches/:batchId/mutations/:mutationId/redirect-to-existing

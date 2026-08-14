@@ -205,6 +205,83 @@ export function renderProposalCard(m, opts = {}) {
     el("span", { text: after, style: "font-size: 12.5px; line-height: 1.45; color: oklch(0.30 0.020 150);" })
   ]));
 
+  // Friction Wave 1 (W1c): the "yes, but" merge editor. Accept/reject/
+  // regenerate proved too coarse for text-merge cases (the Kilmarn review's
+  // COMMON case for updates: the new info is right, but accept-as-shown
+  // would LOSE the original text). An editable staged-text area lets the
+  // reviewer hand-combine old+new; accept then applies the edited version.
+  // Only wired where the host provides onPatchData (Chronicle's batch
+  // review); read-only mounts show the card unchanged.
+  let editorWrap = null;
+  if (typeof opts.onPatchData === "function" && m.op === "upsert_entity" && decided === "") {
+    editorWrap = el("div", { style: "margin: 0 0 8px;" });
+    const editToggle = el("div", {
+      testid: "proposal-card-edit-text-btn",
+      role: "button",
+      text: "✎ Edit staged text",
+      style: "display: inline-block; font-size: 11px; color: oklch(0.45 0.050 185); cursor: pointer; text-decoration: underline; text-underline-offset: 2px;"
+    });
+    const editorPanel = el("div", { style: "display: none; margin-top: 6px;" });
+    const hint = el("div", {
+      text: hasBefore
+        ? "Combine the old and new text by hand — what you save here is exactly what accepting will apply. The old text is shown above (−)."
+        : "What you save here is exactly what accepting will apply.",
+      style: "font-size: 11px; color: oklch(0.55 0.012 70); margin-bottom: 4px;"
+    });
+    const ta = el("textarea", {
+      testid: "proposal-card-edit-text-input",
+      style: "width: 100%; min-height: 84px; padding: 8px 10px; border: 1px solid oklch(0.84 0.010 80); border-radius: 4px; font-family: inherit; font-size: 12.5px; line-height: 1.45; background: oklch(1 0 0); color: inherit; resize: vertical;"
+    });
+    ta.value = m.data?.description ?? "";
+    const saveBtn = el("div", {
+      testid: "proposal-card-edit-text-save",
+      role: "button",
+      text: "Save staged text",
+      style: "padding: 3px 11px; border: 1px solid oklch(0.72 0.055 185); border-radius: 4px; cursor: pointer; font-size: 11.5px; color: oklch(0.99 0.005 185); background: oklch(0.55 0.075 185);"
+    });
+    const insertOldBtn = hasBefore
+      ? el("div", {
+          testid: "proposal-card-edit-text-insert-old",
+          role: "button",
+          text: "Insert old text",
+          style: "padding: 3px 11px; border: 1px solid oklch(0.86 0.010 80); border-radius: 4px; cursor: pointer; font-size: 11.5px; color: oklch(0.42 0.014 65); background: oklch(1 0 0);"
+        })
+      : null;
+    const cancelBtn = el("div", {
+      role: "button",
+      text: "Cancel",
+      style: "padding: 3px 11px; border: 1px solid oklch(0.86 0.010 80); border-radius: 4px; cursor: pointer; font-size: 11.5px; color: oklch(0.52 0.014 65); background: oklch(1 0 0);"
+    });
+    const btnRow = el("div", { style: "display: flex; gap: 6px; margin-top: 6px;" }, [saveBtn, insertOldBtn, cancelBtn]);
+    editorPanel.append(hint, ta, btnRow);
+    editToggle.addEventListener("click", () => {
+      const open = editorPanel.style.display !== "none";
+      editorPanel.style.display = open ? "none" : "block";
+      if (!open) ta.focus();
+    });
+    insertOldBtn?.addEventListener("click", () => {
+      const at = ta.selectionStart ?? ta.value.length;
+      ta.value = ta.value.slice(0, at) + before + ta.value.slice(ta.selectionEnd ?? at);
+      ta.focus();
+    });
+    cancelBtn.addEventListener("click", () => {
+      ta.value = m.data?.description ?? "";
+      editorPanel.style.display = "none";
+    });
+    saveBtn.addEventListener("click", async () => {
+      saveBtn.setAttribute("aria-disabled", "true");
+      saveBtn.textContent = "Saving…";
+      try {
+        await opts.onPatchData(m, { description: ta.value });
+      } catch (err) {
+        saveBtn.removeAttribute("aria-disabled");
+        saveBtn.textContent = "Save staged text";
+        console.error("patch staged text failed:", err);
+      }
+    });
+    editorWrap.append(editToggle, editorPanel);
+  }
+
   // Friction Wave 1 (W1a): deterministic near-match chips on a CREATE card --
   // the live graph's plausible "this may already exist" candidates, computed
   // server-side (batchDetailPayload -> nearMatchesForBatch) and rendered
@@ -311,6 +388,7 @@ export function renderProposalCard(m, opts = {}) {
   const footer = el("div", { style: "display: flex; align-items: flex-end; gap: 12px;" }, [why, btns]);
 
   root.append(header, diffRows);
+  if (editorWrap) root.appendChild(editorWrap);
   if (nearMatchesRow) root.appendChild(nearMatchesRow);
   root.appendChild(footer);
   paint();
