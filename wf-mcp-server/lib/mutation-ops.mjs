@@ -247,6 +247,39 @@ export function triageForBatch(batch, nearMatchesByMid = {}) {
 }
 
 /**
+ * Friction Wave 1 (W5c): the world-name guard -- a NON-BLOCKING advisory for
+ * any entity mutation whose (proposed or targeted) name equals the world
+ * id/name case-insensitively. Russell hit exactly this ambiguity live: the
+ * world is `kilmarn` AND a place "Kilmarn" exists, and while diagnosing the
+ * W5a containment bug his first (wrong, but entirely reasonable) suspicion
+ * was a world-name/place-name collision. Innocent that time — worth a
+ * standing signal, never a block: a same-named seat-of-power place is a
+ * completely legitimate world shape.
+ *
+ * Same read-time/never-persisted convention as nearMatchesForBatch/
+ * triageForBatch above; batchDetailPayload spreads it onto rows as
+ * `worldNameCollision`.
+ *
+ * @param {object} batch
+ * @param {string} worldId
+ * @returns {Object<string,{name:string}>}  mutationId -> collision info
+ */
+export function worldNameCollisionsForBatch(batch, worldId) {
+  const w = String(worldId ?? "").trim().toLowerCase();
+  if (!w) return {};
+  const result = {};
+  for (const m of batch.mutations) {
+    if (m.status !== "pending") continue; // settled rows no longer need the advisory
+    if (m.op !== "upsert_entity") continue;
+    const name = m.data?.name ?? m.entityContext?.name;
+    if (name && String(name).trim().toLowerCase() === w) {
+      result[m.mutationId] = { name: String(name) };
+    }
+  }
+  return result;
+}
+
+/**
  * Friction Wave 1 (W1g): display data for every EDGE mutation in a batch --
  * `{ [mutationId]: {sourceId, targetId, sourceName, targetName, label} }` --
  * so edge cards can render "Source —label→ Target" with real entity NAMES,

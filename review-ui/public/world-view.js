@@ -99,6 +99,17 @@ function goto(hash) { location.hash = hash; }
 function short(name) {
   return name && name.length > 22 ? name.slice(0, 20) + "…" : (name || "");
 }
+// Friction Wave 1 (W5c): the world-name guard, World-tab half. True when an
+// entity's name equals the current world id/name case-insensitively (the
+// real kilmarn/"Kilmarn" ambiguity Russell chased while diagnosing W5a's
+// containment bug). Non-blocking: a subtle marker, never a validation.
+function sharesWorldName(n) {
+  const w = currentWorld();
+  return !!(w && n && n.name && n.name.trim().toLowerCase() === w.trim().toLowerCase());
+}
+const WORLD_NAME_MARKER_TITLE =
+  "Shares the world's name — this is an entity in the world, not the world record itself. " +
+  "Allowed, but searches and diagnoses can conflate the two.";
 
 // ---------------------------------------------------------------------------
 // State. Persistent UI bits survive a hash-driven re-mount (selecting a node
@@ -654,6 +665,14 @@ function buildTreeRow(r) {
     class: "wv-tree-name" + (n.type === "place" ? " wv-tree-name--place" : "")
   }, n.name || n.id);
   row.append(chevron, glyph, name);
+  // W5c: subtle world-name marker (see sharesWorldName).
+  if (sharesWorldName(n)) {
+    row.appendChild(el("span", {
+      class: "wv-world-name-marker",
+      "data-testid": "world-name-marker",
+      title: WORLD_NAME_MARKER_TITLE
+    }, "≙ world"));
+  }
   if (n.flaggedUnreviewed) row.appendChild(el("span", { class: "wv-unreviewed-dot", title: "Unreviewed since last session" }));
   // W5a: a containment cycle's representative renders at root with a VISIBLE
   // warning badge naming the loop — never the pre-fix silent disappearance
@@ -812,6 +831,14 @@ function renderDetail() {
   nameEl.addEventListener("blur", () => saveName(sel.id, nameEl.textContent.trim()));
   header.appendChild(nameEl);
   header.appendChild(el("span", { class: "wv-detail-type", "data-testid": "world-detail-type" }, sel.type || ""));
+  // W5c: the same subtle world-name marker in the detail header.
+  if (sharesWorldName(sel)) {
+    header.appendChild(el("span", {
+      class: "wv-world-name-marker",
+      "data-testid": "world-name-marker-detail",
+      title: WORLD_NAME_MARKER_TITLE
+    }, "≙ shares the world's name"));
+  }
   target.appendChild(header);
 
   // Editable description (autosave -> editNodeOp, which clears unreviewed).

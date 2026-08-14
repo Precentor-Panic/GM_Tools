@@ -207,13 +207,26 @@ export function renderProposalCard(m, opts = {}) {
         style: `padding: 2px 7px; border-radius: 20px; border: 1px solid ${triageMeta.border}; background: ${triageMeta.bg}; font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; color: ${triageMeta.color}; flex: none;`
       })
     : null;
+  // Friction Wave 1 (W5c): the world-name guard -- a subtle, NON-blocking
+  // advisory when this entity's name equals the world id/name (server-
+  // computed, batchDetailPayload's `worldNameCollision`). Russell's real
+  // diagnosis detour: world `kilmarn` + place "Kilmarn" -- innocent, but
+  // ambiguous enough to deserve a standing signal.
+  const worldNameTag = m.worldNameCollision
+    ? el("span", {
+        testid: "proposal-card-world-name-tag",
+        text: "shares the world's name",
+        title: "This entity is named exactly like the world itself. That's allowed — but keep in mind searches and diagnoses can conflate the two.",
+        style: "padding: 2px 7px; border-radius: 20px; border: 1px dashed oklch(0.78 0.030 260); background: oklch(0.955 0.012 260); font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; color: oklch(0.45 0.050 260); flex: none;"
+      })
+    : null;
   const spacer = el("span", { style: "flex: 1;" });
   const riskLabel = el("span", {
     testid: "proposal-card-risk-label",
     text: riskMeta ? riskMeta.label : "unclassified",
     style: `font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.05em; color: ${riskColor};`
   });
-  const header = el("div", { style: "display: flex; align-items: center; gap: 9px; flex-wrap: wrap;" }, [kindBadge, glyph, target, triageTag, spacer, riskLabel]);
+  const header = el("div", { style: "display: flex; align-items: center; gap: 9px; flex-wrap: wrap;" }, [kindBadge, glyph, target, triageTag, worldNameTag, spacer, riskLabel]);
 
   // Diff rows (−/+)
   const diffRows = el("div", { style: "display: flex; flex-direction: column; gap: 3px; margin: 9px 0 8px;" });

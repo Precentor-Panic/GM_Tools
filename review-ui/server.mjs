@@ -105,6 +105,7 @@ import {
   nearMatchesForBatch,
   triageForBatch,
   edgeDisplayForBatch,
+  worldNameCollisionsForBatch,
   convertCreateToUpdateOfExistingOp,
   revertMutationsToPending
 } from "../wf-mcp-server/lib/mutation-ops.mjs";
@@ -622,6 +623,9 @@ function batchDetailPayload(dir, w, batchId) {
     ({ edges: liveEdges } = loadSnapshot(dir, w).snapshot);
   } catch { /* same no-snapshot degrade as liveEntities above */ }
   const edgeDisplay = edgeDisplayForBatch(batch, liveEntities, liveEdges);
+  // W5c: non-blocking world-name guard -- an entity named exactly like the
+  // world gets a subtle advisory tag on its card (see mutation-ops.mjs).
+  const worldNameCollisions = worldNameCollisionsForBatch(batch, w);
   const regions = summary.regions.map((region) => ({
     ...region,
     entities: region.entities.map((e) => ({
@@ -629,7 +633,8 @@ function batchDetailPayload(dir, w, batchId) {
       status: statusByMutationId.get(e.mutationId),
       ...(nearMatches[e.mutationId] ? { nearMatches: nearMatches[e.mutationId] } : {}),
       ...(triage[e.mutationId] ? { triage: triage[e.mutationId].triage, risk: triage[e.mutationId].risk } : {}),
-      ...(edgeDisplay[e.mutationId] ? { edgeDisplay: edgeDisplay[e.mutationId] } : {})
+      ...(edgeDisplay[e.mutationId] ? { edgeDisplay: edgeDisplay[e.mutationId] } : {}),
+      ...(worldNameCollisions[e.mutationId] ? { worldNameCollision: true } : {})
     }))
   }));
   const narratable = batch.mutations.length > 0 && batch.mutations.every((m) => m.status === "accepted");
