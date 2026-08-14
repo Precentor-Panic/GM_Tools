@@ -415,7 +415,7 @@ export function renderProposalCard(m, opts = {}) {
         style: "font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.50 0.13 25); flex: none;"
       }),
       el("span", {
-        text: `“${norm.name}” already exists as a ${norm.keptType}; the extraction guessed ${norm.extractedType}. Merged into the existing ${norm.keptType} (its type is kept) — reject if this is genuinely a different “${norm.name}”.`,
+        text: `“${norm.name}” already exists with type “${norm.keptType}”; the extraction guessed “${norm.extractedType}”. Merged into the existing entity, keeping its type — reject if this is genuinely a different “${norm.name}”.`,
         style: "font-size: 11.5px; color: oklch(0.36 0.030 65);"
       })
     ]);
