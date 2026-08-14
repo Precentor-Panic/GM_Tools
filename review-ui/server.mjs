@@ -2284,7 +2284,7 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, result);
   }
 
-  // POST /api/foundry/push-scene   { world, sceneId, mapSrc, name?, width?, height? }
+  // POST /api/foundry/push-scene   { world, sceneId, mapSrc?, name?, width?, height? }
   // The thin PUSH slice (task 32.3): writes a `create_scene` op onto
   // worlds/<world>/world-fabric-foundry-ops.json (plans/phase-32-bridge-
   // contract.md §2) and polls briefly (mirrors the existing sync/rollback
@@ -2298,10 +2298,13 @@ async function handleApi(req, res, url, parts) {
   //   - { status:'applied', sceneId, opId, ok:false, error }  -- Foundry
   //     itself reported a failure for this op; no ref written.
   // World-scoped, resolveWorld(body.world), no client-supplied dataDir
-  // honored (same convention as every other route in this file). `mapSrc`
-  // is a required caller-supplied input for now (see foundry-push-ops.mjs's
-  // own header comment) -- an unknown sceneId or a missing mapSrc throws,
-  // same 400 as every other validation error in this file (statusForError).
+  // honored (same convention as every other route in this file). W3c:
+  // `mapSrc` is now an OPTIONAL override -- omitted, pushSceneToFoundry
+  // defaults it from the scene's linked map asset (scene.mapAssetId ->
+  // asset.src, else foundryRef.imagePath; see that module's own header
+  // comment). An unknown sceneId, or no mapSrc AND no resolvable linked
+  // asset, throws -- same clean 400 as every other validation error in
+  // this file (statusForError).
   if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "push-scene") {
     const body = await readBody(req);
     const dir = resolveDir();

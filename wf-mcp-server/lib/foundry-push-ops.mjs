@@ -9,12 +9,18 @@
  * ./foundry-pull-ops.mjs (32.2) -- same location, same naming convention,
  * opposite direction.
  *
- * The map image itself (`mapSrc`) is an INPUT for now, not resolved from
- * anywhere on the GM_Tools side (plans/phase-32-tasks.md 32.3: "the map
- * image path/url is an input for now — the interface will supply it
- * later"). This function does not validate that mapSrc points at a real
- * file/URL -- Scene.background.src is Foundry's own document field,
- * resolved by the Foundry-side watcher when it actually creates the Scene.
+ * The map image (`mapSrc`) — Friction Wave 1 W3c superseded Phase 32's
+ * "caller-supplied for now" rule: `mapSrc` is now an OPTIONAL override.
+ * When omitted, it DEFAULTS from the scene's own linked stagecraft map
+ * asset (`scene.mapAssetId`, W3b) — the asset's `src` (W3a, the durable
+ * file path/URL) first, else its `foundryRef.imagePath` (a pulled Foundry
+ * map's real path). An explicit `mapSrc` still wins unconditionally. When
+ * NEITHER exists (no override, and no linked asset with a resolvable
+ * source), this throws a clear error naming both fixes — never a silent
+ * mapless push. This function still does not validate that the resolved
+ * src points at a real file/URL -- Scene.background.src is Foundry's own
+ * document field, resolved by the Foundry-side watcher when it actually
+ * creates the Scene.
  *
  * On an `ok:true` applied result, writes the returned `foundryUuid` into the
  * scene's own `foundrySceneRef` (scenes.mjs's updateScene, an additive
@@ -80,8 +86,10 @@ function resolveSceneName(dir, world, scene) {
  * @param {string} dir
  * @param {string} world
  * @param {string} sceneId
- * @param {{mapSrc:string, name?:string, width?:number, height?:number}} args
- *   `mapSrc` is required -- this op exists to get a map into Foundry.
+ * @param {{mapSrc?:string, name?:string, width?:number, height?:number}} args
+ *   `mapSrc` overrides the map source when given; omitted, it defaults from
+ *   the scene's linked map asset (see this module's header note -- W3c). A
+ *   push still always carries a map: when neither resolves, this throws.
  *   `name` overrides the scene's own resolved display name for the pushed
  *   Foundry Scene's title, if given.
  * @param {object} [opts]   forwarded to writeFoundryOps (pollMs/timeoutMs -- test-injectable); opts.makeOpId overrides id generation for deterministic tests
@@ -92,10 +100,33 @@ function resolveSceneName(dir, world, scene) {
  * >}
  */
 export async function pushSceneToFoundry(dir, world, sceneId, { mapSrc, name, width, height } = {}, opts = {}) {
-  if (!mapSrc) {
-    throw new Error("pushSceneToFoundry requires mapSrc (the map image path/url for the new Foundry Scene's background).");
-  }
   const scene = getScene(world, sceneId); // throws a clear "No scene found" if unknown, same as every other scenes.mjs caller
+
+  // W3c -- explicit mapSrc wins; else default from the scene's linked map
+  // asset (W3b's scene.mapAssetId): asset.src (W3a) first, else a pulled
+  // Foundry map's own foundryRef.imagePath. Never a guessed/fabricated src.
+  let resolvedMapSrc = mapSrc || null;
+  if (!resolvedMapSrc && scene.mapAssetId) {
+    let asset = null;
+    try {
+      asset = getStagecraftAsset(world, scene.mapAssetId);
+    } catch {
+      // A dangling link (asset deleted out from under the scene) falls
+      // through to the same clear no-source error below rather than a
+      // confusing store-level not-found.
+    }
+    resolvedMapSrc = asset?.src || asset?.foundryRef?.imagePath || null;
+  }
+  if (!resolvedMapSrc) {
+    throw new Error(
+      scene.mapAssetId
+        ? `pushSceneToFoundry: no mapSrc given, and this scene's linked map asset ("${scene.mapAssetId}") has no ` +
+          `resolvable source (neither src nor foundryRef.imagePath). Set the asset's file path on its Library ` +
+          `Stagecraft row, or pass an explicit mapSrc.`
+        : "pushSceneToFoundry: no mapSrc given and this scene has no linked map asset to default from. " +
+          "Link a map asset to the scene (scene page → 'link a map…'), or pass an explicit mapSrc."
+    );
+  }
 
   const opId = opts.makeOpId ? opts.makeOpId() : makeOpId();
   const op = {
@@ -103,7 +134,7 @@ export async function pushSceneToFoundry(dir, world, sceneId, { mapSrc, name, wi
     kind: "create_scene",
     data: {
       name: name ?? resolveSceneName(dir, world, scene),
-      background: { src: mapSrc },
+      background: { src: resolvedMapSrc },
       ...(width !== undefined ? { width } : {}),
       ...(height !== undefined ? { height } : {})
     }
@@ -226,14 +257,20 @@ function firstAcceptedAssetOfKind(world, roster, assetKind, skipped) {
 
 /**
  * §5's map/splash src resolution order: `foundryRef.imagePath` as-is, else
- * a `source:'local'` asset's `localFilePath` copied into
- * `<dataDir>/worlds/<world>/scenes-from-gmtools/`, else a recorded skip
- * (never a guessed/fabricated src). The copy happens synchronously and MUST
- * succeed before the op referencing it is composed.
+ * (W3a, additive) the asset's own `src` field as-is (a Foundry-resolvable
+ * path/URL, never copied), else a `source:'local'` asset's `localFilePath`
+ * copied into `<dataDir>/worlds/<world>/scenes-from-gmtools/`, else a
+ * recorded skip (never a guessed/fabricated src). The copy happens
+ * synchronously and MUST succeed before the op referencing it is composed.
+ * Pre-W3a assets carry no `src`, so the original two-tier order is
+ * byte-identical for every existing record.
  */
 function resolveAssetSrc(dataDir, world, asset, skipped) {
   if (typeof asset?.foundryRef?.imagePath === "string" && asset.foundryRef.imagePath) {
     return asset.foundryRef.imagePath;
+  }
+  if (typeof asset?.src === "string" && asset.src) {
+    return asset.src;
   }
   if (asset?.source === "local" && typeof asset?.localFilePath === "string" && asset.localFilePath) {
     const destDir = join(dataDir, "worlds", world, "scenes-from-gmtools");

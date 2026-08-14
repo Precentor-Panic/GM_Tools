@@ -198,6 +198,79 @@ await test("pushSceneToFoundry: queued (no live Foundry client) leaves foundrySc
 });
 
 // ===========================================================================
+// Friction Wave 1 W3c -- push-scene defaults mapSrc from the scene's linked
+// map asset (scene.mapAssetId -> asset.src, else foundryRef.imagePath);
+// explicit mapSrc still overrides; clear error when neither resolves.
+// ===========================================================================
+
+await test("W3c: no explicit mapSrc -- defaults from the linked map asset's src (the op's background.src is the asset's path)", async () => {
+  const WORLD = "push-default-src-world";
+  const asset = saveStagecraftAsset(WORLD, { kind: "map", name: "Lowway Alleys", src: "worlds/kilmarn/maps/lowway.webp" }, { makeId: () => "sc-w3c-1" });
+  const scene = createScene(WORLD, { objectiveNote: "Alley chase", mapAssetId: asset.id });
+
+  const result = await pushSceneToFoundry(dataDir, WORLD, scene.id, {}, { pollMs: 5, timeoutMs: 20 });
+  assert.equal(result.status, "queued"); // no watcher -- we only care about the composed op
+  const ops = JSON.parse(readFileSync(foundryOpsPath(dataDir, WORLD), "utf8"));
+  assert.deepEqual(ops[0].data.background, { src: "worlds/kilmarn/maps/lowway.webp" });
+});
+
+await test("W3c: a linked asset with NO src but a foundryRef.imagePath (a pulled Foundry map) defaults from the imagePath", async () => {
+  const WORLD = "push-default-imagepath-world";
+  const asset = saveStagecraftAsset(
+    WORLD,
+    { kind: "map", name: "Ferry Landing", source: "foundry", foundryRef: { sceneUuid: "Scene.ferry", imagePath: "scenes/ferry.webp" } },
+    { makeId: () => "sc-w3c-2" }
+  );
+  const scene = createScene(WORLD, { objectiveNote: "Ferry ambush", mapAssetId: asset.id });
+
+  await pushSceneToFoundry(dataDir, WORLD, scene.id, {}, { pollMs: 5, timeoutMs: 20 });
+  const ops = JSON.parse(readFileSync(foundryOpsPath(dataDir, WORLD), "utf8"));
+  assert.deepEqual(ops[0].data.background, { src: "scenes/ferry.webp" });
+});
+
+await test("W3c: an EXPLICIT mapSrc still overrides the linked asset unconditionally", async () => {
+  const WORLD = "push-override-world";
+  const asset = saveStagecraftAsset(WORLD, { kind: "map", name: "Default Map", src: "worlds/x/maps/default.webp" }, { makeId: () => "sc-w3c-3" });
+  const scene = createScene(WORLD, { objectiveNote: "Override push", mapAssetId: asset.id });
+
+  await pushSceneToFoundry(dataDir, WORLD, scene.id, { mapSrc: "scenes/explicit-override.webp" }, { pollMs: 5, timeoutMs: 20 });
+  const ops = JSON.parse(readFileSync(foundryOpsPath(dataDir, WORLD), "utf8"));
+  assert.deepEqual(ops[0].data.background, { src: "scenes/explicit-override.webp" });
+});
+
+await test("W3c: linked asset with NEITHER src nor imagePath -> clear error naming the asset and both fixes (set the path / pass mapSrc); nothing written", async () => {
+  const WORLD = "push-no-source-asset-world";
+  const asset = saveStagecraftAsset(WORLD, { kind: "map", name: "Pathless Map" }, { makeId: () => "sc-w3c-4" });
+  const scene = createScene(WORLD, { objectiveNote: "Doomed default", mapAssetId: asset.id });
+
+  await assert.rejects(
+    () => pushSceneToFoundry(dataDir, WORLD, scene.id, {}, { pollMs: 5, timeoutMs: 20 }),
+    (err) => /mapSrc/.test(err.message) && /sc-w3c-4/.test(err.message) && /no\s+resolvable source/i.test(err.message)
+  );
+  const { existsSync: fsExists } = await import("node:fs");
+  assert.ok(!fsExists(foundryOpsPath(dataDir, WORLD)), "no op may be composed without a real map source");
+});
+
+await test("W3c: a DANGLING mapAssetId (asset deleted out from under the scene) falls through to the same clear error, not a store-level not-found", async () => {
+  const WORLD = "push-dangling-asset-world";
+  const scene = createScene(WORLD, { objectiveNote: "Dangling link", mapAssetId: "sc-deleted-long-ago" });
+
+  await assert.rejects(
+    () => pushSceneToFoundry(dataDir, WORLD, scene.id, {}, { pollMs: 5, timeoutMs: 20 }),
+    (err) => /mapSrc/.test(err.message) && /sc-deleted-long-ago/.test(err.message)
+  );
+});
+
+await test("W3c: the ORIGINAL no-mapSrc-no-link error still names mapSrc and now also points at linking a map asset", async () => {
+  const WORLD = "push-neither-world";
+  const scene = createScene(WORLD, { objectiveNote: "Nothing to push with" });
+  await assert.rejects(
+    () => pushSceneToFoundry(dataDir, WORLD, scene.id, {}, { pollMs: 5, timeoutMs: 20 }),
+    (err) => /mapSrc/.test(err.message) && /link a map asset/i.test(err.message)
+  );
+});
+
+// ===========================================================================
 // Phase 36 task 36.2 -- the quiet-push flush engine (clusterTokenPositions /
 // isSceneDirty / composeSceneOps / flushDirtyStagedScenes).
 // ===========================================================================
@@ -318,6 +391,17 @@ await test("composeSceneOps: an asset with NEITHER foundryRef.imagePath NOR a lo
   const { sceneOp, skipped } = composeSceneOps(dataDir, WORLD, getScene(WORLD, scene.id));
   assert.ok(!("background" in sceneOp.data), "no usable src -- background omitted entirely");
   assert.ok(skipped.some((s) => s.reason.includes("no image source available")), `expected the no-src skip reason -- got ${JSON.stringify(skipped)}`);
+});
+
+await test("composeSceneOps (W3a/W3c): a roster map asset with ONLY a `src` (no foundryRef.imagePath, no localFilePath) resolves via src as-is -- the new middle tier", () => {
+  const WORLD = "compose-src-tier-world";
+  const scene = createScene(WORLD, {}, { makeId: () => "compose-scene-src-tier" });
+  const asset = acceptStagecraftAsset(WORLD, saveStagecraftAsset(WORLD, { kind: "map", name: "Src Only", src: "worlds/kilmarn/maps/src-only.webp", status: "proposed" }).id);
+  addToSceneTray(WORLD, scene.id, { id: asset.id, kind: "asset" });
+
+  const { sceneOp, skipped } = composeSceneOps(dataDir, WORLD, getScene(WORLD, scene.id));
+  assert.deepEqual(sceneOp.data.background, { src: "worlds/kilmarn/maps/src-only.webp" });
+  assert.deepEqual(skipped, [], "a src-carrying asset is fully resolvable -- no skip recorded");
 });
 
 await test("composeSceneOps: local-copy resolution -- source:'local' + localFilePath copies the file into <dataDir>/worlds/<world>/scenes-from-gmtools/, src becomes the Foundry-relative path", () => {
