@@ -238,6 +238,48 @@ export function triageForBatch(batch, nearMatchesByMid = {}) {
   return result;
 }
 
+/**
+ * Friction Wave 1 (W1g): display data for every EDGE mutation in a batch --
+ * `{ [mutationId]: {sourceId, targetId, sourceName, targetName, label} }` --
+ * so edge cards can render "Source —label→ Target" with real entity NAMES,
+ * never raw m-ids/wf-ids (the Kilmarn review's "edge cards are illegible"
+ * item). Name resolution per endpoint, in order: a mutation in THIS batch
+ * targeting that id (a not-yet-created entity has no live name -- its own
+ * proposed name is the only truthful one), then the live snapshot, then the
+ * raw id as the honest last resort.
+ *
+ * @param {object} batch
+ * @param {object[]} entities  live-snapshot entities
+ * @param {object[]} edges     live-snapshot edges (resolves a delete/update of an existing edge whose data omits endpoints)
+ */
+export function edgeDisplayForBatch(batch, entities, edges) {
+  const liveNames = new Map((entities ?? []).map((e) => [e.id, e.name]));
+  const batchNames = new Map();
+  for (const m of batch.mutations) {
+    if (m.op === "upsert_entity" && m.id) {
+      const n = m.data?.name ?? m.entityContext?.name;
+      if (n) batchNames.set(m.id, n);
+    }
+  }
+  const liveEdgeById = new Map((edges ?? []).map((e) => [e.id, e]));
+  const resolve = (id) => (id == null ? "(unknown)" : batchNames.get(id) ?? liveNames.get(id) ?? id);
+  const result = {};
+  for (const m of batch.mutations) {
+    if (m.op !== "upsert_edge" && m.op !== "delete_edge") continue;
+    const live = m.id ? liveEdgeById.get(m.id) : undefined;
+    const sourceId = m.data?.sourceId ?? live?.sourceId ?? null;
+    const targetId = m.data?.targetId ?? live?.targetId ?? null;
+    result[m.mutationId] = {
+      sourceId,
+      targetId,
+      sourceName: resolve(sourceId),
+      targetName: resolve(targetId),
+      label: m.data?.relationshipType ?? live?.relationshipType ?? "related"
+    };
+  }
+  return result;
+}
+
 /** Next unused m<N> mutationId index in a batch, for appending regenerated mutations. */
 export function nextMutationIndex(batch) {
   let max = -1;

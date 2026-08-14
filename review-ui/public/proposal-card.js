@@ -65,6 +65,14 @@ function mutationId(m) {
 }
 
 function displayName(m) {
+  // W1g: an edge with server-resolved endpoint names renders as
+  // "Source —label→ Target" -- NEVER a raw m-id/wf-id. The fallback chain
+  // below still serves node mutations and any mount fed a raw
+  // StoredMutation without batchDetailPayload's edgeDisplay enrichment.
+  if ((m.op === "upsert_edge" || m.op === "delete_edge") && m.edgeDisplay) {
+    const d = m.edgeDisplay;
+    return `${d.sourceName} —${d.label}→ ${d.targetName}`;
+  }
   return m.name ?? m.entityContext?.name ?? m.data?.name ?? m.entityId ?? m.id ?? "(unnamed)";
 }
 

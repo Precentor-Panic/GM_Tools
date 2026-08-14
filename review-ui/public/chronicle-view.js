@@ -1274,6 +1274,11 @@ export async function renderChronicleSurface(arg) {
       },
       onDecided: (decided, m, result) => {
         refreshHistoryAfterDecision();
+        // W1g: a mutation can render as more than one card instance (an
+        // edge nested under both its endpoint nodes) -- sync every twin to
+        // the decision just made (the initiating card repaints itself; the
+        // registry repaints the rest from the same shared m.status).
+        for (const api of cardRegistry.get(m.mutationId) ?? []) api.setDecided(decided);
         handleCascadeResult(m, result);
         maybeOfferAcceptConnections(decided, m);
       },
@@ -1321,7 +1326,42 @@ export async function renderChronicleSurface(arg) {
         container.appendChild(group);
       }
     } else {
-      for (const p of state.proposals) container.appendChild(renderProposalCard(p, opts));
+      renderNestedProposalList(container, opts);
+    }
+  }
+
+  // W1g: list mode renders edges INDENTED under the node cards they touch
+  // ("connections rendered under the node cards" -- the round-1 wish, with
+  // the open question resolved as suggested there: an edge touching two
+  // displayed nodes shows under BOTH, with shared accept state via the card
+  // registry + the shared mutation object). An edge touching no displayed
+  // node card (both endpoints already live) stays a top-level card. Original
+  // proposal order is preserved for the top-level sequence.
+  function isEdgeProposal(p) {
+    return p.op === "upsert_edge" || p.op === "delete_edge";
+  }
+  function edgeEndpointIds(p) {
+    const d = p.edgeDisplay ?? p.data ?? {};
+    return [d.sourceId, d.targetId].filter(Boolean);
+  }
+  function renderNestedProposalList(container, opts) {
+    const nodeCardIds = new Set(state.proposals.filter((p) => !isEdgeProposal(p) && p.entityId).map((p) => p.entityId));
+    for (const p of state.proposals) {
+      if (!isEdgeProposal(p)) {
+        container.appendChild(renderProposalCard(p, opts));
+        const nested = state.proposals.filter((q) => isEdgeProposal(q) && p.entityId && edgeEndpointIds(q).includes(p.entityId));
+        if (nested.length) {
+          const nest = el("div", {
+            testid: "chronicle-nested-edges",
+            "data-under": p.mutationId,
+            style: "margin: 2px 0 2px 26px; padding-left: 10px; border-left: 2px solid oklch(0.88 0.010 80); display: flex; flex-direction: column; gap: 6px;"
+          });
+          for (const q of nested) nest.appendChild(renderProposalCard(q, opts));
+          container.appendChild(nest);
+        }
+      } else if (!edgeEndpointIds(p).some((id) => nodeCardIds.has(id))) {
+        container.appendChild(renderProposalCard(p, opts));
+      }
     }
   }
 

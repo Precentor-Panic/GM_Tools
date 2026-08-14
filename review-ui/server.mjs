@@ -104,6 +104,7 @@ import {
   redirectMentionScanRowToExistingOp,
   nearMatchesForBatch,
   triageForBatch,
+  edgeDisplayForBatch,
   convertCreateToUpdateOfExistingOp,
   revertMutationsToPending
 } from "../wf-mcp-server/lib/mutation-ops.mjs";
@@ -602,13 +603,22 @@ function batchDetailPayload(dir, w, batchId) {
   // the Triaged grouping meaningful for pre-Phase-37 batches, whose
   // mutations carry no stamped risk at all.
   const triage = triageForBatch(batch, nearMatches);
+  // W1g: real endpoint names for edge cards ("A —label→ B", never raw ids)
+  // -- the live edges list rides along for delete/update-of-existing-edge
+  // rows whose data omits its endpoints.
+  let liveEdges = [];
+  try {
+    ({ edges: liveEdges } = loadSnapshot(dir, w).snapshot);
+  } catch { /* same no-snapshot degrade as liveEntities above */ }
+  const edgeDisplay = edgeDisplayForBatch(batch, liveEntities, liveEdges);
   const regions = summary.regions.map((region) => ({
     ...region,
     entities: region.entities.map((e) => ({
       ...e,
       status: statusByMutationId.get(e.mutationId),
       ...(nearMatches[e.mutationId] ? { nearMatches: nearMatches[e.mutationId] } : {}),
-      ...(triage[e.mutationId] ? { triage: triage[e.mutationId].triage, risk: triage[e.mutationId].risk } : {})
+      ...(triage[e.mutationId] ? { triage: triage[e.mutationId].triage, risk: triage[e.mutationId].risk } : {}),
+      ...(edgeDisplay[e.mutationId] ? { edgeDisplay: edgeDisplay[e.mutationId] } : {})
     }))
   }));
   const narratable = batch.mutations.length > 0 && batch.mutations.every((m) => m.status === "accepted");
