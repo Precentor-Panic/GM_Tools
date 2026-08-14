@@ -22,7 +22,10 @@
 "use strict";
 import { showUndoToast } from "./plans-view.js";
 import { createFlushableDebounce } from "./debounced-save.mjs";
-import { colorForType } from "./graph-view.js";
+// Friction Wave 1 (W5b): renderGraph is the SAME shared implementation the
+// standalone Graph nav view uses (Phase 7/12/13) -- the World tab's Graph
+// rail mode REUSES it against the already-fetched world graph, never a fork.
+import { colorForType, renderGraph } from "./graph-view.js";
 // Phase 35 task 35.3: the World inspector's own bespoke buildSceneTray/srow
 // implementation is RETIRED in favor of the shared component ("one tray" —
 // README's "implement once", scene-tray.js's own header). A graph-node drag
@@ -115,7 +118,12 @@ const ui = {
   // "spatial" on resetForWorld -- a world switch never carries Loyalty mode
   // over. SPATIAL IS THE DEFAULT; every phase30/31/33-pinned containment
   // behavior is untouched unless the GM explicitly switches.
-  treeMode: "spatial"
+  treeMode: "spatial",
+  // Friction Wave 1 (W5b): the sub-bar rail selector -- "spatial" | "loyalty"
+  // | "graph". Spatial/Loyalty show the tree body (treeMode tracks them);
+  // Graph swaps the whole body for the shared full-graph view. Superseded
+  // the old (clipping) in-tree-head Spatial/Loyalty toggle.
+  railMode: "spatial"
 };
 const cache = { world: null, graph: null, derived: null, loyaltyDerived: null, scenes: null, usedInScene: null };
 let selectedId = null;
@@ -149,6 +157,7 @@ function resetForWorld(world) {
   ui.looseFilter = null;
   ui.expandedInit = false;
   ui.treeMode = "spatial";
+  ui.railMode = "spatial";
   cache.world = null;
   cache.graph = null;
   cache.derived = null;
@@ -254,13 +263,27 @@ function root() { return main() ? main().querySelector('[data-testid="world-surf
 function buildSkeleton() {
   const container = main();
   container.innerHTML = "";
-  const r = el("div", { class: "world-surface", "data-testid": "world-surface-root" });
+  const r = el("div", { class: "world-surface", "data-testid": "world-surface-root", "data-rail-mode": ui.railMode });
+
+  // Friction Wave 1 (W5b): the new sub-bar under the shell topbar, mimicking
+  // the Library's own subbar idiom (library-view.js's tab bar left + filter
+  // controls right). Carries the rail selector (Spatial | Loyalty | Graph)
+  // plus "search the world" + the icon type-filters, both moved DOWN here
+  // from the shell topbar's world slot (mountWorldTopbar, retired). The old
+  // in-tree-head Spatial/Loyalty toggle -- the one whose label clipped to
+  // "Spatial/Loya" in the 318px pane -- is superseded by this selector (same
+  // testids, so the phase38 behavior pins carry over unchanged).
+  r.appendChild(buildSubbar());
+
+  // Body row: the tree body (Spatial/Loyalty -- the three phase30 panes,
+  // completely unchanged inside) and the Graph body (W5b -- the shared
+  // graph-view.js full-graph view), toggled by the rail selector.
+  const bodyRow = el("div", { class: "wv-body" });
 
   // Left: containment tree ("Where things are").
   const treePane = el("aside", { class: "wv-tree-pane" });
   const treeHead = el("div", { class: "wv-tree-head" });
   treeHead.appendChild(el("div", { class: "wv-mono-label" }, "Where things are"));
-  treeHead.appendChild(buildTreeModeToggle());
   const spacer = el("div", { style: "flex:1" });
   // Fix 1 (QA W1 BLOCKER): an always-available, quiet "+ add" affordance --
   // unlike buildActions(sel)'s "Add something here" (only ever rendered once
@@ -303,10 +326,83 @@ function buildSkeleton() {
   // Right: inspector.
   const inspectorPane = el("aside", { class: "wv-inspector-pane" });
 
-  r.append(treePane, centerPane, inspectorPane);
+  const treeBody = el("div", { class: "wv-body-tree", "data-testid": "world-body-tree" });
+  treeBody.append(treePane, centerPane, inspectorPane);
+  treeBody.hidden = ui.railMode === "graph";
+
+  // W5b: the Graph body -- hidden until the rail selector picks Graph. The
+  // inner host is the `container` renderGraph() owns (it wraps it in its own
+  // .graph-view-wrapper on first render).
+  const graphBody = el("div", { class: "wv-body-graph", "data-testid": "world-body-graph" });
+  graphBody.hidden = ui.railMode !== "graph";
+  const graphHost = el("div", { "data-testid": "world-graph-host" });
+  graphBody.appendChild(graphHost);
+
+  bodyRow.append(treeBody, graphBody);
+  r.appendChild(bodyRow);
   container.appendChild(r);
 
   return { tree, expandToggle, detailHost, looseHost, inspectorPane };
+}
+
+// ---------------------------------------------------------------------------
+// W5b: the sub-bar -- rail selector + search + icon filters. Search/chips
+// keep their exact testids/classes (world-search, wv-chip) so every existing
+// pin (phase34 D9/D10) holds; they now filter BOTH the tree modes and the
+// Graph mode.
+// ---------------------------------------------------------------------------
+function buildSubbar() {
+  const bar = el("div", { class: "wv-subbar", "data-testid": "world-subbar" });
+
+  // Rail selector: Spatial | Loyalty | Graph. Reuses the phase38 toggle's
+  // testids/classes (the behavior contract carries over), plus the new
+  // Graph option.
+  const group = el("div", { class: "wv-tree-mode-toggle wv-rail-selector", "data-testid": "wv-tree-mode-toggle", role: "group" });
+  const mk = (mode, label, testid) => {
+    const btn = el("button", {
+      type: "button", class: "wv-tree-mode-btn",
+      "data-testid": testid, "data-rail-mode": mode,
+      "aria-pressed": ui.railMode === mode ? "true" : "false"
+    }, label);
+    btn.addEventListener("click", () => setRailMode(mode));
+    return btn;
+  };
+  group.append(
+    mk("spatial", "Spatial", "wv-tree-mode-spatial-btn"),
+    mk("loyalty", "Loyalty", "wv-tree-mode-loyalty-btn"),
+    mk("graph", "Graph", "wv-rail-graph-btn")
+  );
+
+  const search = el("input", {
+    class: "wv-search", type: "text", placeholder: "Search the world…",
+    "data-testid": "world-search", value: ui.query
+  });
+  search.addEventListener("input", () => {
+    ui.query = search.value;
+    if (ui.railMode === "graph") renderWorldGraph(); else renderTree();
+  });
+
+  const chips = el("div", { class: "wv-chips" });
+  for (const t of TYPE_ORDER) {
+    const meta = TYPES[t];
+    // D9/D11 (Phase 34 task 34.3): icon-only 27px round chips -- the glyph
+    // is the chip's ONLY child; label text lives in the tooltip.
+    const chip = el("div", {
+      class: "wv-chip", "data-type": t,
+      title: `${meta.label} — filter to ${meta.label.toLowerCase()}s`
+    });
+    chip.appendChild(el("span", { class: "wv-chip-glyph", style: `color:${meta.accent}` }, meta.glyph));
+    chip.addEventListener("click", () => {
+      if (ui.types.has(t)) ui.types.delete(t); else ui.types.add(t);
+      syncChipStates(chips);
+      if (ui.railMode === "graph") renderWorldGraph(); else renderTree();
+    });
+    chips.appendChild(chip);
+  }
+  syncChipStates(chips);
+
+  bar.append(group, el("div", { style: "flex:1" }), search, chips);
+  return bar;
 }
 
 // D5-D8 (Phase 34 task 34.3): Esc disarms a pending remove, module-wide --
@@ -321,52 +417,15 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ===========================================================================
-// Topbar (World-only): search box + six type-filter chips, mounted into the
-// shell topbar's world slot. Built once per mount; chip states patched in
-// place so typing/toggling never rebuilds the input (no focus loss).
+// Shell-topbar world slot: Friction Wave 1 (W5b) RETIRED the search+chips
+// mount here (mountWorldTopbar) -- both moved down into the surface's own
+// sub-bar (buildSubbar above), per Russell's rail-redesign request. The
+// export stays: app-shell.js still calls clearWorldTopbar() when leaving the
+// World surface, and renderWorldSurface below clears any stale content.
 // ===========================================================================
 export function clearWorldTopbar() {
   const slot = document.getElementById("shell-world-topbar-slot");
   if (slot) slot.innerHTML = "";
-}
-function mountWorldTopbar() {
-  const slot = document.getElementById("shell-world-topbar-slot");
-  if (!slot) return;
-  slot.innerHTML = "";
-  const wrap = el("div", { class: "wv-topbar" });
-
-  const search = el("input", {
-    class: "wv-search", type: "text", placeholder: "Search the world…",
-    "data-testid": "world-search", value: ui.query
-  });
-  search.addEventListener("input", () => {
-    ui.query = search.value;
-    renderTree();
-  });
-
-  const chips = el("div", { class: "wv-chips" });
-  for (const t of TYPE_ORDER) {
-    const meta = TYPES[t];
-    // D9/D11 (Phase 34 task 34.3): icon-only 27px round chips -- the glyph is
-    // the chip's ONLY child now (no label span); the dropped label text moves
-    // into the tooltip, refreshed copy per the new prototype's own title
-    // binding (`World Graph.dc.html:518`, "<Label> — filter to <label>s").
-    const chip = el("div", {
-      class: "wv-chip", "data-type": t,
-      title: `${meta.label} — filter to ${meta.label.toLowerCase()}s`
-    });
-    chip.appendChild(el("span", { class: "wv-chip-glyph", style: `color:${meta.accent}` }, meta.glyph));
-    chip.addEventListener("click", () => {
-      if (ui.types.has(t)) ui.types.delete(t); else ui.types.add(t);
-      syncChipStates(chips);
-      renderTree();
-    });
-    chips.appendChild(chip);
-  }
-  syncChipStates(chips);
-
-  wrap.append(search, chips);
-  slot.appendChild(wrap);
 }
 function syncChipStates(chips) {
   for (const chip of chips.querySelectorAll(".wv-chip")) {
@@ -501,40 +560,38 @@ function toggleTreeAddPanel() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 38 task 38.3: the Spatial|Loyalty segmented toggle, mounted into
-// .wv-tree-head. A local mirror of session-planner-view.js's
-// buildSegmentedControl idiom (world-view.js has no existing cross-view
-// import from session-planner-view.js, and this project's convention is to
-// avoid a new one for a single small shared widget -- phase38-fixture.mjs
-// §6a's own "lift or mirror locally" instruction).
+// Friction Wave 1 (W5b): rail-mode switching. Spatial/Loyalty carry the
+// phase38 tree-mode semantics forward unchanged (same expand-reveal on a
+// derivation switch); Graph swaps the whole body for the shared full-graph
+// view. The selector lives in the sub-bar (buildSubbar) -- the old
+// in-tree-head toggle (whose label clipped to "Spatial/Loya") is gone.
 // ---------------------------------------------------------------------------
-function buildTreeModeToggle() {
-  const group = el("div", { class: "wv-tree-mode-toggle", "data-testid": "wv-tree-mode-toggle", role: "group" });
-  const spatialBtn = el("button", {
-    type: "button", class: "wv-tree-mode-btn",
-    "data-testid": "wv-tree-mode-spatial-btn",
-    "aria-pressed": ui.treeMode === "spatial" ? "true" : "false"
-  }, "Spatial");
-  const loyaltyBtn = el("button", {
-    type: "button", class: "wv-tree-mode-btn",
-    "data-testid": "wv-tree-mode-loyalty-btn",
-    "aria-pressed": ui.treeMode === "loyalty" ? "true" : "false"
-  }, "Loyalty");
-  spatialBtn.addEventListener("click", () => setTreeMode("spatial"));
-  loyaltyBtn.addEventListener("click", () => setTreeMode("loyalty"));
-  group.append(spatialBtn, loyaltyBtn);
-  return group;
-}
-function syncTreeModeButtons() {
+function syncRailButtons() {
   const r = root();
   if (!r) return;
-  const spatialBtn = r.querySelector('[data-testid="wv-tree-mode-spatial-btn"]');
-  const loyaltyBtn = r.querySelector('[data-testid="wv-tree-mode-loyalty-btn"]');
-  if (spatialBtn) spatialBtn.setAttribute("aria-pressed", ui.treeMode === "spatial" ? "true" : "false");
-  if (loyaltyBtn) loyaltyBtn.setAttribute("aria-pressed", ui.treeMode === "loyalty" ? "true" : "false");
+  r.setAttribute("data-rail-mode", ui.railMode);
+  for (const btn of r.querySelectorAll(".wv-rail-selector .wv-tree-mode-btn")) {
+    btn.setAttribute("aria-pressed", btn.getAttribute("data-rail-mode") === ui.railMode ? "true" : "false");
+  }
+}
+function setRailMode(mode) {
+  if (ui.railMode === mode || !["spatial", "loyalty", "graph"].includes(mode)) return;
+  ui.railMode = mode;
+  const r = root();
+  const treeBody = r && r.querySelector('[data-testid="world-body-tree"]');
+  const graphBody = r && r.querySelector('[data-testid="world-body-graph"]');
+  if (treeBody) treeBody.hidden = mode === "graph";
+  if (graphBody) graphBody.hidden = mode !== "graph";
+  syncRailButtons();
+  if (mode === "graph") {
+    renderWorldGraph();
+    return;
+  }
+  setTreeMode(mode);
 }
 function setTreeMode(mode) {
-  if (ui.treeMode === mode || (mode !== "spatial" && mode !== "loyalty")) return;
+  if (mode !== "spatial" && mode !== "loyalty") return;
+  if (ui.treeMode === mode) { renderTree(); return; }
   ui.treeMode = mode;
   // Reveal the newly-active tree's own structure (mirrors loadGraph's own
   // first-load "expand every node with children" convention) rather than
@@ -543,8 +600,35 @@ function setTreeMode(mode) {
   for (const n of activeDerived().nodesById.values()) {
     if (treeChildIdsOf(n.id).length) ui.expanded.add(n.id);
   }
-  syncTreeModeButtons();
   renderTree();
+}
+
+// ---------------------------------------------------------------------------
+// W5b Graph mode: the shared graph-view.js renderer over the SAME cached
+// world graph the tree derives from, narrowed by the sub-bar's search +
+// type chips. Read-only popovers (name/type/meta + "Develop this node →" to
+// the standalone entity page) -- the standalone Graph nav view keeps the
+// full manual-edit surface; wiring edit/delete/edge-drawing here too was
+// judged disproportionate for this pass and is left for the Designer round
+// (flagged in the wave notes).
+// ---------------------------------------------------------------------------
+function renderWorldGraph() {
+  const r = root();
+  const host = r && r.querySelector('[data-testid="world-graph-host"]');
+  if (!host || !cache.graph) return;
+  const q = ui.query.trim().toLowerCase();
+  let nodes = cache.graph.nodes || [];
+  if (q) nodes = nodes.filter((n) => (n.name || "").toLowerCase().includes(q) || (n.type || "").toLowerCase().includes(q));
+  if (ui.types.size) nodes = nodes.filter((n) => ui.types.has(n.type));
+  const visibleIds = new Set(nodes.map((n) => n.id));
+  const edges = (cache.graph.edges || []).filter((e) => visibleIds.has(e.sourceId) && visibleIds.has(e.targetId));
+  renderGraph(host, { nodes, edges }, {
+    mode: "standalone",
+    // Per-world layout cache, DISTINCT from the standalone Graph nav view's
+    // "standalone" key -- the two views can be arranged independently.
+    cacheKey: `world-rail:${ui.world}`,
+    onDevelopNode: (nodeId) => goto(`entity/${nodeId}`)
+  });
 }
 function buildTreeRow(r) {
   const n = r.node;
@@ -1661,6 +1745,8 @@ async function reload() {
   await loadGraph();
   await recomputeUsedInScene();
   applySelection(selectedId);
+  // W5b: keep the Graph rail mode in sync with fresh data too.
+  if (ui.railMode === "graph") renderWorldGraph();
 }
 
 // ===========================================================================
@@ -1686,16 +1772,18 @@ export async function renderWorldSurface(entityId) {
   const alreadyMounted = !!root() && cache.graph && cache.world === world;
   selectedId = entityId || null;
 
+  // W5b: the shell topbar's world slot is retired (search/filters live in
+  // the surface's own sub-bar now) -- keep it empty.
+  clearWorldTopbar();
+
   if (alreadyMounted) {
     // hash-driven re-mount within the same world: reuse cached data.
-    if (!document.getElementById("shell-world-topbar-slot").firstChild) mountWorldTopbar();
     applySelection(selectedId);
     return;
   }
 
   const token = ++mountToken;
   buildSkeleton();
-  mountWorldTopbar();
   // The root (world-surface-root) exists synchronously from buildSkeleton;
   // the panes fill once the graph loads (guarded below).
   try {
@@ -1706,6 +1794,9 @@ export async function renderWorldSurface(entityId) {
     await recomputeUsedInScene();
     if (token !== mountToken) return;
     applySelection(selectedId);
+    // W5b: a rebuilt skeleton (e.g. returning from another surface with
+    // Graph mode still selected for this world) needs the graph re-rendered.
+    if (ui.railMode === "graph") renderWorldGraph();
   } catch (err) {
     const host = detailHostEl();
     if (host) { host.innerHTML = ""; host.appendChild(el("div", { class: "wv-empty-detail" }, `Could not load the world graph: ${err.message}`)); }

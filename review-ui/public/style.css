@@ -2922,16 +2922,38 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
    already defined above). Three panes: tree | detail+loose | inspector.
    ===================================================================== */
 
-/* Override the shared planner-surface padding: World is a full-bleed 3-pane
-   frame, not a padded scroll column. */
+/* Override the shared planner-surface padding: World is a full-bleed frame,
+   not a padded scroll column. Friction Wave 1 (W5b): now a COLUMN -- the new
+   sub-bar (rail selector + search + icon filters) on top, then the body row
+   (the unchanged 3 panes, or the Graph mode body). */
 #app-shell .world-surface {
   flex: 1;
   min-width: 0;
   padding: 0;
   overflow: hidden;
   display: flex;
+  flex-direction: column;
   align-items: stretch;
 }
+
+/* --- W5b sub-bar: mirrors the Library subbar's chrome (42px, hairline
+   bottom border, chrome background — library-view.js's own subbar values,
+   expressed via the shared --sp-* tokens). --- */
+#app-shell .wv-subbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 16px; height: 42px; flex: none;
+  border-bottom: 1px solid var(--sp-border-hairline);
+  background: var(--sp-surface-chrome);
+}
+#app-shell .wv-body { display: flex; flex: 1; min-height: 0; align-items: stretch; }
+#app-shell .wv-body-tree { display: flex; flex: 1; min-width: 0; align-items: stretch; }
+#app-shell .wv-body-tree[hidden], #app-shell .wv-body-graph[hidden] { display: none; }
+/* Graph mode body: the shared graph-view.js chrome fills the available
+   height (its default .graph-view-container height is a fixed 560px for the
+   legacy nav view; here the container is the whole body). */
+#app-shell .wv-body-graph { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 10px 14px 14px; }
+#app-shell .wv-body-graph .graph-view-wrapper { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#app-shell .wv-body-graph .graph-view-container { flex: 1; height: auto; min-height: 0; }
 
 /* --- World topbar controls (search + type chips) --- */
 #app-shell .shell-world-topbar-slot { display: flex; align-items: center; }
