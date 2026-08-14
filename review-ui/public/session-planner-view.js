@@ -2351,7 +2351,7 @@ function buildPlaceDescriptionBlock(scene, place) {
     grid.className = "scene-place-grid";
     const label = document.createElement("span");
     label.className = "scene-place-grid-label";
-    label.textContent = "The place";
+    label.textContent = "About this place";
     const valueField = makeClickToEditField({
       tag: "div",
       className: "scene-place-desc-value",
