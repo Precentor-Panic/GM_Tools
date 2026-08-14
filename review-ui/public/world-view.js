@@ -889,6 +889,126 @@ function renderDetail() {
 
   // Actions.
   target.appendChild(buildActions(sel));
+
+  // Friction Wave 1 (W5d, Review-UX round 3 item 6): the one-hop LOCAL
+  // graph -- this node + every directly-connected node, edges color-coded
+  // by relationship type. Sits after the action row, above the Loose
+  // threads lane (Russell's own top-to-bottom panel order).
+  const local = buildLocalGraph(sel);
+  if (local) target.appendChild(local);
+}
+
+// ---------------------------------------------------------------------------
+// W5d: the local one-hop graph. Deliberately a tiny bespoke radial layout
+// (selected node centered, neighbors on an ellipse), NOT graph-view.js's
+// force layout -- there is no layout state worth caching for a per-selection
+// one-hop view, and a stable radial arrangement re-renders identically every
+// time. Node fills reuse the shared typeMeta/colorForType vocabulary; edge
+// strokes are color-coded by relationship type via the SAME deterministic
+// colorForType hash (a per-world free-string vocabulary, so a hash is the
+// only honest palette), with a legend + midpoint labels naming each type.
+// Clicking a neighbor selects it -- the fast "walk the graph" loop Russell
+// wants for post-batch relationship cleanup. Edge EDITING stays in the
+// inspector's "Tied to" list (remove) and the standalone Graph view (full
+// edit surface) -- not duplicated here.
+// ---------------------------------------------------------------------------
+const LOCAL_GRAPH_MAX_NEIGHBORS = 12;
+function svgNode(tag, attrs = {}) {
+  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) if (v != null) n.setAttribute(k, v);
+  return n;
+}
+function buildLocalGraph(sel) {
+  const allEdges = ((cache.graph && cache.graph.edges) || []).filter(
+    (e) => (e.sourceId === sel.id || e.targetId === sel.id) &&
+      d().nodesById.has(e.sourceId) && d().nodesById.has(e.targetId) &&
+      e.sourceId !== e.targetId
+  );
+  if (!allEdges.length) return null;
+
+  const neighborIds = [...new Set(allEdges.map((e) => (e.sourceId === sel.id ? e.targetId : e.sourceId)))];
+  const shown = neighborIds.slice(0, LOCAL_GRAPH_MAX_NEIGHBORS);
+  const shownSet = new Set([sel.id, ...shown]);
+  const edges = allEdges.filter((e) => shownSet.has(e.sourceId) && shownSet.has(e.targetId));
+  const omitted = neighborIds.length - shown.length;
+
+  const wrap = el("div", { class: "wv-local-graph-wrap", "data-testid": "world-local-graph", "data-entity-id": sel.id });
+  const head = el("div", { class: "wv-contents-head" });
+  head.appendChild(el("div", { class: "wv-mono-label" }, `Around ${short(sel.name)}`));
+  head.appendChild(el("div", { class: "wv-contents-meta" },
+    `${shown.length} connected${omitted > 0 ? ` · +${omitted} more not shown` : ""}`));
+  wrap.appendChild(head);
+
+  const W = 560, H = Math.max(210, 130 + shown.length * 14);
+  const cx = W / 2, cy = H / 2;
+  const rx = W / 2 - 95, ry = H / 2 - 34;
+  const pos = new Map([[sel.id, { x: cx, y: cy }]]);
+  shown.forEach((id, i) => {
+    const angle = (2 * Math.PI * i) / shown.length - Math.PI / 2;
+    pos.set(id, { x: cx + rx * Math.cos(angle), y: cy + ry * Math.sin(angle) });
+  });
+
+  const svg = svgNode("svg", { viewBox: `0 0 ${W} ${H}`, class: "wv-local-graph-svg" });
+
+  // Edges first (under the nodes), color-coded by relationship type.
+  for (const e of edges) {
+    const a = pos.get(e.sourceId), b = pos.get(e.targetId);
+    const kind = e.relationshipType || "related";
+    const color = colorForType(kind);
+    const line = svgNode("line", {
+      x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+      class: "wv-local-graph-edge",
+      "data-testid": "world-local-graph-edge",
+      "data-relationship-type": kind,
+      stroke: color
+    });
+    svg.appendChild(line);
+    // Midpoint label naming the type, nudged off the line.
+    const label = svgNode("text", {
+      x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - 4,
+      class: "wv-local-graph-edge-label", fill: color, "text-anchor": "middle"
+    });
+    label.textContent = kind;
+    svg.appendChild(label);
+  }
+
+  for (const id of [sel.id, ...shown]) {
+    const n = node(id);
+    const meta = typeMeta(n.type);
+    const p = pos.get(id);
+    const isCenter = id === sel.id;
+    const g = svgNode("g", {
+      class: "wv-local-graph-node" + (isCenter ? " wv-local-graph-node--center" : ""),
+      "data-testid": "world-local-graph-node",
+      "data-entity-id": id,
+      transform: `translate(${p.x}, ${p.y})`
+    });
+    g.appendChild(svgNode("circle", { r: isCenter ? 17 : 12, fill: meta.accent, class: "wv-local-graph-dot" }));
+    const glyph = svgNode("text", { y: 3.5, "text-anchor": "middle", class: "wv-local-graph-glyph" });
+    glyph.textContent = meta.glyph;
+    g.appendChild(glyph);
+    const nm = svgNode("text", { y: (isCenter ? 17 : 12) + 12, "text-anchor": "middle", class: "wv-local-graph-name" });
+    nm.textContent = short(n.name || id);
+    g.appendChild(nm);
+    if (!isCenter) {
+      g.addEventListener("click", () => select(id));
+      g.appendChild(svgNode("title", {})).textContent = `${n.name} — click to open`;
+    }
+    svg.appendChild(g);
+  }
+  wrap.appendChild(svg);
+
+  // Legend: one swatch per distinct relationship type, same colors.
+  const kinds = [...new Set(edges.map((e) => e.relationshipType || "related"))];
+  const legend = el("div", { class: "wv-local-graph-legend", "data-testid": "world-local-graph-legend" });
+  for (const kind of kinds) {
+    const item = el("span", { class: "wv-local-graph-legend-item", "data-relationship-type": kind });
+    item.appendChild(el("span", { class: "wv-local-graph-swatch", style: `background:${colorForType(kind)}` }));
+    item.appendChild(el("span", null, kind));
+    legend.appendChild(item);
+  }
+  wrap.appendChild(legend);
+  return wrap;
 }
 
 function buildContentChip(k) {
