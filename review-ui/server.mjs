@@ -2028,11 +2028,28 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { scene });
   }
 
-  // POST /api/session-planner/scenes/:sceneId  { world, name?, objectiveNote? }  -> {scene}   Phase 29 task 29.1 -- patch-style update, independent optional fields (mirrors updateElement's own "only patch what's provided" convention). Length-4 path -- does not collide with the length-3 create route above, the length-5 fork/rename routes below, or the length-4 GET-by-id route (different method). Backs the scene page's inline objective edit. NOT a rename of the existing POST .../scenes/:id/rename route below (that stays name-only, unmodified).
+  // POST /api/session-planner/scenes/:sceneId  { world, name?, objectiveNote?, mapAssetId? }  -> {scene}   Phase 29 task 29.1 -- patch-style update, independent optional fields (mirrors updateElement's own "only patch what's provided" convention). Length-4 path -- does not collide with the length-3 create route above, the length-5 fork/rename routes below, or the length-4 GET-by-id route (different method). Backs the scene page's inline objective edit. NOT a rename of the existing POST .../scenes/:id/rename route below (that stays name-only, unmodified).
+  //
+  // Friction Wave 1 W3b: `mapAssetId` joined the patch vocabulary -- link
+  // (or clear, with null) ONE stagecraft map asset to this scene. The
+  // cross-store validation lives HERE, not in scenes.mjs (that store stays
+  // pure, same reasoning as the create route's place-type guard above): a
+  // non-null mapAssetId must name an EXISTING stagecraft asset of
+  // kind:'map' in this world -- an unknown id or a splash/music asset
+  // throws a clear 400 rather than silently recording a dangling/wrong-kind
+  // link the push path would later trip over.
   if (method === "POST" && parts.length === 4 && parts[1] === "session-planner" && parts[2] === "scenes") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
-    const scene = updateScene(w, parts[3], { name: body.name, objectiveNote: body.objectiveNote });
+    if (body.mapAssetId !== undefined && body.mapAssetId !== null) {
+      const asset = getStagecraftAsset(w, body.mapAssetId); // throws the store's own clear "No stagecraft asset found" -> 400
+      if (asset.kind !== "map") {
+        throw new Error(
+          `Scene mapAssetId "${body.mapAssetId}" must reference a kind:"map" stagecraft asset (found kind "${asset.kind}").`
+        );
+      }
+    }
+    const scene = updateScene(w, parts[3], { name: body.name, objectiveNote: body.objectiveNote, mapAssetId: body.mapAssetId });
     maybeScheduleFlush(w, scene); // Phase 36 task 36.2, §3 -- a direct scene-RECORD edit is a flush trigger too
     return sendJson(res, 200, { scene });
   }

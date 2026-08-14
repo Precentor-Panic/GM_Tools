@@ -59,6 +59,24 @@
  * `updateScene`'s vocabulary -- see the new, narrow `markScenePushed` below
  * for why a push write-back must never go through `updateScene` (it would
  * race-clobber a concurrent edit's own `updatedAt` bump).
+ *
+ * ADDITIVE CHANGE (Friction Wave 1, W3b -- the "scenes cannot reference a
+ * map" cluster): the Scene record gained `mapAssetId` (string|null, default
+ * null) -- the id of ONE stagecraft `kind:'map'` asset
+ * (session-planner/stagecraft-store.mjs) this scene uses as its map. This is
+ * the durable scene<->map pairing the Kilmarn exercise had to fake with
+ * "MAP: ..." lines in objectiveNote. Joins `updateScene`'s ordinary patch
+ * vocabulary (set/clear via the scene patch route, which also validates the
+ * asset exists and is kind:'map' -- this store stays pure and validates
+ * nothing cross-store, same as `locationEntityId`'s own convention).
+ * INHERITED by forkScene like locationEntityId/objectiveNote (a fork at the
+ * same place plays on the same map unless overridden) -- deliberately unlike
+ * `foundrySceneRef`/`stagedForFoundry` (per-push-instance state). Read by
+ * wf-mcp-server/lib/foundry-push-ops.mjs's pushSceneToFoundry to default
+ * `mapSrc` from the linked asset (W3c). Same no-SCHEMA_VERSION-bump
+ * reasoning as every additive field above: a pre-W3b scene simply has no
+ * `mapAssetId` key, read identically to an explicit null (no map linked) --
+ * every kilmarn scene keeps loading unchanged.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -115,7 +133,7 @@ export function makeSceneId() {
  * @param {string} [opts.now]
  * @returns {object}   the created Scene
  */
-export function createScene(world, { locationEntityId = null, objectiveNote = null, name = null } = {}, opts = {}) {
+export function createScene(world, { locationEntityId = null, objectiveNote = null, name = null, mapAssetId = null } = {}, opts = {}) {
   validateSceneName(name); // QA W2 fix (Group B #12)
   const makeId = opts.makeId ?? makeSceneId;
   const now = opts.now ?? new Date().toISOString();
@@ -126,6 +144,8 @@ export function createScene(world, { locationEntityId = null, objectiveNote = nu
     locationEntityId: locationEntityId ?? null,
     objectiveNote: objectiveNote ?? null,
     name: name ?? null,
+    // Friction Wave 1 W3b -- see this module's own header note.
+    mapAssetId: mapAssetId ?? null,
     foundrySceneRef: null,
     // Phase 36 task 36.2, §1 -- see this module's own header note.
     stagedForFoundry: false,
@@ -152,7 +172,7 @@ export function createScene(world, { locationEntityId = null, objectiveNote = nu
  * @param {string} [opts.now]
  * @returns {object}   the created (forked) Scene
  */
-export function forkScene(world, parentSceneId, { locationEntityId, objectiveNote, name = null } = {}, opts = {}) {
+export function forkScene(world, parentSceneId, { locationEntityId, objectiveNote, name = null, mapAssetId } = {}, opts = {}) {
   const parent = getScene(world, parentSceneId);
   const makeId = opts.makeId ?? makeSceneId;
   const now = opts.now ?? new Date().toISOString();
@@ -162,6 +182,11 @@ export function forkScene(world, parentSceneId, { locationEntityId, objectiveNot
     parentSceneId: parent.id,
     locationEntityId: locationEntityId !== undefined ? locationEntityId : parent.locationEntityId,
     objectiveNote: objectiveNote !== undefined ? objectiveNote : parent.objectiveNote,
+    // Friction Wave 1 W3b -- INHERITED like locationEntityId/objectiveNote
+    // (a fork at the same place plays on the same map unless overridden);
+    // see this module's own header note. `?? null` also normalizes a parent
+    // persisted before this field existed.
+    mapAssetId: mapAssetId !== undefined ? mapAssetId : (parent.mapAssetId ?? null),
     // Deliberately NOT inherited from the parent by default (unlike
     // location/objective) -- a bespoke name identifies ONE specific scene
     // instance; silently copying it onto a fork would produce two
@@ -247,7 +272,7 @@ export function renameScene(world, sceneId, name, opts = {}) {
  *
  * @param {string} world
  * @param {string} sceneId
- * @param {{name?:string|null, objectiveNote?:string|null, foundrySceneRef?:string|null, locationEntityId?:string|null, stagedForFoundry?:boolean}} patch
+ * @param {{name?:string|null, objectiveNote?:string|null, foundrySceneRef?:string|null, locationEntityId?:string|null, stagedForFoundry?:boolean, mapAssetId?:string|null}} patch
  * @param {object} [opts]
  * @param {string} [opts.now]   injectable ISO timestamp, for deterministic tests
  * @returns {object}   the updated Scene
@@ -266,7 +291,7 @@ export function renameScene(world, sceneId, name, opts = {}) {
  * event) -- see phase36-fixture.mjs §1/§5. Do NOT add `lastPushedAt` here --
  * that field is written ONLY by the new, narrower `markScenePushed` below.
  */
-export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneRef, locationEntityId, stagedForFoundry } = {}, opts = {}) {
+export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneRef, locationEntityId, stagedForFoundry, mapAssetId } = {}, opts = {}) {
   if (name !== undefined) validateSceneName(name); // QA W2 fix (Group B #12)
   const scenes = readScenes(world);
   const scene = scenes.find((s) => s.id === sceneId);
@@ -278,6 +303,10 @@ export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneR
   if (foundrySceneRef !== undefined) scene.foundrySceneRef = foundrySceneRef;
   if (locationEntityId !== undefined) scene.locationEntityId = locationEntityId;
   if (stagedForFoundry !== undefined) scene.stagedForFoundry = stagedForFoundry;
+  // Friction Wave 1 W3b -- same undefined-means-leave-untouched merge
+  // semantics as every other key; the ROUTE validates the asset (exists +
+  // kind:'map'), this store stays cross-store-pure (header note).
+  if (mapAssetId !== undefined) scene.mapAssetId = mapAssetId;
   scene.updatedAt = opts.now ?? new Date().toISOString();
   writeScenes(world, scenes);
   return scene;

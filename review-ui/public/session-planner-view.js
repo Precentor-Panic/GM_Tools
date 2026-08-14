@@ -3004,6 +3004,108 @@ function buildStageDressingRow(scene, assetRoster, lookups) {
   return row;
 }
 
+// ---------------------------------------------------------------------------
+// Friction Wave 1 W3b -- the scene<->map link row. Always rendered (unlike
+// the dressing row above, which is absent without roster assets): the whole
+// point is that "no map linked" is VISIBLE, not an absence you have to infer.
+//   - `scene-map-chip` -- ▦ + the linked asset's name (title carries its
+//     src), or a muted "No map linked". data-map-asset-id mirrors the link.
+//   - `scene-map-link-btn` toggles `scene-map-picker`, a <select> over the
+//     world's existing kind:'map' stagecraft assets (label: name — src),
+//     plus "(no map)" to clear. Change saves immediately via the ordinary
+//     POST /api/session-planner/scenes/:id patch route (mapAssetId) and
+//     repaints the chip in place.
+// `onSaved` is the scene page's restartStagePollIfStaged -- a map link IS a
+// scene-record edit, so it's a flush trigger like the objective field.
+// ---------------------------------------------------------------------------
+function buildSceneMapRow(scene, mapAssets, onSaved) {
+  const row = document.createElement("div");
+  row.className = "scene-map-row";
+  row.setAttribute("data-testid", "scene-map-row");
+  row.setAttribute("data-scene-id", scene.id);
+
+  const chip = document.createElement("span");
+  chip.className = "scene-map-chip";
+  chip.setAttribute("data-testid", "scene-map-chip");
+  chip.setAttribute("data-scene-id", scene.id);
+
+  const linkBtn = document.createElement("button");
+  linkBtn.type = "button";
+  linkBtn.className = "scene-map-link-btn";
+  linkBtn.setAttribute("data-testid", "scene-map-link-btn");
+  linkBtn.setAttribute("data-scene-id", scene.id);
+
+  const pickerHost = document.createElement("span");
+
+  const paintChip = () => {
+    const linked = scene.mapAssetId ? mapAssets.find((a) => a.id === scene.mapAssetId) : null;
+    chip.setAttribute("data-map-asset-id", scene.mapAssetId ?? "");
+    chip.setAttribute("data-has-map", scene.mapAssetId ? "true" : "false");
+    if (scene.mapAssetId) {
+      // A linked id whose asset record went missing still shows AS linked
+      // (the id is real data) -- "(map asset missing)" says so honestly.
+      chip.textContent = `▦ ${linked ? linked.name : "(map asset missing)"}`;
+      chip.title = linked?.src ? `Map file: ${linked.src}` : "This map asset has no file path recorded yet — set one on its Library shelf row";
+    } else {
+      chip.textContent = "▦ No map linked";
+      chip.title = "Link a stagecraft map asset so this scene's push can carry its map";
+    }
+    linkBtn.textContent = scene.mapAssetId ? "change" : "link a map…";
+  };
+
+  let pickerOpen = false;
+  const closePicker = () => { pickerOpen = false; pickerHost.innerHTML = ""; };
+  linkBtn.addEventListener("click", () => {
+    if (pickerOpen) { closePicker(); return; }
+    pickerOpen = true;
+    pickerHost.innerHTML = "";
+    if (!mapAssets.length) {
+      const hint = document.createElement("span");
+      hint.className = "scene-map-picker-empty";
+      hint.setAttribute("data-testid", "scene-map-picker-empty");
+      hint.textContent = "No map assets yet — add one on the Library's Stagecraft shelf.";
+      pickerHost.appendChild(hint);
+      return;
+    }
+    const select = document.createElement("select");
+    select.className = "scene-map-picker";
+    select.setAttribute("data-testid", "scene-map-picker");
+    select.setAttribute("data-scene-id", scene.id);
+    const noneOpt = document.createElement("option");
+    noneOpt.value = "";
+    noneOpt.textContent = "(no map)";
+    select.appendChild(noneOpt);
+    for (const a of mapAssets) {
+      const opt = document.createElement("option");
+      opt.value = a.id;
+      opt.textContent = a.src ? `${a.name} — ${a.src}` : a.name;
+      select.appendChild(opt);
+    }
+    select.value = scene.mapAssetId ?? "";
+    select.addEventListener("change", async () => {
+      const chosen = select.value || null;
+      select.disabled = true;
+      try {
+        const { scene: updated } = await spApi(`/api/session-planner/scenes/${encodeURIComponent(scene.id)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: currentWorld(), mapAssetId: chosen })
+        });
+        scene.mapAssetId = updated.mapAssetId ?? null;
+        if (onSaved) onSaved();
+      } catch { /* keep the old link on a failed write */ }
+      closePicker();
+      paintChip();
+    });
+    pickerHost.appendChild(select);
+    select.focus();
+  });
+
+  paintChip();
+  row.append(chip, linkBtn, pickerHost);
+  return row;
+}
+
 async function renderScenePage(container, sceneId, token, opts = {}) {
   // Phase 30 task 30.3: `opts` lets the SAME scene-page render serve both the
   // legacy `#session-planner/<id>` chrome (default) and the new designer shell
@@ -3060,6 +3162,10 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   // (no new store/route). Only fetches the lookups when the roster actually
   // carries an asset row, since the row is entirely absent otherwise.
   const trayRoster = (await spApi(`/api/scene-planning/scenes/${encodeURIComponent(sceneId)}/tray${spWithWorld()}`).catch(() => ({ roster: [] }))).roster ?? [];
+  // Friction Wave 1 W3b -- the scene<->map link's picker needs the world's
+  // map assets regardless of whether the tray roster carries any (linking a
+  // map is exactly what a scene with an empty tray wants to do first).
+  const mapAssets = (await spApi(`/api/session-planner/stagecraft${spWithWorld({ kind: "map" })}`).catch(() => ({ assets: [] }))).assets ?? [];
   const assetRoster = trayRoster.filter((r) => r.kind === "asset");
   const stageDressingLookups = { items: new Map(), stagecraft: new Map() };
   if (assetRoster.length) {
@@ -3307,6 +3413,13 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   renderStageStatus();
   if (scene.stagedForFoundry) restartStagePollIfStaged(); // a fresh load of an already-staged scene watches too, not just a just-flipped toggle
   header.appendChild(stageRow);
+
+  // Friction Wave 1 W3b -- the scene<->map link row: an always-visible map
+  // chip (the exact "does this scene have a map?" glance the owner couldn't
+  // get) + a quiet picker over the world's existing stagecraft map assets
+  // (name + src). Saving writes `mapAssetId` through the ordinary scene
+  // patch route; a linked map also lets push-scene default its mapSrc (W3c).
+  header.appendChild(buildSceneMapRow(scene, mapAssets, restartStagePollIfStaged));
 
   // Phase 36 task 36.4b -- the "Stage" chip row, near the toggle above.
   const dressingRow = buildStageDressingRow(scene, assetRoster, stageDressingLookups);

@@ -1011,6 +1011,19 @@ async function fillRunsheetRows(rowsHost, planId, metaText) {
     return;
   }
   const infoMap = await fetchEntityInfoMap();
+  // Friction Wave 1 W3b -- resolve linked map assets' names for the rows'
+  // map chips. One fetch for the whole runsheet, lazily skipped when no
+  // scene here links a map (the common pre-W3b case costs nothing extra).
+  let mapAssetNames = null;
+  async function mapAssetName(mapAssetId) {
+    if (mapAssetNames === null) {
+      try {
+        const { assets } = await shApi(`/api/session-planner/stagecraft${shWithWorld({ kind: "map" })}`);
+        mapAssetNames = new Map((assets || []).map((a) => [a.id, a.name]));
+      } catch { mapAssetNames = new Map(); }
+    }
+    return mapAssetNames.get(mapAssetId) ?? mapAssetId;
+  }
   for (let i = 0; i < sceneIds.length; i++) {
     const sceneId = sceneIds[i];
     let scene;
@@ -1040,6 +1053,18 @@ async function fillRunsheetRows(rowsHost, planId, metaText) {
     const elemSpan = el("span", { class: "planner-runsheet-elem-meta" });
     elemSpan.textContent = elemMeta;
     metaLine.append(placeSpan, elemSpan);
+    // Friction Wave 1 W3b -- the scene-card map chip: "has a map?" readable
+    // straight off the run sheet (the exact glance the owner couldn't get).
+    if (scene.mapAssetId) {
+      const mapChip = el("span", {
+        class: "planner-runsheet-map-chip",
+        "data-testid": "planner-runsheet-map-chip",
+        "data-map-asset-id": scene.mapAssetId
+      });
+      mapChip.textContent = "▦ map";
+      mapAssetName(scene.mapAssetId).then((nm) => { mapChip.title = `Map: ${nm}`; });
+      metaLine.appendChild(mapChip);
+    }
     const obj = el("div", { class: "planner-runsheet-objective" });
     obj.textContent = scene.objectiveNote || "";
     bodyCol.append(name, metaLine, obj);

@@ -291,6 +291,17 @@ export function mountSceneTray(host, opts = {}) {
 
     const head = el("div", { style: "display: flex; align-items: baseline; gap: 8px;" }, [
       el("span", { text: sceneName(scene), style: "font-size: 12.5px; color: oklch(0.28 0.015 60);" }),
+      // Friction Wave 1 W3b -- "does this scene have a map?" at a glance,
+      // everywhere the tray lists scenes (Library tabs + World inspector).
+      // Only rendered when a map IS linked (the tray row is too small for a
+      // no-map state; the scene page's own always-visible chip carries that).
+      scene.mapAssetId ? el("span", {
+        testid: "scene-tray-map-chip",
+        "data-map-asset-id": scene.mapAssetId,
+        text: "▦",
+        title: `Map: ${state.lookups?.stagecraft.get(scene.mapAssetId)?.name ?? scene.mapAssetId}`,
+        style: "font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.44 0.070 145);"
+      }) : null,
       el("span", { style: "flex: 1;" }),
       el("span", {
         testid: "scene-tray-xp-meter",

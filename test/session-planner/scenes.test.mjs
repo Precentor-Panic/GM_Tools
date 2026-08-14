@@ -524,6 +524,60 @@ const WORLD = "session-planner-scenes-test-world";
     assert.ok(!/graph-service/i.test(src), "must never import GraphService");
   });
 
+  // -------------------------------------------------------------------------
+  // Friction Wave 1 W3b -- `mapAssetId` (the scene<->map link).
+  // -------------------------------------------------------------------------
+
+  test("W3b mapAssetId: defaults null on create; an explicit value round-trips; updateScene sets and clears it", () => {
+    const bare = createScene(WORLD, {}, { makeId: () => "scene-w3b-1" });
+    assert.equal(bare.mapAssetId, null);
+
+    const withMap = createScene(WORLD, { mapAssetId: "sc-map-1" }, { makeId: () => "scene-w3b-2" });
+    assert.equal(withMap.mapAssetId, "sc-map-1");
+
+    const linked = updateScene(WORLD, "scene-w3b-1", { mapAssetId: "sc-map-2" });
+    assert.equal(linked.mapAssetId, "sc-map-2");
+    assert.equal(getScene(WORLD, "scene-w3b-1").mapAssetId, "sc-map-2", "persisted");
+
+    // A patch that DOESN'T mention mapAssetId leaves it untouched...
+    const untouched = updateScene(WORLD, "scene-w3b-1", { objectiveNote: "unrelated edit" });
+    assert.equal(untouched.mapAssetId, "sc-map-2");
+    // ...and an explicit null clears it.
+    const cleared = updateScene(WORLD, "scene-w3b-1", { mapAssetId: null });
+    assert.equal(cleared.mapAssetId, null);
+  });
+
+  test("W3b forkScene: INHERITS mapAssetId like locationEntityId (same place, same map) unless overridden -- unlike foundrySceneRef/stagedForFoundry", () => {
+    const parent = createScene(WORLD, { locationEntityId: "bridge-1", mapAssetId: "sc-map-bridge" }, { makeId: () => "scene-w3b-parent" });
+    markScenePushed(WORLD, parent.id, { foundrySceneRef: "Scene.pushed", lastPushedAt: "2026-08-14T00:00:00.000Z" });
+
+    const fork = forkScene(WORLD, parent.id, {}, { makeId: () => "scene-w3b-fork" });
+    assert.equal(fork.mapAssetId, "sc-map-bridge", "inherited");
+    assert.equal(fork.foundrySceneRef, null, "push-instance state still NOT inherited");
+
+    const overridden = forkScene(WORLD, parent.id, { mapAssetId: null }, { makeId: () => "scene-w3b-fork2" });
+    assert.equal(overridden.mapAssetId, null, "an explicit override (even null) wins");
+  });
+
+  test("W3b back-compat: a pre-W3b record on disk (no mapAssetId key -- every kilmarn scene's shape) loads, reads as no-map, and patches cleanly", () => {
+    const scene = createScene(WORLD, { objectiveNote: "MAP: worlds/kilmarn/maps/old-workaround.webp" }, { makeId: () => "scene-w3b-legacy" });
+    const filePath = join(sessionScenesRoot(), `${WORLD}.json`);
+    const rows = JSON.parse(readFileSync(filePath, "utf8"));
+    for (const r of rows) if (r.id === scene.id) delete r.mapAssetId;
+    writeFileSync(filePath, JSON.stringify(rows, null, 2), "utf8");
+
+    const reread = getScene(WORLD, scene.id);
+    assert.equal(reread.mapAssetId ?? null, null);
+    assert.equal(reread.objectiveNote, "MAP: worlds/kilmarn/maps/old-workaround.webp", "the old workaround line is untouched");
+
+    const patched = updateScene(WORLD, scene.id, { mapAssetId: "sc-map-9" });
+    assert.equal(patched.mapAssetId, "sc-map-9");
+
+    // And a fork OF a legacy parent normalizes the missing key to null.
+    const fork = forkScene(WORLD, "scene-w3b-legacy", { mapAssetId: null }, { makeId: () => "scene-w3b-legacy-fork" });
+    assert.equal(fork.mapAssetId, null);
+  });
+
   test("no write in this file leaked into the repo's real default session-scenes/ directory (the established before/after-diff isolation pattern)", () => {
     const after = existsSync(REPO_DEFAULT_ROOT) ? new Set(readdirSync(REPO_DEFAULT_ROOT)) : new Set();
     const added = [...after].filter((f) => !before.has(f));

@@ -2260,6 +2260,41 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   background: var(--sp-hover-halo); color: var(--sp-ink-secondary);
 }
 
+/* Friction Wave 1 W3b — the scene↔map link row: an ALWAYS-visible map chip
+   ("no map linked" must be seen, not inferred from absence) + a quiet
+   link/change affordance and inline picker. Same quiet pill language as the
+   dressing chips above; a linked map's chip picks up the accent border so
+   has-a-map reads at a glance. */
+:is(#view-session-planner, #app-shell) .scene-map-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 0 0 18px; font-family: var(--sp-font-ui); font-size: 13px;
+}
+:is(#view-session-planner, #app-shell) .scene-map-chip {
+  font-family: var(--sp-font-mono); font-size: 10.5px; letter-spacing: 0.02em;
+  color: var(--sp-ink-muted); background: transparent;
+  border: 1px solid var(--sp-border-hairline); border-radius: 20px; padding: 2px 9px;
+}
+:is(#view-session-planner, #app-shell) .scene-map-chip[data-has-map="true"] {
+  color: oklch(0.38 0.060 145); border-color: oklch(0.72 0.070 145);
+  background: oklch(0.955 0.020 145);
+}
+:is(#view-session-planner, #app-shell) .scene-map-link-btn {
+  border: none; background: transparent; padding: 0; cursor: pointer;
+  font: inherit; font-size: 12px; color: var(--sp-accent, oklch(0.50 0.075 185));
+  text-decoration: underline dotted; text-underline-offset: 3px;
+}
+:is(#view-session-planner, #app-shell) .scene-map-picker {
+  font: inherit; font-size: 12px; max-width: 380px;
+  padding: 3px 6px; border: 1px solid var(--sp-border-hairline); border-radius: 4px;
+  background: var(--sp-paper, #fff); color: inherit;
+}
+:is(#view-session-planner, #app-shell) .scene-map-picker-empty {
+  font-size: 12px; color: var(--sp-ink-muted); font-style: italic;
+}
+/* Run mode keeps the chip (at-a-glance info) but hides the edit affordance,
+   matching the rest of the page's edit-chrome-hidden-in-run convention. */
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-map-link-btn { display: none; }
+
 /* "The place" — a 76px mono-label / editable-value grid, bounded top+bottom
    by 1px hairlines. Editing writes to the graph NODE, not the scene. */
 :is(#view-session-planner, #app-shell) .scene-place-desc-host { margin: 0 0 24px; }
@@ -2845,6 +2880,12 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   color: oklch(0.50 0.075 185);
 }
 #app-shell .planner-runsheet-elem-meta { font-family: var(--sp-font-mono); font-size: 10px; color: var(--sp-ink-muted); }
+/* Friction Wave 1 W3b — the run-sheet scene card's "has a map" chip. */
+#app-shell .planner-runsheet-map-chip {
+  font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: 0.02em;
+  color: oklch(0.38 0.060 145); background: oklch(0.955 0.020 145);
+  border: 1px solid oklch(0.72 0.070 145); border-radius: 20px; padding: 1px 8px;
+}
 #app-shell .planner-runsheet-objective { font-size: 13px; color: oklch(0.48 0.014 65); max-width: 60ch; }
 #app-shell .planner-runsheet-controls { display: flex; align-items: center; gap: 3px; flex: none; padding-top: 2px; }
 #app-shell .planner-runsheet-ctl {
