@@ -47,6 +47,7 @@ import { createBatch } from "../mutation-engine/review-state.mjs";
 import { summarizeBatch, renderHeadline } from "../mutation-engine/grain.mjs";
 import { attachDiffs } from "../time-skip/run.mjs";
 import { importGraph, WFI_VERSION } from "../../foundry_worldFabric/scripts/data/interchange.mjs";
+import { nameNearMatchScore } from "./name-similarity.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPT_TEMPLATE = readFileSync(join(__dirname, "..", "prompts", "writeup-import.md"), "utf8");
@@ -449,6 +450,153 @@ function entityKey(type, name) {
   return `${type}::${String(name).trim().toLowerCase()}`;
 }
 
+// =====================================================================
+// Friction Wave 1 (W2a): near-miss name normalization BEFORE the importGraph
+// dry-run. The Kilmarn live exercise hit the same failure repeatedly: the
+// writeup used natural shorthand ("Master Vane", "the Trade Council",
+// "Lowway") or a decorated variant ("Guild Seal (Dyers' Hall)", "Vane's
+// Seal Ring", "Founding Charter of Kilmarn") of an entity ALREADY in the
+// graph, and importGraph's exact name+type dedup — correctly, by its own
+// contract — created a duplicate instead of merging. This pass rewrites a
+// CONFIDENT near-miss's extracted name to the existing entity's own exact
+// stored name, so the completely-unmodified exact matcher resolves it as a
+// genuine match and the mutation comes out an UPDATE — the same
+// influence-the-input-never-fork-the-matcher approach scan-mentions.mjs's
+// Phase 13.4 pre-pass (applyFuzzyPrepass) established.
+// =====================================================================
+
+/**
+ * The auto-rewrite confidence bar — deliberately ABOVE name-similarity.mjs's
+ * FUZZY_MATCH_THRESHOLD (0.75), which is the ADVISORY bar the W1a review-card
+ * chips use. Rewriting is a stronger act than advising: below this bar the
+ * name is left completely alone and the W1a chips (+ W1b convert-to-update)
+ * remain the human-decides path. Calibrated against the real Kilmarn dup
+ * families, all of which score comfortably above it via
+ * nameNearMatchScore's containment tier:
+ *   "Lowway" vs "The Lowway"                              1.0   (leading article)
+ *   "Master Vane" vs "Master Aldric Vane"                 ~0.92 (subset of canon name)
+ *   "Trade Council" vs "Kilmarn Trade Council"            ~0.92 (subset of canon name)
+ *   "Vane's Seal Ring" vs "Seal Ring"                     ~0.92 (possessive prefix)
+ *   "Founding Charter of Kilmarn" vs "Founding Charter"   ~0.92 ("X of <world>" suffix)
+ *   "Guild Seal (Dyers' Hall)" vs "Guild Seal"            ~0.88 (disambiguating parenthetical)
+ * while the closest genuinely-different siblings stay far below it
+ * ("Thread P-3" vs "Thread P-1" ≈ 0.5).
+ */
+export const WRITEUP_NAME_REWRITE_THRESHOLD = 0.85;
+
+/**
+ * W2a: normalize a WFI proposal's extracted entity names against the live
+ * snapshot. Pure, deterministic, no LLM. The ONLY intervention: an entity
+ * whose name is a confident same-type near-miss of exactly one existing
+ * entity gets its `name` rewritten to that entity's own exact stored name
+ * (and every edge referencing the old name is re-pointed to the new one, so
+ * importGraph's resolveEndpoint keeps resolving them to the same record
+ * instead of minting a stub for a now-unused name). The rewrite is recorded
+ * on the entity as `writeupNormalization` — previewWriteupImport carries it
+ * onto the resulting mutation's entityContext so the review card can say
+ * what happened rather than silently renaming.
+ *
+ * Conservatism rules, in order:
+ *   - an EXACT name match (any type) is never touched here — exact
+ *     name+type is importGraph's own dedup territory, and exact-name/
+ *     different-type is W2b's separate resolution (see
+ *     normalizeProposalAgainstSnapshot below);
+ *   - candidates are SAME-TYPE only (matching findFuzzyEntityMatch's own
+ *     conservatism — a cross-type fuzzy merge is never safe to automate);
+ *   - the best match must be UNIQUE — a tie between two distinct existing
+ *     entities means ambiguity, so nothing is rewritten;
+ *   - the rewrite target's name+type key must not already be claimed by
+ *     another entity in the same proposal (otherwise two proposal items
+ *     would silently collapse into one importGraph result).
+ *
+ * @param {{entities:object[], edges:object[]}} proposal  proposeWfiFromWriteup's output
+ * @param {object[]} existingEntities  live-snapshot entities ({id,name,type})
+ * @param {object} [opts]
+ * @param {number} [opts.threshold=WRITEUP_NAME_REWRITE_THRESHOLD]
+ * @returns {{proposal:{entities:object[], edges:object[]}, rewrites:Array<{from:string, to:string, entityId:string, score:number}>}}
+ */
+export function normalizeProposalNameNearMisses(proposal, existingEntities, opts = {}) {
+  const threshold = opts.threshold ?? WRITEUP_NAME_REWRITE_THRESHOLD;
+  const existing = (existingEntities ?? []).filter((e) => e?.name && e?.type);
+  const byExactName = new Map();
+  for (const e of existing) {
+    const k = e.name.trim().toLowerCase();
+    if (!byExactName.has(k)) byExactName.set(k, []);
+    byExactName.get(k).push(e);
+  }
+
+  const entities = (proposal.entities ?? []).map((e) => ({ ...e }));
+  const claimedKeys = new Set(entities.map((e) => entityKey(e.type, e.name)));
+  const rewrites = [];
+
+  for (const pe of entities) {
+    const nameKey = String(pe.name).trim().toLowerCase();
+    if (byExactName.has(nameKey)) continue; // exact name match (any type): not this pass's territory
+
+    let best = null;
+    let bestScore = 0;
+    let tied = false;
+    for (const e of existing) {
+      if (e.type !== pe.type) continue; // same-type only
+      const score = nameNearMatchScore(pe.name, e.name);
+      if (score < threshold) continue;
+      if (score > bestScore) {
+        best = e;
+        bestScore = score;
+        tied = false;
+      } else if (score === bestScore && best && e.id !== best.id) {
+        tied = true;
+      }
+    }
+    if (!best || tied) continue;
+
+    const targetKey = entityKey(pe.type, best.name);
+    if (claimedKeys.has(targetKey)) continue; // the canon name is already its own proposal item
+
+    const from = pe.name;
+    claimedKeys.delete(entityKey(pe.type, from));
+    claimedKeys.add(targetKey);
+    pe.name = best.name;
+    pe.writeupNormalization = {
+      kind: "near-miss-rename",
+      from,
+      to: best.name,
+      entityId: best.id,
+      score: Math.round(bestScore * 1000) / 1000
+    };
+    rewrites.push({ from, to: best.name, entityId: best.id, score: pe.writeupNormalization.score });
+  }
+
+  // Re-point edge name-refs at the rewritten names. Edge endpoints in a WFI
+  // proposal are NAMES (never ids — see this module's top-of-file note), and
+  // importGraph's resolveEndpoint resolves names case-insensitively, so the
+  // rename map is keyed the same way.
+  const renameByOldKey = new Map(rewrites.map((r) => [r.from.trim().toLowerCase(), r.to]));
+  const edges = (proposal.edges ?? []).map((ed) => {
+    const newSource = renameByOldKey.get(String(ed.source).trim().toLowerCase());
+    const newTarget = renameByOldKey.get(String(ed.target).trim().toLowerCase());
+    if (!newSource && !newTarget) return ed;
+    return { ...ed, ...(newSource ? { source: newSource } : {}), ...(newTarget ? { target: newTarget } : {}) };
+  });
+
+  return { proposal: { ...proposal, entities, edges }, rewrites };
+}
+
+/**
+ * The full W2 pre-dry-run normalization pass, in the order the conservatism
+ * rules require — importWriteup/regenerateWriteupImport call THIS, not the
+ * individual passes. Currently: the W2a near-miss rename pass (W2b's
+ * exact-name/different-type resolution slots in here as its own step).
+ *
+ * @param {{entities:object[], edges:object[]}} proposal
+ * @param {object[]} existingEntities
+ * @param {object} [opts]  forwarded to the individual passes
+ * @returns {{proposal:object, rewrites:Array}}
+ */
+export function normalizeProposalAgainstSnapshot(proposal, existingEntities, opts = {}) {
+  return normalizeProposalNameNearMisses(proposal, existingEntities, opts);
+}
+
 // The reviewable field subset for an entity mutation's `data` — matches
 // diff.mjs's ENTITY_DIFF_FIELDS plus the handful of extra fields
 // prompts/texture.md's own "entity:" field list documents as settable,
@@ -571,7 +719,17 @@ export function previewWriteupImport(proposal, existingSnapshot, opts = {}) {
       batchId: "placeholder",
       sourceKind: "writeup-import",
       regionId: WRITEUP_IMPORT_REGION_ID,
-      entityContext: { name: resolved.name, importance: resolved.importance, tags: resolved.tags }
+      entityContext: {
+        name: resolved.name,
+        importance: resolved.importance,
+        tags: resolved.tags,
+        // W2a/W2b: the pre-dry-run normalization record, when this entity's
+        // extracted name/type was rewritten to match an existing entity —
+        // carried onto the mutation so the review card can SAY what happened
+        // (grain.mjs surfaces it on batch-detail rows) instead of the
+        // rename/merge being silent.
+        ...(pe.writeupNormalization ? { writeupNormalization: pe.writeupNormalization } : {})
+      }
     });
   }
 
@@ -672,7 +830,11 @@ export async function importWriteup(world, text, existingSnapshot, opts = {}) {
   // this function already has existingSnapshot for the dry-run merge below,
   // so no new fetch, just reusing what's already in hand.
   const proposal = await proposeWfiFromWriteup(text, { ...(opts.llmOpts ?? {}), existingEntities: existingSnapshot.entities });
-  const { mutations, summary, suggestions } = previewWriteupImport(proposal, existingSnapshot, { mode: opts.mode });
+  // W2a: deterministic near-miss normalization against the live snapshot
+  // BEFORE the dry-run, so a confident shorthand/variant of an existing
+  // entity dedups into an UPDATE instead of a duplicate create.
+  const { proposal: normalized } = normalizeProposalAgainstSnapshot(proposal, existingSnapshot.entities ?? []);
+  const { mutations, summary, suggestions } = previewWriteupImport(normalized, existingSnapshot, { mode: opts.mode });
   const diffed = attachDiffs(mutations, existingSnapshot.entities ?? [], existingSnapshot.edges ?? []);
 
   const batch = createBatch(
@@ -732,7 +894,10 @@ export async function regenerateWriteupImport(batch, note, existingSnapshot, opt
     );
   }
   const proposal = await proposeWfiFromWriteup(originalText, { ...(opts.llmOpts ?? {}), note, existingEntities: existingSnapshot.entities });
-  const { mutations, summary, suggestions } = previewWriteupImport(proposal, existingSnapshot, { mode: opts.mode });
+  // W2a: same pre-dry-run normalization as importWriteup — a regenerate
+  // must not reintroduce the near-miss duplicates the original run avoided.
+  const { proposal: normalized } = normalizeProposalAgainstSnapshot(proposal, existingSnapshot.entities ?? []);
+  const { mutations, summary, suggestions } = previewWriteupImport(normalized, existingSnapshot, { mode: opts.mode });
   const diffed = attachDiffs(mutations, existingSnapshot.entities ?? [], existingSnapshot.edges ?? []);
   return { mutations: diffed, summary, suggestions };
 }

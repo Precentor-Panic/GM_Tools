@@ -109,7 +109,14 @@ export function summarizeBatch(batch, opts = {}) {
       // discriminator, surfaced so review-ui can render the mandatory badge +
       // border accent -- null for every other mutation producer (writeup-import,
       // texture.mjs, etc.), which never set entityContext.scanResultKind at all.
-      scanResultKind: m.entityContext?.scanResultKind ?? null
+      scanResultKind: m.entityContext?.scanResultKind ?? null,
+      // Friction Wave 1 (W2a/W2b): graph-import/writeup-import.mjs's
+      // pre-dry-run normalization record ({kind:'near-miss-rename'|'type-
+      // conflict-resolved', ...}) -- surfaced so the review card can show
+      // WHY this row targets an existing entity the writeup never named
+      // exactly. Null for every other producer, same convention as
+      // scanResultKind above.
+      writeupNormalization: m.entityContext?.writeupNormalization ?? null
     }));
     return { regionId, entities, headline: renderRegionHeadline(regionId, entities) };
   });

@@ -378,6 +378,31 @@ export function renderProposalCard(m, opts = {}) {
     }
   }
 
+  // Friction Wave 1 (W2a/W2b): the writeup-import pre-dry-run normalization
+  // note. When the extraction's name/type was rewritten to resolve into an
+  // existing entity (graph-import/writeup-import.mjs's
+  // normalizeProposalAgainstSnapshot), the card says so rather than the
+  // merge being silent -- read defensively off either a batchDetailPayload
+  // row (`writeupNormalization`) or a raw StoredMutation (entityContext).
+  let normalizationRow = null;
+  const norm = m.writeupNormalization ?? m.entityContext?.writeupNormalization ?? null;
+  if (norm && norm.kind === "near-miss-rename") {
+    normalizationRow = el("div", {
+      testid: "proposal-card-normalization",
+      "data-normalization-kind": norm.kind,
+      style: "display: flex; align-items: baseline; gap: 7px; margin: 0 0 8px; padding: 6px 9px; border: 1px dashed oklch(0.80 0.045 185); border-radius: 4px; background: oklch(0.972 0.012 185);"
+    }, [
+      el("span", {
+        text: "≈ matched to canon",
+        style: "font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.42 0.070 185); flex: none;"
+      }),
+      el("span", {
+        text: `The writeup said “${norm.from}” — resolved to the existing entity “${norm.to}” so this merges instead of duplicating.`,
+        style: "font-size: 11.5px; color: oklch(0.36 0.030 65);"
+      })
+    ]);
+  }
+
   // Footer: rationale + accept/reject
   const why = el("div", {
     testid: "proposal-card-why",
@@ -446,6 +471,7 @@ export function renderProposalCard(m, opts = {}) {
 
   root.append(header, diffRows);
   if (editorWrap) root.appendChild(editorWrap);
+  if (normalizationRow) root.appendChild(normalizationRow);
   if (nearMatchesRow) root.appendChild(nearMatchesRow);
   root.appendChild(footer);
   paint();
