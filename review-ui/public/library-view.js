@@ -45,7 +45,12 @@ const SOURCE_PILL = {
   // Library.dc.html's own RESKIN-tier `sourceChips` seed (the pixel
   // authority's pre-existing "reskin" pill, line 611) -- matched, not
   // invented, same as every other SOURCE_PILL entry here.
-  reskin: { label: "Reskinned", bg: "oklch(0.90 0.045 300)", fg: "oklch(0.36 0.08 300)" }
+  reskin: { label: "Reskinned", bg: "oklch(0.90 0.045 300)", fg: "oklch(0.36 0.08 300)" },
+  // Friction Wave 1 W4b/W4c -- the Plutonium source layer's own DISTINCT
+  // pill (rust, a hue no other pill uses): on the read-only "Available via
+  // Plutonium" shelf rows, and (via deriveSourcePill's new branch) on
+  // curated entries added FROM that shelf.
+  plutonium: { label: "Plutonium", bg: "oklch(0.92 0.045 25)", fg: "oklch(0.40 0.10 25)" }
 };
 const KINDS = {
   item: { label: "Item", glyph: "◈", accent: "oklch(0.55 0.075 185)" },
@@ -398,7 +403,13 @@ function buildBestiary(ctx) {
     pullButton("Import from Foundry compendium"),
     handAddForm
   ]);
-  centerScroll.append(header, grid, importRow);
+  // Friction Wave 1 W4b -- the read-only "Available via Plutonium" shelf,
+  // BELOW the curated grid and never mixed into it (a separate source
+  // LAYER, the friction note's own hard rule). Self-contained builder; its
+  // add-to-shelf action (W4c) refreshes the whole surface so the new
+  // curated entry appears above.
+  const plutoniumShelf = buildPlutoniumShelf(ctx);
+  centerScroll.append(header, grid, importRow, plutoniumShelf);
   centerCol.appendChild(centerScroll);
 
   const statRail = el("div", { style: "width: 396px; flex: none; border-left: 1px solid oklch(0.87 0.010 80); background: oklch(0.938 0.009 85); display: flex; flex-direction: column; min-height: 0; overflow-y: auto;" });
@@ -797,6 +808,190 @@ function buildBestiary(ctx) {
   paintGrid();
   paintStatRail();
 }
+
+// ===========================================================================
+// AVAILABLE VIA PLUTONIUM — Friction Wave 1 W4b: the read-only source-layer
+// shelf under the Bestiary tab's curated grid. Backed entirely by the W4a
+// route (GET /api/combat-planning/plutonium): search + CR range + type +
+// source filters run SERVER-side, and rendering is windowed (50-row pages +
+// "Show more") so the ~4k-row index never tanks the page. Distinct
+// "Plutonium" source pill; rows NEVER mix into the curated grid's data.
+// ===========================================================================
+const PLU_PAGE_SIZE = 50;
+
+function crLadderToNum(v) {
+  if (!v || v === "any") return null;
+  if (v === "1/8") return 0.125;
+  if (v === "1/4") return 0.25;
+  if (v === "1/2") return 0.5;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function buildPlutoniumShelf(ctx) {
+  const st = { query: "", crMin: "any", crMax: "any", type: "", source: "", offset: 0, rows: [], matched: 0, installed: null, facets: null, loading: false };
+
+  const section = el("div", { testid: "plutonium-shelf", style: "margin-top: 34px; border-top: 1px solid oklch(0.86 0.010 80); padding-top: 18px;" });
+  const headRow = el("div", { style: "display: flex; align-items: baseline; gap: 11px; flex-wrap: wrap;" }, [
+    el("div", { text: "Available via Plutonium", style: "font-family: Spectral, serif; font-size: 20px; font-weight: 500;" }),
+    sourcePill("plutonium", "plutonium-shelf-pill"),
+    el("span", { testid: "plutonium-shelf-count", style: "font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.60 0.012 70);" })
+  ]);
+  const blurb = el("div", {
+    // The W4c manual-import rule, stated up front where the shelf starts.
+    text: "Everything Plutonium's bundled 5etools data says exists — browsable here so the library isn't blind to unimported creatures. Read-only: importing an actor into Foundry stays a manual Plutonium act at prep time.",
+    style: "font-size: 12px; color: oklch(0.52 0.014 65); margin: 5px 0 12px; max-width: 78ch; line-height: 1.5;"
+  });
+  section.append(headRow, blurb);
+
+  // --- filter controls ---
+  const controls = el("div", { style: "display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;" });
+  const inputStyle = "padding: 5px 9px; border: 1px solid oklch(0.84 0.010 80); border-radius: 5px; font-family: inherit; font-size: 12px; background: oklch(1 0 0); color: inherit;";
+  const search = el("input", { testid: "plutonium-search-input", placeholder: "Find a creature…", style: `${inputStyle} width: 200px;` });
+  let debounce = null;
+  search.addEventListener("input", () => {
+    st.query = search.value;
+    clearTimeout(debounce);
+    debounce = setTimeout(() => fetchPage(true), 200);
+  });
+
+  const mkSelect = (testid, first, options, onChange) => {
+    const sel = el("select", { testid, style: inputStyle });
+    sel.appendChild(el("option", { value: first.value, text: first.label }));
+    for (const o of options) sel.appendChild(el("option", { value: o.value, text: o.label }));
+    sel.addEventListener("change", () => { onChange(sel.value); fetchPage(true); });
+    return sel;
+  };
+  const crOpts = CR_LADDER.map((c) => ({ value: c, label: c }));
+  const crMinSel = mkSelect("plutonium-cr-min", { value: "any", label: "CR min" }, crOpts, (v) => { st.crMin = v; });
+  const crMaxSel = mkSelect("plutonium-cr-max", { value: "any", label: "CR max" }, crOpts, (v) => { st.crMax = v; });
+  const typeSelHost = el("span", {});
+  const sourceSelHost = el("span", {});
+  controls.append(search, crMinSel, crMaxSel, typeSelHost, sourceSelHost);
+  section.appendChild(controls);
+
+  const rowsHost = el("div", { testid: "plutonium-rows", style: "display: flex; flex-direction: column; gap: 4px;" });
+  const footerHost = el("div", { style: "margin-top: 10px;" });
+  section.append(rowsHost, footerHost);
+
+  // Facet dropdowns are built ONCE from the first response (whole-index
+  // facets), then left stable while filtering.
+  let facetsBuilt = false;
+  function buildFacetSelects() {
+    if (facetsBuilt || !st.facets) return;
+    facetsBuilt = true;
+    typeSelHost.appendChild(mkSelect(
+      "plutonium-type-filter", { value: "", label: "Any type" },
+      st.facets.types.map((t) => ({ value: t.id, label: `${t.id} (${t.count})` })),
+      (v) => { st.type = v; }
+    ));
+    sourceSelHost.appendChild(mkSelect(
+      "plutonium-source-filter", { value: "", label: "Any source" },
+      st.facets.sources.map((s) => ({ value: s.id, label: `${s.id} (${s.count})` })),
+      (v) => { st.source = v; }
+    ));
+  }
+
+  async function fetchPage(reset) {
+    if (reset) { st.offset = 0; st.rows = []; }
+    st.loading = true;
+    paintFooter();
+    const params = new URLSearchParams();
+    if (st.query.trim()) params.set("query", st.query.trim());
+    const crMin = crLadderToNum(st.crMin);
+    const crMax = crLadderToNum(st.crMax);
+    if (crMin !== null) params.set("crMin", String(crMin));
+    if (crMax !== null) params.set("crMax", String(crMax));
+    if (st.type) params.set("type", st.type);
+    if (st.source) params.set("source", st.source);
+    params.set("offset", String(st.offset));
+    params.set("limit", String(PLU_PAGE_SIZE));
+    try {
+      const r = await api(`/api/combat-planning/plutonium?${params}`);
+      st.installed = r.installed;
+      st.matched = r.matched;
+      st.facets = st.facets || r.facets;
+      st.rows = st.rows.concat(r.creatures || []);
+      st.offset = st.rows.length;
+      buildFacetSelects();
+    } catch { st.installed = st.installed ?? false; }
+    st.loading = false;
+    paintRows();
+    paintFooter();
+  }
+
+  function paintRows() {
+    rowsHost.innerHTML = "";
+    const countEl = headRow.querySelector('[data-testid="plutonium-shelf-count"]');
+    if (st.installed === false) {
+      countEl.textContent = "";
+      rowsHost.appendChild(el("div", {
+        testid: "plutonium-not-installed",
+        text: "Plutonium isn't installed in this Foundry data directory — nothing to browse. Install the Plutonium module and its bundled 5etools data appears here automatically.",
+        style: "padding: 16px; border: 1px dashed oklch(0.86 0.010 80); border-radius: 4px; font-size: 12px; color: oklch(0.56 0.012 70);"
+      }));
+      return;
+    }
+    countEl.textContent = `${st.matched} matching`;
+    if (!st.rows.length) {
+      rowsHost.appendChild(el("div", { text: "Nothing matches that. Loosen the search or a filter.", style: "font-size: 12px; color: oklch(0.56 0.012 70); padding: 8px 0;" }));
+      return;
+    }
+    for (const c of st.rows) rowsHost.appendChild(plutoniumRow(c, ctx));
+  }
+
+  function paintFooter() {
+    footerHost.innerHTML = "";
+    if (st.installed === false) return;
+    if (st.loading) {
+      footerHost.appendChild(el("div", { text: "Loading…", style: "font-size: 11.5px; color: oklch(0.58 0.012 70);" }));
+      return;
+    }
+    if (st.rows.length < st.matched) {
+      const more = el("div", {
+        testid: "plutonium-show-more-btn",
+        text: `Show more (${st.rows.length} of ${st.matched})`,
+        style: "display: inline-block; padding: 6px 14px; border: 1px solid oklch(0.84 0.010 80); border-radius: 5px; cursor: pointer; font-size: 12px; color: oklch(0.44 0.050 25); background: oklch(0.975 0.006 85);"
+      });
+      more.addEventListener("click", () => fetchPage(false));
+      footerHost.appendChild(more);
+    }
+  }
+
+  function plutoniumRow(c, rowCtx) {
+    const statBits = [
+      c.cr != null ? `CR ${c.cr}` : null,
+      c.type ? (c.tags?.length ? `${c.type} (${c.tags.join(", ")})` : c.type) : null,
+      c.ac != null ? `AC ${c.ac}` : null,
+      c.hp != null ? `HP ${c.hp}` : null,
+      c.legendary ? "legendary" : null
+    ].filter(Boolean).join(" · ");
+    const row = el("div", {
+      testid: "plutonium-row",
+      "data-name": c.name,
+      "data-source": c.source ?? "",
+      style: "display: flex; align-items: baseline; gap: 10px; padding: 6px 10px; border: 1px solid oklch(0.90 0.010 80); border-left: 3px solid oklch(0.78 0.070 25); border-radius: 4px; background: oklch(0.985 0.005 85);"
+    }, [
+      el("span", { testid: "plutonium-row-name", text: c.name, style: "font-family: Spectral, serif; font-size: 14.5px; font-weight: 500; flex: none;" }),
+      el("span", { text: statBits, style: "font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.52 0.014 65); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" }),
+      el("span", {
+        testid: "plutonium-row-source",
+        text: `${c.source ?? "?"}${c.page != null ? ` p${c.page}` : ""}`,
+        style: "font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.40 0.10 25); flex: none;"
+      })
+    ]);
+    const action = buildPlutoniumRowAction?.(c, rowCtx);
+    if (action) row.appendChild(action);
+    return row;
+  }
+
+  fetchPage(true);
+  return section;
+}
+
+// W4c wires the per-row "Add to shelf" action here (kept as a named seam so
+// W4b's read-only shelf renders identically with or without it).
+let buildPlutoniumRowAction = null;
 
 // ===========================================================================
 // HERO'S HALL
