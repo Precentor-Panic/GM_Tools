@@ -185,6 +185,10 @@ import {
 // Phase 37.6b -- "Wear it as something else" (see the module's own doc
 // comment for the full grounding/offline-degrade story).
 import { suggestReskins } from "../combat-planning/reskin-suggest.mjs";
+// Friction Wave 1 W4a -- the read-only Plutonium source LAYER (bundled
+// 5etools bestiary data indexed from <dataDir>/modules/plutonium/, never
+// mixed into the curated bestiary store). See that module's own header.
+import { loadPlutoniumIndex, searchPlutoniumIndex, plutoniumFacets } from "../combat-planning/plutonium-source.mjs";
 import { proposePartyMemberFromText, proposePartyMemberFromPdf } from "../combat-planning/party-roster-ingest.mjs";
 import {
   savePartyMember,
@@ -2197,6 +2201,47 @@ async function handleApi(req, res, url, parts) {
   if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "discard") {
     const entry = discardBestiaryEntry(parts[3]);
     return sendJson(res, 200, { entry });
+  }
+
+  // -----------------------------------------------------------------------
+  // Friction Wave 1 W4a -- the "Available via Plutonium" read-only source
+  // layer. Library-wide like the bestiary routes (no `world` -- the bundled
+  // module data isn't world-scoped), dataDir via resolveDir() ONLY (same
+  // no-client-dataDir rule as every route in this file). READ-ONLY: this
+  // route never touches the curated shelf; W4c's explicit per-creature
+  // add-from-plutonium route below is the only bridge.
+  // -----------------------------------------------------------------------
+
+  // GET /api/combat-planning/plutonium?query=&crMin=&crMax=&type=&source=&offset=&limit=
+  // -> { installed, files, count, matched, offset, limit, creatures, facets }
+  // Server-side filter + window (limit default 50, cap 500) so the ~4k-row
+  // index never rides one response; `installed:false` (with empty
+  // creatures/facets) is the graceful "Plutonium isn't installed" state,
+  // a 200, never an error.
+  if (method === "GET" && parts.length === 3 && parts[1] === "combat-planning" && parts[2] === "plutonium") {
+    const dir = resolveDir();
+    const index = loadPlutoniumIndex(dir);
+    const num = (v) => {
+      if (v === null || v === undefined || v === "") return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    const page = searchPlutoniumIndex(index.creatures, {
+      query: q.get("query") ?? "",
+      type: q.get("type"),
+      source: q.get("source"),
+      crMin: num(q.get("crMin")),
+      crMax: num(q.get("crMax")),
+      offset: num(q.get("offset")) ?? 0,
+      limit: num(q.get("limit")) ?? 50
+    });
+    return sendJson(res, 200, {
+      installed: index.installed,
+      files: index.files,
+      count: index.count,
+      ...page,
+      facets: plutoniumFacets(index.creatures)
+    });
   }
 
   // POST /api/combat-planning/party-roster/ingest   { world, text } or { world, pdfBase64 }
