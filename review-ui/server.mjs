@@ -188,7 +188,7 @@ import { suggestReskins } from "../combat-planning/reskin-suggest.mjs";
 // Friction Wave 1 W4a -- the read-only Plutonium source LAYER (bundled
 // 5etools bestiary data indexed from <dataDir>/modules/plutonium/, never
 // mixed into the curated bestiary store). See that module's own header.
-import { loadPlutoniumIndex, searchPlutoniumIndex, plutoniumFacets } from "../combat-planning/plutonium-source.mjs";
+import { loadPlutoniumIndex, searchPlutoniumIndex, plutoniumFacets, findPlutoniumCreature } from "../combat-planning/plutonium-source.mjs";
 import { proposePartyMemberFromText, proposePartyMemberFromPdf } from "../combat-planning/party-roster-ingest.mjs";
 import {
   savePartyMember,
@@ -2242,6 +2242,57 @@ async function handleApi(req, res, url, parts) {
       ...page,
       facets: plutoniumFacets(index.creatures)
     });
+  }
+
+  // W4c: POST /api/combat-planning/bestiary/add-from-plutonium
+  // { name, source } -> {entry}. THE one explicit bridge from the read-only
+  // Plutonium source layer onto the curated shelf: creates an ACCEPTED
+  // bestiary entry (a deliberate per-creature act, same "hand-add accepts
+  // immediately" reasoning as the sibling hand-add route) with the index
+  // row's real stats mapped into rawFields and a "SOURCE pPAGE via
+  // Plutonium" provenance note (also sourceText -- what deriveSourcePill's
+  // new "plutonium" branch keys on). DEDUPE GUARD: adding the same
+  // (name, source) creature twice -> 409 ("already exists" -> statusForError),
+  // matched against non-discarded entries carrying the exact same
+  // provenance line -- a DISCARDED earlier copy doesn't block a re-add.
+  // Importing the actor into Foundry stays a manual Plutonium act at prep
+  // time -- this writes GM_Tools's own catalog row only, nothing
+  // Foundry-facing.
+  if (method === "POST" && parts.length === 4 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[3] === "add-from-plutonium") {
+    const body = await readBody(req);
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const source = typeof body.source === "string" ? body.source.trim() : "";
+    if (!name || !source) {
+      throw new Error("POST /api/combat-planning/bestiary/add-from-plutonium: `name` and `source` are both required (the dataset's identity pair).");
+    }
+    const dir = resolveDir();
+    const creature = findPlutoniumCreature(dir, { name, source });
+    if (!creature) {
+      throw new Error(`No Plutonium creature matches name="${name}" source="${source}" (is Plutonium installed, and is the pair exactly as the shelf lists it?).`);
+    }
+    const provenance = `${creature.source}${creature.page != null ? ` p${creature.page}` : ""} via Plutonium`;
+    const duplicate = listBestiaryEntries().find(
+      (e) => e.status !== "discarded" && e.rawFields?.name === creature.name && e.sourceText === provenance
+    );
+    if (duplicate) {
+      throw new Error(
+        `Bestiary entry "${creature.name}" (${provenance}) already exists on the curated shelf (id "${duplicate.id}") -- not adding a second copy.`
+      );
+    }
+    const rawFields = {
+      name: creature.name,
+      type: creature.type ? (creature.tags?.length ? `${creature.type} (${creature.tags.join(", ")})` : creature.type) : "Unknown",
+      ...(creature.ac != null ? { ac: creature.ac } : {}),
+      ...(creature.hp != null ? { hp: creature.hp } : {}),
+      ...(creature.cr != null ? { challengeRating: creature.cr } : {}),
+      ...(creature.size?.length ? { size: creature.size.join("/") } : {}),
+      ...(creature.environment?.length ? { environment: creature.environment.join(", ") } : {}),
+      ...(creature.legendary ? { legendary: true } : {})
+    };
+    let entry = saveBestiaryEntry({ rawFields, sourceText: provenance });
+    entry = acceptBestiaryEntry(entry.id);
+    entry = updateBestiaryEntryNote(entry.id, provenance);
+    return sendJson(res, 200, { entry });
   }
 
   // POST /api/combat-planning/party-roster/ingest   { world, text } or { world, pdfBase64 }

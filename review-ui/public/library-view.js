@@ -989,9 +989,51 @@ function buildPlutoniumShelf(ctx) {
   return section;
 }
 
-// W4c wires the per-row "Add to shelf" action here (kept as a named seam so
-// W4b's read-only shelf renders identically with or without it).
-let buildPlutoniumRowAction = null;
+// W4c -- the per-row "Add to shelf" action: THE one explicit bridge from the
+// read-only source layer onto the curated shelf (POST .../bestiary/
+// add-from-plutonium; server-side dedupe guard -> 409 reads back as
+// "already on shelf"). An already-added creature renders the quiet "on
+// shelf" marker instead of the button (matched against the curated entries'
+// own provenance line). Success refreshes the whole Bestiary surface so the
+// new curated entry appears in the grid above with its Plutonium pill.
+// Import into Foundry stays a manual Plutonium act at prep time -- the
+// button's own title says so.
+function buildPlutoniumRowAction(c, ctx) {
+  const provenance = `${c.source ?? "?"}${c.page != null ? ` p${c.page}` : ""} via Plutonium`;
+  const alreadyOnShelf = (ctx?.data?.bestiary || []).some(
+    (e) => e.status !== "discarded" && e.rawFields?.name === c.name && e.sourceText === provenance
+  );
+  if (alreadyOnShelf) {
+    return el("span", {
+      testid: "plutonium-row-on-shelf",
+      text: "✓ on shelf",
+      title: "Already on the curated shelf",
+      style: "flex: none; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.48 0.09 150); padding: 2px 8px; border: 1px solid oklch(0.80 0.070 150); border-radius: 20px; background: oklch(0.96 0.020 150);"
+    });
+  }
+  const btn = el("span", {
+    testid: "plutonium-row-add-btn",
+    text: "+ shelf",
+    title: "Add this creature's stats to the curated shelf. Importing the actor into Foundry stays a manual Plutonium act at prep time.",
+    style: "flex: none; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.40 0.10 25); padding: 2px 8px; border: 1px dashed oklch(0.78 0.070 25); border-radius: 20px; cursor: pointer; white-space: nowrap;"
+  });
+  btn.addEventListener("click", async () => {
+    btn.textContent = "adding…";
+    try {
+      await api("/api/combat-planning/bestiary/add-from-plutonium", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: c.name, source: c.source })
+      });
+      await renderLibrarySurface("bestiary"); // a NEW curated entry exists -- full reload, same as hand-add/reskin-accept
+    } catch (err) {
+      // The server's dedupe guard (409) or any other failure -- say so
+      // inline, leave the row usable.
+      btn.textContent = err.status === 409 ? "already on shelf" : "+ shelf";
+      if (err.status !== 409) btn.title = `Could not add: ${err.message}`;
+    }
+  });
+  return btn;
+}
 
 // ===========================================================================
 // HERO'S HALL

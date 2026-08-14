@@ -349,6 +349,17 @@ const IMPLAUSIBLE_RAW_FIELDS = {
     assert.equal(deriveSourcePill({ foundryActorRef: null, sourceText: "hand-typed", sourcePdfName: null }), "mine");
   });
 
+  // Friction Wave 1 W4c -- the add-from-plutonium provenance stamp.
+  test("deriveSourcePill (W4c): 'via Plutonium' in sourceText -> 'plutonium', checked BEFORE the srd branch, and never triggered by an unrelated mention of the word", () => {
+    assert.equal(deriveSourcePill({ foundryActorRef: null, sourceText: "MM p347 via Plutonium", sourcePdfName: null }), "plutonium");
+    // A source string that could ALSO read srd-ish: the explicit stamp wins.
+    assert.equal(deriveSourcePill({ foundryActorRef: null, sourceText: "SRD p1 via Plutonium", sourcePdfName: null }), "plutonium");
+    // foundryActorRef still outranks everything (a later Foundry-link wins).
+    assert.equal(deriveSourcePill({ foundryActorRef: "Actor.x", sourceText: "MM p347 via Plutonium", sourcePdfName: null }), "foundry");
+    // A note merely mentioning the module name without the stamp stays 'mine'.
+    assert.equal(deriveSourcePill({ foundryActorRef: null, sourceText: "reminded me of the plutonium module", sourcePdfName: null }), "mine");
+  });
+
   test("getBestiaryEntry/listBestiaryEntries: a pre-Phase-35 entry (no note/rating on disk) reads note:null, rating:null, and a derived sourcePill", () => {
     // saveBestiaryEntry's own return value is NOT run through the read-time
     // projection (it's a create, not a read boundary) -- assert the

@@ -151,10 +151,11 @@ export function checkBestiaryOutliers(rawFields) {
 /**
  * PURE, no I/O. Phase 35 task 35.1, §5: derives the read-time `sourcePill`
  * projection from fields already on the entry -- foundryActorRef present ->
- * "foundry"; sourceText/sourcePdfName mentioning "SRD" (case-insensitive) ->
- * "srd"; else "mine".
+ * "foundry"; sourceText/sourcePdfName mentioning "via Plutonium"
+ * (Friction Wave 1 W4c's add-from-plutonium stamp) -> "plutonium";
+ * mentioning "SRD" (case-insensitive) -> "srd"; else "mine".
  * @param {object} entry
- * @returns {"foundry"|"srd"|"mine"}
+ * @returns {"foundry"|"reskin"|"plutonium"|"srd"|"mine"}
  */
 export function deriveSourcePill(entry) {
   if (entry?.foundryActorRef) return "foundry";
@@ -165,6 +166,12 @@ export function deriveSourcePill(entry) {
   // way, not an absence-of-other-signals inference.
   if (entry?.reskinOfEntryId) return "reskin";
   const flagText = `${entry?.sourceText ?? ""} ${entry?.sourcePdfName ?? ""}`;
+  // W4c: BEFORE the srd check -- an add-from-plutonium entry's sourceText
+  // ("MM p347 via Plutonium") could in principle also name an SRD-ish
+  // source string, and the explicit "via Plutonium" stamp is the more
+  // specific provenance signal. Same convention as the srd branch: a
+  // read-time inference over stored text, never a fifth persisted status.
+  if (/via plutonium/i.test(flagText)) return "plutonium";
   if (/srd/i.test(flagText)) return "srd";
   return "mine";
 }
