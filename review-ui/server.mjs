@@ -1810,11 +1810,15 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, setRubberDuckMode(body.enabled).rubberDuckMode);
   }
 
-  // POST /api/writeup-propose  { world, dataDir, text, mode }
+  // POST /api/writeup-propose  { world, dataDir, text, mode, framing? }
   // Phase A of the two-phase flow (mirrors wf_propose_from_writeup). Rubber-duck
   // OFF: returns importWriteup()'s own result unchanged, a real batch is created.
   // Rubber-duck ON: returns {phase:'framing', framings, writeupText, mode, rubberDuck} --
-  // no batch created yet.
+  // no batch created yet. Friction Wave 1 (W2d): an optional `framing`
+  // carry-over ({framings, selection, rubberDuck} -- the same body a
+  // writeup-select-framing call carries) skips the framing round entirely on
+  // a resubmit of already-framed material; validated + dispatched by
+  // proposeFromWriteupOp, shared verbatim with the MCP tool.
   if (method === "POST" && parts.length === 2 && parts[1] === "writeup-propose") {
     const body = await readBody(req);
     const dir = resolveDir();
@@ -1826,7 +1830,7 @@ async function handleApi(req, res, url, parts) {
     // degrades to offlineWriteupClient (handles both the rubber-duck-off
     // extraction call and the rubber-duck-on framing call -- see that
     // client's own doc comment) instead of throwing on client construction.
-    const result = await proposeFromWriteupOp(dir, w, { text: body.text, mode: body.mode }, { llmOpts: offlineOpts(offlineWriteupClient) });
+    const result = await proposeFromWriteupOp(dir, w, { text: body.text, mode: body.mode, framing: body.framing }, { llmOpts: offlineOpts(offlineWriteupClient) });
     // QA W3 finding 2: rubber-duck OFF means a real batch landed in one
     // shot -- give it the SAME chronicle-run sidecar a Composer-run batch
     // gets (span/fortuneAtRun/elapsedSessions null -- an intake has no

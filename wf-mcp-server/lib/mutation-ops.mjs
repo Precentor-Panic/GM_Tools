@@ -47,7 +47,9 @@ import {
   QUICK_PICK_REASONS,
   MAX_FRAMING_ROUNDS,
   WriteupImportRegenerateScopeError,
-  FramingRoundLimitError
+  FramingRoundLimitError,
+  // Friction Wave 1 (W2d): framing carry-over validation
+  parseFramingCarryOver
 } from "../../graph-import/writeup-import.mjs";
 import {
   markHumanReviewed,
@@ -737,10 +739,38 @@ export async function regenerateOp(dir, w, { batchId, scope, id, note }, opts = 
  *   no ANTHROPIC_API_KEY is configured. Omitted -> real client construction, byte-identical
  *   to this function's pre-fix behavior (every existing MCP-surface caller, which never
  *   passes this).
+ * FRICTION WAVE 1 (W2d) -- framing carry-over: an optional `framing`
+ * argument ({framings, selection, rubberDuck} -- the exact data
+ * wf_select_framing's writeupText path takes, validated by
+ * writeup-import.mjs's parseFramingCarryOver) skips the rubber-duck phase-A
+ * round ENTIRELY and dispatches straight to selectFramingForNewBatch, so a
+ * resubmit of already-framed material (the split-a-too-dense-writeup case
+ * W2c's fail-fast guidance points at) doesn't re-ask the GM. Two invariants
+ * worth naming:
+ *   - getUserSettings() is NOT read on this path at all. The carried
+ *     `rubberDuck` snapshot came from the ORIGINAL submission's phase-A
+ *     read -- the resubmit is a continuation of that submission, so its
+ *     batch gets the same stamp regardless of any toggle flip since
+ *     (the same carried-state rule wf_select_framing already enforces).
+ *   - the carried framings/selection are recorded on the new batch's
+ *     framingHistory audit trail EXACTLY as a phase-B pick would be --
+ *     selectFramingForNewBatch is reused verbatim, never a second
+ *     record-keeping path.
+ *
  * @returns {Promise<object>} either importWriteup()'s own result shape (rubber-duck off) or
  *   {phase:'framing', framings, writeupText, mode, rubberDuck} (rubber-duck on)
  */
-export async function proposeFromWriteupOp(dir, w, { text: writeupText, mode }, opts = {}) {
+export async function proposeFromWriteupOp(dir, w, { text: writeupText, mode, framing }, opts = {}) {
+  if (framing) {
+    const carried = parseFramingCarryOver(framing); // throws a caller-actionable error on a bad shape
+    return selectFramingForNewBatch(dir, w, {
+      writeupText,
+      mode,
+      framings: carried.framings,
+      selection: carried.selection,
+      rubberDuck: carried.rubberDuck
+    }, opts);
+  }
   const settings = getUserSettings(); // READ ONCE -- see this function's own doc comment
   if (!settings.rubberDuckMode.enabled) {
     const { entities, edges, entityTypes } = loadSnapshot(dir, w).snapshot;

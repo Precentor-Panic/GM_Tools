@@ -471,6 +471,14 @@ server.registerTool(
 
 // --- wf_propose_from_writeup -------------------------------------------------------
 
+// Framing shapes shared by wf_propose_from_writeup's W2d `framing` carry-over
+// and wf_select_framing below (declared here, above both).
+const framingItemSchema = z.object({ id: z.enum(["a", "b", "c"]), sentence: z.string() });
+const framingSelectionSchema = z.object({
+  primary: framingItemSchema.describe("The framing the reviewer picked as primary."),
+  blend: z.string().optional().describe("Optional freeform blend line, e.g. 'also pull in elements of framing C: ...'.")
+});
+
 server.registerTool(
   "wf_propose_from_writeup",
   {
@@ -494,20 +502,37 @@ server.registerTool(
       "writeup-import.mjs's proposeFramingsFromWriteup, a faster/cheaper model tier) and NO batch is created yet. " +
       "Pick one (or blend) and call wf_select_framing next, passing `writeupText`, `framings`, `selection`, and " +
       "the exact `rubberDuck` object echoed back here -- this is a stateless MCP tool call, so the caller carries " +
-      "these values forward rather than this server holding session state.",
+      "these values forward rather than this server holding session state. FRICTION WAVE 1 (W2d) -- resubmitting " +
+      "already-framed material (e.g. after splitting a writeup that hit the W2c truncation fail-fast): pass the " +
+      "optional `framing` argument ({framings, selection, rubberDuck} -- the same values a wf_select_framing call " +
+      "would carry, echoed forward by the caller) to SKIP the phase-A framing round entirely; the extraction runs " +
+      "immediately with that steering, and the carried framings/selection are recorded on the new batch's " +
+      "framingHistory audit trail exactly as a phase-B pick would be. The live rubber-duck setting is NOT re-read " +
+      "on that path -- the carried snapshot stays authoritative for the whole resubmit family.",
     inputSchema: {
       world: worldParam,
       dataDir: dataDirParam,
       text: z.string().min(1).describe("Freeform writeup text to extract graph entities/edges from."),
-      mode: z.enum(["merge", "replace"]).optional().describe("Passed through to importGraph's dry-run preview. Default 'merge'.")
+      mode: z.enum(["merge", "replace"]).optional().describe("Passed through to importGraph's dry-run preview. Default 'merge'."),
+      framing: z
+        .object({
+          framings: z.array(framingItemSchema).length(3).describe("The 3 framings originally shown to the reviewer -- recorded on the audit trail."),
+          selection: framingSelectionSchema,
+          rubberDuck: z.object({ enabled: z.boolean(), updatedAt: z.string().nullable() }).describe("The settings snapshot echoed back by the ORIGINAL phase-A response.")
+        })
+        .optional()
+        .describe(
+          "W2d framing carry-over: a framing/steering selection already made for this material -- skips the " +
+          "rubber-duck phase-A round entirely on a resubmit (split or rephrased writeup) instead of re-asking the GM."
+        )
     }
   },
-  async ({ world, dataDir, text: writeupText, mode }) => {
+  async ({ world, dataDir, text: writeupText, mode, framing }) => {
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
       // Keyless safety -- see lib/offline-clients.mjs.
-      const result = await proposeFromWriteupOp(dir, w, { text: writeupText, mode }, { llmOpts: offlineOpts(offlineWriteupClient) });
+      const result = await proposeFromWriteupOp(dir, w, { text: writeupText, mode, framing }, { llmOpts: offlineOpts(offlineWriteupClient) });
       return text(result);
     } catch (err) {
       return errorText(err);
@@ -516,12 +541,6 @@ server.registerTool(
 );
 
 // --- wf_select_framing (Phase 8) ----------------------------------------------------
-
-const framingItemSchema = z.object({ id: z.enum(["a", "b", "c"]), sentence: z.string() });
-const framingSelectionSchema = z.object({
-  primary: framingItemSchema.describe("The framing the reviewer picked as primary."),
-  blend: z.string().optional().describe("Optional freeform blend line, e.g. 'also pull in elements of framing C: ...'.")
-});
 
 server.registerTool(
   "wf_select_framing",

@@ -292,6 +292,55 @@ const FramingsResponse = z
     message: "framings must have exactly the id set {\"a\",\"b\",\"c\"}, one each, no duplicates"
   });
 
+// Friction Wave 1 (W2d): the pre-supplied framing carry-over shape a caller
+// passes to wf_propose_from_writeup to SKIP the rubber-duck phase-A round on
+// a resubmit of already-framed material (the Kilmarn seed-3 second-order
+// friction: after splitting a too-dense writeup, each half re-triggered a
+// framing round the GM had already answered). Deliberately the EXACT data
+// wf_select_framing's writeupText path already takes -- the caller echoes
+// state forward, the server holds none (the established stateless
+// carry-forward design): the 3 framings originally shown, the GM's
+// selection, and the rubberDuck settings snapshot echoed by the ORIGINAL
+// phase-A response.
+const FramingCarryOverSchema = z.object({
+  framings: z
+    .array(FramingItem)
+    .length(3)
+    .refine((arr) => new Set(arr.map((f) => f.id)).size === 3, {
+      message: "framings must have exactly the id set {\"a\",\"b\",\"c\"}, one each, no duplicates"
+    }),
+  selection: z.object({
+    primary: FramingItem,
+    blend: z.string().optional()
+  }),
+  rubberDuck: z.object({
+    enabled: z.boolean(),
+    updatedAt: z.string().nullable()
+  })
+});
+
+/**
+ * W2d: validate a framing carry-over object, throwing a caller-actionable
+ * error (which fields, what's wrong) rather than letting a malformed shape
+ * corrupt the batch's framingHistory audit trail downstream. Returns the
+ * validated (zod-stripped) value.
+ *
+ * @param {object} framing  {framings, selection, rubberDuck}
+ * @returns {{framings:Array, selection:object, rubberDuck:object}}
+ */
+export function parseFramingCarryOver(framing) {
+  const result = FramingCarryOverSchema.safeParse(framing);
+  if (!result.success) {
+    const issues = result.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
+    throw new Error(
+      `Invalid \`framing\` carry-over: ${issues}. Expected the exact shape wf_select_framing's writeupText path ` +
+      `takes -- {framings: [the 3 framings originally shown], selection: {primary: {id, sentence}, blend?}, ` +
+      `rubberDuck: the settings snapshot echoed by the original phase-A response}.`
+    );
+  }
+  return result.data;
+}
+
 function fillTemplate(vars) {
   return fillTemplateShared(PROMPT_TEMPLATE, vars);
 }
