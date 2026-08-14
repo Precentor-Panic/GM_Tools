@@ -1158,7 +1158,14 @@ export async function renderChronicleSurface(arg) {
         clearTimeout(slowNotice);
         state.batchStatus = "synced";
         state.resyncNeeded = false;
-        statusEl.textContent = `Applied ${result.syncedCount ?? 0} to the world (${result.path ?? "?"}).`;
+        // W2e: an accepted edge whose endpoint create was rejected/removed
+        // gets a flagged "Unresolved: <ref>" placeholder at apply time --
+        // say so instead of letting the stub surface silently later.
+        const stubs = Array.isArray(result.unresolvedStubs) ? result.unresolvedStubs : [];
+        const stubWarning = stubs.length
+          ? ` ⚠ ${stubs.length} edge endpoint${stubs.length === 1 ? "" : "s"} couldn't be resolved — placeholder ${stubs.length === 1 ? "stub" : "stubs"} named ${stubs.map((s) => `“${s.name}”`).join(", ")} (tagged unresolved-reference) created; re-point or delete ${stubs.length === 1 ? "it" : "them"} in the World tab.`
+          : "";
+        statusEl.textContent = `Applied ${result.syncedCount ?? 0} to the world (${result.path ?? "?"}).${stubWarning}`;
         btn.textContent = "Apply to world";
         btn.removeAttribute("aria-disabled");
         paintApplyBanner();

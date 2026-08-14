@@ -56,6 +56,21 @@ import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.
 
 export const SNAPSHOT_SCHEMA_VERSION = 1;
 
+// Friction Wave 1 (W2e): the shape of every internal id this codebase mints
+// (interchange.mjs's defaultMakeId / makeIdGenerator below, both
+// `wf_<ts36>_<n36>`) -- used to tell "a dangling internal id" apart from "a
+// legitimate name ref" when an edge endpoint resolves to nothing. A stub
+// minted for an id-like ref must NEVER be named by that raw id.
+export const INTERNAL_ID_LIKE_RE = /^wf_[a-z0-9]+_[a-z0-9]+$/i;
+
+/** The tag stamped on a W2e placeholder stub, so review/world surfaces can flag it. */
+export const UNRESOLVED_REFERENCE_TAG = "unresolved-reference";
+
+/** The legible display name for a stub minted from an unresolved raw reference. */
+export function unresolvedStubName(ref) {
+  return `Unresolved: ${ref}`;
+}
+
 // World Fabric's own CORE_ENTITY_TYPES (constants.mjs) -- the same default a
 // brand-new in-Foundry world seeds its entityTypes setting with (see
 // module.mjs's game.settings.register default). JSON round-tripped rather
@@ -301,6 +316,56 @@ function runApplyHeadless(snapshotPath, mutations) {
     }
   });
 
+  // -------------------------------------------------------------------------
+  // Friction Wave 1 (W2e): legible stubs for unresolved INTERNAL-ID edge
+  // endpoints. importGraph's resolveEndpoint treats any unresolvable ref as
+  // a NAME and mints a stub entity literally named after it -- fine for a
+  // genuine name ref ("Underbreach"), but an accepted edge whose endpoint
+  // CREATE was rejected/removed carries a dangling internal id, and the
+  // real kilmarn world ended up with an entity named "wf_mssa9fia_0" (the
+  // rejected "Master Vane" create's pre-assigned id). Pre-scan the merged
+  // edges for refs that resolve to nothing and LOOK like internal ids
+  // (never a legitimate name), and mint the stub ourselves: named
+  // "Unresolved: <ref>", tagged 'unresolved-reference' for review surfaces,
+  // and -- deliberately -- with id EQUAL to the dangling ref, so (a) the
+  // edge wires to it with no rewrite, and (b) if the original create is
+  // ever synced later, importGraph's id match merges the real entity ONTO
+  // this stub, healing it in place instead of leaving a duplicate.
+  // Name-like refs keep importGraph's own existing stub-by-name behavior
+  // untouched. Reported back as `unresolvedStubs` so callers (syncOp) can
+  // surface the flag in review.
+  // -------------------------------------------------------------------------
+  const resolvableIds = new Set([...entityMap.keys(), ...wfiEntities.map((e) => e.id).filter(Boolean)]);
+  const resolvableNames = new Set(
+    [...existing.entities ?? [], ...wfiEntities]
+      .map((e) => (e?.name ? String(e.name).trim().toLowerCase() : null))
+      .filter(Boolean)
+  );
+  const unresolvedStubs = [];
+  for (const edge of wfiEdges) {
+    for (const key of ["sourceId", "targetId"]) {
+      const ref = edge[key];
+      if (!ref || resolvableIds.has(ref)) continue;
+      if (resolvableNames.has(String(ref).trim().toLowerCase())) continue;
+      if (!INTERNAL_ID_LIKE_RE.test(String(ref))) continue; // a name-like ref: importGraph's own legible stub-by-name behavior stands
+      const stub = {
+        id: ref,
+        name: unresolvedStubName(ref),
+        type: "object",
+        importance: 0.1,
+        tags: [UNRESOLVED_REFERENCE_TAG],
+        description:
+          `Placeholder created at apply time: an accepted edge referenced the id "${ref}", but no entity with ` +
+          `that id exists in the graph (its create was likely rejected or removed before sync). Re-point the ` +
+          `edge to the right entity, or delete this stub.`
+      };
+      wfiEntities.push(stub);
+      resolvableIds.add(ref);
+      resolvableNames.add(stub.name.trim().toLowerCase());
+      unresolvedStubs.push({ id: ref, name: stub.name, ref });
+    }
+  }
+
   const wfi = { version: 1, entities: wfiEntities, edges: wfiEdges, entityTypes: wfiEntityTypes };
   const result = importGraph(wfi, existing, { mode: "merge", makeId });
 
@@ -376,6 +441,10 @@ function runApplyHeadless(snapshotPath, mutations) {
     deletedEdgeCount: result.edges.length - finalEdges.length,
     skipped,
     idAssignments,
-    idResolution
+    idResolution,
+    // W2e: placeholder stubs minted for dangling internal-id edge endpoints
+    // (see the pre-scan above) -- empty array in the common case. Callers
+    // that surface apply results to a human (syncOp) should flag these.
+    unresolvedStubs
   };
 }

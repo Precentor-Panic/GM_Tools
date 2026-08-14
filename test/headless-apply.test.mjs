@@ -445,6 +445,80 @@ test("applyHeadless: a held lock (a concurrent sync, or a crashed process) rejec
   assert.equal(result.summary.entitiesCreated, 1);
 });
 
+// ------------------------------------------------ W2e: unresolved-endpoint stubs
+
+test("W2e: an accepted edge with a dangling internal-id endpoint gets a legible 'Unresolved: <ref>' stub, tagged and reported -- never a bare id as a name", () => {
+  const snapshotPath = join(scratchDir, "worlds", "w2e-dangling", "world-fabric-snapshot.json");
+  bootstrapSnapshot(snapshotPath, { worldId: "w2e-dangling" });
+  applyHeadless(snapshotPath, [
+    { op: "upsert_entity", data: { id: "wf_real_0", name: "The Lowway", type: "place" } }
+  ]);
+  // The real kilmarn shape: the "Master Vane" create (pre-assigned id
+  // wf_mssa9fia_0) was rejected, but an accepted edge still references it.
+  const result = applyHeadless(snapshotPath, [
+    { op: "upsert_edge", data: { sourceId: "wf_mssa9fia_0", targetId: "wf_real_0", relationshipType: "presence" } }
+  ]);
+
+  assert.deepEqual(result.unresolvedStubs, [
+    { id: "wf_mssa9fia_0", name: "Unresolved: wf_mssa9fia_0", ref: "wf_mssa9fia_0" }
+  ]);
+
+  const snap = JSON.parse(readFileSync(snapshotPath, "utf8")).snapshot;
+  const stub = snap.entities.find((e) => e.id === "wf_mssa9fia_0");
+  assert.ok(stub, "stub exists under the dangling id (so a later sync of the real create heals it in place)");
+  assert.equal(stub.name, "Unresolved: wf_mssa9fia_0", "legible flagged name -- the raw id never becomes a name");
+  assert.ok(stub.tags.includes("unresolved-reference"), "tagged for review/world surfaces");
+  assert.ok(!snap.entities.some((e) => e.name === "wf_mssa9fia_0"), "no entity anywhere named by the bare id");
+
+  const edge = snap.edges.find((e) => e.targetId === "wf_real_0");
+  assert.equal(edge.sourceId, "wf_mssa9fia_0", "the edge wires to the stub, not skipped");
+});
+
+test("W2e: a later sync of the original create heals the stub in place (merge by id), leaving no duplicate", () => {
+  const snapshotPath = join(scratchDir, "worlds", "w2e-heal", "world-fabric-snapshot.json");
+  bootstrapSnapshot(snapshotPath, { worldId: "w2e-heal" });
+  applyHeadless(snapshotPath, [
+    { op: "upsert_entity", data: { id: "wf_real_0", name: "The Lowway", type: "place" } },
+    { op: "upsert_edge", data: { sourceId: "wf_mssb0aaa_0", targetId: "wf_real_0", relationshipType: "presence" } }
+  ]);
+  // The GM later un-rejects/re-proposes the create with the SAME pre-assigned id.
+  applyHeadless(snapshotPath, [
+    { op: "upsert_entity", id: "wf_mssb0aaa_0", data: { name: "Master Aldric Vane", type: "person", description: "Guildmaster." } }
+  ]);
+  const snap = JSON.parse(readFileSync(snapshotPath, "utf8")).snapshot;
+  const healed = snap.entities.filter((e) => e.id === "wf_mssb0aaa_0");
+  assert.equal(healed.length, 1);
+  assert.equal(healed[0].name, "Master Aldric Vane", "the real entity replaced the placeholder name");
+  assert.ok(!snap.entities.some((e) => String(e.name).startsWith("Unresolved:")), "no placeholder left behind");
+});
+
+test("W2e: a NAME-like dangling ref keeps importGraph's own legible stub-by-name behavior (no 'Unresolved:' prefix, not reported)", () => {
+  const snapshotPath = join(scratchDir, "worlds", "w2e-name-ref", "world-fabric-snapshot.json");
+  bootstrapSnapshot(snapshotPath, { worldId: "w2e-name-ref" });
+  applyHeadless(snapshotPath, [
+    { op: "upsert_entity", data: { id: "wf_real_0", name: "The Lowway", type: "place" } }
+  ]);
+  const result = applyHeadless(snapshotPath, [
+    { op: "upsert_edge", data: { sourceId: "The Underbreach", targetId: "wf_real_0", relationshipType: "containment" } }
+  ]);
+  assert.deepEqual(result.unresolvedStubs, [], "a name ref is a normal WFI stub, not a W2e placeholder");
+  const snap = JSON.parse(readFileSync(snapshotPath, "utf8")).snapshot;
+  assert.ok(snap.entities.some((e) => e.name === "The Underbreach"), "importGraph's stub-by-name behavior unchanged");
+});
+
+test("W2e: resolvable endpoints (by id or by name, existing or same-call) mint no stubs at all", () => {
+  const snapshotPath = join(scratchDir, "worlds", "w2e-resolvable", "world-fabric-snapshot.json");
+  bootstrapSnapshot(snapshotPath, { worldId: "w2e-resolvable" });
+  const result = applyHeadless(snapshotPath, [
+    { op: "upsert_entity", data: { id: "wf_a_0", name: "A", type: "place" } },
+    { op: "upsert_entity", data: { id: "wf_b_0", name: "B", type: "place" } },
+    { op: "upsert_edge", data: { sourceId: "wf_a_0", targetId: "wf_b_0", relationshipType: "containment" } }
+  ]);
+  assert.deepEqual(result.unresolvedStubs, []);
+  const snap = JSON.parse(readFileSync(snapshotPath, "utf8")).snapshot;
+  assert.equal(snap.entities.length, 2, "exactly the two real entities, no stubs");
+});
+
 console.log(`\n${passed} passed`);
 
 process.on("exit", () => {

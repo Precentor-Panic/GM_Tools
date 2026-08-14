@@ -1370,6 +1370,11 @@ export async function syncOp(dir, w, { batchId }) {
     deletedEdgeCount: headlessResult.deletedEdgeCount,
     skipped: headlessResult.skipped,
     ...(Object.keys(idAssignments).length ? { idAssignments } : {}),
+    // W2e: placeholder stubs minted for dangling internal-id edge endpoints
+    // (an accepted edge whose endpoint create was rejected/removed) --
+    // named "Unresolved: <ref>" + tagged, never a bare id-as-name. Omitted
+    // when none were needed (the common case).
+    ...(headlessResult.unresolvedStubs?.length ? { unresolvedStubs: headlessResult.unresolvedStubs } : {}),
     note:
       "No live Foundry client picked up the mutation within the poll window; applied directly to the standalone " +
       "snapshot instead. If a live Foundry client for this world reopens later, its own export will overwrite " +

@@ -48,6 +48,10 @@ import { summarizeBatch, renderHeadline } from "../mutation-engine/grain.mjs";
 import { attachDiffs } from "../time-skip/run.mjs";
 import { importGraph, WFI_VERSION } from "../../foundry_worldFabric/scripts/data/interchange.mjs";
 import { nameNearMatchScore } from "./name-similarity.mjs";
+// Friction Wave 1 (W2e): shared "never name a stub by a raw internal id"
+// primitives -- one definition, used by both this preview path and
+// headless-apply.mjs's apply-time stub minting.
+import { INTERNAL_ID_LIKE_RE, UNRESOLVED_REFERENCE_TAG, unresolvedStubName } from "./headless-apply.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPT_TEMPLATE = readFileSync(join(__dirname, "..", "prompts", "writeup-import.md"), "utf8");
@@ -916,17 +920,34 @@ export function previewWriteupImport(proposal, existingSnapshot, opts = {}) {
   const stubMutations = [];
   for (const e of result.entities) {
     if (existingEntityIdSet.has(e.id) || matchedResultIds.has(e.id)) continue;
+    // Friction Wave 1 (W2e): a stub is normally named after the NAME the
+    // edge referenced ("Underbreach") -- legible, keep it. But if the
+    // referenced string is itself an internal id (a defensive guard: the
+    // real kilmarn occurrence came through the APPLY path, fixed in
+    // headless-apply.mjs, and the preview path must uphold the same "never
+    // a bare internal id as a name" rule), rename it legibly and tag it so
+    // the review card flags it instead of presenting "wf_mssa9fia_0" as if
+    // it were a name.
+    const idLikeName = INTERNAL_ID_LIKE_RE.test(String(e.name ?? ""));
+    const data = entityMutationData(e);
+    if (idLikeName) {
+      data.name = unresolvedStubName(e.name);
+      data.tags = [...new Set([...(data.tags ?? []), UNRESOLVED_REFERENCE_TAG])];
+    }
     stubMutations.push({
       op: "upsert_entity",
       id: e.id,
-      data: entityMutationData(e),
-      rationale:
-        `Stub entity auto-created because "${e.name}" is referenced by an edge in the writeup but not otherwise ` +
-        `described — matches importGraph's existing referenced-but-undescribed-endpoint behavior.`,
+      data,
+      rationale: idLikeName
+        ? `An edge in the writeup references "${e.name}", which looks like an internal id rather than a name — ` +
+          `nothing in the graph or this proposal resolves it. Created as a flagged placeholder; re-point the ` +
+          `edge or reject this stub.`
+        : `Stub entity auto-created because "${e.name}" is referenced by an edge in the writeup but not otherwise ` +
+          `described — matches importGraph's existing referenced-but-undescribed-endpoint behavior.`,
       batchId: "placeholder",
       sourceKind: "writeup-import",
       regionId: WRITEUP_IMPORT_REGION_ID,
-      entityContext: { name: e.name, importance: e.importance, tags: e.tags }
+      entityContext: { name: data.name, importance: e.importance, tags: data.tags, ...(idLikeName ? { unresolvedStub: true } : {}) }
     });
   }
 

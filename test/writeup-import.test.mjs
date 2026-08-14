@@ -868,6 +868,30 @@ test("resolveRejectLoop: neither note nor quickPickReason throws a clear error",
   await assert.rejects(resolveRejectLoop(batch, {}, {}), /requires either an explicit `note` or a `quickPickReason`/);
 });
 
+test("W2e (preview path): a stub whose referenced 'name' is really an internal id gets a legible 'Unresolved:' name + flag, never the bare id", () => {
+  // Defensive guard for the preview path (the real kilmarn occurrence came
+  // through the apply path, fixed in headless-apply.mjs): an edge endpoint
+  // string that LOOKS like a minted internal id must never surface as an
+  // entity name on a review card.
+  const proposal = {
+    entities: [{ name: "Alvor", type: "person", rationale: "The smith." }],
+    edges: [
+      { source: "Alvor", target: "wf_stale99_0", relationshipType: "presence", rationale: "Dangling id-like ref." }
+    ]
+  };
+  const { mutations } = previewWriteupImport(proposal, { entities: [], edges: [], entityTypes: [] });
+  const stub = mutations.find((m) => m.op === "upsert_entity" && m.data.name !== "Alvor");
+  assert.ok(stub, "a stub is still created for the unresolvable endpoint");
+  assert.equal(stub.data.name, "Unresolved: wf_stale99_0", "legible flagged name");
+  assert.ok(stub.data.tags.includes("unresolved-reference"), "tagged for the review card");
+  assert.equal(stub.entityContext.unresolvedStub, true);
+  assert.equal(stub.entityContext.name, "Unresolved: wf_stale99_0");
+  assert.match(stub.rationale, /looks like an internal id/);
+  // A NORMAL name-referenced stub keeps its legible referenced name (the
+  // sibling test above already covers this; re-assert the discriminator).
+  assert.ok(!mutations.some((m) => m.data?.name === "wf_stale99_0"), "the bare id never appears as a name");
+});
+
 await Promise.all(pending);
 console.log(`\n${passed} passed`);
 

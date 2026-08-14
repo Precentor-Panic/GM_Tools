@@ -200,6 +200,57 @@ await test('wf_sync_to_foundry: "Foundry open" (a background watcher clears the 
   assert.equal(batch.status, "synced");
 });
 
+await test("W2e: syncing an accepted edge whose endpoint create was rejected reports unresolvedStubs, and the stub lands legibly named + tagged (never a bare id)", async () => {
+  // Reset the mutations file so this test's own headless fallback isn't
+  // confused by the previous test's leftovers.
+  writeFileSync(mutPath, "[]", "utf8");
+
+  // The real kilmarn shape, through the REAL review pipeline: a
+  // writeup-import batch pre-assigned an id to a create; the create was
+  // rejected but its edge accepted; syncing applies only the edge.
+  const danglingId = "wf_w2etest_0";
+  const batchId = "batch_sync_test_w2e";
+  const batch = createBatch(
+    WORLD,
+    { mode: "writeup-import", text: "seed" },
+    undefined,
+    [
+      {
+        op: "upsert_entity",
+        id: danglingId,
+        data: { name: "Master Vane", type: "person" },
+        rationale: "will be rejected",
+        batchId: "placeholder",
+        sourceKind: "writeup-import",
+        regionId: "writeup-import"
+      },
+      {
+        op: "upsert_edge",
+        data: { sourceId: danglingId, targetId: "alvor", relationshipType: "presence" },
+        rationale: "will be accepted",
+        batchId: "placeholder",
+        sourceKind: "writeup-import",
+        regionId: "writeup-import"
+      }
+    ],
+    { makeId: () => batchId }
+  );
+  const entities = [{ id: "alvor", name: "Alvor", type: "person", importance: currentAlvorImportance() }];
+  acceptMutations(WORLD, batchId, [batch.mutations[1].mutationId], entities, []);
+
+  const result = await callSync(batchId);
+  assert.equal(result.path, "headless");
+  assert.deepEqual(result.unresolvedStubs, [
+    { id: danglingId, name: `Unresolved: ${danglingId}`, ref: danglingId }
+  ], "the sync result surfaces the flagged stub for review");
+
+  const snap = JSON.parse(readFileSync(snapPath, "utf8")).snapshot;
+  const stub = snap.entities.find((e) => e.id === danglingId);
+  assert.equal(stub.name, `Unresolved: ${danglingId}`);
+  assert.ok(stub.tags.includes("unresolved-reference"));
+  assert.ok(!snap.entities.some((e) => e.name === danglingId), "no entity named by the raw id anywhere");
+});
+
 await client.close();
 console.log(`\n${passed} passed`);
 
