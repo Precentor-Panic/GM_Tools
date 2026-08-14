@@ -21,7 +21,11 @@
 // 560px panel sections). Route contract: plans/phase-34-tasks.md §"Pre-
 // specified route/store contract" (all routes live as of 34.1).
 "use strict";
-import { isValidWorldId, slugifyWorldId } from "./world-id.js";
+// W6a: the shared attach-or-create picker replaces both this panel's old
+// bare create-world block (disconnected card) AND its snapshot-only world-
+// switch list (connected card) — one world surface, per the friction log's
+// "the two world lists should probably be one surface".
+import { renderWorldPicker } from "./world-picker.js";
 // QA W3 finding 2: the one-shot hash/session handoff into Chronicle's own
 // "Receive new information" -- see chronicle-view.js's own header comment
 // for the full idiom this mirrors (34.2's queued-open-request pattern +
@@ -357,58 +361,18 @@ function renderFoundrySection() {
     card.appendChild(el("div", { class: "conn-noconn-body" },
       "The World Fabric module in Foundry writes the bridge files this reads — open a world there and a sync brings its bestiary and party in as proposals. You can also start from lore alone; stat blocks can come later."));
 
-    // Create-World (moved here from the retired #settings view — the launcher's
-    // first-run lands on #settings, which now redirects to this panel).
+    // W6a: the attach-or-create picker (was: a bare "Start a fresh world"
+    // create block — the exact surface the kilmarn friction entry hit, no
+    // way to point at an EXISTING Foundry world folder). Same POST
+    // /api/worlds flow underneath; world-picker.js owns rows + fallback.
     const cw = el("div", { class: "conn-create-world" });
-    cw.appendChild(el("div", { class: "conn-create-world-label" }, "Start a fresh world"));
-    const row = el("div", { class: "conn-create-world-row" });
-    const input = el("input", { type: "text", class: "conn-create-world-input", "data-testid": "conn-create-world-input", placeholder: "world id, e.g. my-campaign" });
-    const btn = el("button", { type: "button", class: "conn-create-world-btn", "data-testid": "conn-create-world-btn" }, "Create world");
-    const status = el("div", { class: "conn-create-world-status" });
-    // QA W2 fix (Group C #14): "My First Campaign" used to round-trip to a
-    // server 400 mentioning "directory names" -- validate + auto-suggest a
-    // slug client-side instead, live as they type.
-    const hint = el("div", { class: "conn-create-world-status", "data-testid": "conn-create-world-hint" });
-    let suggestedSlug = "";
-    function refreshHint() {
-      const raw = input.value.trim();
-      if (!raw || isValidWorldId(raw)) { hint.textContent = ""; suggestedSlug = ""; return; }
-      suggestedSlug = slugifyWorldId(raw);
-      hint.textContent = suggestedSlug
-        ? `Only lowercase letters, digits, hyphens, and underscores — try "${suggestedSlug}"?`
-        : "Only lowercase letters, digits, hyphens, and underscores.";
-    }
-    input.addEventListener("input", refreshHint);
-    btn.addEventListener("click", async () => {
-      let id = input.value.trim();
-      if (!id) { status.textContent = "Enter a world id first."; return; }
-      if (!isValidWorldId(id)) {
-        // Same two-step clarity precedent as the planner's "Create place"
-        // flow: the first click applies the suggested fix and asks for
-        // confirmation rather than either silently mutating or bluntly
-        // rejecting what was typed.
-        if (suggestedSlug && suggestedSlug !== id) {
-          input.value = suggestedSlug;
-          refreshHint();
-          status.textContent = `Cleaned up to "${suggestedSlug}" — click Create world again to confirm.`;
-          return;
-        }
-        status.textContent = "Only lowercase letters, digits, hyphens, and underscores are allowed.";
-        return;
-      }
-      status.textContent = "Creating…";
-      try {
-        const result = await cmApi("/api/worlds", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ world: id })
-        });
-        selectWorld(result.world);
-        status.textContent = `Created "${result.world}" and selected it.`;
-        renderPanel();
-      } catch (err) { status.textContent = `Create failed: ${err.message}`; }
+    cw.appendChild(el("div", { class: "conn-create-world-label" }, "Pick a world on disk — or start a fresh one"));
+    const pickerHost = el("div", { class: "conn-world-picker" });
+    cw.appendChild(pickerHost);
+    renderWorldPicker(pickerHost, {
+      currentWorld: currentWorld(),
+      onPicked: (worldId) => { selectWorld(worldId); refreshConnectionChip().then(() => { if (panelOpen) renderPanel(); }); }
     });
-    row.append(input, btn);
-    cw.append(row, hint, status);
     card.appendChild(cw);
     sec.appendChild(card);
   }
@@ -416,16 +380,19 @@ function renderFoundrySection() {
 }
 
 function renderWorldSwitchList() {
+  // W6a: the switch list IS the shared picker now — snapshot worlds select,
+  // snapshotless Foundry folders attach, new-id creation is the fallback.
+  // Previously this listed only snapshot-bearing worlds, the "second world
+  // list" the friction log said should be one surface.
   const list = el("div", { class: "conn-world-switch", "data-testid": "conn-world-switch-list" });
-  cmApi("/api/worlds").then(({ worlds }) => {
-    list.innerHTML = "";
-    const cur = currentWorld();
-    for (const w of worlds || []) {
-      const row = el("div", { class: "conn-world-switch-row" + (w === cur ? " conn-world-switch-row--active" : "") }, w);
-      row.addEventListener("click", () => { selectWorld(w); panelState.worldsOpen = false; refreshConnectionChip().then(renderPanel); });
-      list.appendChild(row);
+  renderWorldPicker(list, {
+    currentWorld: currentWorld(),
+    onPicked: (worldId) => {
+      selectWorld(worldId);
+      panelState.worldsOpen = false;
+      refreshConnectionChip().then(() => { if (panelOpen) renderPanel(); });
     }
-  }).catch(() => { /* leave empty */ });
+  });
   return list;
 }
 

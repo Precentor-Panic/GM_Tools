@@ -23,7 +23,7 @@ import { renderWorldSurface as renderWorldSurfaceView, clearWorldTopbar } from "
 import { mountConnectionChip } from "./connection-menu.js";
 import { renderLibrarySurface } from "./library-view.js";
 import { renderChronicleSurface } from "./chronicle-view.js";
-import { isValidWorldId, slugifyWorldId } from "./world-id.js";
+import { renderWorldPicker } from "./world-picker.js";
 
 // ---------------------------------------------------------------------------
 // local api/world helpers (same standalone convention as plans-view.js)
@@ -705,61 +705,30 @@ async function renderNoWorldLanding(wrapper) {
     return;
   }
 
+  // W6a: the shared attach-or-create picker (world-picker.js) replaces the
+  // old create-only input. With zero GM_Tools worlds but real Foundry world
+  // folders on disk (the exact kilmarn first-run), the landing now OFFERS
+  // those folders to attach instead of asking for a brand-new id — the
+  // create fallback is the picker's own bottom row.
   const card = el("div", { class: "planner-empty-cta", "data-testid": "planner-create-world-cta" });
   const title = el("div", { class: "planner-empty-cta-title" });
-  title.textContent = "Create your first world";
+  title.textContent = "Pick or create your first world";
   card.appendChild(title);
   const desc = el("p", { class: "hint" });
-  desc.textContent = "For a genuinely new campaign with no prior Foundry world at all. Creates an empty standalone snapshot, immediately selectable and ready to use.";
+  desc.textContent = "Attach an existing Foundry world from disk, or create a fresh standalone one — either way it's immediately selectable and ready to use.";
   card.appendChild(desc);
-  const row = el("div", { class: "planner-empty-cta-row" });
-  const input = el("input", { type: "text", class: "planner-empty-cta-input", "data-testid": "planner-create-world-input", placeholder: "world id, e.g. my-campaign" });
-  const btn = el("button", { type: "button", class: "btn btn--accept", "data-testid": "planner-create-world-btn" });
-  btn.textContent = "Create a world";
-  const status = el("div", { class: "hint", "data-testid": "planner-create-world-status" });
-  // QA W2 fix (Group C #14): same client-side validate + auto-slug-suggest
-  // as connection-menu.js's own create-world panel (world-id.js, shared).
-  let suggestedSlug = "";
-  function refreshHint() {
-    const raw = input.value.trim();
-    if (!raw || isValidWorldId(raw)) { status.textContent = ""; suggestedSlug = ""; return; }
-    suggestedSlug = slugifyWorldId(raw);
-    status.textContent = suggestedSlug
-      ? `Only lowercase letters, digits, hyphens, and underscores — try "${suggestedSlug}"?`
-      : "Only lowercase letters, digits, hyphens, and underscores.";
-  }
-  input.addEventListener("input", refreshHint);
-  btn.addEventListener("click", async () => {
-    let id = input.value.trim();
-    if (!id) { status.textContent = "Enter a world id first."; return; }
-    if (!isValidWorldId(id)) {
-      if (suggestedSlug && suggestedSlug !== id) {
-        input.value = suggestedSlug;
-        refreshHint();
-        status.textContent = `Cleaned up to "${suggestedSlug}" — click Create a world again to confirm.`;
-        return;
-      }
-      status.textContent = "Only lowercase letters, digits, hyphens, and underscores are allowed.";
-      return;
-    }
-    btn.disabled = true;
-    status.textContent = "Creating…";
-    try {
-      const result = await shApi("/api/worlds", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ world: id })
-      });
-      localStorage.setItem("gmReview.world", result.world);
+  const pickerHost = el("div", { class: "planner-empty-cta-picker" });
+  card.appendChild(pickerHost);
+  renderWorldPicker(pickerHost, {
+    currentWorld: null,
+    createLabel: "Create a world",
+    onPicked: (worldId) => {
+      localStorage.setItem("gmReview.world", worldId);
       worldOptionsBuilt = false; // force the topbar picker to refetch and include the new world
       const { view, arg } = currentShellRoute();
       renderShell(view, arg);
-    } catch (err) {
-      status.textContent = `Could not create world: ${friendlyErrorMessage(err.message)}`;
-      btn.disabled = false;
     }
   });
-  row.append(input, btn);
-  card.append(row, status);
   wrapper.appendChild(card);
 }
 

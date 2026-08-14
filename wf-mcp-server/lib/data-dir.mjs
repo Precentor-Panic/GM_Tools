@@ -31,12 +31,29 @@ export function resolveDataDir(explicit) {
   return null;
 }
 
-/** List world IDs under dataDir that have an active World Fabric snapshot. */
-export function listWorlds(dataDir) {
+/**
+ * W6a: the ONE notion of "worlds on disk". Every world directory under
+ * dataDir/worlds, each flagged with whether a World Fabric snapshot exists
+ * (hasSnapshot: true = already a GM_Tools world, selectable as-is;
+ * false = a plain Foundry world folder that can be ATTACHED by
+ * bootstrapping a snapshot into it — the exact case the kilmarn friction
+ * log hit: a real Foundry world with no way to point GM_Tools at it).
+ * listWorlds() below is a filter over this, never a second directory scan.
+ */
+export function listWorldDirs(dataDir) {
   const worldsDir = join(dataDir, "worlds");
   if (!existsSync(worldsDir)) return [];
   return readdirSync(worldsDir, { withFileTypes: true })
     .filter((d) => d.isDirectory())
-    .map((d) => d.name)
-    .filter((name) => existsSync(join(worldsDir, name, "world-fabric-snapshot.json")));
+    .map((d) => ({
+      id: d.name,
+      hasSnapshot: existsSync(join(worldsDir, d.name, "world-fabric-snapshot.json"))
+    }));
+}
+
+/** List world IDs under dataDir that have an active World Fabric snapshot. */
+export function listWorlds(dataDir) {
+  return listWorldDirs(dataDir)
+    .filter((w) => w.hasSnapshot)
+    .map((w) => w.id);
 }

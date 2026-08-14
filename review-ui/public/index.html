@@ -184,14 +184,14 @@
     <button class="link-btn" data-nav="graph">Explore Graph &rarr;</button>
   </div>
 
+  <!-- W6a: the create-world card that lived here (Task 14.2) is superseded by
+       the shared attach-or-create world picker (world-picker.js), mounted in
+       the Connection Menu panel (gear chip) and the zero-worlds landing. This
+       legacy #settings view is unreachable since Phase 34's redirect, so the
+       dead form + its app.js listener were removed rather than left to drift. -->
   <div class="settings-card">
-    <h2 class="section-label">Create New World</h2>
-    <p class="hint">For a genuinely new campaign with no prior Foundry world at all. Creates an empty standalone snapshot, immediately selectable and usable for New Import.</p>
-    <div class="new-world-row">
-      <input id="new-world-id" type="text" placeholder="world id, e.g. my-campaign">
-      <button id="btn-create-world" class="btn btn--accept">Create World</button>
-    </div>
-    <div id="new-world-status" class="hint"></div>
+    <h2 class="section-label">Worlds</h2>
+    <p class="hint">Attach an existing Foundry world or create a new one from the &#9881; Connection menu in the top bar.</p>
   </div>
 
   <div class="settings-card">

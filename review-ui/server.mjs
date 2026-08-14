@@ -68,7 +68,11 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, extname, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { listWorlds } from "../wf-mcp-server/lib/data-dir.mjs";
+import { listWorldDirs } from "../wf-mcp-server/lib/data-dir.mjs";
+
+// W6a: the server-side world-id floor (POST /api/worlds' own long-standing
+// rule, now also the source of GET /api/worlds' per-dir `attachable` flag).
+const WORLD_ID_RE = /^[a-zA-Z0-9_-]+$/;
 import { loadSnapshot, snapshotFilePath } from "../wf-mcp-server/lib/snapshot.mjs";
 import { resolveWorld, resolveDir } from "../wf-mcp-server/lib/resolve.mjs";
 import { findEntity, neighborhood } from "../wf-mcp-server/lib/graph.mjs";
@@ -1086,12 +1090,30 @@ async function handleApi(req, res, url, parts) {
   const q = url.searchParams;
 
   // GET /api/worlds
+  // W6a: alongside the snapshot-bearing `worlds` list (the topbar
+  // world-select's long-standing source, unchanged shape), the response now
+  // carries `worldDirs` -- EVERY world directory under Data/worlds/*, each
+  // flagged hasSnapshot (selectable as-is) or not (attachable: POST below
+  // bootstraps a snapshot INTO that existing folder). Both lists come from
+  // the same listWorldDirs() scan (data-dir.mjs) -- one notion of "worlds on
+  // disk", per the kilmarn friction entry ("the two world lists should
+  // probably be one surface"). `attachable` is computed HERE, server-side,
+  // so the id-format floor (the same regex POST enforces) can never drift
+  // between the picker UI and the route that acts on it.
   if (method === "GET" && parts.length === 2 && parts[1] === "worlds") {
     const dir = resolveDir();
-    return sendJson(res, 200, { dataDir: dir, worlds: listWorlds(dir) });
+    const dirs = listWorldDirs(dir);
+    return sendJson(res, 200, {
+      dataDir: dir,
+      worlds: dirs.filter((w) => w.hasSnapshot).map((w) => w.id),
+      worldDirs: dirs.map((w) => ({
+        ...w,
+        attachable: !w.hasSnapshot && WORLD_ID_RE.test(w.id)
+      }))
+    });
   }
 
-  // POST /api/worlds  { world, dataDir }
+  // POST /api/worlds  { world }
   // Task 14.2: bootstrapSnapshot() (graph-import/headless-apply.mjs) already
   // existed and was already tested, but was never called from any production
   // code path -- a genuinely new campaign with no prior Foundry world had no
@@ -1099,11 +1121,20 @@ async function handleApi(req, res, url, parts) {
   // it into a real, reachable route: create an empty standalone snapshot for
   // a brand-new world id, which listWorlds() (GET /api/worlds, above) picks
   // up immediately since it just checks for an on-disk snapshot file.
+  //
+  // W6a: the same route now also serves ATTACH -- when the id names an
+  // EXISTING Data/worlds/<id> directory that has no snapshot yet (a real
+  // Foundry world GM_Tools has never touched, e.g. kilmarn), the snapshot is
+  // bootstrapped INTO that folder and the response says `attached: true`.
+  // The id is validated against the actual folder listing (exact name match
+  // via listWorldDirs), not just the regex, so an attach can never invent a
+  // sibling directory through case/whitespace drift. A snapshot-bearing id
+  // still 409s exactly as before -- that world already exists; select it.
   if (method === "POST" && parts.length === 2 && parts[1] === "worlds") {
     const body = await readBody(req);
     const dir = resolveDir();
     const worldId = typeof body.world === "string" ? body.world.trim() : "";
-    if (!worldId || !/^[a-zA-Z0-9_-]+$/.test(worldId)) {
+    if (!worldId || !WORLD_ID_RE.test(worldId)) {
       throw new Error(
         "POST /api/worlds requires a non-empty `world` id using only letters, digits, hyphens, and underscores " +
         "(it becomes a directory name on disk)."
@@ -1113,8 +1144,14 @@ async function handleApi(req, res, url, parts) {
     if (existsSync(snapPath)) {
       throw new Error(`World "${worldId}" already exists at ${snapPath} -- pick a different id, or select it from the existing worlds list instead.`);
     }
+    const existingDir = listWorldDirs(dir).find((w) => w.id === worldId);
     bootstrapSnapshot(snapPath, { worldId });
-    return sendJson(res, 200, { world: worldId, dataDir: dir, created: true });
+    return sendJson(res, 200, {
+      world: worldId,
+      dataDir: dir,
+      created: !existingDir,
+      attached: !!existingDir
+    });
   }
 
   // GET /api/batches

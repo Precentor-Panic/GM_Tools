@@ -3514,6 +3514,47 @@ main[hidden] { display: none !important; }
 #app-shell .conn-create-world-btn:hover { filter: brightness(1.05); }
 #app-shell .conn-create-world-status { font-size: 11.5px; color: var(--sp-ink-muted); margin-top: 6px; min-height: 14px; }
 
+/* W6a -- the shared attach-or-create world picker (world-picker.js). Mounted
+   in the connection panel (disconnected card + switch-world list) and the
+   zero-worlds planner landing; same visual language as the conn panel's own
+   rows/inputs above. */
+#app-shell .world-picker-list { display: flex; flex-direction: column; gap: 4px; }
+#app-shell .world-picker-row {
+  display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+  border: 1px solid oklch(0.88 0.020 185); border-radius: 4px; background: var(--sp-surface-input);
+}
+#app-shell .world-picker-name { font-size: 12.5px; font-weight: 500; color: var(--sp-ink-primary); }
+#app-shell .world-picker-badge {
+  font-family: var(--sp-font-mono); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 3px; flex: 0 0 auto;
+}
+#app-shell .world-picker-badge--ready { background: oklch(0.92 0.045 150); color: oklch(0.38 0.08 150); }
+#app-shell .world-picker-badge--foundry { background: oklch(0.94 0.040 65); color: oklch(0.45 0.08 65); }
+#app-shell .world-picker-badge--invalid { background: oklch(0.93 0.010 185); color: var(--sp-ink-muted); }
+#app-shell .world-picker-current { margin-left: auto; font-family: var(--sp-font-mono); font-size: 9.5px; color: var(--sp-ink-muted); }
+#app-shell .world-picker-select-btn, #app-shell .world-picker-attach-btn {
+  margin-left: auto; padding: 4px 10px; border-radius: var(--sp-radius-md); cursor: pointer;
+  font: inherit; font-size: 11.5px; border: 1px solid var(--sp-border-control);
+  background: var(--sp-surface-input); color: var(--sp-ink-primary);
+}
+#app-shell .world-picker-attach-btn { border: none; background: oklch(0.55 0.075 65); color: oklch(0.99 0.005 65); }
+#app-shell .world-picker-select-btn:hover:not([disabled]), #app-shell .world-picker-attach-btn:hover:not([disabled]) { filter: brightness(1.04); }
+#app-shell .world-picker-row-status { font-size: 10.5px; color: var(--sp-ink-muted); }
+#app-shell .world-picker-empty { font-size: 12px; color: var(--sp-ink-muted); padding: 4px 0; }
+#app-shell .world-picker-create { margin-top: 10px; padding-top: 10px; border-top: 1px solid oklch(0.88 0.030 65); }
+#app-shell .world-picker-create-label { font-family: var(--sp-font-mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.50 0.05 65); margin-bottom: 6px; }
+#app-shell .world-picker-create-row { display: flex; gap: 7px; }
+#app-shell .world-picker-create-input {
+  flex: 1; min-width: 0; padding: 6px 9px; border: 1px solid var(--sp-border-control);
+  border-radius: var(--sp-radius-md); font: inherit; font-size: 12px; background: var(--sp-surface-input); color: inherit;
+}
+#app-shell .world-picker-create-btn {
+  padding: 6px 12px; border: none; border-radius: var(--sp-radius-md); cursor: pointer;
+  font: inherit; font-size: 12px; background: oklch(0.55 0.075 65); color: oklch(0.99 0.005 65);
+}
+#app-shell .world-picker-create-btn:hover:not([disabled]) { filter: brightness(1.05); }
+#app-shell .world-picker-create-status { font-size: 11.5px; color: var(--sp-ink-muted); margin-top: 6px; min-height: 14px; }
+
 /* QA W2 fix (Group C #13): the main-column "create a world" call-to-action
    for a genuinely zero-worlds landing -- same visual language as the
    connection chip's own create-world panel above, just as a standalone card. */

@@ -392,33 +392,12 @@ document.getElementById("btn-undo-last").addEventListener("click", async () => {
   }
 });
 
-// Task 14.2: "Create New World" -- wires bootstrapSnapshot() (already built,
-// already tested per the QA finding) into a real UI path for the first time.
-// Deliberately minimal: an id field and a create button, no extra fields.
-document.getElementById("btn-create-world").addEventListener("click", async () => {
-  const input = document.getElementById("new-world-id");
-  const statusEl = document.getElementById("new-world-status");
-  const worldId = input.value.trim();
-  if (!worldId) { statusEl.textContent = "Enter a world id first."; return; }
-  statusEl.textContent = "Creating…";
-  try {
-    const result = await api("/api/worlds", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ world: worldId })
-    });
-    input.value = "";
-    statusEl.textContent = `Created "${result.world}". Selecting it now…`;
-    await initWorldSelect();
-    const select = document.getElementById("world-select");
-    CURRENT_WORLD = result.world;
-    select.value = result.world;
-    localStorage.setItem("gmReview.world", CURRENT_WORLD);
-    statusEl.textContent = `World "${result.world}" created and selected. Head to New Import to get started.`;
-  } catch (err) {
-    statusEl.textContent = `Create failed: ${err.message}`;
-  }
-});
+// Task 14.2's "Create New World" card listener lived here until W6a. The
+// legacy #settings view has been unreachable since Phase 34's redirect, and
+// the create flow is superseded by the shared attach-or-create world picker
+// (world-picker.js) mounted in the Connection Menu panel and the zero-worlds
+// landing (app-shell.js) -- the dead form and this listener were removed
+// together (index.html's card now just points at the gear menu).
 
 // ---------------------------------------------------------------------------
 // Phase 7 task 7.4 — standalone Graph nav view: whole-graph, batch-
