@@ -146,6 +146,98 @@ export function nearMatchesForBatch(batch, entities) {
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Friction Wave 1 (W1e): deterministic per-mutation triage tags. The Kilmarn
+// review's round-3 ask: "an earlier iteration tagged entries low risk /
+// fights canon / needs review and flagged suspected duplicates -- want it
+// back on every proposed mutation." Purely deterministic v1 (whole-batch LLM
+// triage is explicitly deferred), computed at READ time (batchDetailPayload)
+// -- never persisted, so no schema change and always fresh against the
+// current near-match state.
+// ---------------------------------------------------------------------------
+
+/** Prose-ish fields whose replacement (vs. append) is what "fights canon" means. */
+const TRIAGE_TEXT_FIELDS = new Set(["description", "summary", "name", "notes"]);
+const RISK_SEVERITY = { safe: 0, look: 1, contradict: 2 };
+const TRIAGE_TO_RISK = {
+  "possible-duplicate": "look",
+  "fights-canon": "contradict",
+  "low-risk": "safe",
+  "needs-review": "look"
+};
+
+function normTriageText(s) {
+  return String(s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/**
+ * One mutation -> exactly one of four deterministic tags:
+ *   - 'possible-duplicate': a CREATE with at least one W1a near match.
+ *   - 'fights-canon': an update whose diff REPLACES nonempty existing text
+ *     (the diff-shrink heuristic: the old text no longer appears in the new
+ *     -- an append/extend keeps it and is NOT a fight).
+ *   - 'low-risk': pure adds -- a no-near-match new entity, a brand-new
+ *     edge, or an update that only fills empty fields / appends to text.
+ *   - 'needs-review': everything else (deletes, edge edits, mixed updates,
+ *     anything without a readable diff).
+ *
+ * @param {object} m                     a StoredMutation
+ * @param {Array}  [nearMatches]         W1a's matches for this mutation, if any
+ * @returns {'possible-duplicate'|'fights-canon'|'low-risk'|'needs-review'}
+ */
+export function deriveTriageTag(m, nearMatches = []) {
+  const created = Array.isArray(m.diff) && m.diff.length > 0 && m.diff[0]?.field === "(created)";
+  if (m.op === "upsert_entity" && created) {
+    return nearMatches.length ? "possible-duplicate" : "low-risk";
+  }
+  if (m.op === "upsert_entity" && Array.isArray(m.diff)) {
+    const tuples = m.diff.filter((c) => c.field !== "(created)");
+    const textTuples = tuples.filter((c) => TRIAGE_TEXT_FIELDS.has(c.field));
+    const replacesText = textTuples.some((c) => {
+      const from = normTriageText(c.from);
+      return from && !normTriageText(c.to).includes(from);
+    });
+    if (replacesText) return "fights-canon";
+    const allPureAdds =
+      tuples.length > 0 &&
+      tuples.every((c) => {
+        if (c.from == null || normTriageText(c.from) === "") return true; // filling an empty field
+        if (TRIAGE_TEXT_FIELDS.has(c.field)) return normTriageText(c.to).includes(normTriageText(c.from)); // a genuine append
+        return false;
+      });
+    if (allPureAdds) return "low-risk";
+    return "needs-review";
+  }
+  if (m.op === "upsert_edge" && created) return "low-risk"; // a brand-new connection is a pure add
+  return "needs-review";
+}
+
+/**
+ * W1e: triage + effective risk for a whole batch --
+ * `{ [mutationId]: {triage, risk} }`. `risk` is the SEVERITY MERGE of the
+ * stamped attachDiffs risk (absent on any pre-Phase-37 batch -- the Kilmarn
+ * batches all predate it, which is half of why the Triaged toggle "appeared
+ * broken": every card fell into one bucket) and the triage tag's own mapped
+ * risk. Merge = max severity, never a downgrade: a triage-derived
+ * 'contradict' (a destructive text replace attachDiffs' impact heuristic
+ * scored 'safe') upgrades; a stamped 'contradict' never softens.
+ *
+ * @param {object} batch
+ * @param {Object<string,Array>} [nearMatchesByMid]  nearMatchesForBatch's result
+ */
+export function triageForBatch(batch, nearMatchesByMid = {}) {
+  const result = {};
+  for (const m of batch.mutations) {
+    const triage = deriveTriageTag(m, nearMatchesByMid[m.mutationId] ?? []);
+    const triageRisk = TRIAGE_TO_RISK[triage];
+    const stamped = m.risk && RISK_SEVERITY[m.risk] != null ? m.risk : null;
+    const risk =
+      stamped && RISK_SEVERITY[stamped] >= RISK_SEVERITY[triageRisk] ? stamped : triageRisk;
+    result[m.mutationId] = { triage, risk };
+  }
+  return result;
+}
+
 /** Next unused m<N> mutationId index in a batch, for appending regenerated mutations. */
 export function nextMutationIndex(batch) {
   let max = -1;

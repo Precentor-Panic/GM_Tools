@@ -103,6 +103,7 @@ import {
   patchPendingMutationDataOp,
   redirectMentionScanRowToExistingOp,
   nearMatchesForBatch,
+  triageForBatch,
   convertCreateToUpdateOfExistingOp,
   revertMutationsToPending
 } from "../wf-mcp-server/lib/mutation-ops.mjs";
@@ -596,12 +597,18 @@ function batchDetailPayload(dir, w, batchId) {
     ({ entities: liveEntities } = loadSnapshot(dir, w).snapshot);
   } catch { /* no snapshot yet is a real, valid state */ }
   const nearMatches = nearMatchesForBatch(batch, liveEntities);
+  // W1e: deterministic triage tag + severity-merged effective risk per
+  // mutation (see triageForBatch) -- the risk override is also what makes
+  // the Triaged grouping meaningful for pre-Phase-37 batches, whose
+  // mutations carry no stamped risk at all.
+  const triage = triageForBatch(batch, nearMatches);
   const regions = summary.regions.map((region) => ({
     ...region,
     entities: region.entities.map((e) => ({
       ...e,
       status: statusByMutationId.get(e.mutationId),
-      ...(nearMatches[e.mutationId] ? { nearMatches: nearMatches[e.mutationId] } : {})
+      ...(nearMatches[e.mutationId] ? { nearMatches: nearMatches[e.mutationId] } : {}),
+      ...(triage[e.mutationId] ? { triage: triage[e.mutationId].triage, risk: triage[e.mutationId].risk } : {})
     }))
   }));
   const narratable = batch.mutations.length > 0 && batch.mutations.every((m) => m.status === "accepted");

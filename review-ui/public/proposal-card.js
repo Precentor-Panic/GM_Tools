@@ -36,6 +36,17 @@ const RISK = {
   contradict: { label: "fights canon", color: "oklch(0.52 0.13 25)" }
 };
 
+// Friction Wave 1 (W1e): the deterministic triage-tag vocabulary (server-
+// computed, batchDetailPayload's `triage` field) -- the "bring back triage
+// tags" ask from the Kilmarn review. Colors lean on the RISK palette the
+// tag maps to, so tag and bucket read as one system.
+const TRIAGE_TAGS = {
+  "possible-duplicate": { label: "possible duplicate", color: "oklch(0.50 0.10 65)", bg: "oklch(0.970 0.024 65)", border: "oklch(0.86 0.050 65)" },
+  "fights-canon": { label: "fights canon", color: "oklch(0.50 0.13 25)", bg: "oklch(0.968 0.026 25)", border: "oklch(0.85 0.060 25)" },
+  "low-risk": { label: "low risk", color: "oklch(0.44 0.09 150)", bg: "oklch(0.968 0.020 150)", border: "oklch(0.86 0.045 150)" },
+  "needs-review": { label: "needs review", color: "oklch(0.48 0.014 65)", bg: "oklch(0.965 0.006 85)", border: "oklch(0.88 0.010 80)" }
+};
+
 function el(tag, { style, testid, text, ...attrs } = {}, children = []) {
   const node = document.createElement(tag);
   if (style) node.setAttribute("style", style);
@@ -178,13 +189,23 @@ export function renderProposalCard(m, opts = {}) {
   });
   const glyph = el("span", { text: t.glyph, style: `font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: ${t.accent};` });
   const target = el("span", { testid: "proposal-card-target", text: displayName(m), style: "font-size: 13px; font-weight: 500;" });
+  // W1e: the deterministic triage tag, right in the header.
+  const triageMeta = TRIAGE_TAGS[m.triage];
+  const triageTag = triageMeta
+    ? el("span", {
+        testid: "proposal-card-triage-tag",
+        "data-triage": m.triage,
+        text: triageMeta.label,
+        style: `padding: 2px 7px; border-radius: 20px; border: 1px solid ${triageMeta.border}; background: ${triageMeta.bg}; font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; color: ${triageMeta.color}; flex: none;`
+      })
+    : null;
   const spacer = el("span", { style: "flex: 1;" });
   const riskLabel = el("span", {
     testid: "proposal-card-risk-label",
     text: riskMeta ? riskMeta.label : "unclassified",
     style: `font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.05em; color: ${riskColor};`
   });
-  const header = el("div", { style: "display: flex; align-items: center; gap: 9px;" }, [kindBadge, glyph, target, spacer, riskLabel]);
+  const header = el("div", { style: "display: flex; align-items: center; gap: 9px; flex-wrap: wrap;" }, [kindBadge, glyph, target, triageTag, spacer, riskLabel]);
 
   // Diff rows (−/+)
   const diffRows = el("div", { style: "display: flex; flex-direction: column; gap: 3px; margin: 9px 0 8px;" });
