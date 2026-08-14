@@ -147,7 +147,7 @@ async function postDecision(world, batchId, mid, kind) {
  * @returns {HTMLElement}
  */
 export function renderProposalCard(m, opts = {}) {
-  const { world, batchId, onDecided } = opts;
+  const { world, batchId, onDecided, onConvertToExisting } = opts;
   const mid = mutationId(m);
   const type = m.type ?? m.data?.type ?? "concept";
   const risk = RISK[m.risk] ? m.risk : "";
@@ -239,7 +239,36 @@ export function renderProposalCard(m, opts = {}) {
           style: "font-size: 12px; color: oklch(0.36 0.030 65);"
         })
       ]);
+      // W1b: "This is not a new node — it's an update to THIS node." Only
+      // offered where the host surface wires the conversion (Chronicle's
+      // batch review does; a read-only mount simply shows the chips).
+      if (typeof onConvertToExisting === "function") {
+        const btn = el("div", {
+          testid: "proposal-card-convert-btn",
+          role: "button",
+          "data-entity-id": nm.entityId,
+          text: "This is that — convert to update",
+          style: "padding: 2px 9px; border: 1px solid oklch(0.72 0.055 185); border-radius: 20px; cursor: pointer; font-size: 10.5px; color: oklch(0.33 0.060 185); background: oklch(0.96 0.012 185); flex: none;"
+        });
+        btn.addEventListener("click", async () => {
+          btn.setAttribute("aria-disabled", "true");
+          btn.textContent = "Converting…";
+          try {
+            await onConvertToExisting(m, nm.entityId);
+          } catch (err) {
+            btn.removeAttribute("aria-disabled");
+            btn.textContent = "This is that — convert to update";
+            console.error("convert-to-existing failed:", err);
+          }
+        });
+        chip.appendChild(btn);
+      }
       nearMatchesRow.appendChild(chip);
+    }
+    // W1b: search fallback for when the right existing entity isn't among
+    // the chips ("pick a near match (or search)").
+    if (typeof onConvertToExisting === "function") {
+      nearMatchesRow.appendChild(buildConvertSearch(m, opts, onConvertToExisting));
     }
   }
 
@@ -286,6 +315,81 @@ export function renderProposalCard(m, opts = {}) {
   root.appendChild(footer);
   paint();
   return root;
+}
+
+/**
+ * W1b: the "or search for the right one" fallback under the near-match
+ * chips -- a small expandable search over the live graph (`GET /api/graph`,
+ * the same source the Chronicle branch picker already queries), listing up
+ * to 20 name matches; clicking one converts the create into an update of it.
+ */
+function buildConvertSearch(m, opts, onConvertToExisting) {
+  const wrap = el("div", {});
+  const toggle = el("div", {
+    testid: "proposal-card-convert-search-toggle",
+    role: "button",
+    text: "or search for the existing node…",
+    style: "font-size: 11px; color: oklch(0.45 0.050 185); cursor: pointer; text-decoration: underline; text-underline-offset: 2px;"
+  });
+  const panel = el("div", { style: "display: none; margin-top: 6px;" });
+  const input = el("input", {
+    testid: "proposal-card-convert-search-input",
+    placeholder: "Find the existing entity…",
+    style: "width: 100%; padding: 5px 8px; border: 1px solid oklch(0.85 0.010 80); border-radius: 4px; font-family: inherit; font-size: 12px; background: oklch(1 0 0); color: inherit;"
+  });
+  const results = el("div", { style: "max-height: 150px; overflow-y: auto; margin-top: 4px; display: flex; flex-direction: column; gap: 2px;" });
+  panel.append(input, results);
+
+  let nodesCache = null;
+  async function search(qstr) {
+    if (!nodesCache) {
+      try {
+        const p = new URLSearchParams({ filter: "all" });
+        if (opts.world) p.set("world", opts.world);
+        const res = await fetch(`/api/graph?${p}`);
+        nodesCache = res.ok ? (await res.json()).nodes ?? [] : [];
+      } catch {
+        nodesCache = [];
+      }
+    }
+    const ql = (qstr || "").trim().toLowerCase();
+    results.innerHTML = "";
+    const rows = nodesCache.filter((n) => !ql || (n.name || "").toLowerCase().includes(ql)).slice(0, 20);
+    if (!rows.length) {
+      results.appendChild(el("div", { text: "Nothing by that name in the graph.", style: "font-size: 11.5px; color: oklch(0.58 0.012 70); padding: 4px 2px;" }));
+      return;
+    }
+    for (const n of rows) {
+      const row = el("div", {
+        testid: "proposal-card-convert-search-result",
+        "data-entity-id": n.id,
+        role: "button",
+        text: `${n.name || n.id} (${n.type || "entity"})`,
+        style: "padding: 3px 6px; border-radius: 3px; font-size: 12px; cursor: pointer; color: oklch(0.30 0.020 60); background: oklch(1 0 0 / 0.5);"
+      });
+      row.addEventListener("click", async () => {
+        row.textContent = "Converting…";
+        try {
+          await onConvertToExisting(m, n.id);
+        } catch (err) {
+          row.textContent = `${n.name || n.id} (${n.type || "entity"})`;
+          console.error("convert-to-existing failed:", err);
+        }
+      });
+      results.appendChild(row);
+    }
+  }
+  toggle.addEventListener("click", () => {
+    const open = panel.style.display !== "none";
+    panel.style.display = open ? "none" : "block";
+    if (!open) {
+      search(input.value);
+      input.focus();
+    }
+  });
+  input.addEventListener("input", () => search(input.value));
+  wrap.append(toggle, panel);
+  return wrap;
 }
 
 function cardStyle(decided, riskColor) {

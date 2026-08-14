@@ -32,6 +32,11 @@ import { supersedeEntityNarration, getCurrentEntityNarration, getEntityNarration
 // narration invalidation -- a clean fit, no second hook point added.
 import { markPrepContentStale } from "../../mutation-engine/prep-content.mjs";
 import { applyHeadless } from "../../graph-import/headless-apply.mjs";
+// Friction Wave 1 (W1b): convert-create-to-update re-diffs the converted
+// mutation (and its re-pointed edges) against the live snapshot so the card
+// immediately shows a real before/after against the existing entity --
+// reusing the ONE diff/type/risk stamper every batch producer already uses.
+import { attachDiffs } from "../../time-skip/run.mjs";
 import {
   importWriteup,
   regenerateWriteupImport,
@@ -831,6 +836,121 @@ export function redirectMentionScanRowToExistingOp(dir, w, { batchId, mutationId
 
   saveBatch(w, batch);
   return { batchId, mutationId, redirectedTo: existingEntityId };
+}
+
+/**
+ * Friction Wave 1 (W1b): "This is not a new node — it's an update to THIS
+ * node." Converts a still-PENDING proposed CREATE (any batch kind; the
+ * Kilmarn friction hit it hardest on writeup-import batches) into an UPDATE
+ * targeting a reviewer-chosen existing entity, and re-points every still-
+ * pending edge in the batch that references the would-be-new id — the
+ * "batch's proposed edges must be redrawn to the existing node
+ * automatically" half of the ask. Phase 13.3's
+ * redirectMentionScanRowToExistingOp is the model, generalized: a
+ * mention-scan propose-new row is a create+edge PAIR (so the fix there is
+ * "drop the create, keep one edge"), while a writeup-import create is a
+ * standalone mutation with arbitrarily many sibling edges — so here the
+ * create itself is converted IN PLACE (same mutationId, so client-side state
+ * keyed on it keeps working) and the siblings are re-targeted, not removed.
+ *
+ * What the converted mutation keeps/drops from its proposed `data`:
+ *   - DROPS `name` and `type`: identity now comes from the existing entity —
+ *     an update carrying the writeup's shorthand name ("Master Vane") would
+ *     silently RENAME canon ("Master Aldric Vane") on apply, the exact
+ *     lore-loss failure mode this whole cluster exists to prevent.
+ *   - KEEPS everything else (description/summary/tags/importance/...): that
+ *     is the genuinely new information the reviewer wants to land on the
+ *     existing entity — and the W1c merge editor is how they hand-combine
+ *     it with the old text before accepting.
+ *
+ * Edges already settled (accepted/rejected) are deliberately NOT touched —
+ * re-pointing a settled decision would rewrite history; they're counted in
+ * the result so the UI can say so.
+ *
+ * @param {string} dir
+ * @param {string} w
+ * @param {{batchId:string, mutationId:string, existingEntityId:string}} args
+ * @returns {{batchId:string, mutationId:string, convertedTo:string, originalId:string|null, originalName:string|null, repointedEdgeMutationIds:string[], skippedNonPendingEdgeCount:number}}
+ */
+export function convertCreateToUpdateOfExistingOp(dir, w, { batchId, mutationId, existingEntityId }) {
+  if (!existingEntityId) throw new Error("convertCreateToUpdateOfExistingOp requires existingEntityId.");
+  const { entities, edges } = loadSnapshot(dir, w).snapshot;
+  const existingEntity = entities.find((e) => e.id === existingEntityId);
+  if (!existingEntity) {
+    throw new Error(`No entity "${existingEntityId}" found in the live graph -- cannot convert a create into an update of a nonexistent entity.`);
+  }
+  const batch = loadBatch(w, batchId);
+  const entry = batch.mutations.find((m) => m.mutationId === mutationId);
+  if (!entry) throw new Error(`No mutation "${mutationId}" in batch "${batchId}".`);
+  if (entry.status !== "pending") {
+    throw new Error(`Mutation "${mutationId}" is not pending (status: "${entry.status}") -- cannot convert it.`);
+  }
+  const liveEntityIds = new Set(entities.map((e) => e.id));
+  if (!isCreateEntityMutation(entry, liveEntityIds)) {
+    throw new Error(`Mutation "${mutationId}" is not a proposed CREATE -- "convert to update of existing" only applies to one of those.`);
+  }
+
+  const originalId = entry.id ?? null;
+  const originalName = entry.data?.name ?? null;
+  const originalRationale = entry.rationale;
+
+  const { name: _dropName, type: _dropType, id: _dropDataId, ...keptData } = entry.data ?? {};
+  entry.id = existingEntityId;
+  entry.data = keptData;
+  entry.rationale =
+    `Converted from a proposed create ("${originalName ?? "unnamed"}") into an update of the existing entity ` +
+    `"${existingEntity.name ?? existingEntityId}" -- the reviewer confirmed they are the same thing. ` +
+    `Original rationale: ${originalRationale}`;
+  entry.entityContext = {
+    ...(entry.entityContext ?? {}),
+    // The TARGET entity's own real name/type (redirectMentionScanRowToExistingOp's
+    // own convention) -- the card must read as the canon entity now.
+    name: existingEntity.name ?? existingEntityId,
+    type: existingEntity.type,
+    convertedFromCreate: { originalId, originalName }
+  };
+
+  const repointedEdgeMutationIds = [];
+  let skippedNonPendingEdgeCount = 0;
+  if (originalId) {
+    for (const m of batch.mutations) {
+      if (m.mutationId === mutationId || (m.op !== "upsert_edge" && m.op !== "delete_edge")) continue;
+      const touches = m.data?.sourceId === originalId || m.data?.targetId === originalId;
+      if (!touches) continue;
+      if (m.status !== "pending") {
+        skippedNonPendingEdgeCount++;
+        continue;
+      }
+      if (m.data.sourceId === originalId) m.data.sourceId = existingEntityId;
+      if (m.data.targetId === originalId) m.data.targetId = existingEntityId;
+      repointedEdgeMutationIds.push(m.mutationId);
+    }
+  }
+
+  // Re-diff the converted entry + every re-pointed edge against the live
+  // snapshot, so the card flips from "(created)" to a real before/after and
+  // the risk triage reflects the update-over-existing it now is.
+  const touchedIds = new Set([mutationId, ...repointedEdgeMutationIds]);
+  const strippedTouched = batch.mutations
+    .filter((m) => touchedIds.has(m.mutationId))
+    .map(({ diff: _d, type: _t, risk: _r, ...rest }) => rest);
+  for (const rediffed of attachDiffs(strippedTouched, entities, edges)) {
+    const target = batch.mutations.find((m) => m.mutationId === rediffed.mutationId);
+    target.diff = rediffed.diff;
+    target.type = rediffed.type;
+    target.risk = rediffed.risk;
+  }
+
+  saveBatch(w, batch);
+  return {
+    batchId,
+    mutationId,
+    convertedTo: existingEntityId,
+    originalId,
+    originalName,
+    repointedEdgeMutationIds,
+    skippedNonPendingEdgeCount
+  };
 }
 
 // --- narrate ---------------------------------------------------------------

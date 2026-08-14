@@ -1150,7 +1150,19 @@ export async function renderChronicleSurface(arg) {
     const container = el("div", { testid: "chronicle-proposals", style: "display: flex; flex-direction: column; gap: 9px;" });
     proposalsWrap.appendChild(container);
 
-    const opts = { world: currentWorld(), batchId: state.batchId, onDecided: () => refreshHistoryAfterDecision() };
+    const opts = {
+      world: currentWorld(),
+      batchId: state.batchId,
+      onDecided: () => refreshHistoryAfterDecision(),
+      // W1b: convert a pending CREATE into an update of a chosen existing
+      // entity (near-match chip button or the card's own search fallback),
+      // then re-fetch the whole batch -- the conversion also re-points
+      // sibling edges server-side, so a full repaint is the honest render.
+      onConvertToExisting: async (m, existingEntityId) => {
+        await apiPost(`/api/batches/${encodeURIComponent(state.batchId)}/mutations/${encodeURIComponent(m.mutationId)}/convert-to-existing`, { existingEntityId });
+        await applyBatchAsProposals(state.batchId);
+      }
+    };
 
     acceptAllBtn.addEventListener("click", () => {
       acceptAllBtn.setAttribute("aria-disabled", "true");

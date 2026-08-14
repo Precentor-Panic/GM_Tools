@@ -102,7 +102,8 @@ import {
   scanMentionsOp,
   patchPendingMutationData,
   redirectMentionScanRowToExistingOp,
-  nearMatchesForBatch
+  nearMatchesForBatch,
+  convertCreateToUpdateOfExistingOp
 } from "../wf-mcp-server/lib/mutation-ops.mjs";
 
 // Phase 12 tasks 12.3/12.4/12.6 -- manual node/edge create/edit/delete,
@@ -1727,6 +1728,28 @@ async function handleApi(req, res, url, parts) {
       mutationId: parts[4],
       existingEntityId: body.existingEntityId,
       existingEntityName: body.existingEntityName
+    });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/batches/:batchId/mutations/:mutationId/convert-to-existing
+  //   { world, existingEntityId }
+  // Friction Wave 1 (W1b): a still-pending proposed CREATE (writeup-import
+  // batches foremost) converted into an UPDATE of a reviewer-chosen existing
+  // entity, with every still-pending edge in the batch that referenced the
+  // would-be-new id re-pointed automatically. Phase 13.3's redirect route
+  // above is the mention-scan-specific sibling; this one is general.
+  if (method === "POST" && parts.length === 6 && parts[1] === "batches" && parts[3] === "mutations" && parts[5] === "convert-to-existing") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    if (typeof body.existingEntityId !== "string" || !body.existingEntityId.trim()) {
+      throw new Error("POST .../convert-to-existing requires a non-empty `existingEntityId`.");
+    }
+    const result = convertCreateToUpdateOfExistingOp(dir, w, {
+      batchId: parts[2],
+      mutationId: parts[4],
+      existingEntityId: body.existingEntityId
     });
     return sendJson(res, 200, result);
   }
