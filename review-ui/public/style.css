@@ -3011,6 +3011,16 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 #app-shell .wv-tree-row--sel { background: var(--sp-accent-teal-selected); }
 #app-shell .wv-tree-row.wv-drop-target { border-color: var(--sp-accent-teal); }
 #app-shell .wv-tree-chevron { width: 12px; flex: none; font-family: var(--sp-font-mono); font-size: 9px; color: var(--sp-ink-muted); }
+/* W5a: containment-cycle warning badge on the cycle representative's tree
+   row -- cycle members render (grouped at root) instead of silently
+   vanishing; the badge is the "your data has a loop" signal. Amber, since
+   this is a data-integrity warning, not a selection/teal state. */
+#app-shell .wv-cycle-badge {
+  flex: none; padding: 1px 6px; border-radius: 20px;
+  font-family: var(--sp-font-mono); font-size: 8.5px; letter-spacing: 0.05em; text-transform: uppercase;
+  background: oklch(0.93 0.06 80); color: oklch(0.42 0.10 65); border: 1px solid oklch(0.80 0.09 70);
+  cursor: help;
+}
 #app-shell .wv-tree-glyph { font-family: var(--sp-font-mono); font-size: 10px; }
 #app-shell .wv-tree-name {
   flex: 1; min-width: 0; font-size: 12.5px; color: var(--sp-ink-secondary);

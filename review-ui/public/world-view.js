@@ -32,6 +32,11 @@ import { colorForType } from "./graph-view.js";
 // so the phase33 "drop a node -> real kind:'graph' scene-element" pin
 // survives the unification unchanged.
 import { mountSceneTray, setTrayDragPayload } from "./scene-tray.js";
+// Friction Wave 1 (W5a): the tree derivation (containment/Loyalty parent
+// maps + containment-CYCLE detection) lives in the DOM-free world-tree.mjs
+// so it's unit-testable under plain Node — see that module's header for the
+// Kilmarn <-> Underbreach silent-disappearance bug the cycle handling fixes.
+import { buildDerived, LOYALTY_PARENT_EDGE } from "./world-tree.mjs";
 
 // ---------------------------------------------------------------------------
 // Canonical designer type vocabulary (README §F glyph set + oklch accents).
@@ -156,51 +161,11 @@ function resetForWorld(world) {
 }
 
 // ---------------------------------------------------------------------------
-// Derived tree structure from a chosen set of "parent" EDGES. Defaults to
-// containment (BYTE-IDENTICAL to the pre-Phase-38 behavior -- every existing
-// call site that doesn't pass a second arg is unaffected). Phase 38 task
-// 38.3's Loyalty predicate (LOYALTY_PARENT_EDGE below) reuses this same
-// function to derive a SECOND, independent tree over {membership, fealty}
-// edges (phase38-fixture.mjs §6b).
-//
-// SINGLE-PARENT MOST-RECENT-WINS: a node may carry more than one qualifying
-// parent-edge today (containment never does in practice -- reparentNode
-// enforces at most one -- but Loyalty's free-string vocab can, via
-// writeup-import or hand-authored data). For each source node, the
-// qualifying edge with the greatest `edge.updatedAt ?? edge.createdAt`
-// (ISO-string comparison) wins; ties (including "all null/absent", the
-// common case for headlessly-authored fixtures with no real timestamps) go
-// to the LAST one encountered in `graph.edges` -- array order is itself a
-// legitimate recency proxy. For the default containment predicate this is
-// byte-identical to the old plain-overwrite loop (which was also
-// last-in-array-wins).
+// Tree derivation: see world-tree.mjs (buildDerived + LOYALTY_PARENT_EDGE
+// imported above). Everything below reads the derived maps exactly as
+// before; the ONLY W5a addition surfaced here is `derived.cycleBreaks`
+// (buildTreeRow's warning badge).
 // ---------------------------------------------------------------------------
-function buildDerived(graph, isParentEdge = (e) => e.relationshipType === "containment") {
-  const nodesById = new Map();
-  for (const n of graph.nodes || []) nodesById.set(n.id, n);
-  const parentOf = new Map();
-  const childrenOf = new Map();
-  const parentScoreOf = new Map();
-  const nonContainment = [];
-  for (const e of graph.edges || []) {
-    if (!isParentEdge(e)) { nonContainment.push(e); continue; }
-    const score = e.updatedAt ?? e.createdAt ?? "";
-    const prevScore = parentScoreOf.get(e.sourceId);
-    if (prevScore !== undefined && score < prevScore) continue; // an earlier, more-recent-scoring edge already won
-    const oldParent = parentOf.get(e.sourceId);
-    if (oldParent !== undefined) {
-      const kids = childrenOf.get(oldParent);
-      if (kids) childrenOf.set(oldParent, kids.filter((id) => id !== e.sourceId));
-    }
-    parentOf.set(e.sourceId, e.targetId);
-    parentScoreOf.set(e.sourceId, score);
-    if (!childrenOf.has(e.targetId)) childrenOf.set(e.targetId, []);
-    childrenOf.get(e.targetId).push(e.sourceId);
-  }
-  return { nodesById, parentOf, childrenOf, nonContainment };
-}
-const LOYALTY_PARENT_EDGE = (e) => e.relationshipType === "membership" || e.relationshipType === "fealty";
-
 function d() { return cache.derived; }
 function node(id) { return d().nodesById.get(id); }
 function parentIdOf(id) {
@@ -606,6 +571,22 @@ function buildTreeRow(r) {
   }, n.name || n.id);
   row.append(chevron, glyph, name);
   if (n.flaggedUnreviewed) row.appendChild(el("span", { class: "wv-unreviewed-dot", title: "Unreviewed since last session" }));
+  // W5a: a containment cycle's representative renders at root with a VISIBLE
+  // warning badge naming the loop — never the pre-fix silent disappearance
+  // (the bug that ate Kilmarn + the Underbreach). The badge names every
+  // member; fixing means flipping/removing one of the cycle's edges.
+  const cycleBreak = activeDerived().cycleBreaks && activeDerived().cycleBreaks.get(n.id);
+  if (cycleBreak) {
+    row.appendChild(el("span", {
+      class: "wv-cycle-badge",
+      "data-testid": "world-tree-cycle-badge",
+      "data-entity-id": n.id,
+      "data-cycle-members": cycleBreak.memberIds.join(","),
+      title: `Containment cycle: ${cycleBreak.memberNames.join(" → ")} → ${cycleBreak.memberNames[0]}. ` +
+        `These entities contain each other, so the branch is shown at the root instead of disappearing. ` +
+        `Fix it by removing or flipping one of the containment edges (drag a node onto its real parent).`
+    }, "⚠ cycle"));
+  }
   row.appendChild(el("span", { class: "wv-tree-count" }, r.kids ? String(r.kids) : ""));
 
   row.addEventListener("click", () => select(n.id));

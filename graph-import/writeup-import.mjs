@@ -756,22 +756,164 @@ export function normalizeProposalTypeConflicts(proposal, existingEntities) {
   return { proposal: { ...proposal, entities }, resolutions };
 }
 
+// =====================================================================
+// Friction Wave 1 (W5a) — containment-DIRECTION normalization. The UI's
+// tree convention is child = sourceId -> parent = targetId (world-view.js /
+// world-tree.mjs), but natural prose phrases containment BOTH ways: the
+// real Kilmarn stage-1 extraction turned "Kilmarn has five quarters" into
+// Kilmarn -> quarter edges (semantic "contains", i.e. parent -> child —
+// INVERTED), which made Kilmarn a child of its own quarters and, once a
+// correctly-directed Underbreach -> Kilmarn edge arrived later, closed a
+// containment cycle that silently unrooted both from "Where things are".
+// Deterministic, no LLM: flip only on HIGH-confidence signals; on low
+// confidence leave the direction alone and TAG the edge for the review card
+// (the same writeupNormalization channel W2a/W2b use), so the human decides.
+// =====================================================================
+
+// Parent-first phrasings: the edge's label says the SOURCE contains the
+// TARGET ("X contains/has/houses Y") — under the child->parent convention
+// that's inverted, so a confident match here (with no child-first
+// counter-signal) flips the edge.
+const CONTAINMENT_PARENT_FIRST_LABEL_RE =
+  /\b(contains?|containing|has|have|having|holds?|holding|houses?|housing|hosts?|hosting|encompass(?:es|ing)?|includes?|including|comprises?|comprising|is home to|home to)\b/i;
+// Child-first phrasings: the label says the SOURCE sits inside the TARGET
+// ("located in", "kept in", "part of", "stands at…") — already the
+// convention's direction, confidently KEPT. Matches the real kilmarn labels
+// ("located in", "kept somewhere in its depths", "stitched into",
+// "stands at bridge's east end").
+const CONTAINMENT_CHILD_FIRST_LABEL_RE =
+  /\b(in|inside|within|under|underneath|beneath|below|into|at|part of|located|situated|kept|stored|hidden|buried|stands?|sits?|lies|lives|dwells?|resides?)\b/i;
+
 /**
- * The full W2 pre-dry-run normalization pass, in the order the conservatism
+ * W5a: normalize the DIRECTION of proposed containment edges against the
+ * tree's child=source -> parent=target convention. Pure, deterministic.
+ *
+ * Signals, in order:
+ *   1. LABEL phrasing — parent-first lexicon ("contains", "has", …) with no
+ *      child-first counter-match => FLIP (reason "label"); child-first
+ *      ("located in", "kept …", …) with no parent-first match => keep,
+ *      confidently, no tag. A label matching BOTH lexicons is CONFLICTING —
+ *      direction left alone, edge tagged `containment-direction-uncertain`.
+ *   2. TYPE asymmetry (label silent/absent) — endpoint types resolved from
+ *      the proposal itself, else the live snapshot (post-W2a names, so canon
+ *      lookups hit). source=place -> target∈{object,person} claims a place
+ *      is inside an object/person; the flipped reading (object/person in
+ *      place) is the overwhelmingly-likely fact => FLIP (reason
+ *      "type-asymmetry"). source≠place -> target=place is the canonical
+ *      thing-in-place => keep, no tag.
+ *   3. source=place -> target∈{faction,event,concept} (a place "inside" a
+ *      non-spatial thing) is suspicious BOTH ways (the real kilmarn tree
+ *      pollution here was a mis-TYPED edge, not a mis-directed one) =>
+ *      direction left alone, tagged `containment-direction-uncertain`.
+ *   Everything else (place-in-place with no label signal, unknown endpoint
+ *   types) is left completely untouched — most such edges are correct, and
+ *   flipping on a guess would manufacture the very bug this pass fixes.
+ *
+ * A flip swaps the edge's source/target NAME refs and records
+ * `writeupNormalization: {kind:'containment-direction-flipped', …}` on the
+ * edge; previewWriteupImport carries it onto the edge mutation's
+ * entityContext so the review card says what happened (the flipped edge's
+ * free-text label is deliberately NOT rewritten — deterministic label
+ * rewriting is riskier than a visible note).
+ *
+ * @param {{entities:object[], edges:object[]}} proposal
+ * @param {object[]} existingEntities  live-snapshot entities ({id,name,type})
+ * @returns {{proposal:{entities:object[], edges:object[]}, flips:Array, uncertainties:Array}}
+ */
+export function normalizeProposalContainmentDirection(proposal, existingEntities) {
+  const typeByName = new Map();
+  // Snapshot first, proposal second — a proposal's own type guess for a name
+  // it also describes wins over canon only if canon doesn't know the name
+  // (post-W2b, a same-name proposal entity already carries canon's type).
+  for (const e of existingEntities ?? []) {
+    if (e?.name && e?.type) typeByName.set(String(e.name).trim().toLowerCase(), e.type);
+  }
+  for (const pe of proposal.entities ?? []) {
+    if (pe?.name && pe?.type && !typeByName.has(String(pe.name).trim().toLowerCase())) {
+      typeByName.set(String(pe.name).trim().toLowerCase(), pe.type);
+    }
+  }
+
+  const flips = [];
+  const uncertainties = [];
+  const edges = (proposal.edges ?? []).map((ed) => {
+    if (ed.relationshipType !== "containment") return ed;
+    const label = String(ed.label ?? "");
+    const parentFirst = CONTAINMENT_PARENT_FIRST_LABEL_RE.test(label);
+    const childFirst = CONTAINMENT_CHILD_FIRST_LABEL_RE.test(label);
+
+    const flip = (reason) => {
+      const flipped = {
+        ...ed,
+        source: ed.target,
+        target: ed.source,
+        writeupNormalization: {
+          kind: "containment-direction-flipped",
+          from: { source: ed.source, target: ed.target },
+          reason,
+          label: ed.label ?? null
+        }
+      };
+      flips.push({ source: ed.source, target: ed.target, reason });
+      return flipped;
+    };
+    const tagUncertain = (reason) => {
+      const tagged = {
+        ...ed,
+        writeupNormalization: {
+          kind: "containment-direction-uncertain",
+          reason,
+          label: ed.label ?? null
+        }
+      };
+      uncertainties.push({ source: ed.source, target: ed.target, reason });
+      return tagged;
+    };
+
+    // 1. Label phrasing.
+    if (parentFirst && childFirst) return tagUncertain("conflicting-label");
+    if (parentFirst) return flip("label");
+    if (childFirst) return ed; // confidently already child->parent
+
+    // 2./3. Type asymmetry (label silent).
+    const sType = typeByName.get(String(ed.source).trim().toLowerCase());
+    const tType = typeByName.get(String(ed.target).trim().toLowerCase());
+    if (!sType || !tType) return ed; // unknown endpoint — hands off
+    if (sType === "place" && (tType === "object" || tType === "person")) return flip("type-asymmetry");
+    if (sType === "place" && (tType === "faction" || tType === "event" || tType === "concept")) {
+      return tagUncertain("place-inside-nonplace");
+    }
+    return ed;
+  });
+
+  return { proposal: { ...proposal, edges }, flips, uncertainties };
+}
+
+/**
+ * The full pre-dry-run normalization pass, in the order the conservatism
  * rules require — importWriteup/regenerateWriteupImport call THIS, not the
  * individual passes. Type conflicts resolve FIRST (W2b — after which those
  * entities are exact name+type matches the near-miss pass correctly
- * ignores), then the W2a near-miss rename pass over what's left.
+ * ignores), then the W2a near-miss rename pass over what's left, then the
+ * W5a containment-direction pass LAST (so its snapshot type lookups see the
+ * already-canonicalized endpoint names).
  *
  * @param {{entities:object[], edges:object[]}} proposal
  * @param {object[]} existingEntities
  * @param {object} [opts]  forwarded to the individual passes
- * @returns {{proposal:object, rewrites:Array, typeResolutions:Array}}
+ * @returns {{proposal:object, rewrites:Array, typeResolutions:Array, containmentFlips:Array, containmentUncertainties:Array}}
  */
 export function normalizeProposalAgainstSnapshot(proposal, existingEntities, opts = {}) {
   const typePass = normalizeProposalTypeConflicts(proposal, existingEntities);
   const nearMissPass = normalizeProposalNameNearMisses(typePass.proposal, existingEntities, opts);
-  return { proposal: nearMissPass.proposal, rewrites: nearMissPass.rewrites, typeResolutions: typePass.resolutions };
+  const directionPass = normalizeProposalContainmentDirection(nearMissPass.proposal, existingEntities);
+  return {
+    proposal: directionPass.proposal,
+    rewrites: nearMissPass.rewrites,
+    typeResolutions: typePass.resolutions,
+    containmentFlips: directionPass.flips,
+    containmentUncertainties: directionPass.uncertainties
+  };
 }
 
 // The reviewable field subset for an entity mutation's `data` — matches
@@ -985,7 +1127,12 @@ export function previewWriteupImport(proposal, existingSnapshot, opts = {}) {
     rationale: pedge.rationale,
     batchId: "placeholder",
     sourceKind: "writeup-import",
-    regionId: WRITEUP_IMPORT_REGION_ID
+    regionId: WRITEUP_IMPORT_REGION_ID,
+    // W5a: the containment-direction normalization record (flip note, or a
+    // low-confidence "uncertain" tag) — same entityContext.writeupNormalization
+    // channel the entity passes use; grain.mjs already surfaces it on
+    // batch-detail rows for the review card.
+    ...(pedge.writeupNormalization ? { entityContext: { writeupNormalization: pedge.writeupNormalization } } : {})
   }));
 
   return {

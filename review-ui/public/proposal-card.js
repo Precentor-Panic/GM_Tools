@@ -419,6 +419,46 @@ export function renderProposalCard(m, opts = {}) {
         style: "font-size: 11.5px; color: oklch(0.36 0.030 65);"
       })
     ]);
+  } else if (norm && norm.kind === "containment-direction-flipped") {
+    // Friction Wave 1 (W5a): the writeup phrased containment parent-first
+    // ("X contains/has Y"), inverted against the tree's child->parent
+    // convention -- the direction was normalized deterministically, and the
+    // card says so instead of the flip being silent.
+    normalizationRow = el("div", {
+      testid: "proposal-card-normalization",
+      "data-normalization-kind": norm.kind,
+      style: "display: flex; align-items: baseline; gap: 7px; margin: 0 0 8px; padding: 6px 9px; border: 1px dashed oklch(0.80 0.045 185); border-radius: 4px; background: oklch(0.972 0.012 185);"
+    }, [
+      el("span", {
+        text: "⇄ containment direction normalized",
+        style: "font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.42 0.070 185); flex: none;"
+      }),
+      el("span", {
+        text: `The writeup phrased this as “${norm.from?.source}” containing “${norm.from?.target}”` +
+          (norm.label ? ` (“${norm.label}”)` : "") +
+          `; flipped to the tree's child → parent convention so “${norm.from?.target}” shows inside “${norm.from?.source}” in the World tab. Reject if the original direction was genuinely meant.`,
+        style: "font-size: 11.5px; color: oklch(0.36 0.030 65);"
+      })
+    ]);
+  } else if (norm && norm.kind === "containment-direction-uncertain") {
+    // W5a low-confidence tag: direction left ALONE -- the signals conflict
+    // (or a place sits "inside" a non-spatial thing), so the human decides.
+    normalizationRow = el("div", {
+      testid: "proposal-card-normalization",
+      "data-normalization-kind": norm.kind,
+      style: "display: flex; align-items: baseline; gap: 7px; margin: 0 0 8px; padding: 6px 9px; border: 1px dashed oklch(0.85 0.060 80); border-radius: 4px; background: oklch(0.972 0.020 85);"
+    }, [
+      el("span", {
+        text: "? containment direction unclear",
+        style: "font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.46 0.09 70); flex: none;"
+      }),
+      el("span", {
+        text: norm.reason === "place-inside-nonplace"
+          ? `This containment edge puts a place inside a non-place${norm.label ? ` (“${norm.label}”)` : ""} — that usually means the relationship isn't really spatial containment. Direction left as extracted; consider retyping or flipping it.`
+          : `This edge's phrasing${norm.label ? ` (“${norm.label}”)` : ""} reads both ways, so the direction was left as extracted. Check which entity is really inside which.`,
+        style: "font-size: 11.5px; color: oklch(0.36 0.030 65);"
+      })
+    ]);
   }
 
   // Footer: rationale + accept/reject
