@@ -17,6 +17,10 @@ const {
   regenerateWriteupImport,
   WriteupTooLargeError,
   WriteupImportValidationError,
+  // Friction Wave 1 (W2c)
+  WriteupTruncatedError,
+  resolveWriteupImportMaxTokens,
+  DEFAULT_WRITEUP_IMPORT_MAX_TOKENS,
   MAX_WRITEUP_CHARS,
   WRITEUP_IMPORT_REGION_ID,
   DEFAULT_WRITEUP_IMPORT_MODEL,
@@ -177,37 +181,64 @@ test("proposeWfiFromWriteup: retries once on an invalid entity type, succeeds on
   assert.equal(proposal.entities[0].type, "person");
 });
 
-test("proposeWfiFromWriteup: a truncated first attempt (stop_reason max_tokens) doubles the token budget and retries, rather than resending the same budget", async () => {
-  const goodResponse = JSON.stringify({
-    entities: [{ name: "Alvor", type: "person", rationale: "Recovered after truncation." }],
-    edges: []
-  });
+// W2c: the pre-Wave-1 behavior here was double-the-budget-and-retry, which
+// cost the real Kilmarn seed-3 exercise TWO full multi-minute API calls (plus
+// the lost framing round) to report a budget problem the first response's
+// stop_reason already proved. The contract is now fail-FAST on the first
+// truncated attempt, with actionable guidance.
+test("W2c: a truncated FIRST attempt fails fast with one call -- never a second identical/doubled call", async () => {
   const client = mockClient([
-    { text: "{\"entities\": [ {\"name\": \"Alvor\", \"typ", stopReason: "max_tokens" },
-    goodResponse
-  ]);
-  const proposal = await proposeWfiFromWriteup("Alvor is the smith.", { client, maxTokens: 100 });
-  assert.equal(proposal.entities[0].rationale, "Recovered after truncation.");
-  assert.equal(client.calls.length, 2);
-  assert.equal(client.calls[0].max_tokens, 100, "first attempt uses the requested budget");
-  assert.equal(client.calls[1].max_tokens, 200, "second attempt doubles the budget after truncation, not a blind retry");
-});
-
-test("proposeWfiFromWriteup: truncated on both attempts throws an error that says so, not a generic JSON parse error", async () => {
-  const client = mockClient([
-    { text: "{\"entities\": [", stopReason: "max_tokens" },
-    { text: "{\"entities\": [", stopReason: "max_tokens" }
+    // Three entities' worth of partial output before the cut.
+    { text: '{"entities": [ {"name": "Vane"}, {"name": "The Lowway"}, {"name": "Threa', stopReason: "max_tokens" },
+    JSON.stringify({ entities: [], edges: [] }) // would succeed IF a second call were (wrongly) made
   ]);
   await assert.rejects(
-    proposeWfiFromWriteup("some writeup text", { client, maxTokens: 100 }),
+    proposeWfiFromWriteup("a very entity-dense writeup", { client, maxTokens: 100 }),
     (err) => {
-      assert.equal(err.name, "WriteupImportValidationError");
-      assert.match(err.message, /truncated/i);
-      assert.match(err.lastError.message, /truncated/i);
+      assert.ok(err instanceof WriteupTruncatedError);
+      assert.equal(err.maxTokens, 100);
+      assert.equal(err.approxEntityCount, 3, "reports roughly how many entities the partial response had emitted");
+      assert.match(err.message, /~?\b3 entities/i);
+      assert.match(err.message, /split the writeup/i, "advises splitting");
+      assert.match(err.message, /WF_WRITEUP_IMPORT_MAX_TOKENS/, "names the env override");
+      assert.match(err.message, /Not retrying/i);
       return true;
     }
   );
-  assert.equal(client.calls[1].max_tokens, 200);
+  assert.equal(client.calls.length, 1, "exactly ONE api call -- the whole point of failing fast");
+});
+
+test("W2c: truncation on the validation-retry attempt also fails fast (never a third call)", async () => {
+  const client = mockClient([
+    "not valid json at all", // attempt 1: validation failure -> retry is correct
+    { text: '{"entities": [', stopReason: "max_tokens" } // attempt 2: truncated -> throw, don't loop
+  ]);
+  await assert.rejects(
+    proposeWfiFromWriteup("some writeup text", { client, maxTokens: 100 }),
+    (err) => err instanceof WriteupTruncatedError
+  );
+  assert.equal(client.calls.length, 2);
+});
+
+test("W2c: max tokens comes from WF_WRITEUP_IMPORT_MAX_TOKENS when set, DEFAULT otherwise; explicit opts.maxTokens still wins", async () => {
+  assert.equal(resolveWriteupImportMaxTokens({}), DEFAULT_WRITEUP_IMPORT_MAX_TOKENS);
+  assert.equal(resolveWriteupImportMaxTokens({ WF_WRITEUP_IMPORT_MAX_TOKENS: "32768" }), 32768);
+  assert.equal(resolveWriteupImportMaxTokens({ WF_WRITEUP_IMPORT_MAX_TOKENS: "not-a-number" }), DEFAULT_WRITEUP_IMPORT_MAX_TOKENS);
+  assert.equal(resolveWriteupImportMaxTokens({ WF_WRITEUP_IMPORT_MAX_TOKENS: "-5" }), DEFAULT_WRITEUP_IMPORT_MAX_TOKENS);
+
+  // The env override reaches the real call (read at call time, not module load).
+  process.env.WF_WRITEUP_IMPORT_MAX_TOKENS = "12345";
+  try {
+    const client = mockClient([JSON.stringify({ entities: [], edges: [] })]);
+    await proposeWfiFromWriteup("tiny writeup", { client });
+    assert.equal(client.calls[0].max_tokens, 12345);
+  } finally {
+    delete process.env.WF_WRITEUP_IMPORT_MAX_TOKENS;
+  }
+
+  const client2 = mockClient([JSON.stringify({ entities: [], edges: [] })]);
+  await proposeWfiFromWriteup("tiny writeup", { client: client2, maxTokens: 777 });
+  assert.equal(client2.calls[0].max_tokens, 777, "an explicit opts.maxTokens overrides everything");
 });
 
 test("proposeWfiFromWriteup: throws a typed WriteupImportValidationError after a second failure, does not silently drop the proposal", async () => {

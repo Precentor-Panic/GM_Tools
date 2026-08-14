@@ -390,6 +390,11 @@ function statusForError(err) {
   if (err.name === "NarrationGateError") return 409; // batch not fully accepted -- a real conflict with narrate's precondition, not a bad request shape
   if (err.name === "ConcurrentWriteError") return 409; // another writer holds the lock right now -- retryable
   if (err.name === "WriteupImportRegenerateScopeError") return 400;
+  // W2c: the extraction outgrew its token budget -- a payload-too-dense
+  // condition the CALLER fixes (split the writeup / raise the env budget),
+  // carrying its own actionable guidance. 422, not 500: the server did its
+  // job; the request's content couldn't be processed within the budget.
+  if (err.name === "WriteupTruncatedError") return 422;
   // Phase 8: the bounded re-framing round is already spent -- a real
   // conflict with the reject-loop's own precondition (needs a note now),
   // not a malformed request.

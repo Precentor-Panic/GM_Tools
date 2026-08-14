@@ -59,12 +59,30 @@ export const DEFAULT_WRITEUP_IMPORT_MODEL = "claude-sonnet-5";
 // A real writeup can produce a dozen-plus entities/edges, each with a full
 // attribute set and a rationale -- the original 4096-token default was too
 // small for that and silently truncated real, non-degenerate writeups (found
-// via first hands-on use, not a synthetic test: the model's honest answer
-// just didn't fit, and the retry loop was resending the identical budget, so
-// it failed the same way twice). See proposeWfiFromWriteup's truncation
-// handling below, which now also doubles this on a truncated first attempt
-// rather than only ever using this fixed value.
-export const DEFAULT_WRITEUP_IMPORT_MAX_TOKENS = 8192;
+// via first hands-on use). Friction Wave 1 (W2c): raised from 8192 to 16384
+// after the Kilmarn seed-3 writeup (~600 dense words, seven fate-threads)
+// blew even a doubled 16384 budget -- the OLD scheme (start at 8192, double
+// once on truncation, fail after the second attempt) burned two full
+// several-minute API calls to discover what the first response's
+// stop_reason already said. New scheme: start at this higher default
+// (overridable via the WF_WRITEUP_IMPORT_MAX_TOKENS env var -- see
+// resolveWriteupImportMaxTokens), and FAIL FAST with actionable guidance on
+// the FIRST truncated attempt instead of retrying at all (see
+// WriteupTruncatedError).
+export const DEFAULT_WRITEUP_IMPORT_MAX_TOKENS = 16384;
+
+/**
+ * W2c: the writeup-import extraction budget, env-overridable. Read at call
+ * time (not module load) so a test/session can set it without a re-import;
+ * an unset/invalid value falls back to the default.
+ *
+ * @param {object} [env]  injectable for tests; defaults to process.env
+ * @returns {number}
+ */
+export function resolveWriteupImportMaxTokens(env = process.env) {
+  const parsed = Number.parseInt(env.WF_WRITEUP_IMPORT_MAX_TOKENS ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_WRITEUP_IMPORT_MAX_TOKENS;
+}
 // Phase 8 task 8.1: a deliberately cheaper/faster model tier for the framing
 // call specifically — per the design doc, a visibly-fast first reaction is
 // itself part of signaling "this is a glance, not the real answer" (Phase 3
@@ -135,6 +153,37 @@ export class WriteupImportValidationError extends Error {
     this.lastError = lastError;
     this.rawResponse = rawResponse;
   }
+}
+
+/**
+ * W2c: thrown the moment ANY extraction attempt comes back truncated
+ * (stop_reason 'max_tokens') -- never after a retry. Truncation is a budget
+ * problem: re-sending the same prompt costs another full multi-minute real
+ * API call to hit the same wall (exactly what the Kilmarn seed-3 failure
+ * did, twice, before also losing the framing round). The message carries
+ * the actionable guidance the friction log asked for: roughly how many
+ * entities the partial response had already emitted, and the two real
+ * remedies (split the writeup / raise WF_WRITEUP_IMPORT_MAX_TOKENS).
+ */
+export class WriteupTruncatedError extends Error {
+  constructor(message, { maxTokens, approxEntityCount, rawResponse } = {}) {
+    super(message);
+    this.name = "WriteupTruncatedError";
+    this.maxTokens = maxTokens;
+    this.approxEntityCount = approxEntityCount;
+    this.rawResponse = rawResponse;
+  }
+}
+
+/**
+ * Rough entity count in a (possibly truncated, unparseable) extraction
+ * response: occurrences of a `"name":` key. Entities are the only WFI items
+ * with a `name` field (edges carry source/target/label), so this
+ * approximates "entities emitted before the budget ran out" well enough for
+ * guidance -- it is never used for anything load-bearing.
+ */
+export function approximateEntityCount(rawText) {
+  return (String(rawText ?? "").match(/"name"\s*:/g) ?? []).length;
 }
 
 /**
@@ -299,7 +348,7 @@ export async function proposeWfiFromWriteup(writeupText, opts = {}) {
   let prompt = basePrompt;
   let lastError;
   let lastRaw;
-  let maxTokens = opts.maxTokens ?? DEFAULT_WRITEUP_IMPORT_MAX_TOKENS;
+  const maxTokens = opts.maxTokens ?? resolveWriteupImportMaxTokens();
   const maxAttempts = 2;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -311,19 +360,24 @@ export async function proposeWfiFromWriteup(writeupText, opts = {}) {
     lastRaw = raw;
 
     if (truncated) {
-      // Truncation is a budget problem, not a content problem -- resending
-      // the same prompt with the same maxTokens would just truncate at the
-      // same point again. Double the budget and retry with the SAME prompt
-      // (no point pasting back a response we know is incomplete).
-      lastError = new Error(
-        `Model response was truncated at max_tokens=${maxTokens} before it finished -- the proposal was ` +
-        `larger than the token budget allowed.`
+      // W2c: FAIL FAST, on whichever attempt this is -- never spend another
+      // full real API call re-discovering a budget problem the stop_reason
+      // already reported. (The old behavior doubled the budget and retried;
+      // the real Kilmarn seed-3 failure showed a dense-enough writeup blows
+      // any fixed budget, so the honest move is immediate, actionable
+      // guidance rather than one more multi-minute paid attempt.)
+      const approx = approximateEntityCount(raw);
+      throw new WriteupTruncatedError(
+        `Model response was truncated at max_tokens=${maxTokens} before the extraction finished -- ` +
+        `roughly ${approx} entities had already been emitted when the budget ran out, so this writeup is too ` +
+        `entity-dense for a single extraction pass. Not retrying: an identical call would truncate at the same ` +
+        `point and cost another full API call. Fixes, in preference order: (1) split the writeup into smaller ` +
+        `pieces (density, not length, is what blows the budget) and submit each separately -- an ` +
+        `already-chosen framing can be carried over on resubmit via wf_propose_from_writeup's \`framing\` ` +
+        `parameter, so the rubber-duck round is not re-asked; (2) raise the budget via the ` +
+        `WF_WRITEUP_IMPORT_MAX_TOKENS environment variable (currently ${maxTokens}).`,
+        { maxTokens, approxEntityCount: approx, rawResponse: raw }
       );
-      if (attempt < maxAttempts) {
-        maxTokens *= 2;
-        continue;
-      }
-      break;
     }
 
     try {

@@ -195,6 +195,12 @@ at the repo root for a ready-to-copy starting point). Env vars:
   LLM-backed call. See "Keyless / offline safety" above — every tool works
   without it, just with honest placeholder content instead of real model
   output.
+- `WF_WRITEUP_IMPORT_MAX_TOKENS` — optional (Friction Wave 1, W2c). Output
+  token budget for `wf_propose_from_writeup`'s extraction call; default
+  16384. A truncated extraction now fails FAST on the first attempt with
+  guidance (approximate entity count seen, split-the-writeup advice) instead
+  of burning a second identical call — raise this if your writeups are
+  legitimately that dense and you'd rather pay for bigger single calls.
 
 ## Local dev
 
