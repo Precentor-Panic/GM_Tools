@@ -1112,12 +1112,15 @@ function buildShelf(ctx, which) {
           { key: "kind", label: "Kind", width: "110px", type: "select", options: [
             { value: "map", label: "Map" }, { value: "splash", label: "Splash art" }, { value: "music", label: "Music" }
           ] },
-          { key: "desc", label: "Description", width: "240px" }
+          { key: "desc", label: "Description", width: "240px" },
+          // W3a: the asset's real file path/URL as Foundry resolves it -- the
+          // durable record the Kilmarn exercise had to fake in `desc`.
+          { key: "src", label: "File path", width: "240px", placeholder: "worlds/…/maps/x.webp or URL" }
         ],
         onSubmit: async (v) => {
           await api("/api/session-planner/stagecraft/hand-add", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ world, name: v.name, kind: v.kind, desc: v.desc || undefined })
+            body: JSON.stringify({ world, name: v.name, kind: v.kind, desc: v.desc || undefined, src: v.src || undefined })
           });
           await reload();
         }
@@ -1315,6 +1318,60 @@ function buildShelf(ctx, which) {
     if (r.desc) bodyCol.appendChild(el("div", { text: r.desc, style: "font-size: 12px; color: oklch(0.48 0.014 65); line-height: 1.45; margin-top: 5px; max-width: 78ch;" }));
     else bodyCol.appendChild(el("div", { text: "No description came across from Foundry.", style: "font-size: 11.5px; color: oklch(0.64 0.012 70); font-style: italic; margin-top: 5px;" }));
 
+    // W3a: Stagecraft-only src line -- the asset's real file path/URL,
+    // click-to-edit (POST .../stagecraft/:id/src). A Foundry-pulled asset
+    // that carries no explicit `src` still shows its foundryRef.imagePath as
+    // a read-only hint (that path IS where its file lives) -- only the `src`
+    // field itself is editable.
+    if (!isReliquary) {
+      const srcLine = el("div", { style: "display: flex; align-items: center; gap: 7px; margin-top: 5px;" });
+      const paintSrc = () => {
+        srcLine.innerHTML = "";
+        const shown = r.src || r.foundryImagePath || null;
+        srcLine.appendChild(el("span", {
+          testid: "tagged-shelf-row-src",
+          "data-item-id": r.id,
+          text: shown ? `⛁ ${shown}` : "⛁ no file path recorded",
+          title: r.src ? "This asset's file path/URL (as Foundry resolves it)" : (shown ? "Path from the Foundry pull (foundryRef.imagePath)" : "No file path recorded for this asset yet"),
+          style: `font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: ${shown ? "oklch(0.46 0.014 65)" : "oklch(0.64 0.012 70)"}; ${shown ? "" : "font-style: italic;"} overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60ch;`
+        }));
+        const editBtn = el("span", {
+          testid: "tagged-shelf-row-src-edit-btn",
+          text: r.src ? "✎ edit path" : "✎ set path",
+          style: "font-size: 10.5px; color: oklch(0.50 0.075 185); cursor: pointer; white-space: nowrap;"
+        });
+        editBtn.addEventListener("click", () => {
+          const input = el("input", {
+            testid: "tagged-shelf-row-src-input",
+            value: r.src || "",
+            placeholder: "worlds/…/maps/x.webp or URL",
+            style: "width: 320px; padding: 2px 8px; border: 1px solid oklch(0.72 0.045 185); border-radius: 4px; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; background: oklch(1 0 0); color: inherit;"
+          });
+          const commit = async () => {
+            const v = input.value.trim();
+            try {
+              const { asset } = await api(`/api/session-planner/stagecraft/${encodeURIComponent(r.id)}/src`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ world, src: v || null })
+              });
+              r.src = asset.src ?? null;
+            } catch { /* keep the old value */ }
+            paintSrc();
+          };
+          input.addEventListener("keydown", (ev) => {
+            if (ev.key === "Enter") commit();
+            else if (ev.key === "Escape") paintSrc();
+          });
+          srcLine.innerHTML = "";
+          srcLine.appendChild(input);
+          input.focus();
+        });
+        srcLine.appendChild(editBtn);
+      };
+      paintSrc();
+      bodyCol.appendChild(srcLine);
+    }
+
     const tagsRow = el("div", { style: "display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; align-items: center;" });
     for (const t of r.tags) {
       const on = st.tagFilter.indexOf(t) >= 0;
@@ -1392,7 +1449,11 @@ function normalizeShelf(list, isReliquary) {
           // pack that ISN'T installed in Foundry yet -- browsable so nothing
           // scanning the library is blind to it, badged so nobody mistakes
           // it for a stageable map.
-          catalogOnly: !!r.catalogRef && !r.compendiumRef && !r.foundryRef
+          catalogOnly: !!r.catalogRef && !r.compendiumRef && !r.foundryRef,
+          // W3a: the asset's real file path/URL (editable), plus the
+          // Foundry pull's own imagePath as a read-only fallback hint.
+          src: r.src ?? null,
+          foundryImagePath: r.foundryRef?.imagePath ?? null
         });
 }
 

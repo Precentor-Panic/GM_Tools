@@ -204,7 +204,9 @@ import {
   acceptStagecraftAsset,
   discardStagecraftAsset,
   addStagecraftTag,
-  removeStagecraftTag
+  removeStagecraftTag,
+  // Friction Wave 1 W3a -- the src edit route's backing patch.
+  updateStagecraftAssetSrc
 } from "../session-planner/stagecraft-store.mjs";
 // Phase 35 task 35.1, §3/§8 -- token index (read-only route).
 import { listTokens } from "../session-planner/token-store.mjs";
@@ -3064,12 +3066,14 @@ async function handleApi(req, res, url, parts) {
   }
 
   // QA W2 fix (Group D #19): POST /api/session-planner/stagecraft/hand-add
-  // { world, name, kind, desc? } -> {asset}. Same "write one by hand"
+  // { world, name, kind, desc?, src? } -> {asset}. Same "write one by hand"
   // pattern -- this store's OWN pre-existing "hand-added splash/music row IS
   // the deliberate authorship act" convention (stagecraft-store.mjs's header
   // comment) already defaults saveStagecraftAsset to status:'accepted' and
   // source:'local' with foundryRef:null, so this route is a thin wrapper,
-  // not a new policy.
+  // not a new policy. W3a: gained the optional `src` field (the asset's
+  // Foundry-resolvable file path/URL -- see stagecraft-store.mjs's own W3a
+  // header note).
   if (method === "POST" && parts.length === 4 && parts[1] === "session-planner" && parts[2] === "stagecraft" && parts[3] === "hand-add") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
@@ -3082,8 +3086,23 @@ async function handleApi(req, res, url, parts) {
     const asset = saveStagecraftAsset(w, {
       kind: body.kind,
       name,
-      desc: typeof body.desc === "string" && body.desc.trim() ? body.desc.trim() : null
+      desc: typeof body.desc === "string" && body.desc.trim() ? body.desc.trim() : null,
+      src: typeof body.src === "string" && body.src.trim() ? body.src.trim() : null
     });
+    return sendJson(res, 200, { asset });
+  }
+
+  // W3a: POST /api/session-planner/stagecraft/:id/src   {world, src} -> {asset}
+  // Set (or clear, src:null/"") an existing asset's file path/URL. Thin
+  // wrapper over updateStagecraftAssetSrc -- status-INDEPENDENT by that
+  // function's own documented convention (an accepted asset's path is an
+  // ongoing table-use edit, like a bestiary note). Unknown id -> the store's
+  // own "No stagecraft asset found" -> clean 400 via statusForError, same as
+  // the sibling accept/discard/tags routes.
+  if (method === "POST" && parts.length === 5 && parts[1] === "session-planner" && parts[2] === "stagecraft" && parts[4] === "src") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const asset = updateStagecraftAssetSrc(w, parts[3], body.src ?? null);
     return sendJson(res, 200, { asset });
   }
 

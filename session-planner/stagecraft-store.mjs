@@ -56,6 +56,24 @@
  *     accept route's poll window closed before a result landed; cleared once
  *     `reconcilePendingCompendiumImports` (or a same-call poll) consumes a
  *     matching result.
+ *
+ * ADDITIVE CHANGE (Friction Wave 1, W3a — the "scenes cannot reference a
+ * map" cluster, /opt/dev/campaigns/one-shot/notes/friction.md 2026-08-14):
+ * `src: string|null` (default `null`) — the asset's file path/URL as FOUNDRY
+ * resolves it (a path under Foundry's data dir like
+ * "worlds/kilmarn/maps/lowway.webp", a module path, or an absolute URL).
+ * This is the durable "which file does this map asset actually mean" record
+ * the Kilmarn exercise had to fake by pasting paths into `desc`. DISTINCT
+ * from `localFilePath` above (a file OUTSIDE Foundry's data dir that the
+ * flush composer must copy in first): `src` is used as-is, never copied.
+ * Written by hand-add and the new `updateStagecraftAssetSrc` patch
+ * (status-INDEPENDENT — recording where an accepted asset's file lives is an
+ * ongoing table-use edit, bestiary-store.mjs's note/rating convention, not a
+ * re-ingest a human decision should gate). Read by
+ * wf-mcp-server/lib/foundry-push-ops.mjs (push-scene's default mapSrc, W3c,
+ * and the flush composer's src-resolution order). Pre-existing records
+ * simply lack the key on disk and read as `null` — no SCHEMA_VERSION to
+ * bump (this store's own established additive-field convention above).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -117,7 +135,8 @@ export function saveStagecraftAsset(
     compendiumRef = null,
     thumb = null,
     pendingImport = null,
-    catalogRef = null
+    catalogRef = null,
+    src = null
   },
   opts = {}
 ) {
@@ -150,6 +169,9 @@ export function saveStagecraftAsset(
     // has foundryRef:null + compendiumRef:null and is NEVER pushable/
     // importable until the pack is actually installed.
     catalogRef,
+    // Friction Wave 1 W3a -- see this file's own header comment: the durable
+    // "which file does this map asset mean" path/URL, as Foundry resolves it.
+    src,
     createdAt: now
   };
   const assets = readAssets(world);
@@ -263,6 +285,34 @@ export function removeStagecraftTag(world, assetId, tag) {
   const next = removeTag(assets, assetId, tag);
   writeAssets(world, next);
   return next.find((a) => a.id === assetId);
+}
+
+/**
+ * Friction Wave 1 W3a -- set (or clear, with `src: null`) an asset's file
+ * path/URL (see this module's own header note on `src` vs `localFilePath`).
+ * Status-INDEPENDENT, deliberately NOT `updateStagecraftAssetFields`'s
+ * proposed-only re-ingest guard: recording where an already-accepted map's
+ * file lives is exactly the kind of ongoing table-use edit
+ * bestiary-store.mjs's own note/rating convention exists for, not a
+ * re-ingest a human decision should gate. Trims; an empty/whitespace-only
+ * string clears to `null` (a blank path is never a real path).
+ * @param {string} world
+ * @param {string} assetId
+ * @param {string|null} src
+ * @returns {object}   the updated StagecraftAsset
+ */
+export function updateStagecraftAssetSrc(world, assetId, src) {
+  if (src !== null && src !== undefined && typeof src !== "string") {
+    throw new Error(`Stagecraft asset src must be a string or null (got ${typeof src}).`);
+  }
+  const assets = readAssets(world);
+  const idx = findAssetIndex(world, assetId, assets);
+  const trimmed = typeof src === "string" ? src.trim() : null;
+  const updated = { ...assets[idx], src: trimmed || null };
+  const next = [...assets];
+  next[idx] = updated;
+  writeAssets(world, next);
+  return updated;
 }
 
 /**

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, existsSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -41,6 +41,7 @@ const WORLD = "stagecraft-store-test-world";
     acceptStagecraftAsset,
     discardStagecraftAsset,
     updateStagecraftAssetFields,
+    updateStagecraftAssetSrc,
     addStagecraftTag,
     removeStagecraftTag,
     setStagecraftAssetPendingImport,
@@ -236,6 +237,59 @@ const WORLD = "stagecraft-store-test-world";
     // compendiumRef itself is left untouched -- it's the dedup key a future
     // re-pull still needs to find THIS now-accepted row.
     assert.deepEqual(imported.compendiumRef, { packId: "czepeku-taverns.scenes", entryId: "scnEntryTavernB" });
+  });
+
+  // -------------------------------------------------------------------------
+  // Friction Wave 1 W3a -- `src` (the durable file path/URL) + its
+  // status-independent patch.
+  // -------------------------------------------------------------------------
+
+  test("W3a src: defaults to null on save; an explicit src round-trips", () => {
+    const bare = saveStagecraftAsset(WORLD, { kind: "map", name: "No Path Yet" }, { makeId: () => "sc-w3a-1" });
+    assert.equal(bare.src, null);
+    const withSrc = saveStagecraftAsset(
+      WORLD,
+      { kind: "map", name: "Lowway Alleys", src: "worlds/kilmarn/maps/lowway-alleys.webp" },
+      { makeId: () => "sc-w3a-2" }
+    );
+    assert.equal(withSrc.src, "worlds/kilmarn/maps/lowway-alleys.webp");
+    assert.equal(getStagecraftAsset(WORLD, "sc-w3a-2").src, "worlds/kilmarn/maps/lowway-alleys.webp");
+  });
+
+  test("W3a updateStagecraftAssetSrc: sets a path on an ACCEPTED asset (status-independent, unlike updateStagecraftAssetFields), trims, and clears via null or blank", () => {
+    const asset = saveStagecraftAsset(WORLD, { kind: "map", name: "Docks" }, { makeId: () => "sc-w3a-3" });
+    assert.equal(asset.status, "accepted", "hand-add default -- the exact case the proposed-only re-ingest guard would wrongly block");
+
+    const set = updateStagecraftAssetSrc(WORLD, asset.id, "  worlds/kilmarn/maps/docks.webp  ");
+    assert.equal(set.src, "worlds/kilmarn/maps/docks.webp", "trimmed");
+    assert.equal(set.status, "accepted", "src patch never touches status");
+
+    const clearedByNull = updateStagecraftAssetSrc(WORLD, asset.id, null);
+    assert.equal(clearedByNull.src, null);
+
+    updateStagecraftAssetSrc(WORLD, asset.id, "x.webp");
+    const clearedByBlank = updateStagecraftAssetSrc(WORLD, asset.id, "   ");
+    assert.equal(clearedByBlank.src, null, "a whitespace-only path is never a real path");
+  });
+
+  test("W3a updateStagecraftAssetSrc: unknown id throws the store's own clear not-found error; non-string src throws", () => {
+    assert.throws(() => updateStagecraftAssetSrc(WORLD, "sc-nope", "x.webp"), /No stagecraft asset found/);
+    assert.throws(() => updateStagecraftAssetSrc(WORLD, "sc-w3a-3", 42), /must be a string or null/);
+  });
+
+  test("W3a back-compat: a pre-W3a record on disk (no src key at all) still loads and patches cleanly", () => {
+    // Simulate a legacy record by writing through the store then deleting the
+    // key from the raw file -- the exact on-disk shape every kilmarn asset has.
+    const asset = saveStagecraftAsset(WORLD, { kind: "map", name: "Legacy Row" }, { makeId: () => "sc-w3a-legacy" });
+    const filePath = join(stagecraftRoot(), `${WORLD}.json`);
+    const rows = JSON.parse(readFileSync(filePath, "utf8"));
+    for (const r of rows) if (r.id === asset.id) delete r.src;
+    writeFileSync(filePath, JSON.stringify(rows, null, 2), "utf8");
+
+    const reread = getStagecraftAsset(WORLD, asset.id);
+    assert.equal(reread.src ?? null, null, "a missing key reads as null");
+    const patched = updateStagecraftAssetSrc(WORLD, asset.id, "worlds/x/maps/legacy.webp");
+    assert.equal(patched.src, "worlds/x/maps/legacy.webp");
   });
 
   console.log(`\n${passed} passed`);
