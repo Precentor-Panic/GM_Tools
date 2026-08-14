@@ -205,6 +205,44 @@ export function renderProposalCard(m, opts = {}) {
     el("span", { text: after, style: "font-size: 12.5px; line-height: 1.45; color: oklch(0.30 0.020 150);" })
   ]));
 
+  // Friction Wave 1 (W1a): deterministic near-match chips on a CREATE card --
+  // the live graph's plausible "this may already exist" candidates, computed
+  // server-side (batchDetailPayload -> nearMatchesForBatch) and rendered
+  // right on the card so duplicate-checking stops being a manual World-tab
+  // flip loop. Advisory display; the convert-to-update action rides on the
+  // same chips (W1b) when the host surface wires it.
+  let nearMatchesRow = null;
+  const nearMatches = Array.isArray(m.nearMatches) ? m.nearMatches : [];
+  if (nearMatches.length && decided === "") {
+    nearMatchesRow = el("div", {
+      testid: "proposal-card-near-matches",
+      style: "display: flex; flex-direction: column; gap: 4px; margin: 0 0 8px; padding: 7px 9px; border: 1px dashed oklch(0.82 0.055 65); border-radius: 4px; background: oklch(0.975 0.020 65);"
+    });
+    nearMatchesRow.appendChild(el("div", {
+      text: "Already in the world?",
+      style: "font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.50 0.080 65);"
+    }));
+    for (const nm of nearMatches) {
+      const isCrossType = nm.reason === "exact-name-different-type";
+      const chip = el("div", {
+        testid: "proposal-card-near-match",
+        "data-entity-id": nm.entityId,
+        "data-reason": nm.reason,
+        style: "display: flex; align-items: center; gap: 8px; flex-wrap: wrap;"
+      }, [
+        el("span", {
+          text: isCrossType ? "⚠" : "≈",
+          style: `font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: ${isCrossType ? "oklch(0.50 0.13 25)" : "oklch(0.50 0.080 65)"}; flex: none;`
+        }),
+        el("span", {
+          text: isCrossType ? `${nm.name} (existing ${nm.type ?? "entity"} — same name, different type)` : `${nm.name} (${nm.type ?? "entity"})`,
+          style: "font-size: 12px; color: oklch(0.36 0.030 65);"
+        })
+      ]);
+      nearMatchesRow.appendChild(chip);
+    }
+  }
+
   // Footer: rationale + accept/reject
   const why = el("div", {
     testid: "proposal-card-why",
@@ -243,7 +281,9 @@ export function renderProposalCard(m, opts = {}) {
   const btns = el("div", { style: "display: flex; gap: 6px; flex: none;" }, [acceptBtn, rejectBtn]);
   const footer = el("div", { style: "display: flex; align-items: flex-end; gap: 12px;" }, [why, btns]);
 
-  root.append(header, diffRows, footer);
+  root.append(header, diffRows);
+  if (nearMatchesRow) root.appendChild(nearMatchesRow);
+  root.appendChild(footer);
   paint();
   return root;
 }

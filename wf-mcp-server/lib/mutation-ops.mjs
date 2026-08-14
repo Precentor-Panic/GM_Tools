@@ -54,6 +54,11 @@ import { getUserSettings } from "../../mutation-engine/user-settings.mjs";
 // reuses DEFAULT_MENTION_RELATIONSHIP for the SAME default a fresh link
 // mutation would have carried, rather than inventing a second default.
 import { scanForMentionedEntities, DEFAULT_MENTION_RELATIONSHIP } from "../../graph-import/scan-mentions.mjs";
+// Friction Wave 1 (W1a): deterministic near-match chips for proposed CREATE
+// cards -- the shared name-similarity module (extracted from scan-mentions'
+// Phase 13.4 pre-pass; see that module's own header for the Kilmarn cases
+// that motivated it).
+import { findNearMatches } from "../../graph-import/name-similarity.mjs";
 
 // --- small pure helpers --------------------------------------------------
 
@@ -88,6 +93,52 @@ export function entityIdsForMutations(batch, mutationIds) {
 /** The Set summarizeBatch's flaggedEntityIds opt expects, built from findUnreviewedEntities(). */
 export function flaggedEntityIdSet(world) {
   return new Set(findUnreviewedEntities(world).map((f) => f.entityId));
+}
+
+/**
+ * Friction Wave 1 (W1a/W1b/W1d): is this stored mutation a CREATE — an
+ * `upsert_entity` proposing a brand-new entity, as opposed to an update of a
+ * live one? Two signals, in preference order:
+ *   - the diff's own "(created)" marker (attachDiffs stamps it whenever the
+ *     mutation's id had no live match at diff time) — works with no
+ *     snapshot in hand, which matters for reject-cascade (W1d), whose choke
+ *     point (rejectMutationIds) deliberately has no `dir`;
+ *   - when a live entity-id set IS available, absence from it (covers a
+ *     mutation persisted without a diff at all).
+ *
+ * @param {object} m                    a StoredMutation
+ * @param {Set<string>} [liveEntityIds] live-snapshot entity ids, if the caller has them
+ */
+export function isCreateEntityMutation(m, liveEntityIds) {
+  if (m.op !== "upsert_entity") return false;
+  if (Array.isArray(m.diff) && m.diff.length > 0 && m.diff[0]?.field === "(created)") return true;
+  if (liveEntityIds) return !m.id || !liveEntityIds.has(m.id);
+  return false;
+}
+
+/**
+ * W1a: near-match annotations for every pending CREATE mutation in a batch —
+ * `{ [mutationId]: Array<{entityId,name,type,score,reason}> }`, deterministic
+ * and advisory (nothing here mutates the batch). Backs the review UI's
+ * "possible duplicate" chips; shared here (not in review-ui/server.mjs) per
+ * the front-ends-are-thin-wrappers convention so the MCP surface can reuse
+ * it later.
+ *
+ * @param {object} batch
+ * @param {object[]} entities  live-snapshot entities
+ */
+export function nearMatchesForBatch(batch, entities) {
+  const liveEntityIds = new Set((entities ?? []).map((e) => e.id));
+  const result = {};
+  for (const m of batch.mutations) {
+    if (m.status !== "pending") continue; // a settled row no longer needs the advisory
+    if (!isCreateEntityMutation(m, liveEntityIds)) continue;
+    const name = m.data?.name;
+    if (!name) continue;
+    const matches = findNearMatches(name, m.data?.type, entities ?? []);
+    if (matches.length) result[m.mutationId] = matches;
+  }
+  return result;
 }
 
 /** Next unused m<N> mutationId index in a batch, for appending regenerated mutations. */

@@ -101,7 +101,8 @@ import {
   getEntityNarrationHistoryOp,
   scanMentionsOp,
   patchPendingMutationData,
-  redirectMentionScanRowToExistingOp
+  redirectMentionScanRowToExistingOp,
+  nearMatchesForBatch
 } from "../wf-mcp-server/lib/mutation-ops.mjs";
 
 // Phase 12 tasks 12.3/12.4/12.6 -- manual node/edge create/edit/delete,
@@ -581,13 +582,25 @@ function maybeScheduleFlush(world, scene) {
  * mutation status==='accepted') so the frontend knows whether to offer
  * narration without needing its own copy of narrate.mjs's gate rule.
  */
-function batchDetailPayload(w, batchId) {
+function batchDetailPayload(dir, w, batchId) {
   const batch = loadBatch(w, batchId);
   const statusByMutationId = new Map(batch.mutations.map((m) => [m.mutationId, m.status]));
   const summary = summarizeBatch(batch, { flaggedEntityIds: flaggedEntityIdSet(w) });
+  // Friction Wave 1 (W1a): live-snapshot entities for the deterministic
+  // near-match chips on CREATE cards. A world with no snapshot yet (or an
+  // unreadable one) degrades to no chips -- never a failed batch read.
+  let liveEntities = [];
+  try {
+    ({ entities: liveEntities } = loadSnapshot(dir, w).snapshot);
+  } catch { /* no snapshot yet is a real, valid state */ }
+  const nearMatches = nearMatchesForBatch(batch, liveEntities);
   const regions = summary.regions.map((region) => ({
     ...region,
-    entities: region.entities.map((e) => ({ ...e, status: statusByMutationId.get(e.mutationId) }))
+    entities: region.entities.map((e) => ({
+      ...e,
+      status: statusByMutationId.get(e.mutationId),
+      ...(nearMatches[e.mutationId] ? { nearMatches: nearMatches[e.mutationId] } : {})
+    }))
   }));
   const narratable = batch.mutations.length > 0 && batch.mutations.every((m) => m.status === "accepted");
   return {
@@ -1091,7 +1104,8 @@ async function handleApi(req, res, url, parts) {
   // GET /api/batches/:batchId
   if (method === "GET" && parts.length === 3 && parts[1] === "batches") {
     const w = resolveWorld(q.get("world"));
-    return sendJson(res, 200, batchDetailPayload(w, parts[2]));
+    const dir = resolveDir();
+    return sendJson(res, 200, batchDetailPayload(dir, w, parts[2]));
   }
 
   // POST /api/batches/:batchId/view  { world, grain, regionId, entityId }
