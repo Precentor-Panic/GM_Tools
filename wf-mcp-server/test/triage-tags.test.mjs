@@ -82,3 +82,42 @@ test("W1e: triageForBatch severity-merges stamped risk with the triage-derived o
   assert.deepEqual(result.m1, { triage: "low-risk", risk: "contradict" });
   assert.deepEqual(result.m2, { triage: "possible-duplicate", risk: "look" });
 });
+
+test("W2b: a type-conflict-resolved update is never 'low-risk' -- the merge target deserves a look", () => {
+  // Same pure-append diff as the 'low-risk' case above, but the mutation
+  // exists because writeup-import's normalizeProposalTypeConflicts resolved
+  // an exact-name/different-type guess onto the existing entity.
+  const resolvedAppend = m({
+    op: "upsert_entity", id: "wf_mss38vnc_j",
+    diff: [{ field: "description", from: "A stone bridge.", to: "A stone bridge. Threads are tied to the central span." }],
+    entityContext: {
+      name: "Kilmarn Bridge",
+      writeupNormalization: { kind: "type-conflict-resolved", name: "Kilmarn Bridge", extractedType: "place", keptType: "object", entityId: "wf_mss38vnc_j" }
+    }
+  });
+  assert.equal(deriveTriageTag(resolvedAppend), "needs-review");
+
+  // A genuine text REPLACE still escalates to fights-canon -- the W2b floor
+  // never downgrades anything.
+  const resolvedReplace = m({
+    op: "upsert_entity", id: "wf_mss38vnc_j",
+    diff: [{ field: "description", from: "A stone bridge.", to: "Completely new text." }],
+    entityContext: {
+      name: "Kilmarn Bridge",
+      writeupNormalization: { kind: "type-conflict-resolved", name: "Kilmarn Bridge", extractedType: "place", keptType: "object", entityId: "wf_mss38vnc_j" }
+    }
+  });
+  assert.equal(deriveTriageTag(resolvedReplace), "fights-canon");
+
+  // A near-miss RENAME (W2a) does not change triage at all -- it's an
+  // ordinary update after the rename, tagged purely by its diff.
+  const renamedAppend = m({
+    op: "upsert_entity", id: "wf_mss38vnc_i",
+    diff: [{ field: "description", from: "A sunken street.", to: "A sunken street. Smugglers pass beneath it." }],
+    entityContext: {
+      name: "The Lowway",
+      writeupNormalization: { kind: "near-miss-rename", from: "Lowway", to: "The Lowway", entityId: "wf_mss38vnc_i", score: 1 }
+    }
+  });
+  assert.equal(deriveTriageTag(renamedAppend), "low-risk");
+});

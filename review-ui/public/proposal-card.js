@@ -401,6 +401,24 @@ export function renderProposalCard(m, opts = {}) {
         style: "font-size: 11.5px; color: oklch(0.36 0.030 65);"
       })
     ]);
+  } else if (norm && norm.kind === "type-conflict-resolved") {
+    // W2b: exact name, different extracted type -- resolved onto the
+    // existing entity (which keeps ITS type). Suggestion, not silence: the
+    // reviewer rejects this row if it's genuinely a different same-named thing.
+    normalizationRow = el("div", {
+      testid: "proposal-card-normalization",
+      "data-normalization-kind": norm.kind,
+      style: "display: flex; align-items: baseline; gap: 7px; margin: 0 0 8px; padding: 6px 9px; border: 1px dashed oklch(0.85 0.060 25); border-radius: 4px; background: oklch(0.968 0.026 25);"
+    }, [
+      el("span", {
+        text: "⚠ same name, different type",
+        style: "font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.50 0.13 25); flex: none;"
+      }),
+      el("span", {
+        text: `“${norm.name}” already exists as a ${norm.keptType}; the extraction guessed ${norm.extractedType}. Merged into the existing ${norm.keptType} (its type is kept) — reject if this is genuinely a different “${norm.name}”.`,
+        style: "font-size: 11.5px; color: oklch(0.36 0.030 65);"
+      })
+    ]);
   }
 
   // Footer: rationale + accept/reject

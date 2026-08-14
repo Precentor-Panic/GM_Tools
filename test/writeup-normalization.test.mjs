@@ -303,5 +303,132 @@ test("importWriteup end-to-end: a near-miss create dedups into an update of the 
   assert.equal(shrineRow.writeupNormalization, null, "an untouched create carries no normalization record");
 });
 
+// ---------------------------------------------------------------------------
+// W2b: exact name + different extracted type — the real Kilmarn misses
+// "Kilmarn Bridge" (batch `place` vs canon `object`, seed 3a) and
+// "The Interest" (batch `faction` vs canon `person`, seed 3b).
+// ---------------------------------------------------------------------------
+
+test("W2b real Kilmarn case: 'Kilmarn Bridge' extracted as place resolves onto the canon object, keeping ITS type", async () => {
+  const { normalizeProposalTypeConflicts } = await import("../graph-import/writeup-import.mjs");
+  const { proposal, resolutions } = normalizeProposalTypeConflicts(
+    { entities: [proposalEntity("Kilmarn Bridge", "place")], edges: [] },
+    KILMARN_CANON
+  );
+  const pe = proposal.entities[0];
+  assert.equal(pe.type, "object", "canon keeps its type — never retyped by an extraction guess");
+  assert.equal(pe.name, "Kilmarn Bridge");
+  assert.deepEqual(pe.writeupNormalization, {
+    kind: "type-conflict-resolved",
+    name: "Kilmarn Bridge",
+    extractedType: "place",
+    keptType: "object",
+    entityId: "wf_mss38vnc_j"
+  });
+  assert.equal(resolutions.length, 1);
+});
+
+test("W2b real Kilmarn case: 'The Interest' extracted as faction resolves onto the canon person", async () => {
+  const { normalizeProposalTypeConflicts } = await import("../graph-import/writeup-import.mjs");
+  const { proposal } = normalizeProposalTypeConflicts(
+    { entities: [proposalEntity("The Interest", "faction")], edges: [] },
+    KILMARN_CANON
+  );
+  assert.equal(proposal.entities[0].type, "person");
+  assert.equal(proposal.entities[0].writeupNormalization.entityId, "wf_mss975ng_b");
+});
+
+test("W2b conservatism: a same-type exact match is left to plain dedup; two differently-typed same-name entities are ambiguous", async () => {
+  const { normalizeProposalTypeConflicts } = await import("../graph-import/writeup-import.mjs");
+  const canon = [
+    { id: "a1", name: "The Ford", type: "place" },
+    { id: "a2", name: "The Ford", type: "event" }
+  ];
+  const { proposal, resolutions } = normalizeProposalTypeConflicts(
+    {
+      entities: [
+        proposalEntity("Kilmarn Bridge", "object"), // exact name+type match — plain dedup territory
+        proposalEntity("The Ford", "faction") // ambiguous: two differently-typed canon entities share the name
+      ],
+      edges: []
+    },
+    [...KILMARN_CANON, ...canon]
+  );
+  assert.equal(proposal.entities[0].writeupNormalization, undefined);
+  assert.equal(proposal.entities[0].type, "object");
+  assert.equal(proposal.entities[1].writeupNormalization, undefined);
+  assert.equal(proposal.entities[1].type, "faction");
+  assert.equal(resolutions.length, 0);
+});
+
+test("W2b conservatism: no resolution when the canon name+type is already its own proposal item", async () => {
+  const { normalizeProposalTypeConflicts } = await import("../graph-import/writeup-import.mjs");
+  const { proposal, resolutions } = normalizeProposalTypeConflicts(
+    {
+      entities: [
+        proposalEntity("Kilmarn Bridge", "object"),
+        proposalEntity("Kilmarn Bridge", "place")
+      ],
+      edges: []
+    },
+    KILMARN_CANON
+  );
+  assert.equal(proposal.entities[1].type, "place", "would collapse onto the sibling row — left alone");
+  assert.equal(resolutions.length, 0);
+});
+
+test("W2b: the combined wrapper resolves type conflicts first, then near-misses, and reports both", () => {
+  const { proposal, rewrites, typeResolutions } = normalizeProposalAgainstSnapshot(
+    {
+      entities: [
+        proposalEntity("Kilmarn Bridge", "place"), // W2b case
+        proposalEntity("Master Vane", "person") // W2a case
+      ],
+      edges: []
+    },
+    KILMARN_CANON
+  );
+  assert.equal(proposal.entities[0].type, "object");
+  assert.equal(proposal.entities[0].writeupNormalization.kind, "type-conflict-resolved");
+  assert.equal(proposal.entities[1].name, "Master Aldric Vane");
+  assert.equal(proposal.entities[1].writeupNormalization.kind, "near-miss-rename");
+  assert.equal(typeResolutions.length, 1);
+  assert.equal(rewrites.length, 1);
+});
+
+test("W2b end-to-end: importWriteup turns an exact-name/different-type guess into an update of the existing entity, suggestion surfaced on the row", async () => {
+  const snapshot = {
+    entities: KILMARN_CANON.map((e) => ({ ...e, description: "canon text", importance: 0.5 })),
+    edges: [],
+    entityTypes: []
+  };
+  const extraction = JSON.stringify({
+    entities: [
+      {
+        name: "Kilmarn Bridge",
+        type: "place",
+        description: "canon text Threads are tied to the central span during the ceremony.",
+        rationale: "The bridge hosts the mooring ceremony."
+      }
+    ],
+    edges: []
+  });
+  const result = await importWriteup("norm-test-world-w2b", "…seed text…", snapshot, {
+    llmOpts: { client: mockClient([extraction]) }
+  });
+
+  const batch = loadBatch("norm-test-world-w2b", result.batchId);
+  const bridge = batch.mutations.find((m) => m.data?.name === "Kilmarn Bridge");
+  assert.equal(bridge.id, "wf_mss38vnc_j", "targets the EXISTING entity — never a silent duplicate create");
+  assert.equal(bridge.data.type, "object", "the existing entity's type is kept");
+  assert.notEqual(bridge.diff?.[0]?.field, "(created)");
+  assert.equal(bridge.entityContext.writeupNormalization.kind, "type-conflict-resolved");
+
+  const rows = summarizeBatch(batch).regions.flatMap((r) => r.entities);
+  const row = rows.find((r) => r.mutationId === bridge.mutationId);
+  assert.equal(row.writeupNormalization.kind, "type-conflict-resolved");
+  assert.equal(row.writeupNormalization.extractedType, "place");
+});
+
 await Promise.all(pending);
 console.log(`\n${passed} passed`);

@@ -583,18 +583,88 @@ export function normalizeProposalNameNearMisses(proposal, existingEntities, opts
 }
 
 /**
+ * W2b: exact name match + different extracted type must NEVER silently
+ * create a duplicate — the real Kilmarn misses "Kilmarn Bridge" (extracted
+ * `place`, canon `object`) and "The Interest" (extracted `faction`, canon
+ * `person`), both of which sailed past the name+type dedup by construction.
+ * Resolution: rewrite the proposal entity's `type` (and name casing) to the
+ * EXISTING entity's own — canon keeps its type, never retyped by an
+ * extraction guess — so importGraph's unmodified findExisting resolves it
+ * as an update. The mutation is marked with a
+ * `writeupNormalization: {kind:'type-conflict-resolved', ...}` suggestion
+ * the review card surfaces (the reviewer can still reject the merge if this
+ * genuinely IS a different same-named thing).
+ *
+ * Conservatism: skipped when the name also has a same-type exact match
+ * (plain dedup territory), when MORE than one differently-typed existing
+ * entity shares the name (ambiguous), or when the existing entity's
+ * name+type key is already claimed by another proposal item (collapse risk).
+ *
+ * @param {{entities:object[], edges:object[]}} proposal
+ * @param {object[]} existingEntities
+ * @returns {{proposal:{entities:object[], edges:object[]}, resolutions:Array<{name:string, extractedType:string, keptType:string, entityId:string}>}}
+ */
+export function normalizeProposalTypeConflicts(proposal, existingEntities) {
+  const existing = (existingEntities ?? []).filter((e) => e?.name && e?.type);
+  const byExactName = new Map();
+  for (const e of existing) {
+    const k = e.name.trim().toLowerCase();
+    if (!byExactName.has(k)) byExactName.set(k, []);
+    byExactName.get(k).push(e);
+  }
+
+  const entities = (proposal.entities ?? []).map((e) => ({ ...e }));
+  const claimedKeys = new Set(entities.map((e) => entityKey(e.type, e.name)));
+  const resolutions = [];
+
+  for (const pe of entities) {
+    const nameKey = String(pe.name).trim().toLowerCase();
+    const exacts = byExactName.get(nameKey) ?? [];
+    if (!exacts.length) continue;
+    if (exacts.some((e) => e.type === pe.type)) continue; // plain name+type dedup's own territory
+    const distinct = [...new Map(exacts.map((e) => [e.id, e])).values()];
+    if (distinct.length !== 1) continue; // two differently-typed existing entities share this name — ambiguous, hands off
+    const target = distinct[0];
+
+    const targetKey = entityKey(target.type, target.name);
+    if (claimedKeys.has(targetKey)) continue; // the canon name+type is already its own proposal item
+
+    claimedKeys.delete(entityKey(pe.type, pe.name));
+    claimedKeys.add(targetKey);
+    pe.writeupNormalization = {
+      kind: "type-conflict-resolved",
+      name: target.name,
+      extractedType: pe.type,
+      keptType: target.type,
+      entityId: target.id
+    };
+    pe.name = target.name; // exact stored casing
+    pe.type = target.type; // canon keeps its type
+    resolutions.push({ name: target.name, extractedType: pe.writeupNormalization.extractedType, keptType: target.type, entityId: target.id });
+  }
+
+  // Edge endpoint refs are unchanged by this pass: the NAME string is the
+  // same (importGraph's resolveEndpoint matches names case-insensitively,
+  // so a casing fix needs no re-point), and endpoints are untyped.
+  return { proposal: { ...proposal, entities }, resolutions };
+}
+
+/**
  * The full W2 pre-dry-run normalization pass, in the order the conservatism
  * rules require — importWriteup/regenerateWriteupImport call THIS, not the
- * individual passes. Currently: the W2a near-miss rename pass (W2b's
- * exact-name/different-type resolution slots in here as its own step).
+ * individual passes. Type conflicts resolve FIRST (W2b — after which those
+ * entities are exact name+type matches the near-miss pass correctly
+ * ignores), then the W2a near-miss rename pass over what's left.
  *
  * @param {{entities:object[], edges:object[]}} proposal
  * @param {object[]} existingEntities
  * @param {object} [opts]  forwarded to the individual passes
- * @returns {{proposal:object, rewrites:Array}}
+ * @returns {{proposal:object, rewrites:Array, typeResolutions:Array}}
  */
 export function normalizeProposalAgainstSnapshot(proposal, existingEntities, opts = {}) {
-  return normalizeProposalNameNearMisses(proposal, existingEntities, opts);
+  const typePass = normalizeProposalTypeConflicts(proposal, existingEntities);
+  const nearMissPass = normalizeProposalNameNearMisses(typePass.proposal, existingEntities, opts);
+  return { proposal: nearMissPass.proposal, rewrites: nearMissPass.rewrites, typeResolutions: typePass.resolutions };
 }
 
 // The reviewable field subset for an entity mutation's `data` — matches

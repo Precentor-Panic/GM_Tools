@@ -198,6 +198,12 @@ export function deriveTriageTag(m, nearMatches = []) {
       return from && !normTriageText(c.to).includes(from);
     });
     if (replacesText) return "fights-canon";
+    // Friction Wave 1 (W2b): an update that only exists because the
+    // extraction's exact-name/different-type guess was RESOLVED onto the
+    // existing entity (writeup-import.mjs's normalizeProposalTypeConflicts)
+    // is never 'low-risk' -- the reviewer should confirm the merge target
+    // is genuinely the same thing and not a same-named sibling.
+    const typeConflictResolved = m.entityContext?.writeupNormalization?.kind === "type-conflict-resolved";
     const allPureAdds =
       tuples.length > 0 &&
       tuples.every((c) => {
@@ -205,7 +211,7 @@ export function deriveTriageTag(m, nearMatches = []) {
         if (TRIAGE_TEXT_FIELDS.has(c.field)) return normTriageText(c.to).includes(normTriageText(c.from)); // a genuine append
         return false;
       });
-    if (allPureAdds) return "low-risk";
+    if (allPureAdds && !typeConflictResolved) return "low-risk";
     return "needs-review";
   }
   if (m.op === "upsert_edge" && created) return "low-risk"; // a brand-new connection is a pure add
