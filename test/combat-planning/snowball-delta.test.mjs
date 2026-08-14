@@ -64,8 +64,18 @@ function test(name, fn) {
   }
 }
 
+// FIXTURE ARITHMETIC MATTERS (Friction Wave 1 final-sweep fix of a
+// pre-existing failure): stubScore below is LINEAR (2*damage + eHP), so
+// removing a member changes the score by exactly that member's own weighted
+// contribution. The original fixture had burst-mage at {40 dmg, 30 eHP} and
+// tank at {10 dmg, 90 eHP} -- 2*40+30 = 2*10+90 = 110, so the "genuinely
+// DIFFERENT numbers" test below failed BY CONSTRUCTION (the module was
+// correct; the fixture accidentally engineered the exact coincidence the
+// assertion forbids). burst-mage's eHP is 20 here so the two deltas are
+// 100 vs 110; candidate identities are unchanged (burst-mage still top
+// damage 40>15>10, tank still top eHP 90>50>20).
 const PARTY = [
-  { id: "burst-mage", damagePerRoundEstimate: 40, effectiveHp: 30 },
+  { id: "burst-mage", damagePerRoundEstimate: 40, effectiveHp: 20 },
   { id: "tank", damagePerRoundEstimate: 10, effectiveHp: 90 },
   { id: "support", damagePerRoundEstimate: 15, effectiveHp: 50 }
 ];
