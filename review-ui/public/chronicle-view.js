@@ -200,6 +200,8 @@ export async function renderChronicleSurface(arg) {
     running: false,
     proposals: [],             // region entities from the last run's batch detail
     batchId: null,
+    batchStatus: null,         // W1h: the loaded batch's own lifecycle status ('open'|'synced'|...)
+    resyncNeeded: false,       // W1h: an accept landed AFTER this batch was already synced
     // QA W3 finding 2: "Receive new information" -- the Composer's second
     // primary action. `phase` mirrors the two-phase writeup-propose contract
     // (null | "framing"); `framings`/`writeupText`/`mode`/`rubberDuck` are
@@ -234,6 +236,10 @@ export async function renderChronicleSurface(arg) {
   // ever execute -- a `const` any lower is a temporal-dead-zone crash on
   // deep-linked batch loads (found by this wave's own e2e run).
   const cardRegistry = new Map(); // mutationId -> [{el, setDecided}]
+  // W1h: the accept→apply banner's live element/parts -- declared up here
+  // for the same deep-link TDZ reason as cardRegistry above.
+  let applyBannerEl = null;
+  let applyBannerParts = null;
 
   // ---- initial data ------------------------------------------------------
   let clock, fortune, pending, log;
@@ -1116,6 +1122,70 @@ export async function renderChronicleSurface(arg) {
     const p = findProposal(mid);
     if (p) p.status = word === "yes" ? "accepted" : word === "no" ? "rejected" : "pending";
     for (const api of cardRegistry.get(mid) ?? []) api.setDecided(word);
+    if (word === "yes" && state.batchStatus === "synced") state.resyncNeeded = true;
+    paintApplyBanner();
+  }
+
+  // ---- W1h: "N accepted mutations not yet applied — Apply to world" -------
+  // The Kilmarn friction log's very first entry: after accept-all there was
+  // no discoverable way to actually push the accepted mutations into the
+  // fabric ("accept-all → now what?"). A persistent banner over the What-
+  // changed panel, wired to the EXISTING /api/batches/:id/sync route --
+  // never a second apply path. (applyBannerEl/applyBannerParts are declared
+  // at the top of this function, by cardRegistry -- deep-link TDZ.)
+  function acceptedProposalCount() {
+    return state.proposals.filter((p) => p.status === "accepted").length;
+  }
+
+  function buildApplyBanner() {
+    const label = el("span", { testid: "chronicle-apply-banner-label", style: "flex: 1; font-size: 12.5px; color: oklch(0.34 0.060 185); font-weight: 500;" });
+    const statusEl = el("span", { testid: "chronicle-apply-banner-status", style: "font-size: 11.5px; color: oklch(0.48 0.050 185);" });
+    const btn = el("div", {
+      testid: "chronicle-apply-now-btn",
+      role: "button",
+      text: "Apply to world",
+      style: `padding: 5px 14px; border-radius: 5px; cursor: pointer; background: ${TEAL}; color: oklch(0.99 0.005 185); font-size: 12.5px; font-weight: 500; flex: none;`
+    });
+    btn.addEventListener("click", async () => {
+      if (btn.getAttribute("aria-disabled") === "true") return;
+      btn.setAttribute("aria-disabled", "true");
+      btn.textContent = "Applying…";
+      const slowNotice = setTimeout(() => {
+        statusEl.textContent = "Still working — checking whether a live Foundry client is open for this world…";
+      }, 1500);
+      try {
+        const result = await apiPost(`/api/batches/${encodeURIComponent(state.batchId)}/sync`, {});
+        clearTimeout(slowNotice);
+        state.batchStatus = "synced";
+        state.resyncNeeded = false;
+        statusEl.textContent = `Applied ${result.syncedCount ?? 0} to the world (${result.path ?? "?"}).`;
+        btn.textContent = "Apply to world";
+        btn.removeAttribute("aria-disabled");
+        paintApplyBanner();
+        refreshHistoryAfterDecision();
+      } catch (err) {
+        clearTimeout(slowNotice);
+        btn.removeAttribute("aria-disabled");
+        btn.textContent = "Apply to world";
+        statusEl.textContent = `Apply failed: ${err.message}`;
+      }
+    });
+    const banner = el("div", {
+      testid: "chronicle-apply-banner",
+      style: "display: none; align-items: center; gap: 12px; margin-bottom: 12px; padding: 10px 14px; border: 1px solid oklch(0.78 0.055 185); border-radius: 5px; background: oklch(0.955 0.018 185);"
+    }, [label, statusEl, btn]);
+    applyBannerParts = { label, statusEl, btn };
+    return banner;
+  }
+
+  function paintApplyBanner() {
+    if (!applyBannerEl || !applyBannerParts) return;
+    const n = acceptedProposalCount();
+    const show = n > 0 && (state.batchStatus !== "synced" || state.resyncNeeded);
+    applyBannerEl.style.display = show ? "flex" : "none";
+    if (show) {
+      applyBannerParts.label.textContent = `${n} accepted mutation${n === 1 ? "" : "s"} not yet applied — nothing changes in the world until you apply.`;
+    }
   }
   function cardIsUndecided(p) {
     const api = (cardRegistry.get(p.mutationId) ?? [])[0];
@@ -1235,10 +1305,17 @@ export async function renderChronicleSurface(arg) {
       } else {
         proposalsWrap.style.display = "none";
       }
+      applyBannerEl = null;
       return;
     }
     proposalsWrap.style.display = "block";
     proposalsWrap.style.marginTop = "30px";
+
+    // W1h: the persistent accept→apply banner sits at the very top of the
+    // What-changed panel; paintApplyBanner() shows/hides it live.
+    applyBannerEl = buildApplyBanner();
+    proposalsWrap.appendChild(applyBannerEl);
+    paintApplyBanner();
 
     // QA W3 finding 3(c): a quiet bulk-resolve affordance -- "Accept all
     // shown" drives each currently-rendered card's OWN accept button (the
@@ -1281,6 +1358,9 @@ export async function renderChronicleSurface(arg) {
         for (const api of cardRegistry.get(m.mutationId) ?? []) api.setDecided(decided);
         handleCascadeResult(m, result);
         maybeOfferAcceptConnections(decided, m);
+        // W1h: any decision changes the accepted-but-unapplied count.
+        if (decided === "yes" && state.batchStatus === "synced") state.resyncNeeded = true;
+        paintApplyBanner();
       },
       // W1b: convert a pending CREATE into an update of a chosen existing
       // entity (near-match chip button or the card's own search fallback),
@@ -1391,10 +1471,12 @@ export async function renderChronicleSurface(arg) {
   // immediately -- one path, so every way a batch can land in this panel
   // gets the same rail-freshness guarantee.
   async function applyBatchAsProposals(batchId) {
+    if (state.batchId !== batchId) state.resyncNeeded = false; // a different batch starts clean
     state.batchId = batchId;
     const detail = await api(`/api/batches/${encodeURIComponent(batchId)}${withWorld()}`);
     state.proposals = (detail.regions || []).flatMap((r) => r.entities || []);
     state.scope = detail.batch?.scope; // QA W2 fix (Group B #7): scope for the zero-proposal notice
+    state.batchStatus = detail.batch?.status ?? null; // W1h: drives the apply banner
     paintProposals();
     await refreshHistoryAfterDecision();
   }
