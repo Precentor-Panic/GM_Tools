@@ -398,6 +398,14 @@ export function renderProposalCard(m, opts = {}) {
       // alongside it) that the host surface must reflect on OTHER cards.
       const result = await postDecision(world, batchId, mid, kind);
       decided = target;
+      // W1f: write the decision back onto the shared mutation object. The
+      // host surface re-renders cards from these same objects (Chronicle's
+      // state.proposals) whenever a VIEW filter flips (the "Triaged"
+      // toggle) -- without this write-back, every re-render read the STALE
+      // pre-decision status and selections already made visually vanished
+      // (the reported "toggle appears broken and clears my selections").
+      // The persisted server state was always correct; the view lied.
+      m.status = target === "yes" ? "accepted" : "rejected";
       paint();
       onDecided?.(decided, m, result);
     } catch (err) {

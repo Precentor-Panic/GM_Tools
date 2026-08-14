@@ -225,6 +225,15 @@ export async function renderChronicleSurface(arg) {
   let historyListHost = null;
   let receiveHost = null; // QA W3 finding 2: rebuilt fresh each buildReceiveSection() call; paintReceiveSection() repaints in place
   let historyRefreshToken = 0; // QA W3 finding 3(a): generation token, see refreshHistoryAfterDecision below
+  // W1d/W1g: every rendered proposal-card instance registers here, keyed by
+  // mutationId -- a mutation can render as MORE THAN ONE card (W1g nests an
+  // edge under each node card it touches), and cascade/undo/twin decisions
+  // must repaint every instance, never just the clicked one. Declared HERE
+  // (not down by paintProposals) because the batch deep-link route below
+  // runs paintProposals BEFORE the later statements of this function body
+  // ever execute -- a `const` any lower is a temporal-dead-zone crash on
+  // deep-linked batch loads (found by this wave's own e2e run).
+  const cardRegistry = new Map(); // mutationId -> [{el, setDecided}]
 
   // ---- initial data ------------------------------------------------------
   let clock, fortune, pending, log;
@@ -1099,12 +1108,6 @@ export async function renderChronicleSurface(arg) {
   }
 
   // ---- proposals ("What changed") ---------------------------------------
-  // W1d/W1g: every rendered proposal-card instance registers here, keyed by
-  // mutationId -- a mutation can render as MORE THAN ONE card (W1g nests an
-  // edge under each node card it touches), and cascade/undo/twin decisions
-  // must repaint every instance, never just the clicked one.
-  const cardRegistry = new Map(); // mutationId -> [{el, setDecided}]
-
   function findProposal(mid) {
     return state.proposals.find((p) => p.mutationId === mid);
   }
