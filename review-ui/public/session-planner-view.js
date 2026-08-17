@@ -3260,24 +3260,27 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     placeLabel.textContent = (place?.name ?? scene.locationEntityId ?? "Unplaced").toUpperCase();
     header.appendChild(placeLabel);
   }
-  if (scene.locationEntityId) {
-    const placeName = place?.name ?? scene.locationEntityId;
-    const nameField = makeClickToEditField({
-      tag: "h2",
-      className: "scene-place-name",
-      testid: "scene-place-name",
-      dataAttrs: { "data-entity-id": scene.locationEntityId },
-      inputTestid: "scene-place-name-input",
-      value: placeName,
-      placeholder: "Place name…",
-      save: (v) => spApi(`/api/graph/nodes/${encodeURIComponent(scene.locationEntityId)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ world: currentWorld(), data: { name: v } })
-      })
-    });
-    header.appendChild(nameField.el);
-  } else {
+  // Russell (2026-08-16, Kilmarn exercise): the big header title is the
+  // SCENE's name, not the place's — the teal label above already carries the
+  // place, so rendering the place twice read as a bug ("scenes are all
+  // adopting the plan title"). Click-to-edit now renames the SCENE (29.1
+  // patch route); place renames live in the World tab / graph views.
+  const titleField = makeClickToEditField({
+    tag: "h2",
+    className: "scene-place-name",
+    testid: "scene-title",
+    dataAttrs: { "data-scene-id": scene.id },
+    inputTestid: "scene-title-input",
+    value: scene.name ?? "Untitled scene",
+    placeholder: "Scene title…",
+    save: (v) => spApi(`/api/session-planner/scenes/${encodeURIComponent(scene.id)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), name: v })
+    })
+  });
+  header.appendChild(titleField.el);
+  if (!scene.locationEntityId) {
     const noPlace = document.createElement("p");
     noPlace.className = "hint";
     noPlace.textContent = "This scene has no anchor place.";

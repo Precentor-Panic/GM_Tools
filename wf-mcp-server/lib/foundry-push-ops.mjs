@@ -52,6 +52,46 @@ import { loadSnapshot, foundryResultsPath } from "./snapshot.mjs";
 import { writeFoundryOps, makeOpId, FoundryOpsInFlightError } from "./foundry-ops.mjs";
 
 /**
+ * Pixel dimensions of a local PNG/JPEG, or null when unreadable/unsupported.
+ * Russell (2026-08-16, Kilmarn exercise): scenes pushed without width/height
+ * left Foundry on its default canvas size, so a portrait-aspect czepeku map
+ * rendered visibly stretched. Reading the real dimensions lets every push
+ * default the Scene's canvas to the image's own aspect. Deliberately tiny
+ * header parsers (repo has a no-runtime-deps rule); anything unparseable
+ * just returns null and the push proceeds without dims, exactly as before.
+ */
+export function imageDimensions(absPath) {
+  let buf;
+  try { buf = readFileSync(absPath); } catch { return null; }
+  if (buf.length > 24 && buf.readUInt32BE(0) === 0x89504e47) {
+    // PNG: 8-byte signature, IHDR length+type, then width/height big-endian.
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+  }
+  if (buf.length > 4 && buf[0] === 0xff && buf[1] === 0xd8) {
+    // JPEG: walk segments to the first SOFn frame header.
+    let off = 2;
+    while (off + 9 < buf.length) {
+      if (buf[off] !== 0xff) { off++; continue; }
+      const marker = buf[off + 1];
+      if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd9)) { off += 2; continue; }
+      const len = buf.readUInt16BE(off + 2);
+      if ((marker >= 0xc0 && marker <= 0xcf) && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return { height: buf.readUInt16BE(off + 5), width: buf.readUInt16BE(off + 7) };
+      }
+      off += 2 + len;
+    }
+  }
+  return null;
+}
+
+/** Best-effort width/height from a dataDir-relative background src. */
+function dimsForSrc(dataDir, src) {
+  if (!src || /^https?:/.test(src)) return null;
+  const abs = join(dataDir, src);
+  return existsSync(abs) ? imageDimensions(abs) : null;
+}
+
+/**
  * Same fallback order as review-ui/public/plans-view.js's own
  * resolveSceneDisplayName (kept in step deliberately, not re-derived) --
  * bespoke name, else the scene's location entity's real name (looked up
@@ -128,6 +168,10 @@ export async function pushSceneToFoundry(dir, world, sceneId, { mapSrc, name, wi
     );
   }
 
+  // Default the Scene canvas to the image's own pixel dimensions when the
+  // caller didn't specify — prevents Foundry's default canvas stretching a
+  // portrait/landscape map (Russell, 2026-08-16). Explicit width/height wins.
+  const dims = width === undefined && height === undefined ? dimsForSrc(dir, resolvedMapSrc) : null;
   const opId = opts.makeOpId ? opts.makeOpId() : makeOpId();
   const op = {
     opId,
@@ -135,8 +179,8 @@ export async function pushSceneToFoundry(dir, world, sceneId, { mapSrc, name, wi
     data: {
       name: name ?? resolveSceneName(dir, world, scene),
       background: { src: resolvedMapSrc },
-      ...(width !== undefined ? { width } : {}),
-      ...(height !== undefined ? { height } : {})
+      ...(width !== undefined ? { width } : dims ? { width: dims.width } : {}),
+      ...(height !== undefined ? { height } : dims ? { height: dims.height } : {})
     }
   };
 
@@ -341,13 +385,31 @@ export function composeSceneOps(dataDir, world, scene, opts = {}) {
   const roster = Array.isArray(tray.roster) ? tray.roster : [];
   const isCreatePath = scene.foundrySceneRef == null;
 
-  const mapAsset = firstAcceptedAssetOfKind(world, roster, "map", skipped);
+  // Russell (2026-08-16): "stage for Foundry" must carry the scene's map.
+  // The scene's own linked map (W3b scene.mapAssetId) is the primary source;
+  // the tray-roster scan (phase36's original contract) is the fallback for
+  // scenes that stage-dress via tray rows instead of a link.
+  let mapAsset = null;
+  if (scene.mapAssetId) {
+    try {
+      const linked = getStagecraftAsset(world, scene.mapAssetId);
+      if (linked?.kind === "map" && linked.status !== "discarded") mapAsset = linked;
+      else skipped.push({ kind: "asset", id: scene.mapAssetId, reason: "linked map asset is not a usable map (wrong kind or discarded)" });
+    } catch {
+      skipped.push({ kind: "asset", id: scene.mapAssetId, reason: "linked map asset not found" });
+    }
+  }
+  if (!mapAsset) mapAsset = firstAcceptedAssetOfKind(world, roster, "map", skipped);
   const splashAsset = firstAcceptedAssetOfKind(world, roster, "splash", skipped);
 
   const data = { name: resolveSceneName(dataDir, world, scene) };
   if (mapAsset) {
     const src = resolveAssetSrc(dataDir, world, mapAsset, skipped);
-    if (src) data.background = { src };
+    if (src) {
+      data.background = { src };
+      const dims = dimsForSrc(dataDir, src);
+      if (dims) { data.width = dims.width; data.height = dims.height; }
+    }
   }
   if (splashAsset) {
     const src = resolveAssetSrc(dataDir, world, splashAsset, skipped);
