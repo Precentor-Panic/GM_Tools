@@ -161,3 +161,8 @@ node_modules/
 
 # Design-handoff source zip (extracted into design/ — the zip itself is redundant)
 /TTRPG Session Planning Tool.zip
+
+# Owned rulebook archives + extracted rules library — NEVER commit (IP)
+/Core Books-*.zip
+/Draw Steel-*.zip
+/rules-library/
