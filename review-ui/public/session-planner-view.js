@@ -3106,6 +3106,211 @@ function buildSceneMapRow(scene, mapAssets, onSaved) {
   return row;
 }
 
+
+// ---------------------------------------------------------------------------
+// Run spread (2026-08-25, Russell): Run mode renders the scene as a module-
+// style "runnable spread" -- the format of the Kilmarn GM brief
+// (campaigns/one-shot/briefs/kilmarn-gm-brief.html): a head band (title +
+// where), a 3:2 grid whose MAIN column carries read-aloud text, dressing and
+// the exits, and whose SIDE column carries the KEY/stat elements as blocks,
+// backdrops as GM boxes, and the objective. It is a pure, read-only
+// projection of the same scene/elements/narration data the Prep DOM edits --
+// rebuilt from a fresh fetch every time Run is entered (typing in Prep never
+// re-renders the list, so a cached copy would go stale).
+//
+// Classification is by element shape first, then by the light naming
+// conventions the Kilmarn scenes already use ("Read Aloud — …",
+// "Backdrop — …", "→ Where this leads"); anything unrecognised is dressing.
+// ---------------------------------------------------------------------------
+function runSpreadKindFor(element) {
+  const name = String(element.name || "").trim();
+  if (/^(→|->)/.test(name) || /^exits?\b/i.test(name) || /where this leads/i.test(name)) return "exits";
+  if (/^read[ -]?aloud/i.test(name)) return "read";
+  if (/^backdrop/i.test(name)) return "backdrop";
+  if (element.kind === "graph" || element.stat) return "block";
+  return "dressing";
+}
+
+function runSpreadTitleAfterDash(name, fallback) {
+  const m = String(name || "").split(/\s+[—–-]\s+/);
+  return m.length > 1 ? m.slice(1).join(" — ").trim() : fallback;
+}
+
+// "ONWARD (plot): text → 'Target'" -> { label:"Plot", text, target }.
+function runSpreadParseExit(raw) {
+  let text = String(raw || "").trim();
+  if (!text) return null;
+  let label = "";
+  const lm = text.match(/^([A-Z][A-Z ]*(?:\([^)]*\))?)\s*:\s*/);
+  if (lm) { label = lm[1]; text = text.slice(lm[0].length); }
+  const low = label.toLowerCase();
+  if (/plot/.test(low)) label = "Plot";
+  else if (/explore/.test(low)) label = "Explore";
+  else if (/linger/.test(low)) label = "Linger";
+  else if (label) label = label.charAt(0) + label.slice(1).toLowerCase();
+  let target = "";
+  const tm = text.match(/\s*(?:→|->)\s*(.+?)\s*$/);
+  if (tm) {
+    target = tm[1].trim().replace(/^['‘"]+/, "").replace(/['’"]+$/, "").trim();
+    text = text.slice(0, tm.index).trim();
+  }
+  return { label, text, target };
+}
+
+function runSpreadEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text != null) el.textContent = text;
+  return el;
+}
+
+function runSpreadLabeledLine(label, value, { secret = false } = {}) {
+  const line = runSpreadEl("div", "rs-line");
+  const l = runSpreadEl("span", `rs-l${secret ? " rs-l--secret" : ""}`, label);
+  line.append(l, document.createTextNode(String(value)));
+  return line;
+}
+
+function runSpreadFieldLines(fields, order, labels) {
+  const out = [];
+  for (const f of order) {
+    if (f === "checks") continue;
+    const v = fields?.[f];
+    if (v == null || String(v).trim() === "") continue;
+    out.push(runSpreadLabeledLine(labels[f] ?? f, v, { secret: f === "secret" }));
+  }
+  return out;
+}
+
+function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
+  const spread = runSpreadEl("div", "scene-run-spread");
+  spread.setAttribute("data-testid", "scene-run-spread");
+  spread.setAttribute("data-scene-id", scene.id);
+
+  // Head band: scene title left, WHERE (place · map) right.
+  const head = runSpreadEl("div", "rs-head");
+  head.appendChild(runSpreadEl("h3", null, scene.name ?? "Untitled scene"));
+  const where = runSpreadEl("div", "rs-where");
+  const linkedMap = scene.mapAssetId ? mapAssets.find((a) => a.id === scene.mapAssetId) : null;
+  where.appendChild(document.createTextNode(place?.name ?? "Unplaced"));
+  if (linkedMap) { where.appendChild(document.createElement("br")); where.appendChild(document.createTextNode(`Map: ${linkedMap.name}`)); }
+  head.appendChild(where);
+  spread.appendChild(head);
+
+  const grid = runSpreadEl("div", "rs-grid");
+  const main = runSpreadEl("div", "rs-main");
+  const side = runSpreadEl("div", "rs-side");
+  grid.append(main, side);
+  spread.appendChild(grid);
+
+  // Scene-level read-aloud narration opens the main column as the sensory line.
+  const narrText = narration?.text ? String(narration.text).trim() : "";
+  if (narrText) main.appendChild(runSpreadEl("p", "rs-sensory", narrText));
+
+  const groups = { read: [], dressing: [], exits: [], block: [], backdrop: [] };
+  for (const el of elements) groups[runSpreadKindFor(el)].push(el);
+
+  // MAIN: read-aloud beats in order.
+  for (const el of groups.read) {
+    main.appendChild(runSpreadEl("div", "rs-h", runSpreadTitleAfterDash(el.name, "Read aloud")));
+    const f = el.fields || {};
+    if (f.trigger) main.appendChild(runSpreadEl("div", "rs-when", f.trigger));
+    if (f.looks) main.appendChild(runSpreadEl("p", "rs-read", f.looks));
+    for (const k of ["gives", "means", "secret"]) {
+      if (f[k]) main.appendChild(runSpreadLabeledLine(k === "means" ? "GM" : SCENE_FIELD_LABELS[k], f[k], { secret: k === "secret" }));
+    }
+  }
+
+  // MAIN: dressing -- every unclassified local element as one list line.
+  if (groups.dressing.length) {
+    main.appendChild(runSpreadEl("div", "rs-h", "Dressing"));
+    const ul = runSpreadEl("ul", "rs-dress");
+    for (const el of groups.dressing) {
+      const li = document.createElement("li");
+      li.appendChild(runSpreadEl("b", null, el.name || "(unnamed)"));
+      const f = el.fields || {};
+      const lead = [f.looks, f.gives].filter((x) => x && String(x).trim()).join(" ");
+      if (lead) li.appendChild(document.createTextNode(` — ${lead}`));
+      for (const k of ["trigger", "means", "wants", "function", "secret"]) {
+        if (f[k]) li.appendChild(runSpreadLabeledLine(SCENE_FIELD_LABELS[k] ?? k, f[k], { secret: k === "secret" }));
+      }
+      const checks = f.checks;
+      if (Array.isArray(checks) && checks.length) {
+        for (const c of checks) li.appendChild(runSpreadEl("span", "rs-check", `${c.skill} DC ${c.dc}${c.purpose ? ` — ${c.purpose}` : ""}`));
+      }
+      ul.appendChild(li);
+    }
+    main.appendChild(ul);
+  }
+
+  // MAIN: exits, at the foot.
+  if (groups.exits.length) {
+    const ex = runSpreadEl("div", "rs-exits");
+    for (const el of groups.exits) {
+      const f = el.fields || {};
+      if (f.trigger) ex.appendChild(runSpreadEl("div", "rs-when", f.trigger));
+      for (const k of ["gives", "means", "secret", "looks", "wants", "function"]) {
+        const parsed = runSpreadParseExit(f[k]);
+        if (!parsed) continue;
+        const row = document.createElement("div");
+        if (parsed.label) row.appendChild(runSpreadEl("b", null, parsed.label));
+        row.appendChild(document.createTextNode(parsed.text));
+        if (parsed.target) { row.appendChild(document.createTextNode(" — ")); row.appendChild(runSpreadEl("span", "rs-target", parsed.target)); }
+        ex.appendChild(row);
+      }
+    }
+    main.appendChild(ex);
+  }
+
+  // SIDE: objective first (the GM's one-line "what has to happen here").
+  if (scene.objectiveNote && String(scene.objectiveNote).trim()) {
+    const box = runSpreadEl("div", "rs-box");
+    box.appendChild(runSpreadEl("b", "rs-box-l", "Objective"));
+    box.appendChild(document.createTextNode(String(scene.objectiveNote)));
+    side.appendChild(box);
+  }
+
+  // SIDE: KEY (graph) + stat-bearing elements as blocks.
+  for (const el of groups.block) {
+    const isThread = /^thread\b/i.test(String(el.name || ""));
+    const block = runSpreadEl("div", `rs-block${isThread ? " rs-block--thread" : ""}`);
+    const entityType = el.kind === "graph" && el.graphEntityId ? nodeMap?.get(el.graphEntityId)?.type : null;
+    if (entityType) block.style.setProperty("--element-type-color", colorForType(entityType));
+    const bh = runSpreadEl("div", "rs-bhead");
+    bh.appendChild(runSpreadEl("span", "rs-bname", el.name || "(unnamed)"));
+    if (el.kind === "graph") bh.appendChild(runSpreadEl("span", "rs-pill", entityType || "graph"));
+    if (el.stat && typeof el.stat.count === "number" && el.stat.count > 1) bh.appendChild(runSpreadEl("span", "rs-mult", `×${el.stat.count}`));
+    block.appendChild(bh);
+    const f = el.fields || {};
+    if (Array.isArray(f.checks) && f.checks.length) {
+      for (const c of f.checks) block.appendChild(runSpreadEl("span", "rs-check", `${c.skill} DC ${c.dc}${c.purpose ? ` — ${c.purpose}` : ""}`));
+    }
+    for (const line of runSpreadFieldLines(f, SCENE_FIELD_ORDER, SCENE_FIELD_LABELS)) block.appendChild(line);
+    if (el.stat) {
+      const ref = f.statblockRef ? String(f.statblockRef) : "";
+      if (ref) block.appendChild(runSpreadLabeledLine("Stat block", ref));
+      if (el.stat.raw && String(el.stat.raw).trim()) block.appendChild(runSpreadEl("pre", "rs-stat", String(el.stat.raw)));
+    }
+    side.appendChild(block);
+  }
+
+  // SIDE: backdrops as GM boxes.
+  for (const el of groups.backdrop) {
+    const box = runSpreadEl("div", "rs-box");
+    box.appendChild(runSpreadEl("b", "rs-box-l", el.name || "Backdrop"));
+    const f = el.fields || {};
+    if (f.trigger) box.appendChild(runSpreadEl("div", "rs-when", f.trigger));
+    for (const k of ["looks", "gives", "means", "secret"]) {
+      if (f[k]) box.appendChild(runSpreadEl("div", "rs-boxp", f[k]));
+    }
+    side.appendChild(box);
+  }
+
+  if (!side.childNodes.length) side.appendChild(runSpreadEl("div", "rs-empty", "No key elements, stat blocks or backdrops on this scene."));
+  if (!main.childNodes.length) main.appendChild(runSpreadEl("div", "rs-empty", "Nothing to read yet — add read-aloud text or elements in Prep."));
+  return spread;
+}
+
 async function renderScenePage(container, sceneId, token, opts = {}) {
   // Phase 30 task 30.3: `opts` lets the SAME scene-page render serve both the
   // legacy `#session-planner/<id>` chrome (default) and the new designer shell
@@ -3233,6 +3438,13 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   subBarRight.appendChild(wrapBtn);
   topBar.appendChild(subBarRight);
   root.appendChild(topBar);
+
+  // Run spread host (see buildRunSpread): sits right under the top bar so in
+  // Run mode the spread is the first thing on the page. Hidden by CSS in Prep.
+  const runHost = document.createElement("div");
+  runHost.className = "scene-run-spread-host";
+  runHost.setAttribute("data-testid", "scene-run-spread-host");
+  root.appendChild(runHost);
 
   // Layout toggle: flip the live scene-elements-list's data-layout attribute in
   // place (no re-render -- edit state is preserved). scenePageLayout is also
@@ -3522,6 +3734,22 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   // attribute (CSS hides all edit chrome, bumps read-aloud to 20px, collapses
   // MUNDANE rows to their Gives line) and force-closes the Wrap panel (the Wrap
   // toggle itself is CSS-hidden in run mode, so it must not be left open).
+  // The run spread is rebuilt from a FRESH elements fetch every time Run is
+  // entered (Prep typing mutates DOM in place without re-rendering the list,
+  // so anything cached here would silently lag behind the last edit).
+  const rebuildRunSpread = async () => {
+    let elements = [];
+    try {
+      ({ elements } = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements${spWithWorld()}`));
+    } catch { elements = []; }
+    let freshNarration = narration;
+    try {
+      freshNarration = (await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/narration${spWithWorld()}`)).narration;
+    } catch { /* keep the render-time copy */ }
+    if (stale()) return;
+    runHost.innerHTML = "";
+    runHost.appendChild(buildRunSpread(scene, elements || [], freshNarration, place, mapAssets, nodeMap));
+  };
   const applyMode = (mode) => {
     scenePageMode = mode;
     modeControl.setActive(mode);
@@ -3530,7 +3758,9 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
       wrapPanel.hidden = true;
       wrapBtn.textContent = "Wrap ▸";
     }
+    if (mode === "run") rebuildRunSpread();
   };
+  if (scenePageMode === "run") rebuildRunSpread(); // navigated here already in Run
   modeControl.buttons.prep.addEventListener("click", () => applyMode("prep"));
   modeControl.buttons.run.addEventListener("click", () => applyMode("run"));
 

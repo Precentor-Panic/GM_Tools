@@ -2177,6 +2177,118 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   display: none;
 }
 
+/* =========================================================================
+   Run spread (2026-08-25) -- Run mode renders the scene as a module-style
+   runnable spread (the Kilmarn GM brief's format): head band, 3:2 grid,
+   read-aloud + dressing + exits in the main column, KEY/stat blocks +
+   backdrops + objective in the side column. Prep chrome that the spread
+   supersedes is hidden in Run; the map/dressing chip rows stay (at-a-glance
+   info, and phase36's Run-mode contract requires the dressing row visible).
+   ========================================================================= */
+:is(#view-session-planner, #app-shell) .scene-page:not([data-mode="run"]) .scene-run-spread-host { display: none; }
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-place-header > :not(.scene-map-row):not(.scene-stage-dressing-row),
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-read-aloud-section,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-elements-section,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .beyond-room-drawer {
+  display: none !important;
+}
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-map-row,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-stage-dressing-row { margin: 0 0 8px; }
+
+:is(#view-session-planner, #app-shell) .scene-run-spread {
+  border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-md);
+  background: var(--sp-surface-card); overflow: hidden; margin: 0 0 18px;
+  font-family: var(--sp-font-serif); color: var(--sp-ink-primary); font-size: 15px; line-height: 1.5;
+}
+:is(#view-session-planner, #app-shell) .rs-head {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  background: var(--sp-surface-chrome); padding: 10px 18px; border-bottom: 1px solid var(--sp-border-hairline);
+}
+:is(#view-session-planner, #app-shell) .rs-head h3 {
+  margin: 0; font-family: var(--sp-font-serif); font-size: 21px; font-weight: 600;
+  color: var(--sp-ink-heading); text-wrap: balance;
+}
+:is(#view-session-planner, #app-shell) .rs-where {
+  font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: var(--sp-mono-label-tracking);
+  text-transform: uppercase; color: var(--sp-ink-muted); text-align: right; line-height: 1.5;
+}
+:is(#view-session-planner, #app-shell) .rs-grid { display: grid; grid-template-columns: 3fr 2fr; }
+@media (max-width: 760px) {
+  :is(#view-session-planner, #app-shell) .rs-grid { grid-template-columns: 1fr; }
+  :is(#view-session-planner, #app-shell) .rs-side { border-left: none !important; border-top: 1px solid var(--sp-border-hairline); }
+}
+:is(#view-session-planner, #app-shell) .rs-main { padding: 12px 18px 16px; min-width: 0; }
+:is(#view-session-planner, #app-shell) .rs-side {
+  padding: 12px 14px 16px; min-width: 0; border-left: 1px solid var(--sp-border-hairline);
+  background: color-mix(in srgb, var(--sp-surface-chrome) 45%, var(--sp-surface-card));
+}
+
+/* Main column */
+:is(#view-session-planner, #app-shell) .rs-sensory { font-style: italic; font-size: 17px; line-height: 1.5; margin: 2px 0 8px; white-space: pre-line; }
+:is(#view-session-planner, #app-shell) .rs-h {
+  font-family: var(--sp-font-mono); font-size: 10px; font-weight: 600; letter-spacing: var(--sp-mono-label-tracking);
+  text-transform: uppercase; color: var(--sp-accent-rust); margin: 14px 0 4px;
+}
+:is(#view-session-planner, #app-shell) .rs-main > .rs-h:first-child { margin-top: 2px; }
+:is(#view-session-planner, #app-shell) .rs-when {
+  font-family: var(--sp-font-ui); font-size: 12px; color: var(--sp-ink-muted); margin: 0 0 4px; white-space: pre-line;
+}
+:is(#view-session-planner, #app-shell) .rs-read {
+  font-size: 18px; line-height: 1.55; margin: 2px 0 8px; padding-left: 12px;
+  border-left: 2px solid var(--sp-accent-rust); white-space: pre-line;
+}
+:is(#view-session-planner, #app-shell) .rs-line { margin: 4px 0; white-space: pre-line; }
+:is(#view-session-planner, #app-shell) .rs-l {
+  font-family: var(--sp-font-mono); font-size: 9.5px; font-weight: 600; letter-spacing: var(--sp-mono-label-tracking);
+  text-transform: uppercase; color: var(--sp-ink-muted); margin-right: 6px; white-space: nowrap;
+}
+:is(#view-session-planner, #app-shell) .rs-l--secret { color: var(--sp-accent-rust); }
+:is(#view-session-planner, #app-shell) .rs-dress { margin: 4px 0 6px; padding-left: 18px; }
+:is(#view-session-planner, #app-shell) .rs-dress li { margin: 4px 0; font-size: 14.5px; }
+:is(#view-session-planner, #app-shell) .rs-dress li .rs-line { font-size: 13.5px; margin: 2px 0 2px 0; }
+:is(#view-session-planner, #app-shell) .rs-exits {
+  border-top: 1px dashed var(--sp-border-dashed); margin-top: 14px; padding-top: 8px; font-size: 14px;
+}
+:is(#view-session-planner, #app-shell) .rs-exits > div { margin: 4px 0; }
+:is(#view-session-planner, #app-shell) .rs-exits b {
+  font-family: var(--sp-font-mono); font-size: 9.5px; font-weight: 600; letter-spacing: var(--sp-mono-label-tracking);
+  text-transform: uppercase; color: var(--sp-accent-rust); margin-right: 6px;
+}
+:is(#view-session-planner, #app-shell) .rs-target { font-weight: 600; color: var(--sp-ink-heading); }
+
+/* Side column */
+:is(#view-session-planner, #app-shell) .rs-block {
+  border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-sm); background: var(--sp-surface-card);
+  padding: 8px 10px; margin: 0 0 10px; font-size: 13.5px; line-height: 1.45;
+  border-left: 3px solid var(--element-type-color, var(--sp-border-control));
+}
+:is(#view-session-planner, #app-shell) .rs-block--thread { border-left: 3px dashed var(--sp-accent-amber); }
+:is(#view-session-planner, #app-shell) .rs-bhead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
+:is(#view-session-planner, #app-shell) .rs-bname { font-weight: 600; font-size: 15px; color: var(--sp-ink-heading); }
+:is(#view-session-planner, #app-shell) .rs-pill {
+  font-family: var(--sp-font-mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+  border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-pill); padding: 1px 7px; color: var(--sp-ink-muted);
+}
+:is(#view-session-planner, #app-shell) .rs-mult { color: var(--sp-accent-rust); font-weight: 600; }
+:is(#view-session-planner, #app-shell) .rs-check {
+  display: block; font-family: var(--sp-font-mono); font-size: 11.5px; margin: 2px 0; color: var(--sp-ink-primary);
+  background: var(--sp-surface-chrome); border-radius: var(--sp-radius-sm); padding: 1px 6px; width: fit-content; max-width: 100%;
+}
+:is(#view-session-planner, #app-shell) .rs-stat {
+  font-family: var(--sp-font-mono); font-size: 11px; line-height: 1.4; white-space: pre-wrap; margin: 6px 0 2px;
+  background: var(--sp-surface-chrome); border-radius: var(--sp-radius-sm); padding: 6px 8px; overflow-x: auto;
+}
+:is(#view-session-planner, #app-shell) .rs-box {
+  background: var(--sp-surface-chrome); border-radius: var(--sp-radius-sm); padding: 7px 10px; margin: 0 0 10px;
+  font-family: var(--sp-font-ui); font-size: 13px; line-height: 1.45; white-space: pre-line;
+}
+:is(#view-session-planner, #app-shell) .rs-box-l {
+  display: block; font-family: var(--sp-font-mono); font-size: 9.5px; font-weight: 600; letter-spacing: var(--sp-mono-label-tracking);
+  text-transform: uppercase; color: var(--sp-accent-rust); margin-bottom: 2px;
+}
+:is(#view-session-planner, #app-shell) .rs-boxp { margin: 3px 0; }
+:is(#view-session-planner, #app-shell) .rs-empty { font-family: var(--sp-font-ui); font-size: 13px; color: var(--sp-ink-muted); font-style: italic; }
+
 /* Extras + Beyond-this-room drawer. */
 :is(#view-session-planner, #app-shell) .scene-extras-bar { gap: 8px; }
 :is(#view-session-planner, #app-shell) .beyond-room-drawer {
