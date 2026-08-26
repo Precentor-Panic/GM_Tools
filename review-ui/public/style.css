@@ -2367,6 +2367,16 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 /* Prep chrome: the chip is edit chrome, so it hides in Run with the rest. */
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-element-run { display: none !important; }
 
+/* Seeded placeholders (run skeleton): dashed, with a "fill me" hint until real content lands. */
+:is(#view-session-planner, #app-shell) .scene-element-row[data-placeholder="true"] { border-left: 3px dashed var(--sp-border-dashed); opacity: 0.9; }
+:is(#view-session-planner, #app-shell) .scene-element-row[data-placeholder="true"] .scene-element-name::after {
+  content: " · fill me"; font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--sp-accent-amber); font-weight: 400;
+}
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-seed-skeleton-link { display: none !important; }
+:is(#view-session-planner, #app-shell) .scene-seed-skeleton-link { color: var(--sp-accent-teal); font-size: 0.85rem; opacity: 0.75; }
+:is(#view-session-planner, #app-shell) .scene-seed-skeleton-link:hover { opacity: 1; }
+
 /* Layout board */
 :is(#view-session-planner, #app-shell) .scene-layout-board { display: grid; gap: 12px; }
 :is(#view-session-planner, #app-shell) .layout-board-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }

@@ -1242,6 +1242,9 @@ function buildSceneElementRow(scene, element, refreshList, nodeMap) {
   // its Gives line only; a local row that carries a stat block (an NPC/creature)
   // is NOT collapsed. This attribute lets the CSS distinguish the two cleanly.
   row.setAttribute("data-has-stat", element.stat ? "true" : "false");
+  // Run layout (2026-08-26): a seeded, still-empty placeholder renders dashed
+  // with a "fill me" hint; the flag clears server-side on the first real edit.
+  if (element.run?.placeholder) row.setAttribute("data-placeholder", "true");
 
   // Design pass (task 28.6): a KEY row's glyph/accent-rule/toggle are tinted
   // with its real graph entity type's color (--element-type-color, read by
@@ -1483,6 +1486,42 @@ function buildRunRoleChip(scene, element, { onChange } = {}) {
     wrap.appendChild(pop);
     setTimeout(() => document.addEventListener("mousedown", onOutside), 0);
   });
+  return wrap;
+}
+
+// Run layout (2026-08-26) -- "seed run skeleton": pre-creates placeholder
+// elements for every spread role this scene lacks (session-planner/
+// run-skeleton.mjs, via POST .../run-layout/seed). A quiet ghost link beside
+// "propose elements" -- additive and idempotent; never touches what's there.
+function buildSeedSkeletonGhostLink(scene, refreshElements) {
+  const wrap = document.createElement("div");
+  wrap.className = "scene-assist-ghost";
+  const link = document.createElement("button");
+  link.type = "button";
+  link.className = "link-btn scene-seed-skeleton-link";
+  link.setAttribute("data-testid", "scene-seed-skeleton-link");
+  link.setAttribute("data-scene-id", scene.id);
+  link.textContent = "▤ seed run skeleton";
+  link.title = "Add placeholder elements for every part of a runnable scene this one still lacks (read-aloud, dressing, beats, exits, GM box…) — you fill them in";
+  const status = document.createElement("span");
+  status.className = "scene-assist-status hint";
+  link.addEventListener("click", async () => {
+    link.disabled = true;
+    status.textContent = "";
+    try {
+      const result = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/run-layout/seed`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ world: currentWorld() })
+      });
+      const n = result.seeded?.length ?? 0;
+      status.textContent = n ? `▤ seeded ${n} placeholder${n === 1 ? "" : "s"} (${result.kind})` : `▤ nothing missing for a ${result.kind} scene`;
+      if (n) await refreshElements();
+    } catch (err) {
+      status.textContent = `▤ ${err.message || "failed"}`;
+    } finally {
+      link.disabled = false;
+    }
+  });
+  wrap.append(link, status);
   return wrap;
 }
 
@@ -4129,6 +4168,7 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   // §C: a quiet, scene-level `✦` ghost link to propose elements for this room
   // (additive/interruptible; the room is fully runnable without it).
   elementsSection.appendChild(buildProposeElementsGhostLink(scene, refreshElements));
+  elementsSection.appendChild(buildSeedSkeletonGhostLink(scene, refreshElements));
   elementsSection.appendChild(listHost);
   // §C (below the elements): `◇ From graph` inline picker + `▣ NPC or
   // creature` + `▤ From library` (Phase 37.6 task 1 retired `✦ Suggest

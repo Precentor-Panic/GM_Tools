@@ -143,3 +143,34 @@ test("Layout board: a real drag from Main to Side persists the column change", a
   assert.deepEqual(stored.run, { column: "side", role: "beat" });
   await page.close();
 });
+
+test("seed run skeleton: Prep shows dashed 'fill me' placeholders; Run hides the empty ones; a filled one stops being a placeholder", async () => {
+  const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "lt-square", name: "Seed scene" });
+  const page = await openScene(scene.id);
+  await page.locator('[data-testid="scene-seed-skeleton-link"]').click();
+  await page.locator('.scene-element-row[data-placeholder="true"]').first().waitFor({ timeout: 10000 });
+  const rows = page.locator('.scene-element-row[data-placeholder="true"]');
+  assert.equal(await rows.count(), 8, "narrative: read + 3 dressing + 2 beats + gm + exits");
+  const stored = await els(scene.id);
+  assert.ok(stored.every((e) => e.run?.placeholder === true));
+
+  // Run: only the exits placeholder carries text (the ONWARD template), so it is the only thing that renders.
+  await page.locator('[data-testid="mode-run-btn"]').click();
+  const spread = page.locator('[data-testid="scene-run-spread"]');
+  await spread.waitFor({ state: "visible" });
+  assert.equal(await spread.locator(".rs-main .rs-read").count(), 0);
+  assert.equal(await spread.locator(".rs-main ul.rs-dress").count(), 0);
+  assert.equal(await spread.locator(".rs-main .rs-exits .rs-exit").count(), 3);
+
+  // Fill the read-aloud placeholder through the route: the flag drops and Run shows it on the next entry.
+  const read = stored.find((e) => e.run.role === "read");
+  await fetch(`${base}/api/scene-planning/scenes/${scene.id}/elements/${read.id}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: WORLD, fields: { looks: "The ford runs brown." } })
+  });
+  await page.locator('[data-testid="mode-prep-btn"]').click();
+  await page.locator('[data-testid="mode-run-btn"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-run-spread"] .rs-main .rs-read').length === 1);
+  assert.equal((await els(scene.id)).find((e) => e.id === read.id).run.placeholder, undefined);
+  await page.close();
+});

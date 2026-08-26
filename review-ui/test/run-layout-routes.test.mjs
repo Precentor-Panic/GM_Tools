@@ -194,3 +194,24 @@ test("the shared run-layout module is served to the browser as JavaScript", asyn
   assert.match(res.headers.get("content-type"), /javascript/);
   assert.match(await res.text(), /export function inferRunLayout/);
 });
+
+test("run-layout/seed creates placeholder elements per role for the scene's kind, skips roles already present, and is idempotent", async () => {
+  const s3 = createScene(WORLD, { name: "Combat — Bridge fight" });
+  const p = `/api/scene-planning/scenes/${s3.id}`;
+  // Pre-existing read-aloud (untagged -> inferred role 'read') must NOT be duplicated.
+  await postJson(`${p}/elements`, { world: WORLD, name: "Read Aloud — Opening", fields: { looks: "Fog." } });
+  const first = await postJson(`${p}/run-layout/seed`, { world: WORLD });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.kind, "combat", "kind from the name prefix");
+  assert.ok(first.body.skipped.includes("read"));
+  const roles = first.body.seeded.map((e) => e.run.role);
+  assert.deepEqual([...new Set(roles)], ["dressing", "block", "sketch", "beat", "gm", "exits"]);
+  assert.ok(first.body.seeded.every((e) => e.run.placeholder === true));
+  const exits = first.body.seeded.find((e) => e.run.role === "exits");
+  assert.match(exits.fields.gives, /^ONWARD \(plot\)/);
+  const again = await postJson(`${p}/run-layout/seed`, { world: WORLD });
+  assert.equal(again.body.seeded.length, 0, "idempotent by role");
+  assert.equal(again.body.elements.length, first.body.elements.length);
+  const explicitKind = await postJson(`${p}/run-layout/seed`, { world: WORLD, kind: "musical" });
+  assert.equal(explicitKind.status, 200, "an unknown override falls back rather than erroring");
+});

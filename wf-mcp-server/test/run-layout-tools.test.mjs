@@ -143,5 +143,16 @@ await test("multi-world safety: every new tool requires `world`", async () => {
   }
 });
 
+await test("wf_seed_run_skeleton seeds placeholders for the missing roles and is idempotent", async () => {
+  const { scene } = await call("wf_create_scene", { world: WORLD, name: "Transit — The ford" });
+  const first = await call("wf_seed_run_skeleton", { world: WORLD, sceneId: scene.id });
+  assert.equal(first.kind, "transit");
+  assert.deepEqual(first.seeded.map((e) => e.run.role), ["read", "beat", "beat", "exits"]);
+  const again = await call("wf_seed_run_skeleton", { world: WORLD, sceneId: scene.id });
+  assert.equal(again.seeded.length, 0);
+  const asCombat = await call("wf_seed_run_skeleton", { world: WORLD, sceneId: scene.id, kind: "combat" });
+  assert.ok(asCombat.seeded.some((e) => e.run.role === "block"), "override adds the combat-only roles");
+});
+
 await client.close();
 rmSync(scratchDir, { recursive: true, force: true });

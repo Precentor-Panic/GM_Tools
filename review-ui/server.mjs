@@ -333,6 +333,7 @@ import { proposeUpdatesForPlan, proposeUpdatesForScene } from "../session-planne
 // no-silent-auto-write violation), so its route resolves `dir` too.
 import { createElement, listElementsForScene, updateElement, removeElement, promoteElement, demoteElement, attachExistingNodeAsElement, reorderElements, inferRunLayoutForScene } from "../session-planner/scene-elements.mjs";
 import { createHash } from "node:crypto";
+import { seedRunSkeleton } from "../session-planner/run-skeleton.mjs";
 import { getCurrentSceneNarration, saveSceneNarration } from "../session-planner/scene-narration.mjs";
 
 // Phase 28 task 28.4, §E -- the inline `✦` functional-prep assist. Thin
@@ -3023,6 +3024,16 @@ async function handleApi(req, res, url, parts) {
     const elements = inferRunLayoutForScene(w, parts[3]);
     touchSceneSafely(w, parts[3]);
     return sendJson(res, 200, { elements: elements.map(withBestiarySummary) });
+  }
+
+  // Run layout (2026-08-26) -- POST /api/scene-planning/scenes/:sceneId/run-layout/seed   { world, kind? }   -> {kind, seeded, skipped, elements}
+  // Seeds placeholder elements for every spread role the scene lacks (session-planner/run-skeleton.mjs). Idempotent by role.
+  if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "run-layout" && parts[5] === "seed") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const result = seedRunSkeleton(w, parts[3], { kind: body.kind });
+    touchSceneSafely(w, parts[3]);
+    return sendJson(res, 200, { ...result, elements: result.elements.map(withBestiarySummary) });
   }
 
   // Run layout (2026-08-26) -- GET /api/scene-planning/scenes/:sceneId/run-version?world=   -> {version}

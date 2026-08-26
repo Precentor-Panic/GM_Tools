@@ -112,6 +112,7 @@ import { createElement, listElementsForScene, updateElement, removeElement, reor
 import { getSceneTray, removeFromSceneTray, setSceneTrayXpBudget } from "../session-planner/scene-tray.mjs";
 import { getCurrentSceneNarration, saveSceneNarration } from "../session-planner/scene-narration.mjs";
 import { RUN_COLUMNS, RUN_ROLES } from "../session-planner/run-layout.mjs";
+import { seedRunSkeleton } from "../session-planner/run-skeleton.mjs";
 // The scene-tray "drop" composition (creature/hero/asset resolution +
 // stat-carrying element dedup) -- shared verbatim with review-ui/server.mjs's
 // POST .../tray/drop route. See that module's own header comment for why
@@ -1932,6 +1933,28 @@ server.registerTool(
       const elements = inferRunLayoutForScene(w, sceneId);
       touchScene(w, sceneId);
       return text({ elements });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_seed_run_skeleton",
+  {
+    title: "Seed a Scene with placeholder elements for every Run-spread role it lacks",
+    description:
+      "MUTATION -- direct write, no review gate. Mirrors POST .../run-layout/seed (session-planner/run-skeleton.mjs). Template by `kind` " +
+      "(narrative | combat | transit; defaults from the scene's own kind, then its name prefix). Placeholders are hidden in Run until filled; " +
+      "idempotent by role -- re-running only fills genuine gaps.",
+    inputSchema: { world: requiredWorldParam, sceneId: z.string(), kind: z.enum(["narrative", "combat", "transit"]).optional() }
+  },
+  async ({ world, sceneId, kind }) => {
+    try {
+      const w = resolveWorld(world);
+      const result = seedRunSkeleton(w, sceneId, { kind });
+      touchScene(w, sceneId);
+      return text(result);
     } catch (err) {
       return errorText(err);
     }
