@@ -74,7 +74,7 @@ Full-width content area, `max-width: 900px`, padding `34px 40px 60px`.
 
 Centred column, `max-width: 780px`, padding `34px 30px 90px`.
 
-Sub-bar above it (height ~40px, background `oklch(0.945 0.009 85)`, 1px bottom border): `← <prev scene name>` / `<next scene name> →`, then right-aligned **Page | Cards** segmented control and the **✦ Wrap ▸** button (1px border `oklch(0.68 0.09 65)`, text `oklch(0.42 0.09 65)`).
+Sub-bar above it (height ~40px, background `oklch(0.945 0.009 85)`, 1px bottom border): `← <prev scene name>` / `<next scene name> →`, then right-aligned **Page | Cards | Layout** segmented control, the **Prep | Run** control (§E) and the **✦ Wrap ▸** button (1px border `oklch(0.68 0.09 65)`, text `oklch(0.42 0.09 65)`).
 
 Body, in order:
 
@@ -95,6 +95,12 @@ Body, in order:
 - **Only fields with content render.** Below them, a wrapping row of dashed pill chips — `+ TRIGGER`, `+ GIVES`, `+ LOOKS`, `+ MEANS`, `+ CHECKS`, `+ FUNCTION`, `+ WANTS`, `+ SECRET`, `+ STAT BLOCK` — one per unfilled field. Clicking a chip opens an empty editable line for it. This is the *only* way to add a field; there is no form.
 
 **Cards layout**: `repeat(auto-fill, minmax(320px, 1fr))` grid, gap 12px. Same content; card = 1px border, `border-top: 3px` (KEY amber / MUNDANE grey), radius 3px, padding `13px 14px 12px`, KEY background `oklch(0.985 0.008 78)`. Field label sits above its value rather than beside it.
+
+**Run chip** (2026-08-26, both layouts): after the name, a quiet mono pill reading `column · role (· variant)` — the element's placement in the Run spread (§E). Dashed + prefixed `auto ·` when inferred from the name rather than set; amber border for `side`, struck-through for `off`. Click → a small popover (Column ×3 radios, Role ×8 radios, Variant text, **Save** / **Auto**) writing `element.run` through the ordinary element patch route; **Auto** clears it back to inference. Hidden in Run with the rest of the edit chrome.
+
+**Layout board** (`Layout` in the segmented control, 2026-08-26): replaces the rows with two lanes — **Main** (3fr) | **Side** (2fr) — and an **Off** shelf below. One compact card per element (Spectral name, run chip, first ~72 chars of its primary field; KEY cards carry the entity-type colour on the left rule, seeded placeholders are dashed). HTML5 drag-and-drop between lanes / within a lane, plus `↑ ↓` and an `in main | → side | → off` select per card as the keyboard path. Every move persists as: patch `run.column` if it changed, then `POST …/elements/reorder` with the FULL id order (main ⧺ side ⧺ off) so `order` stays one global sequence. Toolbar: hint text + **Infer layout for untagged** (`POST …/run-layout/infer` — writes explicit `run` only where absent, never overwrites). Entering/leaving the board re-renders the list (it is a different DOM); Page↔Cards stays the in-place attribute flip.
+
+**Seed run skeleton** (ghost link beside `✦ propose elements here`, 2026-08-26): `▤ seed run skeleton` → `POST …/run-layout/seed` creates placeholder elements for every spread role the scene lacks, by `scene.kind` (narrative: read-aloud, 3 dressing, 2 beats, GM note, exits; combat adds Enemies + Sketch; transit: read, beat, exits), falling back to the name prefix. Placeholders (`run.placeholder`) render dashed with a `· fill me` suffix in Prep, are hidden in Run while empty, and drop the flag on their first real edit. Idempotent by role.
 
 #### Stat blocks
 
@@ -126,9 +132,20 @@ Disclosure line: `▸ <statblockRef>  ×N`. Open panel: 1px border, `border-top:
 - **Accept** / **Reject** buttons; accepted card turns green-bordered on `oklch(0.96 0.020 150)`, rejected card goes flat grey.
 - Footer: "Accept all" (ghost) and a primary "Apply N to graph" that is disabled-looking until at least one is accepted.
 
-### E. Run mode
+### E. Run mode — the runnable spread (rewritten 2026-08-26)
 
-A **Prep | Run mode** segmented control in the top bar. In run mode: all edit chrome hides (`display: none` on ✕/⭑/add-field chips/add buttons/reorder arrows), read-aloud jumps to 20px, MUNDANE elements collapse to their **Gives** line only, KEY elements stay full, and the Wrap panel is force-closed.
+A **Prep | Run** segmented control in the top bar. Run hides every piece of edit chrome (rows, chips, ghost links, add buttons, wrap, the beyond-this-room drawer — the map chip row and the stage-dressing chip row stay, they are at-a-glance info) and renders the scene as a **runnable spread** (`.scene-run-spread`, built by `buildRunSpread` in `session-planner-view.js`), the module-style format a GM can run straight from:
+
+- **Head band** — Spectral 21px title, pills (`combat` when `scene.kind === "combat"`, then `scene.tags`; anything with "live" in it goes rust), and a right-aligned mono uppercase **where** line (`scene.whereNote`, else the place name; the linked map's name on a second line unless whereNote already names one).
+- **3:2 grid.** MAIN column: the scene narration as an italic sensory opener; then, in element `order`, read-aloud beats (rust-ruled 18px Spectral, `trigger` as a small when-line, `means` as a `GM` aside), interaction beats (`.ixh`-style mono heading + labelled lines + DC chips), consecutive **dressing** rows folded into one bullet list, and the **exits** footer (dashed rule; each line parsed as `LABEL: text → 'Target scene'` into a Plot / Explore / Linger label, the text, and a bold target). SIDE column: the objective box, the **map slot** (sketch elements in place; otherwise a 160px cover thumbnail of the linked map asset via `GET /api/session-planner/stagecraft/:id/image`), **stat blocks** (name, `×N`, `AC · HP · CR` from a linked bestiary entry or the `statblockRef` text, checks, tactics, raw stat paste), **payload cards** (gold dashed rule: italic phrase, Effect / Alternate / Failure lines), **GM boxes** (backdrops, notes, tone-state texture), sketches (inline SVG through a small sanitiser + caption).
+
+**Where each element goes is data, not guesswork.** `element.run = { column: main|side|off, role: read|dressing|beat|exits|block|card|gm|sketch, variant?, placeholder? }` (zod `RunLayout`, `session-planner/scene-elements.mjs`). An element without `run` falls back to `inferRunLayout()` in `session-planner/run-layout.mjs` — the ONE shared module, served to the browser as `/shared/run-layout.mjs` — which keys off the naming conventions the scene-authoring skill already recommends ("Read Aloud — X", "Backdrop — X", "→ Where this leads", stat/bestiary fields). Explicit always wins; the row chip shows which is in force (§C).
+
+**Variants.** An element may carry `run.variant` (a free string: "Present", "Night", "T-1 burned"). `scene.activeVariants` (string[]) gates them: empty = show everything (the pre-variant behaviour); otherwise only elements whose variant is listed render, and elements without a variant always render. One scene-level switch, so one call (`wf_set_scene_active_variants`) flips a whole scene's state mid-session.
+
+**Live refresh.** While in Run the page polls `GET …/run-version` (a sha1 over scene record + elements + narration) every 3 s (chained `setTimeout`, never an unbounded interval; paused while the tab is hidden, stopped on Prep/navigation) and rebuilds the spread only when the fingerprint changes — an `updated just now` tag flashes on the head band. So an edit from another tab, or an agent over MCP (`wf_set_element_run`, `wf_set_scene_active_variants`, `wf_add/update/delete_scene_element`, `wf_set_scene_narration`, `wf_reorder_scene_elements`), lands on the table within a few seconds.
+
+Routes: `POST …/elements` / `POST …/elements/:id` carry `run`; `POST …/run-layout/infer`; `POST …/run-layout/seed`; `GET …/run-version`; `GET …/elements` attaches a read-only `bestiary {name, ac, hp, cr, note}` summary when `fields.bestiaryEntryId` is set. Scene patch (`POST /api/session-planner/scenes/:id`) carries `kind`, `whereNote`, `tags`, `activeVariants`.
 
 ### F. World Graph — containment tree
 
@@ -229,6 +246,14 @@ Top bar (42px) holds the tab control (label + mono count) and per-tab controls o
 **Tags** are the whole findability model: pills at 11px, radius 20px. Clicking a tag filters by it; ✕ removes it from that row; `+ tag` opens an inline input (Enter commits, Esc cancels). The left rail lists every tag in the current tab with live counts; selected tags AND together, with a "Clear tag filter" escape. Free-text search matches name, description, and tags at once.
 
 Every row on all four tabs is draggable onto the **scene tray** in the left rail. Creatures stack (`×N`) and count against the scene's XP budget; heroes and props (items/maps/art/music) are single and cost nothing — the tray meta reads "N creatures · N heroes · N props".
+
+## J. Briefing — world-level front matter (2026-08-26)
+
+A fifth shell surface (`#briefing`, nav button after Library): the campaign's front matter — premise, clock, cast, party, town map, table rules — as an ordered grid of **cards** the GM wants in front of them before the first scene. Same paper treatment as the Run spread one level up: `max-width: 1080px`, two columns (a card may `span` both), Spectral titles, mono rust eyebrows.
+
+Card = `{ title, eyebrow, body, span: 1|2, order }` (`session-planner/briefing-store.mjs`, `briefing/<world>.json`). Title and eyebrow are click-to-edit (the planner's own `makeClickToEditField`); the body is light HTML (paragraphs, lists, tables, emphasis, headings, inline SVG — the brief's `.stat`/`.phrase`/`.pill`/sketch classes are styled) rendered through a whitelist sanitiser at rest and swapped for a raw textarea on click. Hover tools: `↑ ↓`, span toggle (`⇔`/`⇤`), delete (confirm). **+ Add card** appends an empty card.
+
+Routes: `GET/POST /api/session-planner/briefing`, `POST …/briefing/reorder`, `POST …/briefing/:id`, `DELETE …/briefing/:id`. MCP: `wf_list_briefing_cards`, `wf_upsert_briefing_card`, `wf_delete_briefing_card`, `wf_reorder_briefing_cards` — the intended way to have an agent write a world's briefing from its notes.
 
 ## I. Connection Menu (shared)
 

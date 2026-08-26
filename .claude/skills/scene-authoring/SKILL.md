@@ -58,9 +58,20 @@ explicit on every call; canon still goes through review).
    delivers one cold while the agent mutates the scene stack behind it.
 6. **Residue** — one `gives` line: what changes no matter how the scene
    resolved (this is what feeds the chronicle/world state afterward).
+   **Run placement (2026-08-26):** every element can carry an explicit
+   `run: {column: main|side|off, role: read|dressing|beat|exits|block|
+   card|gm|sketch, variant?}` — set it when you create the element
+   (`wf_add_scene_element … run:`) rather than relying on name inference.
+   Variants are free strings gated by `scene.activeVariants`
+   (`wf_set_scene_active_variants`); tag backdrops and conditional
+   read-alouds with one. `wf_seed_run_skeleton` pre-creates placeholders
+   for a fresh scene; `wf_infer_run_layout` tags a legacy one.
 7. **"→ Where this leads"** — nav references naming exact target scenes
    (and which backdrop/variant to use on arrival). Until scene
-   hyperlinking exists, verbatim scene names are the contract.
+   hyperlinking exists, verbatim scene names are the contract. Encode
+   each exit as `LABEL: text → 'Target scene'` (LABEL ∈ ONWARD (plot) /
+   ONWARD (explore) / LINGER, or any uppercase word) — Run mode parses
+   that into the Plot / Explore / Linger footer.
 
 ## 4. Filler & hook scenes
 
