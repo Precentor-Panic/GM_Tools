@@ -63,8 +63,8 @@
 // don't exist in the DOM yet, not just hidden.
 "use strict";
 import { createFlushableDebounce } from "./debounced-save.mjs";
-// Run layout vocabulary + inference -- the SAME file the stores use (served by server.mjs).
-import { effectiveRun, variantVisible, elementIsEmpty, parseExitLine, titleAfterDash, ROLE_LABELS, RUN_ROLES, RUN_COLUMNS, ROLE_DEFAULT_COLUMN } from "/shared/run-layout.mjs";
+// Run layout vocabulary + inference -- the SAME file the stores use (session-planner/run-layout.mjs re-exports it).
+import { effectiveRun, variantVisible, elementIsEmpty, parseExitLine, titleAfterDash, ROLE_LABELS, RUN_ROLES, RUN_COLUMNS, ROLE_DEFAULT_COLUMN } from "./run-layout.mjs";
 // Phase 28 task 28.6: the SAME deterministic type->color hash graph-view.js
 // already established for node fill colors (no second type-color mapping) --
 // used to tint a KEY element's glyph/accent-rule with its real graph entity
@@ -3457,7 +3457,7 @@ function buildSceneMapRow(scene, mapAssets, onSaved) {
 // the Prep DOM edits. WHERE each element goes is explicit data
 // (`element.run` = {column, role, variant?, placeholder?}, see
 // session-planner/run-layout.mjs -- served to the browser as
-// /shared/run-layout.mjs so inference is defined exactly once); an element
+// `./run-layout.mjs` so inference is defined exactly once); an element
 // without `run` falls back to that module's naming-convention inference.
 // `scene.activeVariants` gates variant-tagged elements (empty = show all).
 // Rebuilt from a fresh fetch every time Run is entered and on every

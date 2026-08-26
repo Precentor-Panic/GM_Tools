@@ -1097,16 +1097,7 @@ export function createReviewServer(opts = {}) {
   return server.listen(opts.port ?? DEFAULT_PORT);
 }
 
-// Run layout (2026-08-26): the ONE shared inference module lives with the
-// stores (session-planner/run-layout.mjs, imported server-side by
-// scene-elements.mjs) and is served here so the browser imports the very
-// same file -- never a mirrored copy that can drift.
-const SHARED_MODULES = {
-  "/shared/run-layout.mjs": join(__dirname, "..", "session-planner", "run-layout.mjs")
-};
-
 function handleStatic(pathname, res) {
-  if (SHARED_MODULES[pathname]) return serveStatic(res, SHARED_MODULES[pathname]);
   const rel = pathname === "/" ? "/index.html" : pathname;
   const filePath = join(PUBLIC_DIR, rel);
   // Guard against path traversal outside public/ -- a fixed, small file set is served, no reason to ever escape PUBLIC_DIR.

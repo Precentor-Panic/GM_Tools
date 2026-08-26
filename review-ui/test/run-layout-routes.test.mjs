@@ -18,7 +18,7 @@ import { test, before, after } from "node:test";
  *   GET  /api/scene-planning/scenes/:id/elements?world=     -> elements carry `bestiary` summary when linked
  *   POST /api/session-planner/scenes/:id                     { kind?, whereNote?, tags?, activeVariants? }
  *   GET  /api/session-planner/stagecraft/:id/image?world=    streams the asset file from under WF_DATA_DIR
- *   GET  /shared/run-layout.mjs                              the one shared inference module, served to the browser
+ *   GET  /run-layout.mjs                                     the one shared inference module (public/), served to the browser
  *
  * Same in-process server.listen(0) + scratch-dir convention as
  * scene-planning-routes.test.mjs.
@@ -189,7 +189,7 @@ test("stagecraft image route streams the asset's file from under WF_DATA_DIR and
 });
 
 test("the shared run-layout module is served to the browser as JavaScript", async () => {
-  const res = await fetch(`${base}/shared/run-layout.mjs`);
+  const res = await fetch(`${base}/run-layout.mjs`);
   assert.equal(res.status, 200);
   assert.match(res.headers.get("content-type"), /javascript/);
   assert.match(await res.text(), /export function inferRunLayout/);

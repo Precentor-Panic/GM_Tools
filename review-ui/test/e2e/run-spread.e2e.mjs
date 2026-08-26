@@ -1,6 +1,6 @@
 // Run spread (2026-08-26) -- Run mode renders the scene as a runnable
 // spread driven by each element's EXPLICIT `run` layout (column/role/
-// variant), falling back to /shared/run-layout.mjs's inference for
+// variant), falling back to run-layout.mjs's inference for
 // untagged elements, and gated by `scene.activeVariants`. Asserted against
 // the real ported DOM under the designer shell (`#planner/scene/<id>`).
 import assert from "node:assert/strict";
