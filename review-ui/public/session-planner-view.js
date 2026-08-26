@@ -853,7 +853,7 @@ function trimTrailingWhitespace(v) {
   return typeof v === "string" ? v.replace(/[ \t\r\n]+$/, "") : v;
 }
 
-function makeClickToEditField({ tag = "div", className = "", testid, dataAttrs = {}, inputTestid, inputDataAttrs = {}, value = "", placeholder = "", emptyText = "", save, onSaved, multiline = false }) {
+export function makeClickToEditField({ tag = "div", className = "", testid, dataAttrs = {}, inputTestid, inputDataAttrs = {}, value = "", placeholder = "", emptyText = "", save, onSaved, multiline = false }) {
   const el = document.createElement(tag);
   if (className) el.className = className;
   el.setAttribute("data-testid", testid);

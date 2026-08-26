@@ -334,6 +334,7 @@ import { proposeUpdatesForPlan, proposeUpdatesForScene } from "../session-planne
 import { createElement, listElementsForScene, updateElement, removeElement, promoteElement, demoteElement, attachExistingNodeAsElement, reorderElements, inferRunLayoutForScene } from "../session-planner/scene-elements.mjs";
 import { createHash } from "node:crypto";
 import { seedRunSkeleton } from "../session-planner/run-skeleton.mjs";
+import { listBriefingCards, createBriefingCard, updateBriefingCard, removeBriefingCard, reorderBriefingCards } from "../session-planner/briefing-store.mjs";
 import { getCurrentSceneNarration, saveSceneNarration } from "../session-planner/scene-narration.mjs";
 
 // Phase 28 task 28.4, §E -- the inline `✦` functional-prep assist. Thin
@@ -3315,6 +3316,41 @@ async function handleApi(req, res, url, parts) {
       src: typeof body.src === "string" && body.src.trim() ? body.src.trim() : null
     });
     return sendJson(res, 200, { asset });
+  }
+
+  // -----------------------------------------------------------------------
+  // Briefing (2026-08-26) -- world-level front-matter cards, prefix
+  // `/api/session-planner/briefing`. Thin wrappers over
+  // session-planner/briefing-store.mjs only.
+  // -----------------------------------------------------------------------
+  // GET /api/session-planner/briefing?world=   -> {cards} in order
+  if (method === "GET" && parts.length === 3 && parts[1] === "session-planner" && parts[2] === "briefing") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, { cards: listBriefingCards(w) });
+  }
+  // POST /api/session-planner/briefing   { world, title, eyebrow?, body?, span? }   -> {card}
+  if (method === "POST" && parts.length === 3 && parts[1] === "session-planner" && parts[2] === "briefing") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    return sendJson(res, 200, { card: createBriefingCard(w, { title: body.title, eyebrow: body.eyebrow, body: body.body, span: body.span }) });
+  }
+  // POST /api/session-planner/briefing/reorder   { world, cardIds }   -> {cards}   (literal path, ahead of the :id patch below)
+  if (method === "POST" && parts.length === 4 && parts[1] === "session-planner" && parts[2] === "briefing" && parts[3] === "reorder") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    return sendJson(res, 200, { cards: reorderBriefingCards(w, Array.isArray(body.cardIds) ? body.cardIds : []) });
+  }
+  // POST /api/session-planner/briefing/:id   { world, title?, eyebrow?, body?, span? }   -> {card}
+  if (method === "POST" && parts.length === 4 && parts[1] === "session-planner" && parts[2] === "briefing") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    return sendJson(res, 200, { card: updateBriefingCard(w, parts[3], { title: body.title, eyebrow: body.eyebrow, body: body.body, span: body.span }) });
+  }
+  // DELETE /api/session-planner/briefing/:id   { world } (body or query)   -> {deleted}
+  if (method === "DELETE" && parts.length === 4 && parts[1] === "session-planner" && parts[2] === "briefing") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world ?? q.get("world"));
+    return sendJson(res, 200, removeBriefingCard(w, parts[3]));
   }
 
   // Run layout (2026-08-26) -- GET /api/session-planner/stagecraft/:id/image?world=

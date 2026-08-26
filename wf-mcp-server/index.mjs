@@ -113,6 +113,7 @@ import { getSceneTray, removeFromSceneTray, setSceneTrayXpBudget } from "../sess
 import { getCurrentSceneNarration, saveSceneNarration } from "../session-planner/scene-narration.mjs";
 import { RUN_COLUMNS, RUN_ROLES } from "../session-planner/run-layout.mjs";
 import { seedRunSkeleton } from "../session-planner/run-skeleton.mjs";
+import { listBriefingCards, createBriefingCard, updateBriefingCard, removeBriefingCard, reorderBriefingCards } from "../session-planner/briefing-store.mjs";
 // The scene-tray "drop" composition (creature/hero/asset resolution +
 // stat-carrying element dedup) -- shared verbatim with review-ui/server.mjs's
 // POST .../tray/drop route. See that module's own header comment for why
@@ -1958,6 +1959,71 @@ server.registerTool(
     } catch (err) {
       return errorText(err);
     }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Briefing (2026-08-26) -- world-level front-matter cards (session-planner/
+// briefing-store.mjs). Direct planner writes, mirroring
+// /api/session-planner/briefing/* 1:1.
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "wf_list_briefing_cards",
+  {
+    title: "List a world's Briefing cards (front matter) in order",
+    description: "READ. Mirrors GET /api/session-planner/briefing. Cards are {id, title, eyebrow, body (light HTML), span 1|2, order}.",
+    inputSchema: { world: requiredWorldParam }
+  },
+  async ({ world }) => {
+    try { return text({ cards: listBriefingCards(resolveWorld(world)) }); } catch (err) { return errorText(err); }
+  }
+);
+
+server.registerTool(
+  "wf_upsert_briefing_card",
+  {
+    title: "Create or patch a Briefing card",
+    description:
+      "MUTATION -- direct write, no review gate. Without `cardId`: creates a card (title required) appended at the end. With `cardId`: " +
+      "patches only the supplied keys. `body` is light HTML (p/ul/ol/table/b/i/h3/inline svg…), sanitised at render time; plain text is fine too. " +
+      "`span` 2 = full width. Use `eyebrow` for the small-caps category label (\"The premise\", \"Cast\", \"Table rules\").",
+    inputSchema: {
+      world: requiredWorldParam, cardId: z.string().optional(), title: z.string().optional(), eyebrow: z.string().nullable().optional(),
+      body: z.string().optional(), span: z.union([z.literal(1), z.literal(2)]).optional()
+    }
+  },
+  async ({ world, cardId, title, eyebrow, body, span }) => {
+    try {
+      const w = resolveWorld(world);
+      const card = cardId ? updateBriefingCard(w, cardId, { title, eyebrow, body, span }) : createBriefingCard(w, { title, eyebrow, body, span });
+      return text({ card });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_delete_briefing_card",
+  {
+    title: "Delete a Briefing card",
+    description: "MUTATION -- direct write, no review gate. Mirrors DELETE /api/session-planner/briefing/:id. Idempotent.",
+    inputSchema: { world: requiredWorldParam, cardId: z.string() }
+  },
+  async ({ world, cardId }) => {
+    try { return text(removeBriefingCard(resolveWorld(world), cardId)); } catch (err) { return errorText(err); }
+  }
+);
+
+server.registerTool(
+  "wf_reorder_briefing_cards",
+  {
+    title: "Reorder a world's Briefing cards",
+    description: "MUTATION -- direct write, no review gate. Mirrors POST /api/session-planner/briefing/reorder: `cardIds` is the full desired order.",
+    inputSchema: { world: requiredWorldParam, cardIds: z.array(z.string()).min(1) }
+  },
+  async ({ world, cardIds }) => {
+    try { return text({ cards: reorderBriefingCards(resolveWorld(world), cardIds) }); } catch (err) { return errorText(err); }
   }
 );
 

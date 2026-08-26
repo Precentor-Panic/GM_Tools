@@ -23,6 +23,7 @@ import { renderWorldSurface as renderWorldSurfaceView, clearWorldTopbar } from "
 import { mountConnectionChip } from "./connection-menu.js";
 import { renderLibrarySurface } from "./library-view.js";
 import { renderChronicleSurface } from "./chronicle-view.js";
+import { renderBriefingSurface } from "./briefing-view.js";
 import { renderWorldPicker } from "./world-picker.js";
 
 // ---------------------------------------------------------------------------
@@ -186,6 +187,9 @@ function wireStaticControls() {
     ?.addEventListener("click", () => { goto("chronicle"); renderShell("chronicle"); });
   document.querySelector('[data-testid="shell-nav-library"]')
     ?.addEventListener("click", () => { goto("library"); renderShell("library"); });
+  // Briefing (2026-08-26): the world-level front matter surface.
+  document.querySelector('[data-testid="shell-nav-briefing"]')
+    ?.addEventListener("click", () => { goto("briefing"); renderShell("briefing"); });
 
   const sel = document.querySelector('[data-testid="shell-world-select"]');
   sel?.addEventListener("change", () => {
@@ -1157,7 +1161,8 @@ function paintNavActive(surface) {
     planner: '[data-testid="shell-surface-toggle-planner"]',
     world: '[data-testid="shell-surface-toggle-world"]',
     chronicle: '[data-testid="shell-nav-chronicle"]',
-    library: '[data-testid="shell-nav-library"]'
+    library: '[data-testid="shell-nav-library"]',
+    briefing: '[data-testid="shell-nav-briefing"]'
   };
   for (const [surf, sel] of Object.entries(map)) {
     const btn = document.querySelector(sel);
@@ -1195,7 +1200,7 @@ export function renderShell(view, arg) {
     return;
   }
 
-  if (view === "chronicle" || view === "library") {
+  if (view === "chronicle" || view === "library" || view === "briefing") {
     shell.setAttribute("data-surface", view);
     paintNavActive(view);
     railOpenPlanId = null;
@@ -1208,6 +1213,7 @@ export function renderShell(view, arg) {
     // page (chronicle-view.js) -- both own #shell-main themselves (a single
     // root child, per the phase34 "sole occupant" e2e).
     if (view === "library") renderLibrarySurface(arg);
+    else if (view === "briefing") renderBriefingSurface(arg);
     else renderChronicleSurface(arg);
     return;
   }

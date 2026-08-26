@@ -190,7 +190,7 @@ function renderCurrentView() {
   // segment is `planner` or `world`; the reverse for any legacy hash. Kept as a
   // branch INSIDE this same renderCurrentView so the 4 nav-cancel hooks above
   // fire on a shell navigation exactly as for any legacy hash (§2/§4).
-  const inShell = view === "planner" || view === "world" || view === "chronicle" || view === "library";
+  const inShell = view === "planner" || view === "world" || view === "chronicle" || view === "library" || view === "briefing";
   document.getElementById("app-shell").hidden = !inShell;
   document.querySelector("header.topbar").hidden = inShell;
   document.querySelector("main").hidden = inShell;
@@ -208,7 +208,7 @@ function renderCurrentView() {
   else if (view === "session-planner") renderSessionPlanner(arg);
   else if (view === "combat-planning") renderCombatPlanning(arg);
   else if (view === "combat-planning-ingest") renderCombatPlanningIngest(arg);
-  else if (view === "planner" || view === "world" || view === "chronicle" || view === "library") renderShell(view, arg);
+  else if (view === "planner" || view === "world" || view === "chronicle" || view === "library" || view === "briefing") renderShell(view, arg);
 }
 
 // Phase 15 task 15.3: closing the mobile drawer belongs on the hashchange

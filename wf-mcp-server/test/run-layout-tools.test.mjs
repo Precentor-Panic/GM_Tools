@@ -38,7 +38,8 @@ const env = {
   GM_TOOLS_SCENE_TRAY_DIR: join(scratchDir, "scene-tray"),
   GM_TOOLS_SCENE_NARRATION_DIR: join(scratchDir, "scene-narration"),
   GM_TOOLS_BESTIARY_DIR: join(scratchDir, "bestiary"),
-  GM_TOOLS_STAGECRAFT_DIR: join(scratchDir, "stagecraft")
+  GM_TOOLS_STAGECRAFT_DIR: join(scratchDir, "stagecraft"),
+  GM_TOOLS_BRIEFING_DIR: join(scratchDir, "briefing")
 };
 delete env.ANTHROPIC_API_KEY;
 delete env.WF_DEFAULT_WORLD;
@@ -152,6 +153,18 @@ await test("wf_seed_run_skeleton seeds placeholders for the missing roles and is
   assert.equal(again.seeded.length, 0);
   const asCombat = await call("wf_seed_run_skeleton", { world: WORLD, sceneId: scene.id, kind: "combat" });
   assert.ok(asCombat.seeded.some((e) => e.run.role === "block"), "override adds the combat-only roles");
+});
+
+await test("briefing tools: upsert (create + patch), list in order, reorder, delete", async () => {
+  const { card: a } = await call("wf_upsert_briefing_card", { world: WORLD, title: "The Premise", eyebrow: "The con", body: "<p>x</p>", span: 2 });
+  const { card: b } = await call("wf_upsert_briefing_card", { world: WORLD, title: "Cast" });
+  const { card: b2 } = await call("wf_upsert_briefing_card", { world: WORLD, cardId: b.id, body: "<ul><li>Vane</li></ul>" });
+  assert.equal(b2.body, "<ul><li>Vane</li></ul>"); assert.equal(b2.title, "Cast");
+  const { cards } = await call("wf_reorder_briefing_cards", { world: WORLD, cardIds: [b.id, a.id] });
+  assert.deepEqual(cards.map((c) => c.id), [b.id, a.id]);
+  assert.equal((await call("wf_delete_briefing_card", { world: WORLD, cardId: a.id })).deleted, true);
+  assert.deepEqual((await call("wf_list_briefing_cards", { world: WORLD })).cards.map((c) => c.id), [b.id]);
+  await callExpectError("wf_upsert_briefing_card", { world: WORLD, body: "no title" });
 });
 
 await client.close();
