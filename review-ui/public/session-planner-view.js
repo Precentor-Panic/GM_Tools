@@ -3502,10 +3502,14 @@ function runSpreadFieldLines(fields, keys) {
 // as SVG with an <svg> root; <script>/<foreignObject>, on* handlers and
 // javascript: hrefs are dropped. Returns null when it isn't usable SVG.
 function runSpreadSanitizeSvg(markup) {
+  // Parse as HTML (not image/svg+xml): the HTML parser puts <svg> in the SVG
+  // namespace even when the markup omits xmlns -- hand-drawn sketches
+  // pasted from a page usually do, and an un-namespaced <svg> renders as
+  // plain text.
   let doc;
-  try { doc = new DOMParser().parseFromString(String(markup || ""), "image/svg+xml"); } catch { return null; }
-  const root = doc.documentElement;
-  if (!root || root.nodeName.toLowerCase() !== "svg" || doc.querySelector("parsererror")) return null;
+  try { doc = new DOMParser().parseFromString(`<div>${String(markup || "")}</div>`, "text/html"); } catch { return null; }
+  const root = doc.body?.firstElementChild?.querySelector("svg") ?? null;
+  if (!root) return null;
   for (const bad of root.querySelectorAll("script, foreignObject")) bad.remove();
   const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
   const nodes = [root];
@@ -3541,7 +3545,7 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
   const where = runSpreadEl("div", "rs-where");
   const linkedMap = scene.mapAssetId ? mapAssets.find((a) => a.id === scene.mapAssetId) : null;
   where.appendChild(document.createTextNode(scene.whereNote?.trim() ? scene.whereNote : (place?.name ?? "Unplaced")));
-  if (linkedMap) { where.appendChild(document.createElement("br")); where.appendChild(document.createTextNode(`Map: ${linkedMap.name}`)); }
+  if (linkedMap && !/\bmap\s*:/i.test(scene.whereNote || "")) { where.appendChild(document.createElement("br")); where.appendChild(document.createTextNode(`Map: ${linkedMap.name}`)); }
   head.appendChild(where);
   spread.appendChild(head);
 

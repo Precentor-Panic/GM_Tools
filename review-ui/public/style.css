@@ -2210,7 +2210,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 }
 :is(#view-session-planner, #app-shell) .rs-where {
   font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: var(--sp-mono-label-tracking);
-  text-transform: uppercase; color: var(--sp-ink-muted); text-align: right; line-height: 1.5;
+  text-transform: uppercase; color: var(--sp-ink-muted); text-align: right; line-height: 1.5; white-space: pre-line;
 }
 :is(#view-session-planner, #app-shell) .rs-grid { display: grid; grid-template-columns: 3fr 2fr; }
 @media (max-width: 760px) {
