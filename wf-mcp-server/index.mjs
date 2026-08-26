@@ -108,9 +108,10 @@ import { pullFoundryActorsToStores } from "./lib/foundry-pull-ops.mjs";
 // stores behind /api/scene-planning/* and /api/session-planner/scenes*.
 import { createScene, getScene, listScenesForWorld, listScenesByRecency, updateScene, touchScene } from "../session-planner/scenes.mjs";
 import { createPlan, getPlan, listPlansForWorld, addSceneToPlan, reorderPlanScenes, renamePlan } from "../session-planner/plans.mjs";
-import { createElement, listElementsForScene, updateElement } from "../session-planner/scene-elements.mjs";
+import { createElement, listElementsForScene, updateElement, removeElement, reorderElements, promoteElement, demoteElement, inferRunLayoutForScene } from "../session-planner/scene-elements.mjs";
 import { getSceneTray, removeFromSceneTray, setSceneTrayXpBudget } from "../session-planner/scene-tray.mjs";
-import { getCurrentSceneNarration } from "../session-planner/scene-narration.mjs";
+import { getCurrentSceneNarration, saveSceneNarration } from "../session-planner/scene-narration.mjs";
+import { RUN_COLUMNS, RUN_ROLES } from "../session-planner/run-layout.mjs";
 // The scene-tray "drop" composition (creature/hero/asset resolution +
 // stat-carrying element dedup) -- shared verbatim with review-ui/server.mjs's
 // POST .../tray/drop route. See that module's own header comment for why
@@ -161,6 +162,11 @@ const server = new McpServer({ name: "world-fabric", version: "0.1.0" });
 // bestiary-store.mjs is library-wide, not world-scoped, mirroring
 // GET /api/combat-planning/bestiary's own documented "no world parameter"
 // convention exactly.
+// Run layout (2026-08-26) -- the element's explicit spread placement; `null` clears back to inference.
+const runLayoutParam = z.object({
+  column: z.enum(RUN_COLUMNS), role: z.enum(RUN_ROLES), variant: z.string().optional(), placeholder: z.boolean().optional()
+}).nullable().optional().describe("Explicit Run-spread placement {column, role, variant?, placeholder?}; null clears to inference.");
+
 const requiredWorldParam = z.string().min(1).describe(
   "World ID (Foundry world folder name) -- REQUIRED. This server never silently defaults across worlds for this " +
   "tool, even if WF_DEFAULT_WORLD happens to be set. Call wf_list_worlds first if unsure which id to use."
@@ -1677,14 +1683,22 @@ server.registerTool(
 server.registerTool(
   "wf_update_scene",
   {
-    title: "Patch a Scene's name/objective",
-    description: "MUTATION -- direct write, no review gate. Mirrors POST /api/session-planner/scenes/:sceneId (patch-style -- only supplied fields change).",
-    inputSchema: { world: requiredWorldParam, sceneId: z.string(), name: z.string().optional(), objectiveNote: z.string().optional() }
+    title: "Patch a Scene's name/objective/kind/whereNote/tags/activeVariants",
+    description:
+      "MUTATION -- direct write, no review gate. Mirrors POST /api/session-planner/scenes/:sceneId (patch-style -- only supplied fields change). " +
+      "Run-layout keys: `kind` (narrative|combat|transit|null) drives the seed skeleton + a 'combat' pill; `whereNote` is the Run spread's " +
+      "where-line; `tags` render as pills; `activeVariants` gates which variant-tagged elements Run mode shows (empty = show all) -- " +
+      "prefer wf_set_scene_active_variants for that one during live play.",
+    inputSchema: {
+      world: requiredWorldParam, sceneId: z.string(), name: z.string().optional(), objectiveNote: z.string().optional(),
+      kind: z.enum(["narrative", "combat", "transit"]).nullable().optional(), whereNote: z.string().nullable().optional(),
+      tags: z.array(z.string()).optional(), activeVariants: z.array(z.string()).optional()
+    }
   },
-  async ({ world, sceneId, name, objectiveNote }) => {
+  async ({ world, sceneId, name, objectiveNote, kind, whereNote, tags, activeVariants }) => {
     try {
       const w = resolveWorld(world);
-      return text({ scene: updateScene(w, sceneId, { name, objectiveNote }) });
+      return text({ scene: updateScene(w, sceneId, { name, objectiveNote, kind, whereNote, tags, activeVariants }) });
     } catch (err) {
       return errorText(err);
     }
@@ -1705,13 +1719,14 @@ server.registerTool(
       name: z.string(),
       kind: z.enum(["local", "graph"]).optional(),
       fields: z.record(z.string(), z.any()).optional(),
-      stat: z.record(z.string(), z.any()).optional()
+      stat: z.record(z.string(), z.any()).optional(),
+      run: runLayoutParam
     }
   },
-  async ({ world, sceneId, name, kind, fields, stat }) => {
+  async ({ world, sceneId, name, kind, fields, stat, run }) => {
     try {
       const w = resolveWorld(world);
-      return text({ element: createElement(w, sceneId, { name, kind, fields, stat }) });
+      return text({ element: createElement(w, sceneId, { name, kind, fields, stat, run }) });
     } catch (err) {
       return errorText(err);
     }
@@ -1731,13 +1746,192 @@ server.registerTool(
       elementId: z.string(),
       name: z.string().optional(),
       fields: z.record(z.string(), z.any()).optional(),
-      stat: z.record(z.string(), z.any()).optional()
+      stat: z.record(z.string(), z.any()).optional(),
+      run: runLayoutParam
     }
   },
-  async ({ world, sceneId, elementId, name, fields, stat }) => {
+  async ({ world, sceneId, elementId, name, fields, stat, run }) => {
     try {
       const w = resolveWorld(world);
-      return text({ element: updateElement(w, sceneId, elementId, { name, fields, stat }) });
+      return text({ element: updateElement(w, sceneId, elementId, { name, fields, stat, run }) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Run layout + live-play element tools (2026-08-26). All MUTATIONS are direct
+// planner writes (no review gate -- prep working state, per the
+// gm-tools-agent contract), mirroring the review-ui routes 1:1 so what an
+// agent does over MCP and what the GM does in the UI are the same writes.
+// The Run page polls a run-version fingerprint, so every one of these lands
+// on an open Run screen within a few seconds.
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "wf_delete_scene_element",
+  {
+    title: "Remove an element from a Scene",
+    description: "MUTATION -- direct write, no review gate. Mirrors DELETE /api/scene-planning/scenes/:sceneId/elements/:elementId. Idempotent; never touches a promoted element's graph node.",
+    inputSchema: { world: requiredWorldParam, sceneId: z.string(), elementId: z.string() }
+  },
+  async ({ world, sceneId, elementId }) => {
+    try {
+      const w = resolveWorld(world);
+      const result = removeElement(w, sceneId, elementId);
+      touchScene(w, sceneId);
+      return text(result);
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_reorder_scene_elements",
+  {
+    title: "Reorder a Scene's elements",
+    description: "MUTATION -- direct write, no review gate. Mirrors POST .../elements/reorder: `elementIds` is the FULL desired order (each listed element's `order` becomes its index; unlisted ones keep theirs).",
+    inputSchema: { world: requiredWorldParam, sceneId: z.string(), elementIds: z.array(z.string()).min(1) }
+  },
+  async ({ world, sceneId, elementIds }) => {
+    try {
+      const w = resolveWorld(world);
+      const elements = reorderElements(w, sceneId, elementIds);
+      touchScene(w, sceneId);
+      return text({ elements });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_promote_scene_element",
+  {
+    title: "Promote a scene-local element to a KEY graph node",
+    description: "MUTATION -- direct write. Mirrors POST .../elements/:elementId/promote: creates a REAL graph node + containment edge (the one planner write that touches the graph -- the element becomes kind:'graph').",
+    inputSchema: { world: requiredWorldParam, dataDir: dataDirParam, sceneId: z.string(), elementId: z.string() }
+  },
+  async ({ world, dataDir, sceneId, elementId }) => {
+    try {
+      const w = resolveWorld(world);
+      const dir = resolveDir(dataDir);
+      const element = await promoteElement(dir, w, sceneId, elementId);
+      touchScene(w, sceneId);
+      return text({ element });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_demote_scene_element",
+  {
+    title: "Demote a KEY element back to scene-local (keeps the graph node)",
+    description: "MUTATION -- direct write, no review gate. Mirrors POST .../elements/:elementId/demote. Never deletes the underlying graph node.",
+    inputSchema: { world: requiredWorldParam, sceneId: z.string(), elementId: z.string() }
+  },
+  async ({ world, sceneId, elementId }) => {
+    try {
+      const w = resolveWorld(world);
+      const element = demoteElement(w, sceneId, elementId);
+      touchScene(w, sceneId);
+      return text({ element });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_set_scene_narration",
+  {
+    title: "Set a Scene's read-aloud narration (the spread's opening line)",
+    description: "MUTATION -- direct write, no review gate. Mirrors POST /api/scene-planning/scenes/:sceneId/narration. Appends a new current version (history kept).",
+    inputSchema: { world: requiredWorldParam, sceneId: z.string(), text: z.string() }
+  },
+  async ({ world, sceneId, text: narrationText }) => {
+    try {
+      const w = resolveWorld(world);
+      const narration = saveSceneNarration(w, sceneId, { text: narrationText });
+      touchScene(w, sceneId);
+      return text({ narration });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_set_element_run",
+  {
+    title: "Place an element in the Run spread (column · role · variant)",
+    description:
+      "MUTATION -- direct write, no review gate. Writes the element's EXPLICIT `run` layout (session-planner/run-layout.mjs): " +
+      "column main|side|off; role read|dressing|beat|exits|block|card|gm|sketch; optional free-string `variant` (gated by the scene's " +
+      "activeVariants). Pass `clear:true` to drop the explicit layout and fall back to inference.",
+    inputSchema: {
+      world: requiredWorldParam, sceneId: z.string(), elementId: z.string(),
+      column: z.enum(RUN_COLUMNS).optional(), role: z.enum(RUN_ROLES).optional(), variant: z.string().nullable().optional(),
+      clear: z.boolean().optional()
+    }
+  },
+  async ({ world, sceneId, elementId, column, role, variant, clear }) => {
+    try {
+      const w = resolveWorld(world);
+      if (clear) {
+        const element = updateElement(w, sceneId, elementId, { run: null });
+        touchScene(w, sceneId);
+        return text({ element });
+      }
+      if (!column || !role) throw new Error("wf_set_element_run needs both `column` and `role` (or `clear:true`).");
+      const run = { column, role };
+      if (variant) run.variant = variant;
+      const element = updateElement(w, sceneId, elementId, { run });
+      touchScene(w, sceneId);
+      return text({ element });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_set_scene_active_variants",
+  {
+    title: "Switch which variant(s) a Scene shows in Run mode",
+    description:
+      "MUTATION -- direct write, no review gate. Sets `scene.activeVariants` (free strings matching elements' run.variant). " +
+      "Elements without a variant always show; an EMPTY list shows every variant. This is the live-play switch: one call flips a " +
+      "whole scene from one state to another and the open Run page picks it up within a few seconds.",
+    inputSchema: { world: requiredWorldParam, sceneId: z.string(), variants: z.array(z.string()) }
+  },
+  async ({ world, sceneId, variants }) => {
+    try {
+      const w = resolveWorld(world);
+      return text({ scene: updateScene(w, sceneId, { activeVariants: variants }) });
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_infer_run_layout",
+  {
+    title: "Write an explicit Run layout onto every untagged element of a Scene",
+    description: "MUTATION -- direct write, no review gate. Mirrors POST .../run-layout/infer: uses run-layout.mjs's naming-convention inference for elements with no `run`; never overwrites an existing one (idempotent).",
+    inputSchema: { world: requiredWorldParam, sceneId: z.string() }
+  },
+  async ({ world, sceneId }) => {
+    try {
+      const w = resolveWorld(world);
+      const elements = inferRunLayoutForScene(w, sceneId);
+      touchScene(w, sceneId);
+      return text({ elements });
     } catch (err) {
       return errorText(err);
     }
