@@ -2289,6 +2289,44 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 :is(#view-session-planner, #app-shell) .rs-boxp { margin: 3px 0; }
 :is(#view-session-planner, #app-shell) .rs-empty { font-family: var(--sp-font-ui); font-size: 13px; color: var(--sp-ink-muted); font-style: italic; }
 
+/* Run spread additions (2026-08-26): head pills, beats, cards, sketches, map thumbnail. */
+:is(#view-session-planner, #app-shell) .rs-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
+:is(#view-session-planner, #app-shell) .rs-pills { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+:is(#view-session-planner, #app-shell) .rs-pill--tag { color: var(--sp-ink-secondary); border-color: var(--sp-border-control); }
+:is(#view-session-planner, #app-shell) .rs-pill--live { color: var(--sp-accent-rust); border-color: var(--sp-accent-rust); }
+:is(#view-session-planner, #app-shell) .rs-p { margin: 3px 0 5px; white-space: pre-line; }
+:is(#view-session-planner, #app-shell) .rs-exit { margin: 4px 0; }
+:is(#view-session-planner, #app-shell) .rs-block--beat { border-left: 3px solid var(--element-type-color, var(--sp-accent-teal)); }
+:is(#view-session-planner, #app-shell) .rs-bl {
+  display: block; font-family: var(--sp-font-mono); font-size: 11.5px; margin: 2px 0 4px; color: var(--sp-ink-primary);
+}
+:is(#view-session-planner, #app-shell) .rs-card { border-left: 3px dashed var(--sp-accent-amber); }
+:is(#view-session-planner, #app-shell) .rs-phrase { font-style: italic; font-size: 15px; margin: 2px 0 6px; }
+:is(#view-session-planner, #app-shell) .rs-box--objective { font-family: var(--sp-font-serif); }
+:is(#view-session-planner, #app-shell) .rs-sketch { margin: 0 0 10px; }
+:is(#view-session-planner, #app-shell) .rs-sketch svg {
+  width: 100%; height: auto; display: block; background: var(--sp-surface-card);
+  border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-sm);
+  color: var(--sp-ink-primary);
+}
+/* The sketch vocabulary (mirrors the GM brief's classes) so pasted-in sketches keep their meaning in both themes. */
+:is(#view-session-planner, #app-shell) .rs-sketch .sk { stroke: var(--sp-ink-primary); fill: none; stroke-width: 1.6; stroke-linecap: round; }
+:is(#view-session-planner, #app-shell) .rs-sketch .skw { stroke: var(--sp-ink-primary); fill: var(--sp-surface-chrome); stroke-width: 1.6; }
+:is(#view-session-planner, #app-shell) .rs-sketch .skm { stroke: var(--sp-accent-rust); fill: none; stroke-width: 1.6; stroke-dasharray: 4 3; }
+:is(#view-session-planner, #app-shell) .rs-sketch .skg { stroke: var(--sp-accent-amber); fill: none; stroke-width: 1.8; }
+:is(#view-session-planner, #app-shell) .rs-sketch .skt { font-family: var(--sp-font-ui); font-size: 9px; fill: var(--sp-ink-muted); letter-spacing: .04em; text-transform: uppercase; }
+:is(#view-session-planner, #app-shell) .rs-sketch .skT { font-family: var(--sp-font-ui); font-size: 10px; fill: var(--sp-ink-primary); font-weight: 700; }
+:is(#view-session-planner, #app-shell) .rs-sketch .skb { fill: var(--sp-surface-card); stroke: var(--sp-accent-rust); stroke-width: 1.4; }
+:is(#view-session-planner, #app-shell) .rs-sketch .skbn { font-family: var(--sp-font-ui); font-size: 8.5px; fill: var(--sp-accent-rust); font-weight: 700; }
+:is(#view-session-planner, #app-shell) .rs-sketch .skwtr { fill: color-mix(in srgb, var(--sp-ink-muted) 16%, var(--sp-surface-card)); stroke: var(--sp-ink-primary); stroke-width: 1.4; }
+:is(#view-session-planner, #app-shell) .rs-sketch .skthin { stroke: var(--sp-ink-primary); fill: none; stroke-width: .9; stroke-linecap: round; }
+:is(#view-session-planner, #app-shell) .rs-cap { font-family: var(--sp-font-ui); font-size: 11.5px; color: var(--sp-ink-muted); margin-top: 4px; white-space: pre-line; }
+:is(#view-session-planner, #app-shell) .rs-map { margin: 0 0 10px; }
+:is(#view-session-planner, #app-shell) .rs-map img {
+  display: block; width: 100%; height: 160px; object-fit: cover;
+  border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-sm);
+}
+
 /* Extras + Beyond-this-room drawer. */
 :is(#view-session-planner, #app-shell) .scene-extras-bar { gap: 8px; }
 :is(#view-session-planner, #app-shell) .beyond-room-drawer {
