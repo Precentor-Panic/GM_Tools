@@ -2322,9 +2322,87 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 :is(#view-session-planner, #app-shell) .rs-sketch .skthin { stroke: var(--sp-ink-primary); fill: none; stroke-width: .9; stroke-linecap: round; }
 :is(#view-session-planner, #app-shell) .rs-cap { font-family: var(--sp-font-ui); font-size: 11.5px; color: var(--sp-ink-muted); margin-top: 4px; white-space: pre-line; }
 :is(#view-session-planner, #app-shell) .rs-map { margin: 0 0 10px; }
+:is(#view-session-planner, #app-shell) .rs-updated {
+  font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--sp-accent-accept); margin-left: auto; align-self: center;
+}
 :is(#view-session-planner, #app-shell) .rs-map img {
   display: block; width: 100%; height: 160px; object-fit: cover;
   border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-sm);
+}
+
+/* =========================================================================
+   Run layout (2026-08-26) -- Prep organising tools: the per-row run chip +
+   popover, and the Layout board (Main | Side lanes + Off shelf).
+   ========================================================================= */
+:is(#view-session-planner, #app-shell) .scene-element-run { position: relative; flex-shrink: 0; }
+:is(#view-session-planner, #app-shell) .scene-element-run-chip {
+  font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: 0.03em;
+  color: var(--sp-ink-secondary); background: transparent; cursor: pointer;
+  border: 1px solid var(--sp-border-control); border-radius: var(--sp-radius-pill); padding: 1px 8px;
+  transition: box-shadow 0.1s ease, background-color 0.1s ease;
+}
+:is(#view-session-planner, #app-shell) .scene-element-run-chip[data-inferred="true"] { color: var(--sp-ink-muted); border-style: dashed; }
+:is(#view-session-planner, #app-shell) .scene-element-run-chip[data-column="side"] { border-color: var(--sp-accent-amber); }
+:is(#view-session-planner, #app-shell) .scene-element-run-chip[data-column="off"] { opacity: 0.6; text-decoration: line-through; }
+:is(#view-session-planner, #app-shell) .scene-element-run-chip:hover { background: var(--sp-hover-halo); box-shadow: 0 0 0 3px var(--sp-hover-halo); }
+:is(#view-session-planner, #app-shell) .scene-element-run-pop {
+  position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; min-width: 300px;
+  background: var(--sp-surface-card); border: 1px solid var(--sp-border-control); border-radius: var(--sp-radius-md);
+  box-shadow: var(--sp-toast-shadow); padding: 10px 12px; display: grid; gap: 8px;
+  font-family: var(--sp-font-ui); font-size: 12px; color: var(--sp-ink-primary); text-align: left; white-space: normal;
+}
+:is(#view-session-planner, #app-shell) .run-pop-title {
+  font-family: var(--sp-font-mono); font-size: 9.5px; letter-spacing: var(--sp-mono-label-tracking); text-transform: uppercase;
+  color: var(--sp-ink-muted); margin-bottom: 3px;
+}
+:is(#view-session-planner, #app-shell) .run-pop-group { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+:is(#view-session-planner, #app-shell) .run-pop-group .run-pop-title { flex-basis: 100%; }
+:is(#view-session-planner, #app-shell) .run-pop-opt { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+:is(#view-session-planner, #app-shell) .run-pop-variant {
+  font: inherit; font-size: 12px; padding: 3px 6px; width: 100%;
+  border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-sm); background: var(--sp-surface-input); color: inherit;
+}
+:is(#view-session-planner, #app-shell) .run-pop-actions { display: flex; gap: 6px; justify-content: flex-end; }
+/* Prep chrome: the chip is edit chrome, so it hides in Run with the rest. */
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-element-run { display: none !important; }
+
+/* Layout board */
+:is(#view-session-planner, #app-shell) .scene-layout-board { display: grid; gap: 12px; }
+:is(#view-session-planner, #app-shell) .layout-board-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+:is(#view-session-planner, #app-shell) .layout-board-hint { font-family: var(--sp-font-ui); font-size: 12px; color: var(--sp-ink-muted); max-width: 62ch; }
+:is(#view-session-planner, #app-shell) .layout-board-lanes { display: grid; grid-template-columns: 3fr 2fr; gap: 12px; }
+@media (max-width: 760px) { :is(#view-session-planner, #app-shell) .layout-board-lanes { grid-template-columns: 1fr; } }
+:is(#view-session-planner, #app-shell) .layout-lane {
+  border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-md); padding: 8px; min-height: 120px;
+  background: color-mix(in srgb, var(--sp-surface-chrome) 40%, var(--sp-surface-card));
+  transition: background-color 0.1s ease, border-color 0.1s ease;
+}
+:is(#view-session-planner, #app-shell) .layout-lane--over { border-color: var(--sp-accent-teal); background: var(--sp-accent-teal-selected); }
+:is(#view-session-planner, #app-shell) .layout-lane--off { min-height: 64px; opacity: 0.85; }
+:is(#view-session-planner, #app-shell) .layout-lane-title {
+  font-family: var(--sp-font-mono); font-size: 9.5px; letter-spacing: var(--sp-mono-label-tracking); text-transform: uppercase;
+  color: var(--sp-ink-muted); margin: 0 0 6px 2px;
+}
+:is(#view-session-planner, #app-shell) .layout-lane-list { display: grid; gap: 6px; }
+:is(#view-session-planner, #app-shell) .layout-card {
+  background: var(--sp-surface-card); border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-sm);
+  padding: 6px 8px; cursor: grab; display: grid; gap: 4px;
+  border-left: 3px solid var(--sp-border-control);
+}
+:is(#view-session-planner, #app-shell) .layout-card--key { border-left-color: var(--element-type-color, var(--sp-accent-amber)); }
+:is(#view-session-planner, #app-shell) .layout-card--placeholder { border-style: dashed; }
+:is(#view-session-planner, #app-shell) .layout-card--dragging { opacity: 0.4; }
+:is(#view-session-planner, #app-shell) .layout-card-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+:is(#view-session-planner, #app-shell) .layout-card-top .layout-card-name { flex: 1 1 100%; }
+:is(#view-session-planner, #app-shell) .layout-card-top .scene-element-run-chip { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+:is(#view-session-planner, #app-shell) .scene-element-run-chip { white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+:is(#view-session-planner, #app-shell) .layout-card-name { font-family: var(--sp-font-serif); font-size: 14px; font-weight: 600; color: var(--sp-ink-heading); min-width: 0; }
+:is(#view-session-planner, #app-shell) .layout-card-text { font-family: var(--sp-font-ui); font-size: 12px; color: var(--sp-ink-secondary); }
+:is(#view-session-planner, #app-shell) .layout-card-btns { display: flex; align-items: center; gap: 4px; }
+:is(#view-session-planner, #app-shell) .layout-card-send {
+  font: inherit; font-size: 11px; margin-left: auto; padding: 1px 4px;
+  border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-sm); background: var(--sp-surface-input); color: inherit;
 }
 
 /* Extras + Beyond-this-room drawer. */

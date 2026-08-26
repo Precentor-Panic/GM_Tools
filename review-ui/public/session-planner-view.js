@@ -1287,6 +1287,8 @@ function buildSceneElementRow(scene, element, refreshList, nodeMap) {
     })
   });
   head.appendChild(nameField.el);
+  // Run layout (2026-08-26): the quiet "where does this go in Run" chip.
+  head.appendChild(buildRunRoleChip(scene, element));
 
   const controls = document.createElement("div");
   controls.className = "scene-element-controls";
@@ -1370,6 +1372,293 @@ function buildSceneElementRow(scene, element, refreshList, nodeMap) {
   return row;
 }
 
+// ---------------------------------------------------------------------------
+// Run layout (2026-08-26) -- Prep-side organising tools.
+//
+// (a) buildRunRoleChip: one quiet chip per element row showing `column ·
+//     role (· variant)`; muted "auto" styling when the layout is inferred
+//     rather than explicit. Click opens a small inline popover (column ×3,
+//     role ×8, variant text, Auto) that writes `run` through the ordinary
+//     element patch route. Never touches the add-element flow.
+// (b) buildLayoutBoard: the third layout ("Layout") -- Main | Side lanes plus
+//     an Off shelf; compact cards; HTML5 drag-and-drop between/within lanes
+//     (no library) and ↑/↓ buttons as the deterministic path (mirrors
+//     plans-view.js's runsheet arrows). Every move persists as: patch
+//     `run.column` if it changed, then POST the FULL id order (main ⧺ side
+//     ⧺ off) through the existing reorder route so `order` stays one global
+//     sequence for the scene.
+// ---------------------------------------------------------------------------
+function runChipLabel(element) {
+  const { run, inferred } = effectiveRun(element);
+  const bits = [run.column, ROLE_LABELS[run.role] ?? run.role];
+  if (run.variant) bits.push(run.variant);
+  return { text: bits.join(" · "), inferred, run };
+}
+
+async function saveElementRun(scene, element, run) {
+  const { element: updated } = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/${encodeURIComponent(element.id)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: currentWorld(), run })
+  });
+  element.run = updated.run;
+  return updated;
+}
+
+function buildRunRoleChip(scene, element, { onChange } = {}) {
+  const wrap = document.createElement("span");
+  wrap.className = "scene-element-run";
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "scene-element-run-chip";
+  chip.setAttribute("data-testid", "scene-element-run-chip");
+  chip.setAttribute("data-element-id", element.id);
+  const paint = () => {
+    const { text: label, inferred, run } = runChipLabel(element);
+    chip.textContent = inferred ? `auto · ${label}` : label;
+    chip.setAttribute("data-inferred", inferred ? "true" : "false");
+    chip.setAttribute("data-column", run.column);
+    chip.setAttribute("data-role", run.role);
+    chip.title = inferred
+      ? "Run placement is inferred from the name — click to set it explicitly"
+      : "Where this element sits in the Run spread — click to change";
+  };
+  paint();
+  wrap.appendChild(chip);
+
+  let pop = null;
+  const close = () => { if (pop) { pop.remove(); pop = null; document.removeEventListener("mousedown", onOutside); } };
+  const onOutside = (e) => { if (pop && !e.composedPath().includes(pop) && e.target !== chip) close(); };
+  chip.addEventListener("click", () => {
+    if (pop) { close(); return; }
+    const { run } = effectiveRun(element);
+    pop = document.createElement("div");
+    pop.className = "scene-element-run-pop";
+    pop.setAttribute("data-testid", "scene-element-run-pop");
+    const mkGroup = (title, name, values, current, labels) => {
+      const g = document.createElement("div");
+      g.className = "run-pop-group";
+      const h = document.createElement("div"); h.className = "run-pop-title"; h.textContent = title; g.appendChild(h);
+      for (const v of values) {
+        const l = document.createElement("label");
+        l.className = "run-pop-opt";
+        const r = document.createElement("input"); r.type = "radio"; r.name = `${name}-${element.id}`; r.value = v; r.checked = v === current;
+        r.setAttribute("data-testid", `run-pop-${name}`);
+        l.append(r, document.createTextNode(` ${labels?.[v] ?? v}`));
+        g.appendChild(l);
+      }
+      return g;
+    };
+    pop.appendChild(mkGroup("Column", "column", RUN_COLUMNS, run.column));
+    pop.appendChild(mkGroup("Role", "role", RUN_ROLES, run.role, ROLE_LABELS));
+    const vg = document.createElement("div"); vg.className = "run-pop-group";
+    const vh = document.createElement("div"); vh.className = "run-pop-title"; vh.textContent = "Variant"; vg.appendChild(vh);
+    const vi = document.createElement("input"); vi.type = "text"; vi.className = "run-pop-variant"; vi.placeholder = "e.g. Night (optional)"; vi.value = run.variant ?? "";
+    vi.setAttribute("data-testid", "run-pop-variant");
+    vg.appendChild(vi); pop.appendChild(vg);
+    const actions = document.createElement("div"); actions.className = "run-pop-actions";
+    const save = document.createElement("button"); save.type = "button"; save.className = "btn"; save.textContent = "Save";
+    save.setAttribute("data-testid", "run-pop-save");
+    const auto = document.createElement("button"); auto.type = "button"; auto.className = "btn"; auto.textContent = "Auto";
+    auto.title = "Drop the explicit placement and infer from the name again";
+    auto.setAttribute("data-testid", "run-pop-auto");
+    actions.append(save, auto); pop.appendChild(actions);
+    save.addEventListener("click", async () => {
+      const column = pop.querySelector(`input[name="column-${element.id}"]:checked`)?.value;
+      const role = pop.querySelector(`input[name="role-${element.id}"]:checked`)?.value;
+      const next = { column, role };
+      const variant = vi.value.trim();
+      if (variant) next.variant = variant;
+      if (element.run?.placeholder) next.placeholder = true;
+      save.disabled = true;
+      try { await saveElementRun(scene, element, next); paint(); close(); onChange?.(); }
+      finally { save.disabled = false; }
+    });
+    auto.addEventListener("click", async () => {
+      auto.disabled = true;
+      try { await saveElementRun(scene, element, null); paint(); close(); onChange?.(); }
+      finally { auto.disabled = false; }
+    });
+    pop.addEventListener("mousedown", (e) => e.stopPropagation());
+    wrap.appendChild(pop);
+    setTimeout(() => document.addEventListener("mousedown", onOutside), 0);
+  });
+  return wrap;
+}
+
+function buildLayoutBoard(scene, elements, refreshList) {
+  const board = document.createElement("div");
+  board.className = "scene-layout-board";
+  board.setAttribute("data-testid", "scene-layout-board");
+  board.setAttribute("data-scene-id", scene.id);
+
+  const lanes = { main: [], side: [], off: [] };
+  for (const el of elements) lanes[effectiveRun(el).run.column].push(el);
+
+  // Persist: optional column change on ONE element, then the full order.
+  const persist = async (movedId, newColumn) => {
+    if (movedId && newColumn) {
+      const el = elements.find((e) => e.id === movedId);
+      const { run } = effectiveRun(el);
+      if (run.column !== newColumn) {
+        const next = { ...run, column: newColumn };
+        await saveElementRun(scene, el, next);
+      }
+    }
+    const ids = [...lanes.main, ...lanes.side, ...lanes.off].map((e) => e.id);
+    await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/reorder`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), elementIds: ids })
+    });
+    await refreshList();
+  };
+
+  const moveTo = (id, column, index) => {
+    for (const k of Object.keys(lanes)) {
+      const i = lanes[k].findIndex((e) => e.id === id);
+      if (i >= 0) { const [el] = lanes[k].splice(i, 1); lanes[column].splice(index, 0, el); return; }
+    }
+  };
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "layout-board-toolbar";
+  const hint = document.createElement("span");
+  hint.className = "layout-board-hint";
+  hint.textContent = "Drag cards between Main and Side (or onto the Off shelf) to lay the scene out for Run. ↑/↓ reorder within a lane.";
+  const inferBtn = document.createElement("button");
+  inferBtn.type = "button";
+  inferBtn.className = "btn layout-board-infer-btn";
+  inferBtn.setAttribute("data-testid", "layout-board-infer-btn");
+  inferBtn.textContent = "Infer layout for untagged";
+  inferBtn.title = "Write an explicit placement onto every element that still says 'auto' (never changes one you set)";
+  inferBtn.addEventListener("click", async () => {
+    inferBtn.disabled = true;
+    try {
+      await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/run-layout/infer`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ world: currentWorld() })
+      });
+      await refreshList();
+    } finally { inferBtn.disabled = false; }
+  });
+  toolbar.append(hint, inferBtn);
+  board.appendChild(toolbar);
+
+  const lanesWrap = document.createElement("div");
+  lanesWrap.className = "layout-board-lanes";
+  board.appendChild(lanesWrap);
+
+  const primaryText = (el) => {
+    const f = el.fields || {};
+    const t = f.looks || f.gives || f.trigger || f.means || f.secret || "";
+    const one = String(t).replace(/\s+/g, " ").trim();
+    return one.length > 72 ? `${one.slice(0, 72)}…` : one;
+  };
+
+  const buildLane = (column, title) => {
+    const lane = document.createElement("div");
+    lane.className = `layout-lane layout-lane--${column}`;
+    lane.setAttribute("data-testid", "layout-lane");
+    lane.setAttribute("data-column", column);
+    const h = document.createElement("div");
+    h.className = "layout-lane-title";
+    h.textContent = title;
+    lane.appendChild(h);
+    const list = document.createElement("div");
+    list.className = "layout-lane-list";
+    lane.appendChild(list);
+
+    const cards = lanes[column];
+    cards.forEach((el, idx) => {
+      const card = document.createElement("div");
+      card.className = "layout-card";
+      card.setAttribute("data-testid", "layout-card");
+      card.setAttribute("data-element-id", el.id);
+      card.draggable = true;
+      const { run, inferred } = effectiveRun(el);
+      card.setAttribute("data-role", run.role);
+      if (el.kind === "graph") card.classList.add("layout-card--key");
+      if (run.placeholder) card.classList.add("layout-card--placeholder");
+
+      const top = document.createElement("div");
+      top.className = "layout-card-top";
+      const name = document.createElement("span");
+      name.className = "layout-card-name";
+      name.textContent = el.name || "(unnamed)";
+      top.appendChild(name);
+      top.appendChild(buildRunRoleChip(scene, el, { onChange: refreshList }));
+      card.appendChild(top);
+      const sub = primaryText(el);
+      if (sub) { const p = document.createElement("div"); p.className = "layout-card-text"; p.textContent = sub; card.appendChild(p); }
+      if (inferred) card.setAttribute("data-inferred", "true");
+
+      const btns = document.createElement("div");
+      btns.className = "layout-card-btns";
+      const up = document.createElement("button");
+      up.type = "button"; up.className = "icon-btn layout-card-up"; up.textContent = "↑"; up.title = "Move up";
+      up.setAttribute("data-testid", "layout-card-up"); up.setAttribute("data-element-id", el.id);
+      up.disabled = idx === 0;
+      up.addEventListener("click", async () => { moveTo(el.id, column, idx - 1); await persist(); });
+      const down = document.createElement("button");
+      down.type = "button"; down.className = "icon-btn layout-card-down"; down.textContent = "↓"; down.title = "Move down";
+      down.setAttribute("data-testid", "layout-card-down"); down.setAttribute("data-element-id", el.id);
+      down.disabled = idx === cards.length - 1;
+      down.addEventListener("click", async () => { moveTo(el.id, column, idx + 1); await persist(); });
+      const sendTo = document.createElement("select");
+      sendTo.className = "layout-card-send";
+      sendTo.setAttribute("data-testid", "layout-card-send");
+      sendTo.setAttribute("data-element-id", el.id);
+      for (const c of RUN_COLUMNS) {
+        const o = document.createElement("option"); o.value = c; o.textContent = c === column ? `in ${c}` : `→ ${c}`; o.selected = c === column;
+        sendTo.appendChild(o);
+      }
+      sendTo.title = "Send to another lane (keyboard-friendly alternative to dragging)";
+      sendTo.addEventListener("change", async () => {
+        const target = sendTo.value;
+        if (target === column) return;
+        moveTo(el.id, target, lanes[target].length);
+        await persist(el.id, target);
+      });
+      btns.append(up, down, sendTo);
+      card.appendChild(btns);
+
+      card.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("text/plain", el.id);
+        e.dataTransfer.effectAllowed = "move";
+        card.classList.add("layout-card--dragging");
+      });
+      card.addEventListener("dragend", () => card.classList.remove("layout-card--dragging"));
+      list.appendChild(card);
+    });
+
+    const indexFromPointer = (y) => {
+      const kids = Array.from(list.querySelectorAll(".layout-card:not(.layout-card--dragging)"));
+      let i = 0;
+      for (const k of kids) { const r = k.getBoundingClientRect(); if (y > r.top + r.height / 2) i++; }
+      return i;
+    };
+    lane.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; lane.classList.add("layout-lane--over"); });
+    lane.addEventListener("dragleave", () => lane.classList.remove("layout-lane--over"));
+    lane.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      lane.classList.remove("layout-lane--over");
+      const id = e.dataTransfer.getData("text/plain");
+      if (!id) return;
+      // Index among the OTHER cards in this lane (the dragged one is removed first by moveTo).
+      const idx = indexFromPointer(e.clientY);
+      const was = lanes[column].findIndex((x) => x.id === id);
+      moveTo(id, column, was >= 0 && was < idx ? idx - 1 : idx);
+      await persist(id, column);
+    });
+    return lane;
+  };
+
+  lanesWrap.appendChild(buildLane("main", "Main — read-aloud, dressing, beats, exits"));
+  lanesWrap.appendChild(buildLane("side", "Side — stat blocks, cards, GM boxes, sketch"));
+  board.appendChild(buildLane("off", "Off — kept in Prep, not shown in Run"));
+  return board;
+}
+
 function buildAddElementGhostRow(scene, refreshList) {
   const ghost = document.createElement("div");
   ghost.className = "scene-add-element-row editable-list-ghost-row";
@@ -1451,6 +1740,14 @@ async function renderSceneElementsList(scene, listHost, nodeMap) {
   wrap.setAttribute("data-layout", scenePageLayout);
 
   const refreshList = () => renderSceneElementsList(scene, listHost, nodeMap);
+  if (scenePageLayout === "board") {
+    // Run layout (2026-08-26): the Layout board replaces the rows (the
+    // ghost add row stays below it -- adding must stay as easy as ever).
+    wrap.appendChild(buildLayoutBoard(scene, elements, refreshList));
+    wrap.appendChild(buildAddElementGhostRow(scene, refreshList));
+    listHost.appendChild(wrap);
+    return;
+  }
   for (const element of elements) {
     wrap.appendChild(buildSceneElementRow(scene, element, refreshList, nodeMap));
   }
@@ -3537,7 +3834,8 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
 
   const layoutControl = buildSegmentedControl(scene.id, [
     { key: "page", label: "Page", testid: "layout-page-btn", active: true },
-    { key: "cards", label: "Cards", testid: "layout-cards-btn", active: false }
+    { key: "cards", label: "Cards", testid: "layout-cards-btn", active: false },
+    { key: "board", label: "Layout", testid: "layout-board-btn", active: false }
   ]);
   const modeControl = buildSegmentedControl(scene.id, [
     { key: "prep", label: "Prep", testid: "mode-prep-btn", active: scenePageMode === "prep" },
@@ -3567,13 +3865,19 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   // place (no re-render -- edit state is preserved). scenePageLayout is also
   // read by renderSceneElementsList so a later structural re-render keeps it.
   const applyLayout = (layout) => {
+    const wasBoard = scenePageLayout === "board";
     scenePageLayout = layout;
     layoutControl.setActive(layout);
     const list = root.querySelector('[data-testid="scene-elements-list"]');
     if (list) list.setAttribute("data-layout", layout);
+    // The Layout board is a different DOM, not a CSS flip: entering or
+    // leaving it re-renders the list (a structural op; Page<->Cards stays
+    // the in-place attribute flip it always was).
+    if ((layout === "board") !== wasBoard) refreshElements();
   };
   layoutControl.buttons.page.addEventListener("click", () => applyLayout("page"));
   layoutControl.buttons.cards.addEventListener("click", () => applyLayout("cards"));
+  layoutControl.buttons.board.addEventListener("click", () => applyLayout("board"));
 
   // Place header (the room). In the designer shell this is one of the three
   // named sub-roots the phase30 contract pins (planner-scene-place-header).
@@ -3873,6 +4177,51 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     runHost.innerHTML = "";
     runHost.appendChild(buildRunSpread(scene, elements || [], freshNarration, place, mapAssets, nodeMap));
   };
+  // Run-mode live refresh (2026-08-26): while in Run, poll the cheap
+  // run-version fingerprint (scene record + elements + narration) every few
+  // seconds and rebuild the spread only when it changes -- so an edit made
+  // elsewhere (Prep in another tab, an agent over MCP flipping
+  // activeVariants mid-session) lands on the table without a reload. Same
+  // bounded-chained-setTimeout shape as restartStagePollIfStaged above:
+  // never an unbounded setInterval; stops on leaving Run, navigation
+  // (stale()), and while the tab is hidden.
+  const RUN_POLL_MS = 3000;
+  let runPollTimer = null;
+  let runVersion = null;
+  const stopRunPoll = () => { if (runPollTimer) { clearTimeout(runPollTimer); runPollTimer = null; } };
+  const flashSpreadUpdated = () => {
+    const headEl = runHost.querySelector(".rs-head");
+    if (!headEl) return;
+    const tag = document.createElement("span");
+    tag.className = "rs-updated";
+    tag.setAttribute("data-testid", "scene-run-updated");
+    tag.textContent = "updated just now";
+    headEl.appendChild(tag);
+    setTimeout(() => tag.remove(), 4000);
+  };
+  const runPollTick = async () => {
+    runPollTimer = null;
+    if (stale() || scenePageMode !== "run") return;
+    if (document.visibilityState === "hidden") { runPollTimer = setTimeout(runPollTick, RUN_POLL_MS); return; }
+    try {
+      const { version } = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/run-version${spWithWorld()}`);
+      if (stale() || scenePageMode !== "run") return;
+      if (runVersion !== null && version !== runVersion) {
+        await rebuildRunSpread();
+        flashSpreadUpdated();
+      }
+      runVersion = version;
+    } catch {
+      // transient -- try again next tick
+    }
+    if (!stale() && scenePageMode === "run") runPollTimer = setTimeout(runPollTick, RUN_POLL_MS);
+  };
+  const startRunPoll = () => {
+    stopRunPoll();
+    runVersion = null;
+    runPollTimer = setTimeout(runPollTick, RUN_POLL_MS);
+  };
+
   const applyMode = (mode) => {
     scenePageMode = mode;
     modeControl.setActive(mode);
@@ -3881,9 +4230,10 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
       wrapPanel.hidden = true;
       wrapBtn.textContent = "Wrap ▸";
     }
-    if (mode === "run") rebuildRunSpread();
+    if (mode === "run") { rebuildRunSpread(); startRunPoll(); }
+    else stopRunPoll();
   };
-  if (scenePageMode === "run") rebuildRunSpread(); // navigated here already in Run
+  if (scenePageMode === "run") { rebuildRunSpread(); startRunPoll(); } // navigated here already in Run
   modeControl.buttons.prep.addEventListener("click", () => applyMode("prep"));
   modeControl.buttons.run.addEventListener("click", () => applyMode("run"));
 
