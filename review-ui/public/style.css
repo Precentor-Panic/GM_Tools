@@ -1778,6 +1778,14 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   background: transparent; border: none; box-shadow: none; border-radius: 0;
   padding: 0 30px 90px; color: var(--sp-ink-primary);
 }
+/* Run mode and the Layout board are two-column surfaces: they span the whole
+   centre pane instead of Prep's 780px reading column (Russell, 2026-08-26:
+   "the 2 column layout takes up an incredibly small area in the middle"). */
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"],
+:is(#view-session-planner, #app-shell) .scene-page:has(.scene-elements-list[data-layout="board"]) {
+  max-width: none; padding-left: 28px; padding-right: 28px;
+}
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-run-spread { font-size: 16px; }
 
 /* The sub-bar: prev/next (left) + Wrap button (right), with the middle left
    deliberately open for 29.5's Page|Cards + Prep|Run segmented controls. */
