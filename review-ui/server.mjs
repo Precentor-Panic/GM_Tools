@@ -65,7 +65,7 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
-import { join, extname, dirname } from "node:path";
+import { join, extname, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { listWorldDirs } from "../wf-mcp-server/lib/data-dir.mjs";
@@ -331,7 +331,8 @@ import { proposeUpdatesForPlan, proposeUpdatesForScene } from "../session-planne
 // graph (a direct manual edit, same surface as POST /api/graph/nodes -- see
 // scene-elements.mjs's own header comment for why this is NOT a
 // no-silent-auto-write violation), so its route resolves `dir` too.
-import { createElement, listElementsForScene, updateElement, removeElement, promoteElement, demoteElement, attachExistingNodeAsElement, reorderElements } from "../session-planner/scene-elements.mjs";
+import { createElement, listElementsForScene, updateElement, removeElement, promoteElement, demoteElement, attachExistingNodeAsElement, reorderElements, inferRunLayoutForScene } from "../session-planner/scene-elements.mjs";
+import { createHash } from "node:crypto";
 import { getCurrentSceneNarration, saveSceneNarration } from "../session-planner/scene-narration.mjs";
 
 // Phase 28 task 28.4, §E -- the inline `✦` functional-prep assist. Thin
@@ -476,7 +477,9 @@ const CONTENT_TYPES = {
   // (review-ui/public/fonts/*.woff2) -- without this they fall back to
   // application/octet-stream (the extname()-miss default below), which most
   // browsers tolerate for @font-face but isn't the correct MIME type.
-  ".woff2": "font/woff2"
+  ".woff2": "font/woff2",
+  // Run layout (2026-08-26): map images streamed by the stagecraft image route.
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml", ".gif": "image/gif"
 };
 
 function serveStatic(res, filePath) {
@@ -521,6 +524,23 @@ function serveStatic(res, filePath) {
  * that already succeeded must never be reported as failed just because the
  * recency bump couldn't find a scene to stamp.
  */
+// Run layout (2026-08-26) -- the elements list carries a tiny read-only
+// `bestiary` summary for any element linked via fields.bestiaryEntryId, so
+// the Run spread can print AC/HP/CR without the client learning the
+// bestiary store. Missing/unknown entries degrade to no summary, never an
+// error (a dangling link is a prep problem, not a render failure).
+function withBestiarySummary(element) {
+  const id = element?.fields?.bestiaryEntryId;
+  if (!id) return element;
+  try {
+    const entry = getBestiaryEntry(id);
+    const rf = entry.rawFields || {};
+    return { ...element, bestiary: { id, name: entry.name ?? rf.name ?? null, ac: rf.ac ?? null, hp: rf.hp ?? null, cr: rf.challengeRating ?? rf.cr ?? null, note: entry.note ?? null } };
+  } catch {
+    return element;
+  }
+}
+
 function touchSceneSafely(w, sceneId) {
   try {
     const scene = touchScene(w, sceneId);
@@ -1075,7 +1095,16 @@ export function createReviewServer(opts = {}) {
   return server.listen(opts.port ?? DEFAULT_PORT);
 }
 
+// Run layout (2026-08-26): the ONE shared inference module lives with the
+// stores (session-planner/run-layout.mjs, imported server-side by
+// scene-elements.mjs) and is served here so the browser imports the very
+// same file -- never a mirrored copy that can drift.
+const SHARED_MODULES = {
+  "/shared/run-layout.mjs": join(__dirname, "..", "session-planner", "run-layout.mjs")
+};
+
 function handleStatic(pathname, res) {
+  if (SHARED_MODULES[pathname]) return serveStatic(res, SHARED_MODULES[pathname]);
   const rel = pathname === "/" ? "/index.html" : pathname;
   const filePath = join(PUBLIC_DIR, rel);
   // Guard against path traversal outside public/ -- a fixed, small file set is served, no reason to ever escape PUBLIC_DIR.
@@ -2095,7 +2124,11 @@ async function handleApi(req, res, url, parts) {
         );
       }
     }
-    const scene = updateScene(w, parts[3], { name: body.name, objectiveNote: body.objectiveNote, mapAssetId: body.mapAssetId });
+    const scene = updateScene(w, parts[3], {
+      name: body.name, objectiveNote: body.objectiveNote, mapAssetId: body.mapAssetId,
+      // Run layout keys (2026-08-26); the store validates shape.
+      kind: body.kind, whereNote: body.whereNote, tags: body.tags, activeVariants: body.activeVariants
+    });
     maybeScheduleFlush(w, scene); // Phase 36 task 36.2, §3 -- a direct scene-RECORD edit is a flush trigger too
     return sendJson(res, 200, { scene });
   }
@@ -2971,7 +3004,7 @@ async function handleApi(req, res, url, parts) {
   if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "elements") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
-    const element = createElement(w, parts[3], { name: body.name, kind: body.kind, fields: body.fields, stat: body.stat });
+    const element = createElement(w, parts[3], { name: body.name, kind: body.kind, fields: body.fields, stat: body.stat, run: body.run });
     touchSceneSafely(w, parts[3]); // Phase 30 task 30.1 -- content write bumps scene recency
     return sendJson(res, 200, { element });
   }
@@ -2979,7 +3012,30 @@ async function handleApi(req, res, url, parts) {
   // GET /api/scene-planning/scenes/:sceneId/elements?world=   -> {elements:[...]}, in `order`
   if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "elements") {
     const w = resolveWorld(q.get("world"));
-    return sendJson(res, 200, { elements: listElementsForScene(w, parts[3]) });
+    return sendJson(res, 200, { elements: listElementsForScene(w, parts[3]).map(withBestiarySummary) });
+  }
+
+  // Run layout (2026-08-26) -- POST /api/scene-planning/scenes/:sceneId/run-layout/infer   { world }   -> {elements}
+  // Writes an EXPLICIT `run` onto every element lacking one (never overwrites). Length-6 literal path, checked ahead of the generic PATCH-by-elementId route below like from-graph/reorder.
+  if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "run-layout" && parts[5] === "infer") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const elements = inferRunLayoutForScene(w, parts[3]);
+    touchSceneSafely(w, parts[3]);
+    return sendJson(res, 200, { elements: elements.map(withBestiarySummary) });
+  }
+
+  // Run layout (2026-08-26) -- GET /api/scene-planning/scenes/:sceneId/run-version?world=   -> {version}
+  // A cheap fingerprint of everything Run mode renders (scene record +
+  // elements + current narration) so the Run page can poll for live edits
+  // (e.g. an agent flipping activeVariants over MCP) without re-fetching
+  // the lot every tick. Stores are re-read per request anyway.
+  if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "run-version") {
+    const w = resolveWorld(q.get("world"));
+    const scene = getScene(w, parts[3]);
+    const payload = JSON.stringify([scene, listElementsForScene(w, parts[3]), getCurrentSceneNarration(w, parts[3])]);
+    const version = createHash("sha1").update(payload).digest("hex").slice(0, 16);
+    return sendJson(res, 200, { version });
   }
 
   // POST /api/scene-planning/scenes/:sceneId/elements/:elementId/promote   { world }   -> {element}   makes a REAL graph node + containment edge -- resolveDir() needed, unlike the other scene-elements routes below.
@@ -3031,7 +3087,7 @@ async function handleApi(req, res, url, parts) {
   if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "elements") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
-    const element = updateElement(w, parts[3], parts[5], { name: body.name, fields: body.fields, stat: body.stat });
+    const element = updateElement(w, parts[3], parts[5], { name: body.name, fields: body.fields, stat: body.stat, run: body.run });
     touchSceneSafely(w, parts[3]); // Phase 30 task 30.1 -- content write bumps scene recency
     return sendJson(res, 200, { element });
   }
@@ -3248,6 +3304,23 @@ async function handleApi(req, res, url, parts) {
       src: typeof body.src === "string" && body.src.trim() ? body.src.trim() : null
     });
     return sendJson(res, 200, { asset });
+  }
+
+  // Run layout (2026-08-26) -- GET /api/session-planner/stagecraft/:id/image?world=
+  // Streams the asset's own file from under the Foundry data dir (the same
+  // root Foundry serves `src` from), for the Run spread's map thumbnail.
+  // The resolved path MUST stay inside the data dir (400 otherwise); a
+  // missing file is a plain 404. Never accepts a client path -- only an
+  // asset id, whose `src` the GM set.
+  if (method === "GET" && parts.length === 5 && parts[1] === "session-planner" && parts[2] === "stagecraft" && parts[4] === "image") {
+    const w = resolveWorld(q.get("world"));
+    const asset = getStagecraftAsset(w, parts[3]);
+    if (!asset.src) return sendJson(res, 404, { error: "This asset has no file path (src) recorded." });
+    const root = resolve(resolveDir());
+    const filePath = resolve(root, asset.src);
+    if (filePath !== root && !filePath.startsWith(root + sep)) return sendJson(res, 400, { error: "Asset src escapes the data directory." });
+    if (!existsSync(filePath)) return sendJson(res, 404, { error: `Map file not found: ${asset.src}` });
+    return serveStatic(res, filePath);
   }
 
   // W3a: POST /api/session-planner/stagecraft/:id/src   {world, src} -> {asset}

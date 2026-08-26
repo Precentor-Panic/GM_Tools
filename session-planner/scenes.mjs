@@ -133,7 +133,7 @@ export function makeSceneId() {
  * @param {string} [opts.now]
  * @returns {object}   the created Scene
  */
-export function createScene(world, { locationEntityId = null, objectiveNote = null, name = null, mapAssetId = null } = {}, opts = {}) {
+export function createScene(world, { locationEntityId = null, objectiveNote = null, name = null, mapAssetId = null, kind = null, whereNote = null, tags = [], activeVariants = [] } = {}, opts = {}) {
   validateSceneName(name); // QA W2 fix (Group B #12)
   const makeId = opts.makeId ?? makeSceneId;
   const now = opts.now ?? new Date().toISOString();
@@ -150,6 +150,14 @@ export function createScene(world, { locationEntityId = null, objectiveNote = nu
     // Phase 36 task 36.2, §1 -- see this module's own header note.
     stagedForFoundry: false,
     lastPushedAt: null,
+    // Run layout (2026-08-26): kind drives the seed skeleton + a "combat"
+    // pill; whereNote is the spread's "where" line; tags render as pills;
+    // activeVariants gates which `run.variant` elements Run mode shows
+    // (empty = show all). All generic, all optional.
+    kind: kind ?? null,
+    whereNote: whereNote ?? null,
+    tags: Array.isArray(tags) ? tags : [],
+    activeVariants: Array.isArray(activeVariants) ? activeVariants : [],
     createdAt: now,
     updatedAt: now
   };
@@ -200,6 +208,13 @@ export function forkScene(world, parentSceneId, { locationEntityId, objectiveNot
     // Phase 36 task 36.2, §1 -- also NOT inherited, same reasoning.
     stagedForFoundry: false,
     lastPushedAt: null,
+    // Run layout keys: kind/whereNote/tags INHERIT (a fork at the same place
+    // is the same kind of scene); activeVariants resets (fresh scene, fresh
+    // state).
+    kind: parent.kind ?? null,
+    whereNote: parent.whereNote ?? null,
+    tags: Array.isArray(parent.tags) ? [...parent.tags] : [],
+    activeVariants: [],
     createdAt: now,
     updatedAt: now
   };
@@ -291,7 +306,9 @@ export function renameScene(world, sceneId, name, opts = {}) {
  * event) -- see phase36-fixture.mjs §1/§5. Do NOT add `lastPushedAt` here --
  * that field is written ONLY by the new, narrower `markScenePushed` below.
  */
-export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneRef, locationEntityId, stagedForFoundry, mapAssetId } = {}, opts = {}) {
+const SCENE_KINDS = new Set(["narrative", "combat", "transit"]);
+
+export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneRef, locationEntityId, stagedForFoundry, mapAssetId, kind, whereNote, tags, activeVariants } = {}, opts = {}) {
   if (name !== undefined) validateSceneName(name); // QA W2 fix (Group B #12)
   const scenes = readScenes(world);
   const scene = scenes.find((s) => s.id === sceneId);
@@ -307,6 +324,20 @@ export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneR
   // semantics as every other key; the ROUTE validates the asset (exists +
   // kind:'map'), this store stays cross-store-pure (header note).
   if (mapAssetId !== undefined) scene.mapAssetId = mapAssetId;
+  // Run layout keys (2026-08-26) -- same undefined-means-untouched semantics.
+  if (kind !== undefined) {
+    if (kind !== null && !SCENE_KINDS.has(kind)) throw new Error(`Scene kind must be one of narrative|combat|transit|null (got "${kind}").`);
+    scene.kind = kind;
+  }
+  if (whereNote !== undefined) scene.whereNote = whereNote;
+  if (tags !== undefined) {
+    if (!Array.isArray(tags) || tags.some((t) => typeof t !== "string")) throw new Error("Scene tags must be an array of strings.");
+    scene.tags = tags;
+  }
+  if (activeVariants !== undefined) {
+    if (!Array.isArray(activeVariants) || activeVariants.some((t) => typeof t !== "string")) throw new Error("Scene activeVariants must be an array of strings.");
+    scene.activeVariants = activeVariants;
+  }
   scene.updatedAt = opts.now ?? new Date().toISOString();
   writeScenes(world, scenes);
   return scene;

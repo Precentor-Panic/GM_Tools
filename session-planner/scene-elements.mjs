@@ -46,6 +46,7 @@ import { getScene } from "./scenes.mjs";
 import { addNodeOp, addEdgeOp } from "../wf-mcp-server/lib/manual-edit-ops.mjs";
 import { loadSnapshot } from "../wf-mcp-server/lib/snapshot.mjs";
 import { findEntity } from "../wf-mcp-server/lib/graph.mjs";
+import { RUN_COLUMNS, RUN_ROLES, inferRunLayout, elementIsEmpty } from "./run-layout.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "scene-elements");
@@ -136,6 +137,16 @@ export const SceneElementFields = z.object({
   bestiaryEntryId: z.string().optional()
 }).strict();
 
+// Run layout (2026-08-26) -- see session-planner/run-layout.mjs for the
+// vocabulary and the inference fallback. Stored EXPLICITLY on the element
+// so Run mode never has to guess; `null`/absent means "infer".
+export const RunLayout = z.object({
+  column: z.enum(RUN_COLUMNS),
+  role: z.enum(RUN_ROLES),
+  variant: z.string().optional(),
+  placeholder: z.boolean().optional()
+}).strict();
+
 export const SceneElement = z.object({
   id: z.string(),
   sceneId: z.string(),
@@ -145,6 +156,7 @@ export const SceneElement = z.object({
   name: z.string(),
   fields: SceneElementFields,
   stat: StatBlock.nullable().optional(),
+  run: RunLayout.nullable().optional(),
   order: z.number(),
   createdAt: z.string()
 }).strict();
@@ -187,7 +199,7 @@ export function makeElementId() {
  * @param {string} [opts.now]
  * @returns {object}   the created element, appended at max(order for this scene)+1 (0 if the scene has none yet)
  */
-export function createElement(world, sceneId, { name, kind, fields, stat } = {}, opts = {}) {
+export function createElement(world, sceneId, { name, kind, fields, stat, run } = {}, opts = {}) {
   const makeId = opts.makeId ?? makeElementId;
   const now = opts.now ?? new Date().toISOString();
   const elements = readElements(world);
@@ -203,6 +215,7 @@ export function createElement(world, sceneId, { name, kind, fields, stat } = {},
     name: name ?? "",
     fields: fields ?? {},
     stat: stat ?? null,
+    run: run ?? null,
     order: nextOrder,
     createdAt: now
   };
@@ -246,14 +259,40 @@ export function getElement(world, sceneId, elementId) {
  * @param {{name?:string, fields?:object, stat?:object}} patch
  * @returns {object}   the updated element
  */
-export function updateElement(world, sceneId, elementId, { name, fields, stat } = {}) {
+export function updateElement(world, sceneId, elementId, { name, fields, stat, run } = {}) {
   const elements = readElements(world);
   const element = findElementOrThrow(elements, sceneId, elementId);
   if (name !== undefined) element.name = name;
   if (fields !== undefined) element.fields = { ...element.fields, ...fields };
   if (stat !== undefined) element.stat = { ...(element.stat || {}), ...stat };
+  // `run` REPLACES (not merges): a layout is one small value the caller
+  // always sends whole; `null` clears back to "infer".
+  if (run !== undefined) element.run = run;
+  // A seeded placeholder stops being one the moment real content lands.
+  if ((fields !== undefined || stat !== undefined) && element.run?.placeholder && !elementIsEmpty(element)) {
+    element.run = { ...element.run };
+    delete element.run.placeholder;
+  }
   writeElements(world, elements);
   return element;
+}
+
+/**
+ * Writes an EXPLICIT `run` layout onto every element of the scene that has
+ * none, using run-layout.mjs's inference. Never overwrites an existing
+ * `run` (a GM's hand-placed layout must survive re-running this), so it is
+ * idempotent. Returns the scene's elements in order.
+ */
+export function inferRunLayoutForScene(world, sceneId) {
+  const elements = readElements(world);
+  let changed = false;
+  for (const element of elements) {
+    if (element.sceneId !== sceneId || element.run) continue;
+    element.run = inferRunLayout(element);
+    changed = true;
+  }
+  if (changed) writeElements(world, elements);
+  return listElementsForScene(world, sceneId);
 }
 
 /**
