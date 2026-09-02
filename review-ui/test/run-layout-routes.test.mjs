@@ -99,6 +99,59 @@ test("a malformed `run` (unknown role) is rejected with 400 and nothing is writt
   assert.ok(!list.body.elements.some((e) => e.name === "Bad"));
 });
 
+// Run-spread consolidation pass: run.group (explicit-only composite-card tag).
+test("run.group persists and round-trips through create/patch; a re-set without it clears just the group", async () => {
+  const created = await postJson(elementsPath(), { world: WORLD, name: "Thread card", run: { column: "main", role: "card", group: "P-2" } });
+  assert.equal(created.status, 200);
+  assert.deepEqual(created.body.element.run, { column: "main", role: "card", group: "P-2" });
+
+  const listed = await getJson(`${elementsPath()}?world=${WORLD}`);
+  const stored = listed.body.elements.find((e) => e.id === created.body.element.id);
+  assert.equal(stored.run.group, "P-2", "group survives the round trip");
+
+  const regrouped = await postJson(`${elementsPath()}/${created.body.element.id}`, { world: WORLD, run: { column: "main", role: "card" } });
+  assert.equal(regrouped.status, 200);
+  assert.ok(!("group" in regrouped.body.element.run), "run REPLACES -- saving without group clears it");
+});
+
+test("an empty-string run.group is rejected with 400 (an empty string can never form a group)", async () => {
+  const bad = await postJson(elementsPath(), { world: WORLD, name: "Empty group", run: { column: "main", role: "card", group: "" } });
+  assert.equal(bad.status, 400);
+  const list = await getJson(`${elementsPath()}?world=${WORLD}`);
+  assert.ok(!list.body.elements.some((e) => e.name === "Empty group"));
+});
+
+// Phase 4 draft-marking (persona round): draft:true on a create/patch marks
+// the written keys as unreviewed LLM output; any ordinary fields patch
+// un-marks the keys it touches (editing IS reviewing).
+test("draft:true marks written field keys on element.draftFields; an ordinary patch clears exactly the keys it touches", async () => {
+  const created = await postJson(elementsPath(), {
+    world: WORLD, name: "Drafted detail", draft: true,
+    fields: { gives: "model text", secret: "model secret", looks: "   " } // whitespace-only never marks
+  });
+  assert.equal(created.status, 200);
+  assert.deepEqual([...created.body.element.draftFields].sort(), ["gives", "secret"]);
+
+  // Round-trips through the list.
+  const listed = await getJson(`${elementsPath()}?world=${WORLD}`);
+  const stored = listed.body.elements.find((e) => e.id === created.body.element.id);
+  assert.deepEqual([...stored.draftFields].sort(), ["gives", "secret"]);
+
+  // A later draft:true patch ADDS its key.
+  const more = await postJson(`${elementsPath()}/${created.body.element.id}`, { world: WORLD, draft: true, fields: { means: "more model text" } });
+  assert.deepEqual([...more.body.element.draftFields].sort(), ["gives", "means", "secret"]);
+
+  // An ordinary (GM) patch clears only what it touches.
+  const edited = await postJson(`${elementsPath()}/${created.body.element.id}`, { world: WORLD, fields: { gives: "my own words" } });
+  assert.deepEqual([...edited.body.element.draftFields].sort(), ["means", "secret"]);
+
+  // Clearing the last marks deletes the property entirely (old-data shape).
+  await postJson(`${elementsPath()}/${created.body.element.id}`, { world: WORLD, fields: { means: "mine", secret: "mine too" } });
+  const final = await getJson(`${elementsPath()}?world=${WORLD}`);
+  const done = final.body.elements.find((e) => e.id === created.body.element.id);
+  assert.ok(!("draftFields" in done), "no marks left -> no property, byte-compatible with pre-feature elements");
+});
+
 test("run-layout/infer writes `run` only where absent, keys off naming conventions, and never overwrites an explicit layout", async () => {
   const s2 = createScene(WORLD, { name: "Infer scene" });
   const p = `/api/scene-planning/scenes/${s2.id}/elements`;

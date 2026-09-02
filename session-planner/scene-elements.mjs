@@ -140,11 +140,22 @@ export const SceneElementFields = z.object({
 // Run layout (2026-08-26) -- see session-planner/run-layout.mjs for the
 // vocabulary and the inference fallback. Stored EXPLICITLY on the element
 // so Run mode never has to guess; `null`/absent means "infer".
+//
+// `group` (run-spread consolidation pass): elements of a scene sharing a
+// non-empty group string (within the same column) render as ONE composite
+// card in Run -- e.g. a fate-thread card plus its outcome read-alouds.
+// EXPLICIT ONLY: inference never invents a group (composition is a GM
+// decision, "layout is data, not guesswork"). Optional is load-bearing for
+// backward compat (this schema is .strict(); every element persisted before
+// this field existed parses because absent-optional is fine, while an
+// unknown key would 400). min(1) so an empty string can never form a group;
+// clearing = saving a run without the key (updateElement's run REPLACES).
 export const RunLayout = z.object({
   column: z.enum(RUN_COLUMNS),
   role: z.enum(RUN_ROLES),
   variant: z.string().optional(),
-  placeholder: z.boolean().optional()
+  placeholder: z.boolean().optional(),
+  group: z.string().min(1).optional()
 }).strict();
 
 export const SceneElement = z.object({
@@ -158,7 +169,14 @@ export const SceneElement = z.object({
   stat: StatBlock.nullable().optional(),
   run: RunLayout.nullable().optional(),
   order: z.number(),
-  createdAt: z.string()
+  createdAt: z.string(),
+  // Phase 4 draft-marking (persona round): field keys whose CURRENT value
+  // was written by an LLM assist (✦ draft fields / ✦ propose elements) and
+  // has not been touched by the GM since. Cleared per-key by any ordinary
+  // fields patch that doesn't itself declare draft:true — editing a field IS
+  // reviewing it. Optional for backward compat (.strict() schema); absent
+  // means "no unreviewed drafts", same as an empty list.
+  draftFields: z.array(z.string()).optional()
 }).strict();
 
 export function sceneElementsRoot() {
@@ -199,7 +217,7 @@ export function makeElementId() {
  * @param {string} [opts.now]
  * @returns {object}   the created element, appended at max(order for this scene)+1 (0 if the scene has none yet)
  */
-export function createElement(world, sceneId, { name, kind, fields, stat, run } = {}, opts = {}) {
+export function createElement(world, sceneId, { name, kind, fields, stat, run, draft } = {}, opts = {}) {
   const makeId = opts.makeId ?? makeElementId;
   const now = opts.now ?? new Date().toISOString();
   const elements = readElements(world);
@@ -219,6 +237,14 @@ export function createElement(world, sceneId, { name, kind, fields, stat, run } 
     order: nextOrder,
     createdAt: now
   };
+  // draft:true = these fields were LLM-written and not yet GM-reviewed
+  // (see SceneElement.draftFields) -- only non-empty text keys get marked.
+  if (draft === true) {
+    const marked = Object.entries(element.fields)
+      .filter(([k, v]) => k !== "checks" && v != null && String(v).trim() !== "")
+      .map(([k]) => k);
+    if (marked.length) element.draftFields = marked;
+  }
   writeElements(world, [...elements, element]);
   return element;
 }
@@ -259,11 +285,29 @@ export function getElement(world, sceneId, elementId) {
  * @param {{name?:string, fields?:object, stat?:object}} patch
  * @returns {object}   the updated element
  */
-export function updateElement(world, sceneId, elementId, { name, fields, stat, run } = {}) {
+export function updateElement(world, sceneId, elementId, { name, fields, stat, run, draft } = {}) {
   const elements = readElements(world);
   const element = findElementOrThrow(elements, sceneId, elementId);
   if (name !== undefined) element.name = name;
-  if (fields !== undefined) element.fields = { ...element.fields, ...fields };
+  if (fields !== undefined) {
+    element.fields = { ...element.fields, ...fields };
+    // Draft-marking bookkeeping (see SceneElement.draftFields): a patch that
+    // declares draft:true marks its keys as unreviewed LLM output; any other
+    // fields patch UN-marks the keys it touches -- the GM (or a collaborator
+    // acting for them) writing a field is what reviewing it means here.
+    const patchedKeys = Object.keys(fields);
+    const current = new Set(element.draftFields ?? []);
+    if (draft === true) {
+      for (const k of patchedKeys) {
+        const v = fields[k];
+        if (k !== "checks" && v != null && String(v).trim() !== "") current.add(k);
+      }
+    } else {
+      for (const k of patchedKeys) current.delete(k);
+    }
+    if (current.size) element.draftFields = [...current];
+    else delete element.draftFields;
+  }
   if (stat !== undefined) element.stat = { ...(element.stat || {}), ...stat };
   // `run` REPLACES (not merges): a layout is one small value the caller
   // always sends whole; `null` clears back to "infer".

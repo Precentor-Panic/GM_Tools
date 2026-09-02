@@ -2997,7 +2997,7 @@ async function handleApi(req, res, url, parts) {
   if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "elements") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
-    const element = createElement(w, parts[3], { name: body.name, kind: body.kind, fields: body.fields, stat: body.stat, run: body.run });
+    const element = createElement(w, parts[3], { name: body.name, kind: body.kind, fields: body.fields, stat: body.stat, run: body.run, draft: body.draft });
     touchSceneSafely(w, parts[3]); // Phase 30 task 30.1 -- content write bumps scene recency
     return sendJson(res, 200, { element });
   }
@@ -3090,7 +3090,7 @@ async function handleApi(req, res, url, parts) {
   if (method === "POST" && parts.length === 6 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "elements") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
-    const element = updateElement(w, parts[3], parts[5], { name: body.name, fields: body.fields, stat: body.stat, run: body.run });
+    const element = updateElement(w, parts[3], parts[5], { name: body.name, fields: body.fields, stat: body.stat, run: body.run, draft: body.draft });
     touchSceneSafely(w, parts[3]); // Phase 30 task 30.1 -- content write bumps scene recency
     return sendJson(res, 200, { element });
   }
