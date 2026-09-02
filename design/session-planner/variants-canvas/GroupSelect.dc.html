@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;600&display=swap">
+  <style>
+    body { margin: 0; font-family: "IBM Plex Sans", -apple-system, sans-serif; color: oklch(0.30 0.012 60); }
+    a { color: oklch(0.55 0.11 40); } a:hover { color: oklch(0.45 0.11 40); }
+    .lbl { font-family: "IBM Plex Mono", monospace; font-size: 9.5px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.58 0.012 70); }
+    .step { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid oklch(0.55 0.11 40); color: oklch(0.55 0.11 40); font-family: "IBM Plex Mono", monospace; font-size: 11px; font-weight: 600; flex-shrink: 0; }
+    .row { display: flex; align-items: center; gap: 10px; border-top: 1px solid oklch(0.90 0.008 80); padding: 8px 6px; font-size: 13.5px; }
+    .cb { width: 15px; height: 15px; border: 1.5px solid oklch(0.70 0.012 75); border-radius: 3px; flex-shrink: 0; }
+    .cb--on { background: oklch(0.55 0.075 185); border-color: oklch(0.55 0.075 185); }
+    .chip { font-family: "IBM Plex Mono", monospace; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; border: 1px dashed oklch(0.80 0.010 80); border-radius: 20px; padding: 1px 8px; color: oklch(0.58 0.012 70); margin-left: auto; }
+  </style>
+</helmet>
+<div style="width: 720px; background: white; border: 1px solid oklch(0.85 0.010 80); padding: 18px 20px 20px">
+  <div class="lbl" style="color: oklch(0.55 0.11 40); margin-bottom: 2px">Sketch · G1 — Select &amp; combine</div>
+  <div style="font-size: 15px; font-weight: 600; margin-bottom: 12px">Tick the pieces in Prep, one action makes the card</div>
+
+  <div style="display: flex; align-items: center; gap: 8px; margin: 0 0 6px"><span class="step">1</span><span style="font-size: 12.5px; color: oklch(0.45 0.012 65)">Checkboxes appear on hover / long-press — tick the lead and its states</span></div>
+  <div style="border: 1px solid oklch(0.88 0.010 80); border-radius: 3px; margin-bottom: 14px">
+    <div class="row" style="border-top: none"><span class="cb cb--on"></span><b>Charm — The Held Word</b><span class="chip">main · card</span></div>
+    <div class="row"><span class="cb cb--on"></span>Read Aloud — Fires in place<span class="chip">main · read</span></div>
+    <div class="row"><span class="cb cb--on"></span>Read Aloud — Redirected<span class="chip">main · read</span></div>
+    <div class="row"><span class="cb"></span>Beat — The arbiter<span class="chip">main · beat</span></div>
+    <div class="row"><span class="cb"></span>The wax yard<span class="chip">main · dressing</span></div>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 8px; margin: 0 0 6px"><span class="step">2</span><span style="font-size: 12.5px; color: oklch(0.45 0.012 65)">An action bar floats up — lead defaults to the lowest row, names become the tabs</span></div>
+  <div style="display: flex; align-items: center; gap: 12px; border: 1px solid oklch(0.55 0.075 185); background: oklch(0.96 0.012 185); border-radius: 4px; padding: 8px 12px; font-size: 13px; margin-bottom: 14px">
+    <span>3 selected</span>
+    <span class="lbl" style="color: oklch(0.30 0.012 60)">⊞ One card · lead: Charm — The Held Word ▾</span>
+    <span style="border: 1px solid oklch(0.55 0.075 185); border-radius: 4px; padding: 3px 12px; font-weight: 600; color: oklch(0.40 0.06 185)">Combine</span>
+    <span style="color: oklch(0.58 0.012 70)">cancel</span>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 8px; margin: 0 0 6px"><span class="step">3</span><span style="font-size: 12.5px; color: oklch(0.45 0.012 65)">Done — one gesture wrote group + variants on all three rows</span></div>
+  <div style="border: 1px solid oklch(0.88 0.010 80); border-left: 3px dashed oklch(0.62 0.10 65); border-radius: 3px; padding: 6px 10px; font-size: 13px">
+    <b>Charm — The Held Word</b> <span class="chip" style="border-style: solid">⊞ held-word</span>
+    <div style="color: oklch(0.50 0.012 65); font-size: 12px; margin-top: 3px">+ Fires in place · Redirected — after-dash names became the run-time tabs</div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

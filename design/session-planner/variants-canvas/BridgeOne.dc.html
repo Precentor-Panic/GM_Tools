@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;600&display=swap">
+  <style>
+    body { margin: 0; font-family: "IBM Plex Sans", -apple-system, sans-serif; color: oklch(0.30 0.012 60); }
+    a { color: oklch(0.55 0.11 40); } a:hover { color: oklch(0.45 0.11 40); }
+    .lbl { font-family: "IBM Plex Mono", monospace; font-size: 9.5px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.58 0.012 70); }
+    .sec { font-family: "IBM Plex Mono", monospace; font-size: 10px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.55 0.11 40); border-bottom: 1px dashed oklch(0.80 0.010 80); padding: 10px 4px 4px; }
+    .prow { display: flex; align-items: baseline; gap: 8px; border-top: 1px solid oklch(0.92 0.006 80); padding: 7px 4px; font-size: 13px; }
+    .grip { color: oklch(0.70 0.012 75); font-size: 12px; cursor: grab; }
+  </style>
+</helmet>
+<div style="width: 720px; background: white; border: 1px solid oklch(0.85 0.010 80); padding: 18px 20px 20px">
+  <div class="lbl" style="color: oklch(0.55 0.11 40); margin-bottom: 2px">Sketch · O3 — One surface (the merge question)</div>
+  <div style="font-size: 15px; font-weight: 600; margin-bottom: 12px">No board at all: the Page list IS the layout, sectioned by lane</div>
+
+  <div style="border: 1px solid oklch(0.88 0.010 80); border-radius: 3px">
+    <div class="sec" style="padding-top: 6px">Main column</div>
+    <div class="prow" style="border-top: none"><span class="grip">⠿</span><b>Read Aloud — Opening</b><span style="font-size: 12px; color: oklch(0.50 0.012 65)">Tallow smoke and raised voices…</span></div>
+    <div class="prow"><span class="grip">⠿</span><b>Charm — The Held Word</b><span style="font-size: 12px; color: oklch(0.50 0.012 65)">⊞ 3 states · "The mark is not the maker."</span></div>
+    <div class="prow"><span class="grip">⠿</span><b>Beat — The arbiter</b><span style="font-size: 12px; color: oklch(0.50 0.012 65)">Ten minutes of gratitude if freed…</span></div>
+    <div class="sec">Side</div>
+    <div class="prow"><span class="grip">⠿</span><b>Backdrops</b><span style="font-size: 12px; color: oklch(0.50 0.012 65)">Present · Bad turn</span></div>
+    <div class="prow"><span class="grip">⠿</span><b>Hall toughs</b><span style="font-size: 12px; color: oklch(0.50 0.012 65)">Thug (MM) ×2</span></div>
+    <div class="sec">Off — kept in Prep, not shown in Run</div>
+    <div class="prow" style="color: oklch(0.58 0.012 70); font-size: 12px"><span></span>nothing shelved</div>
+  </div>
+
+  <div style="font-size: 12px; color: oklch(0.50 0.012 65); margin-top: 10px">
+    Row order inside a section IS the run order; dragging a row across a section header moves it between lanes. Everything stays click-to-edit because it never stops being the Page view — the separate Layout board retires.
+    <br><br><b>Honest tradeoffs:</b> the writing surface inherits a second job (every row grows a grip, every scroll passes lane headers); a long scene means dragging across a lot of prose; and the board's at-a-glance two-lane overview disappears. No reviewer asked for this merge — the weeknight-DM persona explicitly "keep this"-ed the separate board.
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

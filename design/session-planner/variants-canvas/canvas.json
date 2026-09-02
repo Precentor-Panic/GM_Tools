@@ -1,0 +1,42 @@
+{
+  "pages": [
+    { "id": "page-run", "name": "Run switch" },
+    { "id": "page-authoring", "name": "Authoring" },
+    { "id": "page-alt", "name": "Alternates" }
+  ],
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 1080, "h": 800, "title": "B — Tabs on the card", "is_interactive": true, "page": "page-run" },
+
+    { "file": "GroupSelect.dc.html", "x": 0, "y": 0, "w": 780, "h": 620, "title": "G1 — Select & combine", "page": "page-authoring" },
+    { "file": "GroupDrag.dc.html", "x": 900, "y": 0, "w": 780, "h": 560, "title": "G2 — Drag onto the card", "page": "page-authoring" },
+    { "file": "BridgeRail.dc.html", "x": 0, "y": 800, "w": 780, "h": 540, "title": "O1 — Layout rail beside Prep", "page": "page-authoring" },
+    { "file": "BridgeAdd.dc.html", "x": 900, "y": 800, "w": 780, "h": 420, "title": "O2 — Born placed", "page": "page-authoring" },
+    { "file": "BridgeOne.dc.html", "x": 1800, "y": 800, "w": 780, "h": 660, "title": "O3 — One surface", "page": "page-authoring" },
+
+    { "file": "StateStrip.dc.html", "x": 0, "y": 0, "w": 1080, "h": 940, "title": "A — State strip", "is_interactive": true, "page": "page-alt" },
+    { "file": "AllVisible.dc.html", "x": 1200, "y": 0, "w": 1080, "h": 960, "title": "C — Everything visible", "is_interactive": true, "page": "page-alt" }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 0, "y": -220, "w": 340, "page": "page-run",
+      "text": "PICKED (2026-09-01): B — tabs on the card, contingent on the authoring being cheap.\nStill clickable. A and C live on the Alternates page; the authoring options are on the Authoring page."
+    },
+    {
+      "id": "note-authoring",
+      "x": 1800, "y": 0, "w": 360, "page": "page-authoring",
+      "text": "TOP ROW — how a card GETS its tabs (pick one or both):\nG1 Select & combine: tick rows in Prep, one action groups them. Works anywhere, discoverable, no drag skill. Tradeoff: checkboxes are new chrome on the Page view.\nG2 Drag onto the card: board-native, matches the World tree's drag-into gesture, previews the tabs in place. Tradeoff: only exists on the board; drop-on vs drop-between needs care.\n\nBOTTOM ROW — easing add -> organize (independent of G1/G2):\nO1 rail: organize without leaving Prep; costs page width.\nO2 born placed: kills the organizing step for most adds; add-row gets busier.\nO3 one surface: the merge question, tradeoffs on the sketch. Reviewer evidence says keep the board (weeknight-DM 'keep this'); nobody asked for a merge."
+    },
+    {
+      "id": "note-a",
+      "x": 400, "y": -180, "w": 300, "page": "page-alt",
+      "text": "A — STATE STRIP (not picked)\nOne scene-level strip; chips = variants; empty = show everything.\nKept for reference: it is still the honest picture of the scene-level data model, and could return as a read-only summary line even under B."
+    },
+    {
+      "id": "note-c",
+      "x": 1600, "y": -180, "w": 300, "page": "page-alt",
+      "text": "C — EVERYTHING VISIBLE (not picked)\nNo state ever hides; live state carries the ink.\nKept for reference: closest to how Kilmarn was actually run."
+    }
+  ],
+  "launch": { "view": "canvas", "page": "page-authoring" }
+}

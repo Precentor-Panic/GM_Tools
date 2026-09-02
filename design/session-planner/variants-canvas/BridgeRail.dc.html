@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;600&display=swap">
+  <style>
+    body { margin: 0; font-family: "IBM Plex Sans", -apple-system, sans-serif; color: oklch(0.30 0.012 60); }
+    a { color: oklch(0.55 0.11 40); } a:hover { color: oklch(0.45 0.11 40); }
+    .lbl { font-family: "IBM Plex Mono", monospace; font-size: 9.5px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.58 0.012 70); }
+    .prow { border-top: 1px solid oklch(0.90 0.008 80); padding: 7px 4px; font-size: 13px; }
+    .mini { border: 1px solid oklch(0.88 0.010 80); border-radius: 3px; background: white; padding: 3px 8px; font-size: 11px; margin-bottom: 5px; }
+  </style>
+</helmet>
+<div style="width: 720px; background: white; border: 1px solid oklch(0.85 0.010 80); padding: 18px 20px 20px">
+  <div class="lbl" style="color: oklch(0.55 0.11 40); margin-bottom: 2px">Sketch · O1 — Layout rail beside Prep</div>
+  <div style="font-size: 15px; font-weight: 600; margin-bottom: 12px">The board shrinks to a rail that lives next to the Page view</div>
+
+  <div style="display: grid; grid-template-columns: 1fr 210px; gap: 16px">
+    <div>
+      <div class="lbl" style="margin-bottom: 4px">Prep · Page — rows stay full click-to-edit</div>
+      <div style="border: 1px solid oklch(0.88 0.010 80); border-radius: 3px">
+        <div class="prow" style="border-top: none"><b>Read Aloud — Opening</b><div style="font-size: 12px; color: oklch(0.50 0.012 65)">Tallow smoke and raised voices…</div></div>
+        <div class="prow" style="background: oklch(0.96 0.012 185)"><b>Charm — The Held Word</b><div style="font-size: 12px; color: oklch(0.50 0.012 65)">"The mark is not the maker." — dragging → </div></div>
+        <div class="prow"><b>Beat — The arbiter</b><div style="font-size: 12px; color: oklch(0.50 0.012 65)">Ten minutes of gratitude if freed…</div></div>
+        <div class="prow"><b>The wax yard</b><div style="font-size: 12px; color: oklch(0.50 0.012 65)">apprentices at a run…</div></div>
+      </div>
+    </div>
+    <div>
+      <div class="lbl" style="margin-bottom: 4px">Run layout</div>
+      <div style="background: oklch(0.955 0.008 85); border: 1px solid oklch(0.88 0.010 80); border-radius: 4px; padding: 8px">
+        <div class="lbl" style="font-size: 8.5px">Main</div>
+        <div class="mini">Read Aloud — Opening</div>
+        <div class="mini" style="border: 2px dashed oklch(0.55 0.075 185)">⊞ drop here</div>
+        <div class="mini">Beat — The arbiter</div>
+        <div class="lbl" style="font-size: 8.5px; margin-top: 8px">Side</div>
+        <div class="mini">Backdrops</div>
+        <div class="mini">Hall toughs</div>
+        <div class="lbl" style="font-size: 8.5px; margin-top: 8px">Off</div>
+        <div class="mini" style="border-style: dashed; color: oklch(0.58 0.012 70)">nothing shelved</div>
+      </div>
+    </div>
+  </div>
+  <div style="font-size: 12px; color: oklch(0.50 0.012 65); margin-top: 10px">Add and organize without switching views: write in the rows, drag a row into a lane slot. The full board stays for heavy rearranging; the rail covers the common case. Costs ~210px of Page width.</div>
+</div>
+</x-dc>
+</body>
+</html>

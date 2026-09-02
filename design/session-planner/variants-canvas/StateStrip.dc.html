@@ -1,0 +1,159 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:wght@400;600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;600&display=swap">
+  <style>
+    :root {
+      --serif: "Spectral", Georgia, "Times New Roman", serif;
+      --ui: "IBM Plex Sans", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+      --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+      --page: oklch(0.955 0.008 85);
+      --chrome: oklch(0.938 0.009 85);
+      --card: oklch(0.985 0.005 85);
+      --hairline: oklch(0.88 0.010 80);
+      --dashed: oklch(0.80 0.010 80);
+      --ink: oklch(0.27 0.015 60);
+      --ink-h: oklch(0.24 0.015 60);
+      --ink-mut: oklch(0.58 0.012 70);
+      --rust: oklch(0.55 0.11 40);
+      --amber: oklch(0.62 0.10 65);
+      --teal: oklch(0.55 0.075 185);
+      --teal-sel: oklch(0.90 0.020 185);
+    }
+    body { margin: 0; font-family: var(--ui); color: var(--ink); }
+    a { color: oklch(0.55 0.11 40); } a:hover { color: oklch(0.45 0.11 40); }
+    .rs-h { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--rust); margin: 14px 0 4px; }
+    .rs-l { font-family: var(--mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-mut); margin-right: 6px; white-space: nowrap; }
+    .rs-when { font-size: 12px; color: var(--ink-mut); margin: 0 0 4px; }
+    .chip { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; border: 1px solid var(--hairline); border-radius: 20px; padding: 4px 12px; cursor: pointer; background: var(--card); color: var(--ink-mut); }
+  </style>
+</helmet>
+<div style="width: 1040px; background: oklch(0.955 0.008 85); border: 1px solid oklch(0.88 0.010 80); font-family: var(--ui)">
+
+  <!-- Head band, per the real .rs-head -->
+  <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 16px; background: oklch(0.938 0.009 85); padding: 10px 18px; border-bottom: 1px solid oklch(0.88 0.010 80)">
+    <h3 style="margin: 0; font-family: var(--serif); font-size: 21px; font-weight: 600; color: oklch(0.24 0.015 60)">The Hall — The Held Word</h3>
+    <div style="font-family: var(--mono); font-size: 10px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.58 0.012 70); text-align: right">Craft Row · Chandlers' Hall</div>
+  </div>
+
+  <!-- TREATMENT A: the scene-level STATE STRIP. One row under the head band;
+       each chip is a variant; empty selection = showing everything. This is
+       scene.activeVariants made visible and clickable. -->
+  <div style="display: flex; align-items: center; gap: 8px; padding: 8px 18px; background: oklch(0.945 0.009 85); border-bottom: 1px dashed oklch(0.80 0.010 80)">
+    <span class="rs-l" style="color: oklch(0.55 0.11 40)">State</span>
+    <button class="chip" style="{{ allStyle }}" onClick="{{ clearAll }}">All</button>
+    <sc-for list="{{ chips }}" as="c" hint-placeholder-count="4">
+      <button class="chip" style="{{ c.style }}" onClick="{{ c.toggle }}">{{ c.name }}</button>
+    </sc-for>
+    <span style="font-size: 11.5px; color: oklch(0.58 0.012 70); margin-left: auto">{{ stateSummary }}</span>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 3fr 2fr">
+    <!-- MAIN -->
+    <div style="padding: 12px 18px 16px; min-width: 0">
+      <div class="rs-h" style="margin-top: 2px">Opening</div>
+      <p style="font-family: var(--serif); font-size: 18px; line-height: 1.55; margin: 2px 0 8px; padding-left: 12px; border-left: 2px solid oklch(0.55 0.11 40); color: oklch(0.27 0.015 60)">Tallow smoke and raised voices. Above the doors the guild seal hangs as it always has — and one strand of it catches the light wrong.</p>
+
+      <!-- The composite group card -->
+      <div style="border: 1px solid oklch(0.88 0.010 80); border-left: 3px dashed oklch(0.62 0.10 65); border-radius: 3px; background: oklch(0.985 0.005 85); padding: 8px 12px; margin: 12px 0 10px; font-size: 13.5px; line-height: 1.45">
+        <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px">
+          <span style="font-family: var(--serif); font-weight: 600; font-size: 15px; color: oklch(0.24 0.015 60)">Charm — The Held Word</span>
+        </div>
+        <p style="font-family: var(--serif); font-style: italic; margin: 2px 0 6px">"The mark is not the maker."</p>
+        <div style="margin: 4px 0"><span class="rs-l">Effect</span>Severs a craft from its reputation when it fires.</div>
+        <div style="font-family: var(--mono); font-size: 11.5px; background: oklch(0.938 0.009 85); border-radius: 3px; padding: 1px 6px; width: fit-content; margin: 4px 0">Sleight of Hand DC 13 — remove intact</div>
+
+        <sc-if value="{{ showFires }}" hint-placeholder-val="{{ true }}">
+          <div style="border-top: 1px dashed oklch(0.80 0.010 80); margin-top: 8px; padding-top: 6px">
+            <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px"><span class="rs-l" style="color: oklch(0.58 0.012 70)">Fires in place</span></div>
+            <div class="rs-when">The charm fires where it was placed.</div>
+            <p style="font-family: var(--serif); font-size: 17px; line-height: 1.55; margin: 2px 0 4px; padding-left: 12px; border-left: 2px solid oklch(0.55 0.11 40)">By week's end the wagons come back loaded with what left — quality true, and the buyers' notes all saying the same polite, ruinous thing.</p>
+          </div>
+        </sc-if>
+        <sc-if value="{{ showRedirect }}" hint-placeholder-val="{{ true }}">
+          <div style="border-top: 1px dashed oklch(0.80 0.010 80); margin-top: 8px; padding-top: 6px">
+            <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px"><span class="rs-l" style="color: oklch(0.58 0.012 70)">Redirected</span></div>
+            <div class="rs-when">The charm fires somewhere the party moved it.</div>
+            <p style="font-family: var(--serif); font-size: 17px; line-height: 1.55; margin: 2px 0 4px; padding-left: 12px; border-left: 2px solid oklch(0.55 0.11 40)">The mark you aimed it at comes unmoored from its maker. Decide fast what that name was holding up.</p>
+          </div>
+        </sc-if>
+
+        <div style="border-top: 1px dashed oklch(0.80 0.010 80); margin-top: 8px; padding-top: 6px">
+          <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px"><span class="rs-l" style="color: oklch(0.58 0.012 70)">Aftermath</span></div>
+          <div style="margin: 3px 0"><span class="rs-l">Gives</span>The guild chest opens to pay claims, and keeps opening.</div>
+          <div style="margin: 3px 0"><span class="rs-l" style="color: oklch(0.55 0.11 40)">Secret</span>The sample book proving the goods were sound is in the old journeyman's hands.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SIDE -->
+    <div style="padding: 12px 14px 16px; min-width: 0; border-left: 1px solid oklch(0.88 0.010 80); background: oklch(0.965 0.007 85)">
+      <div style="background: oklch(0.938 0.009 85); border-radius: 3px; padding: 7px 10px; margin: 0 0 10px; font-size: 13px; line-height: 1.45">
+        <b style="display: block; font-family: var(--mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.55 0.11 40); margin-bottom: 2px">Objective</b>
+        The charm in the hall seal binds craft to word. A clean removal frees the arbiter.
+      </div>
+      <div style="background: oklch(0.938 0.009 85); border-radius: 3px; padding: 7px 10px; margin: 0 0 10px; font-size: 13px; line-height: 1.45">
+        <b style="display: block; font-family: var(--mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.55 0.11 40); margin-bottom: 2px">GM Notes</b>
+        <sc-if value="{{ showPresent }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 4px">
+            <div style="display: flex; align-items: baseline; gap: 8px"><span class="rs-l">Present</span></div>
+            <div class="rs-when">Default state.</div>
+            <div style="margin: 3px 0">Productive noise; the smell of hot wax; gossip about the provost's visits.</div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ showBad }}" hint-placeholder-val="{{ true }}">
+          <div style="border-top: 1px dashed oklch(0.80 0.010 80); margin-top: 8px; padding-top: 6px">
+            <div style="display: flex; align-items: baseline; gap: 8px"><span class="rs-l">Bad turn</span></div>
+            <div class="rs-when">Charms trending the wrong way.</div>
+            <div style="margin: 3px 0">Cold vats, idle journeymen, a For Sale sign on the largest hall.</div>
+          </div>
+        </sc-if>
+        <div style="border-top: 1px dashed oklch(0.80 0.010 80); margin-top: 8px; padding-top: 6px">
+          <div style="display: flex; align-items: baseline; gap: 8px"><span class="rs-l">Always</span></div>
+          <div style="margin: 3px 0">The arbiter can be freed in any state — ten minutes of gratitude follow.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1040,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { sel: [] }; // empty = show everything (the activeVariants model)
+  }
+  renderVals() {
+    const VARIANTS = ["Fires in place", "Redirected", "Present", "Bad turn"];
+    const sel = this.state.sel;
+    const on = (v) => sel.length === 0 || sel.includes(v);
+    const activeChip = "font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; border: 1px solid oklch(0.55 0.075 185); border-radius: 20px; padding: 4px 12px; cursor: pointer; background: oklch(0.90 0.020 185); color: oklch(0.24 0.015 60);";
+    const idleChip = "font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; border: 1px solid oklch(0.88 0.010 80); border-radius: 20px; padding: 4px 12px; cursor: pointer; background: oklch(0.985 0.005 85); color: oklch(0.58 0.012 70);";
+    return {
+      chips: VARIANTS.map((name) => ({
+        name,
+        style: sel.includes(name) ? activeChip : idleChip,
+        toggle: () => {
+          const next = sel.includes(name) ? sel.filter((x) => x !== name) : sel.concat(name);
+          this.setState({ sel: next });
+        }
+      })),
+      allStyle: sel.length === 0 ? activeChip : idleChip,
+      clearAll: () => this.setState({ sel: [] }),
+      stateSummary: sel.length === 0 ? "showing everything" : "showing: " + sel.join(" · "),
+      showFires: on("Fires in place"),
+      showRedirect: on("Redirected"),
+      showPresent: on("Present"),
+      showBad: on("Bad turn")
+    };
+  }
+}
+</script>
+</body>
+</html>
