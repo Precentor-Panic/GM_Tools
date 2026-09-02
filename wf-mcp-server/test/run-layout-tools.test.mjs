@@ -100,6 +100,26 @@ await test("wf_add_scene_element / wf_update_scene_element accept `run`; wf_set_
   await callExpectError("wf_update_scene_element", { world: WORLD, sceneId, elementId: gmId, run: { column: "main", role: "hero" } });
 });
 
+await test("wf_set_element_run carries `group` (composite Run card tag); a re-set without it clears just the group", async () => {
+  const { element: grouped } = await call("wf_set_element_run", { world: WORLD, sceneId, elementId: plainId, column: "main", role: "card", group: "P-2" });
+  assert.deepEqual(grouped.run, { column: "main", role: "card", group: "P-2" });
+  // wf_add_scene_element's `run` param takes it too.
+  const { element: sibling } = await call("wf_add_scene_element", {
+    world: WORLD, sceneId, name: "Read Aloud — Outcome", fields: { looks: "It lands." },
+    run: { column: "main", role: "read", group: "P-2", variant: "Outcome" }
+  });
+  assert.equal(sibling.run.group, "P-2");
+  // Replace-not-merge: setting run again WITHOUT group drops it.
+  const { element: ungrouped } = await call("wf_set_element_run", { world: WORLD, sceneId, elementId: plainId, column: "main", role: "card" });
+  assert.ok(!("group" in ungrouped.run), "re-set without group clears it");
+  // The store's zod (min(1)) rejects an empty-string group.
+  await callExpectError("wf_update_scene_element", { world: WORLD, sceneId, elementId: plainId, run: { column: "main", role: "card", group: "" } });
+  // Cleanup so the later infer/reorder tests see the same element set as before.
+  await call("wf_delete_scene_element", { world: WORLD, sceneId, elementId: sibling.id });
+  const { element: restored } = await call("wf_set_element_run", { world: WORLD, sceneId, elementId: plainId, clear: true });
+  assert.equal(restored.run, null);
+});
+
 await test("wf_infer_run_layout tags only untagged elements and is idempotent; wf_get_scene returns the run + activeVariants", async () => {
   const { elements } = await call("wf_infer_run_layout", { world: WORLD, sceneId });
   const byId = new Map(elements.map((e) => [e.id, e]));
@@ -135,6 +155,37 @@ await test("wf_promote_scene_element makes a real graph node; wf_demote_scene_el
   assert.equal(back.kind, "local");
   const { entity } = await call("wf_get_entity", { world: WORLD, entityId: element.graphEntityId });
   assert.ok(entity, "graph node survives demote");
+});
+
+// Persona round (M2): the MCP surface used to hide the lib's `opts.type`
+// override, so a stat-less NPC could only ever promote as an "object".
+await test("wf_promote_scene_element: explicit `type` overrides the stat-block inference", async () => {
+  const { element: npc } = await call("wf_add_scene_element", { world: WORLD, sceneId, name: "The Old Journeyman", fields: { gives: "Collects wrong strands." } });
+  const { element } = await call("wf_promote_scene_element", { world: WORLD, sceneId, elementId: npc.id, type: "person" });
+  const { entity } = await call("wf_get_entity", { world: WORLD, entityId: element.graphEntityId });
+  assert.equal(entity.type, "person", "explicit type wins over the no-stat 'object' default");
+  await call("wf_delete_scene_element", { world: WORLD, sceneId, elementId: npc.id });
+});
+
+// Persona round (M3): wf_apply_mutations used to blind-overwrite the bridge
+// file, silently discarding queued-but-unapplied mutations (the exact gap
+// foundry-ops.mjs's own doc comment flags). The raw tool now refuses.
+await test("wf_apply_mutations refuses to clobber a non-empty queued-mutations bridge file", async () => {
+  const { writeFileSync: wfs, mkdirSync: mks } = await import("node:fs");
+  const { mutationsPath } = await import("../lib/snapshot.mjs");
+  const { dirname: dn } = await import("node:path");
+  const bridge = mutationsPath(dataDir, WORLD);
+  mks(dn(bridge), { recursive: true });
+  wfs(bridge, JSON.stringify([{ op: "upsert_entity", data: { id: "stuck-1", name: "Stuck", type: "concept" } }]), "utf8");
+  const errText = await callExpectError("wf_apply_mutations", {
+    world: WORLD, mutations: [{ op: "upsert_entity", data: { id: "new-1", name: "New", type: "concept" } }]
+  });
+  assert.match(errText, /queued-but-unapplied/, "the refusal names the actual problem");
+  assert.match(errText, /1 queued/, "and counts what would have been lost");
+  // The stuck queue is untouched by the refused call.
+  const { readFileSync: rfs } = await import("node:fs");
+  assert.match(rfs(bridge, "utf8"), /stuck-1/);
+  wfs(bridge, "[]", "utf8"); // clean up so later suites see a drained queue
 });
 
 await test("multi-world safety: every new tool requires `world`", async () => {

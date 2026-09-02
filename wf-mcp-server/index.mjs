@@ -16,8 +16,9 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
+import { existsSync, readFileSync } from "node:fs";
 import { listWorlds } from "./lib/data-dir.mjs";
-import { loadSnapshot } from "./lib/snapshot.mjs";
+import { loadSnapshot, mutationsPath } from "./lib/snapshot.mjs";
 import { neighborhood, edgesFor, findEntity, findEntityByName, findEdge } from "./lib/graph.mjs";
 import { resolveWorld, resolveDir } from "./lib/resolve.mjs";
 
@@ -165,9 +166,29 @@ const server = new McpServer({ name: "world-fabric", version: "0.1.0" });
 // GET /api/combat-planning/bestiary's own documented "no world parameter"
 // convention exactly.
 // Run layout (2026-08-26) -- the element's explicit spread placement; `null` clears back to inference.
+// `group` (run-spread consolidation pass): elements of a scene sharing a non-empty group string
+// (same column) render as ONE composite card in Run -- e.g. a payload card leading, its outcome
+// read-alouds as labeled sections beneath. Explicit only; inference never invents one.
 const runLayoutParam = z.object({
-  column: z.enum(RUN_COLUMNS), role: z.enum(RUN_ROLES), variant: z.string().optional(), placeholder: z.boolean().optional()
-}).nullable().optional().describe("Explicit Run-spread placement {column, role, variant?, placeholder?}; null clears to inference.");
+  column: z.enum(RUN_COLUMNS), role: z.enum(RUN_ROLES), variant: z.string().optional(), placeholder: z.boolean().optional(),
+  group: z.string().min(1).optional()
+}).nullable().optional().describe("Explicit Run-spread placement {column, role, variant?, placeholder?, group?}; null clears to inference. Elements sharing `group` merge into one composite Run card (lead = lowest-order member).");
+
+// Persona round (2026-08-31, finding M1): the scene-element `fields` bag LOOKS
+// open here (a zod record, for wire flexibility) but the store re-validates
+// with a CLOSED .strict() vocabulary and its error names only the offending
+// key -- a cold agent burned four probing calls discovering the real set. So
+// the set lives on the param description, kept in sync with
+// session-planner/scene-elements.mjs's SceneElementFields.
+const elementFieldsParam = z.record(z.string(), z.any()).optional().describe(
+  "Accepts ONLY these keys (any other is rejected with unrecognized_keys): " +
+  "`trigger` (when this fires), `gives` (the main content line -- what it offers the table), " +
+  "`looks` (visible/read-aloud description; renders as Effect on a role-'card' element), " +
+  "`means` (subtext/GM aside; renders as GM on a read, Alternate on a card), " +
+  "`checks` (array of {skill, dc, purpose?}), `function` (mechanical purpose), " +
+  "`wants` (an NPC's motivation), `secret` (GM-only; renders as Failure on a card), " +
+  "`statblockRef` (stat-block name/source), `bestiaryEntryId` (bestiary link)."
+);
 
 const requiredWorldParam = z.string().min(1).describe(
   "World ID (Foundry world folder name) -- REQUIRED. This server never silently defaults across worlds for this " +
@@ -360,10 +381,14 @@ server.registerTool(
   {
     title: "Write graph mutations for World Fabric to apply",
     description:
-      "Writes a mutations array to world-fabric-mutations.json. World Fabric's in-Foundry mutation watcher polls " +
-      "every 5s, applies them (upsert/delete entity or edge), and clears the file. Requires a Foundry client to " +
-      "have that world open and the module active — this tool cannot apply mutations if nobody has the world loaded. " +
-      "Polls briefly to report whether the mutation was picked up.",
+      "OVERWRITES world-fabric-mutations.json with this array — refuses (with an error) if the file still holds " +
+      "queued-but-unapplied mutations, so an earlier queued write is never silently discarded. World Fabric's " +
+      "in-Foundry mutation watcher polls every 5s, applies them (upsert/delete entity or edge), and clears the file. " +
+      "Requires a Foundry client to have that world open and the module active — a 'queued' status in the response " +
+      "means NOT applied yet, and this tool has NO headless fallback (unlike wf_sync_to_foundry). Without a live " +
+      "Foundry client, route graph writes through a propose/accept/sync batch instead " +
+      "(wf_propose_mutations or wf_propose_from_writeup -> accept -> wf_sync_to_foundry, which falls back to " +
+      "applying against the standalone snapshot).",
     inputSchema: {
       world: worldParam,
       dataDir: dataDirParam,
@@ -374,6 +399,28 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
+      // Concurrency guard (persona round, 2026-08-31; gm-tools-conventions'
+      // never-blind-overwrite rule — the same gap foundry-ops.mjs's own doc
+      // comment already flagged): a bridge file that exists and isn't "[]"
+      // is a previous queue nobody has drained; overwriting it silently
+      // discarded those writes. The guard lives HERE (the raw tool), not in
+      // the shared applyMutationsToFoundry, because sync/rollback's
+      // live-then-headless fallback deliberately reuses that function with
+      // its own leftover-file semantics — changing those is a separate,
+      // deeper investigation.
+      const bridgePath = mutationsPath(dir, w);
+      if (existsSync(bridgePath)) {
+        const contents = readFileSync(bridgePath, "utf8").trim();
+        if (contents && contents !== "[]") {
+          let pendingCount = "some";
+          try { const arr = JSON.parse(contents); if (Array.isArray(arr)) pendingCount = arr.length; } catch { /* unparseable still blocks */ }
+          throw new Error(
+            `Refusing to overwrite ${bridgePath}: it still holds ${pendingCount} queued-but-unapplied mutation(s) ` +
+            `from an earlier write. Either wait for a live Foundry client (with this world open) to drain the ` +
+            `queue, or if those mutations are known-stale, clear the file to [] yourself first.`
+          );
+        }
+      }
       const result = await applyMutationsToFoundry(dir, w, mutations);
       return text(result);
     } catch (err) {
@@ -503,7 +550,10 @@ server.registerTool(
       "as an existing populated one. `mode='replace'` only changes how THIS PREVIEW classifies create-vs-existing " +
       "(importGraph's own replace semantics) -- the actual commit at wf_sync_to_foundry time always applies each " +
       "mutation individually and never wipes anything not mentioned in the batch. Requires ANTHROPIC_API_KEY in " +
-      "this server process's own environment, same as wf_propose_mutations. PHASE 8 -- rubber-duck mode: if the " +
+      "this server process's own environment, same as wf_propose_mutations -- WITHOUT a key this degrades to an " +
+      "offline placeholder client whose extraction is honestly EMPTY: the response carries `offline: true` and an " +
+      "explanatory `offlineNote`, and the resulting 0-mutation batch means OFFLINE, not that your text contained " +
+      "nothing extractable. PHASE 8 -- rubber-duck mode: if the " +
       "GM's global setting (wf_get_rubber_duck_mode) is OFF, this behaves EXACTLY as above, single call, single " +
       "batch, unchanged from Phase 5. If it's ON, this call instead returns `{phase:'framing', framings, " +
       "writeupText, mode, rubberDuck}` -- three cheap one-sentence interpretive framings (graph-import/" +
@@ -1720,7 +1770,7 @@ server.registerTool(
       sceneId: z.string(),
       name: z.string(),
       kind: z.enum(["local", "graph"]).optional(),
-      fields: z.record(z.string(), z.any()).optional(),
+      fields: elementFieldsParam,
       stat: z.record(z.string(), z.any()).optional(),
       run: runLayoutParam
     }
@@ -1747,7 +1797,7 @@ server.registerTool(
       sceneId: z.string(),
       elementId: z.string(),
       name: z.string().optional(),
-      fields: z.record(z.string(), z.any()).optional(),
+      fields: elementFieldsParam,
       stat: z.record(z.string(), z.any()).optional(),
       run: runLayoutParam
     }
@@ -1813,14 +1863,24 @@ server.registerTool(
   "wf_promote_scene_element",
   {
     title: "Promote a scene-local element to a KEY graph node",
-    description: "MUTATION -- direct write. Mirrors POST .../elements/:elementId/promote: creates a REAL graph node + containment edge (the one planner write that touches the graph -- the element becomes kind:'graph').",
-    inputSchema: { world: requiredWorldParam, dataDir: dataDirParam, sceneId: z.string(), elementId: z.string() }
+    description:
+      "MUTATION -- direct write. Mirrors POST .../elements/:elementId/promote: creates a REAL graph node + containment " +
+      "edge (the one planner write that touches the graph -- the element becomes kind:'graph'). BE AWARE of what the " +
+      "node actually gets: only the element's NAME carries over (its `fields` do NOT -- describe the node afterwards " +
+      "via a reviewed graph mutation); its type is `type` if you pass one, else inferred 'person' when the element " +
+      "carries a stat block, else 'object'; and the containment edge always targets the SCENE'S OWN location entity, " +
+      "not any place named in the element's text.",
+    inputSchema: {
+      world: requiredWorldParam, dataDir: dataDirParam, sceneId: z.string(), elementId: z.string(),
+      type: z.enum(["person", "place", "faction", "object", "event", "concept"]).optional()
+        .describe("Entity type for the created node; omit to use the stat-block inference (stat -> person, else object).")
+    }
   },
-  async ({ world, dataDir, sceneId, elementId }) => {
+  async ({ world, dataDir, sceneId, elementId, type }) => {
     try {
       const w = resolveWorld(world);
       const dir = resolveDir(dataDir);
-      const element = await promoteElement(dir, w, sceneId, elementId);
+      const element = await promoteElement(dir, w, sceneId, elementId, type ? { type } : {});
       touchScene(w, sceneId);
       return text({ element });
     } catch (err) {
@@ -1874,14 +1934,18 @@ server.registerTool(
     description:
       "MUTATION -- direct write, no review gate. Writes the element's EXPLICIT `run` layout (session-planner/run-layout.mjs): " +
       "column main|side|off; role read|dressing|beat|exits|block|card|gm|sketch; optional free-string `variant` (gated by the scene's " +
-      "activeVariants). Pass `clear:true` to drop the explicit layout and fall back to inference.",
+      "activeVariants); optional free-string `group` -- elements sharing a group render as ONE composite Run card (lead = " +
+      "lowest-order member; use it to keep a payload/thread card and its outcome read-alouds together instead of as near-duplicate " +
+      "sibling cards). Pass `clear:true` to drop the explicit layout and fall back to inference (a re-set without `group` clears " +
+      "just the group).",
     inputSchema: {
       world: requiredWorldParam, sceneId: z.string(), elementId: z.string(),
       column: z.enum(RUN_COLUMNS).optional(), role: z.enum(RUN_ROLES).optional(), variant: z.string().nullable().optional(),
+      group: z.string().nullable().optional(),
       clear: z.boolean().optional()
     }
   },
-  async ({ world, sceneId, elementId, column, role, variant, clear }) => {
+  async ({ world, sceneId, elementId, column, role, variant, group, clear }) => {
     try {
       const w = resolveWorld(world);
       if (clear) {
@@ -1892,6 +1956,7 @@ server.registerTool(
       if (!column || !role) throw new Error("wf_set_element_run needs both `column` and `role` (or `clear:true`).");
       const run = { column, role };
       if (variant) run.variant = variant;
+      if (group) run.group = group;
       const element = updateElement(w, sceneId, elementId, { run });
       touchScene(w, sceneId);
       return text({ element });
@@ -1907,8 +1972,11 @@ server.registerTool(
     title: "Switch which variant(s) a Scene shows in Run mode",
     description:
       "MUTATION -- direct write, no review gate. Sets `scene.activeVariants` (free strings matching elements' run.variant). " +
-      "Elements without a variant always show; an EMPTY list shows every variant. This is the live-play switch: one call flips a " +
-      "whole scene from one state to another and the open Run page picks it up within a few seconds.",
+      "Elements without a variant always show; an EMPTY list shows every variant. This is the PERSISTENT switch: one call flips a " +
+      "whole scene from one state to another and the open Run page picks it up within a few seconds. Note (variants round, " +
+      "2026-09-01): on cards with state TABS (grouped elements / the GM-notes fold), this call SEEDS which tab starts active -- " +
+      "the GM's own tab clicks in Run are local-only and never write back, and a GM's existing local pick on a card is not " +
+      "overridden by this call; loose (ungrouped) variant elements are still hard-gated by it.",
     inputSchema: { world: requiredWorldParam, sceneId: z.string(), variants: z.array(z.string()) }
   },
   async ({ world, sceneId, variants }) => {
