@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:wght@400;600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;600&display=swap">
+  <style>
+    :root { --serif: "Spectral", Georgia, serif; --ui: "IBM Plex Sans", -apple-system, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace; }
+    body { margin: 0; font-family: var(--ui); color: oklch(0.27 0.015 60); }
+    a { color: oklch(0.55 0.11 40); } a:hover { color: oklch(0.45 0.11 40); }
+    .lbl { font-family: var(--mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.58 0.012 70); }
+    .chip { font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; border: 1px solid oklch(0.88 0.010 80); border-radius: 20px; padding: 3px 10px; color: oklch(0.50 0.012 65); background: oklch(0.985 0.005 85); }
+    .ghost { font-size: 13px; color: oklch(0.55 0.075 185); }
+  </style>
+</helmet>
+<div style="width: 760px; background: oklch(0.955 0.008 85); border: 1px solid oklch(0.85 0.010 80); padding: 16px 22px 20px">
+  <div class="lbl" style="color: oklch(0.55 0.11 40); margin-bottom: 8px">Option A · Front-matter band — EMPTY scene (the worksheet moves up, nothing else does)</div>
+
+  <div style="border-bottom: 1px solid oklch(0.88 0.010 80); padding-bottom: 10px">
+    <div style="display: flex; align-items: baseline; gap: 10px">
+      <span class="lbl" style="color: oklch(0.50 0.06 185)">The Loom</span>
+      <h1 style="margin: 0; font-family: var(--serif); font-size: 24px; font-weight: 600; color: oklch(0.58 0.012 70); font-style: italic">Untitled scene</h1>
+    </div>
+    <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 4px">
+      <span class="lbl">Intent</span>
+      <span style="font-size: 13px; color: oklch(0.58 0.012 70); font-style: italic">what has to happen here…</span>
+      <span class="chip">GM only · off in Run</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px">
+      <span class="chip">☐ Stage for Foundry</span>
+      <span class="chip">▦ map: link…</span>
+      <span class="chip" style="border-style: dashed; border-color: oklch(0.62 0.10 65); color: oklch(0.52 0.10 65)">About the place ▾ — no description yet</span>
+    </div>
+    <div style="border: 1px dashed oklch(0.62 0.10 65); border-radius: 4px; padding: 8px 12px; margin-top: 8px; background: oklch(0.985 0.008 78)">
+      <div style="font-size: 12.5px; color: oklch(0.50 0.012 65)"><span class="lbl" style="margin-right: 8px">About this place</span><i>nothing on the graph node yet</i></div>
+      <div class="ghost" style="margin-top: 4px">✦ develop this place — prominent HERE because the place is empty; quiet once it isn't</div>
+    </div>
+  </div>
+
+  <div style="margin-top: 12px">
+    <div class="lbl" style="color: oklch(0.55 0.11 40)">Read aloud — opens Run</div>
+    <p style="font-family: var(--serif); font-size: 15px; font-style: italic; color: oklch(0.58 0.012 70); margin: 4px 0 0; padding-left: 12px; border-left: 2px solid oklch(0.88 0.010 80)">Click to add this scene's opener…</p>
+    <div class="ghost" style="margin-top: 3px">✦ draft this from the place and the intent</div>
+  </div>
+
+  <div style="margin-top: 14px">
+    <div class="lbl">Elements</div>
+    <!-- Empty state: the assists ARE the content, so they sit right here — the
+         only time they appear at the top. Skeleton is gone entirely. -->
+    <div style="border: 1px dashed oklch(0.80 0.010 80); border-radius: 4px; padding: 14px; margin-top: 6px; text-align: center">
+      <div style="font-size: 13px; color: oklch(0.50 0.012 65)">Nothing here yet.</div>
+      <div style="display: flex; gap: 18px; justify-content: center; margin-top: 8px">
+        <span style="font-size: 13px; color: oklch(0.40 0.014 65)">+ add element</span>
+        <span class="ghost">✦ propose elements from this place</span>
+      </div>
+      <div style="font-size: 11px; color: oklch(0.58 0.012 70); margin-top: 6px">New elements land in <b>main</b> — sort to the side in the lanes when you care.</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

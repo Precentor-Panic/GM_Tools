@@ -2,9 +2,16 @@
   "pages": [
     { "id": "page-run", "name": "Run switch" },
     { "id": "page-authoring", "name": "Authoring" },
+    { "id": "page-prep", "name": "Prep header" },
     { "id": "page-alt", "name": "Alternates" }
   ],
   "artboards": [
+    { "file": "PrepAFilled.dc.html", "x": 0, "y": 0, "w": 800, "h": 780, "title": "A — Band · filled", "page": "page-prep" },
+    { "file": "PrepALanes.dc.html", "x": 920, "y": 0, "w": 1060, "h": 700, "title": "A — Band · filled + lanes", "page": "page-prep" },
+    { "file": "PrepAEmpty.dc.html", "x": 0, "y": 920, "w": 800, "h": 700, "title": "A — Band · empty", "page": "page-prep" },
+    { "file": "PrepBLanes.dc.html", "x": 920, "y": 920, "w": 1060, "h": 680, "title": "B — Meta in rail · lanes open", "page": "page-prep" },
+    { "file": "PrepBClosed.dc.html", "x": 2100, "y": 920, "w": 800, "h": 620, "title": "B — Meta in rail · lanes closed", "page": "page-prep" },
+
     { "file": "Main.dc.html", "x": 0, "y": 0, "w": 1080, "h": 800, "title": "B — Tabs on the card", "is_interactive": true, "page": "page-run" },
 
     { "file": "GroupSelect.dc.html", "x": 0, "y": 0, "w": 780, "h": 620, "title": "G1 — Select & combine", "page": "page-authoring" },
@@ -17,6 +24,11 @@
     { "file": "AllVisible.dc.html", "x": 1200, "y": 0, "w": 1080, "h": 960, "title": "C — Everything visible", "is_interactive": true, "page": "page-alt" }
   ],
   "annotations": [
+    {
+      "id": "note-prep",
+      "x": 2100, "y": 0, "w": 380, "page": "page-prep",
+      "text": "PREP HEADER CLEANUP (Russell's gripes, 2026-09-01):\nBoth options: seed-run-skeleton REMOVED (new elements default to main; sort in lanes). Propose-elements moves to the BOTTOM beside + add element; on an EMPTY scene it appears up top as the worksheet. ONE read-aloud home (this block opens Run; beats are elements — the duplicate came from the skeleton seeding a second one). Develop-this-place lives INSIDE the about-the-place section, prominent only while the place has no description. Intent gets a 'GM only - off in Run' toggle (it is often just the scene-locator note).\n\nA — FRONT-MATTER BAND: everything above the read-aloud compresses to name + intent + one chip row (stage / map / about-disclosure). Meta always in the same place, lanes or not.\nTradeoff: the chip row is still a row of chrome on every scene.\n\nB — META IN THE RAIL: the content column is ONLY name/intent/read-aloud/elements; stage/map/place live in a Scene-setup card at the top of the rail; with lanes closed they collapse to one quiet disclosure line.\nTradeoff: meta moves house depending on rail state; the setup card costs rail height."
+    },
     {
       "id": "brief",
       "x": 0, "y": -220, "w": 340, "page": "page-run",
@@ -38,5 +50,5 @@
       "text": "C — EVERYTHING VISIBLE (not picked)\nNo state ever hides; live state carries the ink.\nKept for reference: closest to how Kilmarn was actually run."
     }
   ],
-  "launch": { "view": "canvas", "page": "page-authoring" }
+  "launch": { "view": "canvas", "page": "page-prep" }
 }
