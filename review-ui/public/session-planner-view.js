@@ -875,11 +875,16 @@ export function makeClickToEditField({ tag = "div", className = "", testid, data
     el.classList.toggle("scene-field--empty", !has);
   }
 
-  function enterEdit() {
+  function enterEdit(caretOffset = null) {
     if (editing) return;
     editing = true;
     el.textContent = "";
     el.classList.remove("scene-field--empty");
+    // Editing keeps the text's laid-out SHAPE (variants-round feedback: the
+    // host span collapsed once emptied, so the 100%-width textarea inherited
+    // ~nothing and rendered narrow-and-tall). Block + full width = the
+    // textarea wraps exactly like the resting text did.
+    el.classList.add("scene-field--editing");
     const ta = document.createElement("textarea");
     ta.className = "scene-edit-textarea";
     ta.setAttribute("data-testid", inputTestid);
@@ -923,14 +928,36 @@ export function makeClickToEditField({ tag = "div", className = "", testid, data
       sceneEditDebounces.delete(debounce);
       currentValue = v;
       editing = false;
+      el.classList.remove("scene-field--editing");
       renderRest();
     });
     el.appendChild(ta);
     ta.focus();
     autoGrow();
+    // Land the cursor where the click happened instead of at the end —
+    // "wherever I click, my cursor ends up and I can just start editing".
+    if (caretOffset != null) {
+      const pos = Math.max(0, Math.min(caretOffset, ta.value.length));
+      ta.setSelectionRange(pos, pos);
+    }
   }
 
-  el.addEventListener("click", () => { if (!editing) enterEdit(); });
+  el.addEventListener("click", (e) => {
+    if (editing) return;
+    // The rendered value is one text node (renderRest sets textContent), so
+    // the browser's caret-from-point offset maps 1:1 onto the string.
+    let caret = null;
+    try {
+      if (document.caretRangeFromPoint) {
+        const r = document.caretRangeFromPoint(e.clientX, e.clientY);
+        if (r && el.contains(r.startContainer)) caret = r.startOffset;
+      } else if (document.caretPositionFromPoint) {
+        const p = document.caretPositionFromPoint(e.clientX, e.clientY);
+        if (p && el.contains(p.offsetNode)) caret = p.offset;
+      }
+    } catch { caret = null; }
+    enterEdit(caret);
+  });
   renderRest();
   return { el, enterEdit, setValue(v) { currentValue = v ?? ""; if (!editing) renderRest(); } };
 }
@@ -1718,6 +1745,19 @@ function createLaneModel(scene, elements, refreshList) {
       await saveElementRun(scene, tEl, { ...tRun, group: groupName });
     }
     const next = { ...dRun, column: tRun.column, group: groupName };
+    // Variants-round feedback: with "+ variant" gone, drag-onto-a-TABBED-card
+    // IS how you add a state — a variant-less element joining a group that
+    // already has states gets one, derived from its after-dash name
+    // (previously it silently became an always-shown section below the tabs,
+    // which read as a bug at the table). Joining an untabbed card stays a
+    // plain combine; clearing the variant in the chip popover still demotes
+    // a state to an always-shown section.
+    const targetHasStates = targetEntry.kind === "stack"
+      ? targetEntry.members.some((m) => effectiveRun(m).run.variant)
+      : !!tRun.variant;
+    if (targetHasStates && !next.variant) {
+      next.variant = titleAfterDash(dEl.name, "") || dEl.name || "New state";
+    }
     await saveElementRun(scene, dEl, next);
     // Order: dragged right after the target group's last member.
     const lastId = targetEntry.kind === "stack" ? targetEntry.members[targetEntry.members.length - 1].id : tEl.id;
@@ -1733,29 +1773,9 @@ function createLaneModel(scene, elements, refreshList) {
 
 
 
-  // "+ variant" on a stack: create a member born grouped, its variant a
-  // fresh "New state" name; the GM renames/fills it in Prep (the board has
-  // no text editing on purpose -- that's the Page view's job).
-  const addVariant = async (stack) => {
-    const lead = stack.members[0];
-    const lRun = effectiveRun(lead).run;
-    const lastVariantMember = [...stack.members].reverse().find((m) => effectiveRun(m).run.variant);
-    const role = lastVariantMember ? effectiveRun(lastVariantMember).run.role : "read";
-    const existing = new Set(stack.members.map((m) => effectiveRun(m).run.variant).filter(Boolean));
-    let variant = "New state";
-    for (let n = 2; existing.has(variant); n++) variant = `New state ${n}`;
-    await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        world: currentWorld(),
-        name: `${ROLE_LABELS[role] ?? role} — ${variant}`,
-        fields: {},
-        run: { column: lRun.column, role, group: stack.group, variant }
-      })
-    });
-    await refreshList();
-  };
+  // ("+ variant" was cut — Russell, 2026-09-01: make the state element with
+  // + element in Prep, then DRAG it onto the card; joinTo derives its
+  // variant when the target already has states.)
 
   // Card-level join-zone wiring: the vertical MIDDLE band of a card is the
   // join target (dashed amber); the edges fall through to the lane's
@@ -1836,7 +1856,7 @@ function createLaneModel(scene, elements, refreshList) {
 
   return {
     entries, lanes, entryColumn, entryHasId, findEntryById, flattenIds,
-    persist, moveEntry, ungroupTo, joinAllowed, joinTo, addVariant,
+    persist, moveEntry, ungroupTo, joinAllowed, joinTo,
     wireJoinTarget, wireDragSource, wireLaneDropTarget
   };
 }
@@ -1907,7 +1927,7 @@ function buildLayoutBoard(scene, elements, refreshList) {
 
   const {
     lanes, persist, moveEntry,
-    addVariant, wireJoinTarget, wireDragSource, wireLaneDropTarget
+    wireJoinTarget, wireDragSource, wireLaneDropTarget
   } = createLaneModel(scene, elements, refreshList);
 
   const toolbar = document.createElement("div");
@@ -2029,14 +2049,6 @@ function buildLayoutBoard(scene, elements, refreshList) {
       chip.textContent = v;
       tabsRow.appendChild(chip);
     }
-    const addBtn = document.createElement("button");
-    addBtn.type = "button";
-    addBtn.className = "layout-stack-tab layout-stack-tab--add";
-    addBtn.setAttribute("data-testid", "layout-stack-add-variant");
-    addBtn.textContent = "+ variant";
-    addBtn.title = "Add a new state to this card (rename and fill it in Prep)";
-    addBtn.addEventListener("click", async () => { addBtn.disabled = true; try { await addVariant(stack); } finally { addBtn.disabled = false; } });
-    tabsRow.appendChild(addBtn);
     card.appendChild(tabsRow);
 
     for (const m of stack.members.slice(1)) {

@@ -5,7 +5,9 @@
 //   - the ONE-LAYER CAP: a multi-member stack dragged by its lead can never
 //     join another card — the drop falls through to lane reorder;
 //   - a member sub-row dragged out to lane space ungroups it;
-//   - "+ variant" creates a member born grouped with a fresh variant name.
+//   - drag-onto-a-TABBED-card IS how a state is added ("+ variant" removed,
+//     Russell 2026-09-01): a variant-less element joining a group that
+//     already has states gets one derived from its after-dash name.
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import { chromium } from "playwright";
@@ -96,7 +98,7 @@ test("drop ON a card joins its group (slug from the target's name); Run then sho
   await page.close();
 });
 
-test("one-layer cap: a multi-member stack dragged onto a card REORDERS instead of joining; a member dragged to lane space ungroups; + variant creates a grouped member", async () => {
+test("one-layer cap: a multi-member stack dragged onto a card REORDERS instead of joining; joining a tabbed card derives a state; a member dragged out ungroups", async () => {
   const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "bg-hall", name: "Cap scene" });
   const stackLead = await makeEl(scene.id, { name: "Charm — The Ledger", fields: { gives: "x" }, run: { column: "main", role: "card", group: "ledger" } });
   const member = await makeEl(scene.id, { name: "Read Aloud — Paid", fields: { looks: "y" }, run: { column: "main", role: "read", group: "ledger", variant: "Paid" } });
@@ -117,19 +119,22 @@ test("one-layer cap: a multi-member stack dragged onto a card REORDERS instead o
   assert.equal(stored.find((e) => e.id === lone.id).run.group, undefined, "the lone card gained no group");
   assert.equal(stored.find((e) => e.id === stackLead.id).run.group, "ledger", "the stack kept its own group");
 
-  // "+ variant" births a grouped member with a fresh variant name.
+  // Joining a TABBED card derives a state: the variant-less lone beat
+  // dragged onto the stack becomes tab "The clerk" (after-dash name), not a
+  // section below the tabs (the reported at-the-table confusion).
   board = page.locator('[data-testid="scene-layout-board"]');
-  await board.locator('[data-testid="layout-stack-add-variant"]').click();
+  const loneCard2 = board.locator(`[data-testid="layout-card"][data-element-id="${lone.id}"]`);
+  const stack2 = board.locator(`[data-testid="layout-stack"][data-element-id="${stackLead.id}"]`);
+  await loneCard2.dragTo(stack2);
   await page.waitForFunction(
     (g) => document.querySelectorAll(`[data-testid="layout-stack"][data-group="${g}"] [data-testid="layout-stack-member"]`).length >= 2,
     "ledger",
     { timeout: 10000 }
   );
   stored = await els(scene.id);
-  const born = stored.find((e) => e.run?.variant === "New state");
-  assert.ok(born, "the new member exists");
-  assert.equal(born.run.group, "ledger");
-  assert.equal(born.run.role, "read", "role copied from the last variant member");
+  const joined = stored.find((e) => e.id === lone.id);
+  assert.equal(joined.run.group, "ledger");
+  assert.equal(joined.run.variant, "The clerk", "the after-dash name became the state");
 
   // Drag the original member OUT to lane space (the title strip — always
   // card-free, so the drop can never read as a join): it ungroups.

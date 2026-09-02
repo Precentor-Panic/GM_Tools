@@ -1858,6 +1858,12 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   border-radius: var(--sp-radius-md); box-shadow: 0 0 0 3px var(--sp-focus-halo);
   padding: 4px 6px; resize: none; overflow: hidden; min-height: 1.6em;
 }
+/* Editing keeps the resting text's shape: an inline host span collapses to
+   zero width once emptied, starving the 100%-width textarea (the
+   "narrow and tall" edit box). */
+:is(#view-session-planner, #app-shell) .scene-field--editing {
+  display: block; width: 100%; min-width: 0;
+}
 
 /* Section labels ("Elements", "Events, encounters & notes"). */
 :is(#view-session-planner, #app-shell) .scene-section-heading {
@@ -2439,9 +2445,6 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   font-family: var(--sp-font-mono); font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase;
   border: 1px solid var(--sp-border-hairline); border-radius: 3px; padding: 1px 7px;
   color: var(--sp-ink-secondary); background: var(--sp-surface-chrome);
-}
-:is(#view-session-planner, #app-shell) button.layout-stack-tab--add {
-  border-style: dashed; cursor: pointer; color: var(--sp-ink-muted); background: none;
 }
 :is(#view-session-planner, #app-shell) .layout-stack-member {
   border-top: 1px dashed var(--sp-border-dashed); margin-top: 5px; padding: 4px 0 0 8px;
