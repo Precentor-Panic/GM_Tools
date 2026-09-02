@@ -1843,7 +1843,9 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   border-radius: 0; padding: 2px 0 2px 18px; margin: 0; white-space: pre-wrap;
 }
 :is(#view-session-planner, #app-shell) .scene-narration.read-aloud::before {
-  content: "Read Aloud"; display: block; text-transform: uppercase;
+  /* "— opens Run": the ONE home for the opener; later read-alouds are beat
+     ELEMENTS (the duplicate came from the retired seed skeleton). */
+  content: "Read Aloud — opens Run"; display: block; text-transform: uppercase;
   font-family: var(--sp-font-mono); font-size: 9.5px; font-weight: 400;
   font-style: normal; letter-spacing: 0.11em; color: var(--sp-accent-teal);
   opacity: 1; margin-bottom: 6px;
@@ -2451,6 +2453,65 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   font-size: 12px; color: var(--sp-ink-secondary); cursor: grab;
 }
 :is(#view-session-planner, #app-shell) .layout-stack-member.layout-card--dragging { opacity: 0.4; }
+
+/* Option A front-matter band (2026-09-02): the seven stacked header blocks
+   compress into three rows — title (place label inline with the name),
+   intent (+ off-in-Run chip), and a quiet stage/map chip row — with the
+   place description behind an "About the place" disclosure that opens
+   itself only while the description is empty. */
+:is(#view-session-planner, #app-shell) .scene-band-titlerow {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+}
+:is(#view-session-planner, #app-shell) .scene-band-titlerow .scene-place-label { margin: 0; }
+:is(#view-session-planner, #app-shell) .scene-band-titlerow .scene-place-name { margin: 0; flex: 1; min-width: 0; }
+:is(#view-session-planner, #app-shell) .scene-band-intentrow {
+  display: flex; align-items: baseline; gap: 10px; margin: 2px 0 8px;
+}
+:is(#view-session-planner, #app-shell) .scene-band-intentrow .scene-objective { flex: 1; min-width: 0; margin: 0; }
+:is(#view-session-planner, #app-shell) .scene-band-chip {
+  font-family: var(--sp-font-mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+  border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-pill); padding: 2px 9px;
+  color: var(--sp-ink-muted); background: var(--sp-surface-card); cursor: pointer; flex: none; white-space: nowrap;
+}
+:is(#view-session-planner, #app-shell) .scene-intent-run-toggle[data-in-run="false"] {
+  color: var(--sp-accent-rust); border-color: var(--sp-border-control);
+}
+:is(#view-session-planner, #app-shell) .scene-band-chiprow {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 0 0 10px;
+}
+:is(#view-session-planner, #app-shell) .scene-band-chiprow .scene-stage-row,
+:is(#view-session-planner, #app-shell) .scene-band-chiprow .scene-map-row {
+  margin: 0; font-size: 12px;
+}
+:is(#view-session-planner, #app-shell) .scene-about-place {
+  border-top: 1px dashed var(--sp-border-dashed); border-bottom: 1px solid var(--sp-border-hairline);
+  padding: 6px 0; margin: 0 0 4px;
+}
+:is(#view-session-planner, #app-shell) .scene-about-summary {
+  cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: 10px; min-width: 0;
+}
+:is(#view-session-planner, #app-shell) .scene-about-summary::-webkit-details-marker { display: none; }
+:is(#view-session-planner, #app-shell) .scene-about-summary-label {
+  font-family: var(--sp-font-mono); font-size: 9.5px; font-weight: 600; letter-spacing: var(--sp-mono-label-tracking);
+  text-transform: uppercase; color: var(--sp-ink-muted); flex: none;
+}
+:is(#view-session-planner, #app-shell) .scene-about-summary-label::after { content: " ▸"; }
+:is(#view-session-planner, #app-shell) .scene-about-place[open] .scene-about-summary-label::after { content: " ▾"; }
+:is(#view-session-planner, #app-shell) .scene-about-summary-preview {
+  font-size: 12px; color: var(--sp-ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+:is(#view-session-planner, #app-shell) .scene-about-place[open] .scene-about-summary-preview { display: none; }
+:is(#view-session-planner, #app-shell) .scene-about-summary--empty .scene-about-summary-label,
+:is(#view-session-planner, #app-shell) .scene-about-summary--empty .scene-about-summary-preview {
+  color: oklch(0.52 0.10 65);
+}
+:is(#view-session-planner, #app-shell) .scene-about-place .scene-place-desc-host { margin-top: 6px; }
+/* Inside the disclosure the summary is the section label — no divider
+   between the description and develop-this-place (the gripe), and no
+   double margins from the old standalone block. */
+:is(#view-session-planner, #app-shell) .scene-about-place .scene-develop-place-wrap,
+:is(#view-session-planner, #app-shell) .scene-about-place .scene-place-grid { border-top: none; border-bottom: none; margin-top: 4px; padding-top: 0; margin-bottom: 4px; }
+:is(#view-session-planner, #app-shell) .scene-about-place .scene-place-desc-host { margin-bottom: 2px; }
 
 /* O1 (2026-09-01): the Prep layout rail — closed, the container is
    display:contents (layout byte-identical to the plain list); open, a flex

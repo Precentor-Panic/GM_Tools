@@ -182,6 +182,37 @@ test("Run flags draft fields with a ✦ pill (cleared by a GM edit) and nags on 
   await page.close();
 });
 
+// Option A band (2026-09-02): the intent/objective is often the GM's
+// scene-locator note — the band's toggle chip drops it from Run.
+test("the intent's off-in-Run chip persists objectiveInRun and the Run spread drops the Objective box", async () => {
+  const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "rs-square", name: "Intent scene", objectiveNote: "Find the right scene in the browser." });
+  await makeEl(scene.id, { name: "Read Aloud — Opening", fields: { looks: "Rain again." }, run: { column: "main", role: "read" } });
+
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+  await page.goto(`${base}/#planner/scene/${scene.id}`);
+  await page.locator('[data-testid="scene-elements-list"]').waitFor({ timeout: 15000 });
+
+  const chip = page.locator('[data-testid="intent-run-toggle"]');
+  assert.equal(await chip.getAttribute("data-in-run"), "true", "absent flag = shown (pre-flag behavior)");
+  await chip.click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="intent-run-toggle"]')?.getAttribute("data-in-run") === "false", { timeout: 5000 });
+  const stored = await (await fetch(`${base}/api/session-planner/scenes/${scene.id}?world=${WORLD}`)).json();
+  assert.equal(stored.scene.objectiveInRun, false, "the chip persisted through the scene patch route");
+
+  await page.locator('[data-testid="mode-run-btn"]').click();
+  const spread = page.locator('[data-testid="scene-run-spread"]');
+  await spread.waitFor({ state: "visible", timeout: 15000 });
+  assert.equal(await spread.locator(".rs-box--objective").count(), 0, "GM-only intent never reaches the Run spread");
+  await page.close();
+
+  // Route-flipped back on -> the box returns on a fresh open.
+  await updateSceneViaRoute(base, WORLD, scene.id, { objectiveInRun: true });
+  const { page: page2, spread: spread2 } = await openRun(scene.id);
+  assert.match(await spread2.locator(".rs-box--objective").textContent(), /right scene in the browser/);
+  await page2.close();
+});
+
 test("a sketch element renders its SVG (sanitised) with its caption; an empty placeholder is hidden", async () => {
   const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "rs-square", name: "Sketch scene" });
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60"><script>window.__pwned=1</script><rect class="skw" x="10" y="10" width="40" height="20" onclick="window.__pwned=2"/><text class="skT" x="12" y="45">WELL</text></svg>';

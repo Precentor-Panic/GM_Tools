@@ -254,6 +254,10 @@ test("place-description edits write back to the graph node and survive reload", 
   const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "p30-forge" });
   const { page, root } = await openScene(scene.id);
 
+  // Option A band (2026-09-02): the place block sits behind the "About the
+  // place" disclosure — closed by default when a description exists.
+  const about = root.locator('[data-testid="scene-about-place"]');
+  if (await about.getAttribute("open") === null) await about.locator("summary").click();
   const desc = root.locator('[data-testid="scene-place-description"]').first();
   await editValue(page, desc, "scene-place-description-input", "Now with a fresh coat of grime.");
   await page.waitForTimeout(300);
@@ -285,6 +289,11 @@ test("✦ develop this place (scene page): hits the real route, and Accept merge
   const root = page.locator(`[data-testid="planner-scene-view"][data-scene-id="${scene.id}"]`);
   await root.waitFor({ state: "visible", timeout: 15000 });
 
+  // Option A band: develop-this-place lives INSIDE the About-the-place
+  // disclosure now — open it first (closed by default once described).
+  const aboutDet = root.locator('[data-testid="scene-about-place"]');
+  await aboutDet.waitFor({ state: "attached", timeout: 10000 });
+  if (await aboutDet.getAttribute("open") === null) await aboutDet.locator("summary").click();
   const link = root.locator('[data-testid="scene-develop-place-link"]');
   await link.waitFor({ state: "visible", timeout: 10000 });
   await link.click();

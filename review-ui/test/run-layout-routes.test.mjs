@@ -194,6 +194,16 @@ test("scene patch carries kind/whereNote/tags/activeVariants; kind is validated"
   assert.equal(bad.status, 400);
   const fresh = await getJson(`/api/session-planner/scenes/${scene.id}?world=${WORLD}`);
   assert.equal(fresh.body.scene.kind, "combat", "a rejected patch leaves the record untouched");
+
+  // Option A band (2026-09-02): objectiveInRun joins the patch vocabulary —
+  // false = the Run spread hides the Objective box; absent = shown.
+  const off = await postJson(`/api/session-planner/scenes/${scene.id}`, { world: WORLD, objectiveInRun: false });
+  assert.equal(off.status, 200);
+  assert.equal(off.body.scene.objectiveInRun, false);
+  const badFlag = await postJson(`/api/session-planner/scenes/${scene.id}`, { world: WORLD, objectiveInRun: "nope" });
+  assert.equal(badFlag.status, 400);
+  const on = await postJson(`/api/session-planner/scenes/${scene.id}`, { world: WORLD, objectiveInRun: true });
+  assert.equal(on.body.scene.objectiveInRun, true);
 });
 
 test("run-version changes when an element, the scene record, or the narration changes — and not otherwise", async () => {

@@ -209,10 +209,17 @@ test("Layout board: a real drag from Main to Side persists the column change", a
   await page.close();
 });
 
-test("seed run skeleton: Prep shows dashed 'fill me' placeholders; Run hides the empty ones; a filled one stops being a placeholder", async () => {
+test("seed run skeleton (route/MCP only — the Prep ghost retired 2026-09-02): placeholders render dashed, Run hides the empty ones, a filled one stops being a placeholder", async () => {
   const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "lt-square", name: "Seed scene" });
+  // The Prep ghost link is GONE (Option A band) — seeding stays available to
+  // agents/tests through the route, and the placeholder BEHAVIOR is what
+  // this test still pins.
+  const seedRes = await fetch(`${base}/api/scene-planning/scenes/${scene.id}/run-layout/seed`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ world: WORLD })
+  });
+  assert.equal(seedRes.status, 200);
   const page = await openScene(scene.id);
-  await page.locator('[data-testid="scene-seed-skeleton-link"]').click();
+  assert.equal(await page.locator('[data-testid="scene-seed-skeleton-link"]').count(), 0, "the Prep ghost is retired");
   await page.locator('.scene-element-row[data-placeholder="true"]').first().waitFor({ timeout: 10000 });
   const rows = page.locator('.scene-element-row[data-placeholder="true"]');
   assert.equal(await rows.count(), 8, "narrative: read + 3 dressing + 2 beats + gm + exits");

@@ -1583,41 +1583,8 @@ function buildRunRoleChip(scene, element, { onChange } = {}) {
   return wrap;
 }
 
-// Run layout (2026-08-26) -- "seed run skeleton": pre-creates placeholder
-// elements for every spread role this scene lacks (session-planner/
-// run-skeleton.mjs, via POST .../run-layout/seed). A quiet ghost link beside
-// "propose elements" -- additive and idempotent; never touches what's there.
-function buildSeedSkeletonGhostLink(scene, refreshElements) {
-  const wrap = document.createElement("div");
-  wrap.className = "scene-assist-ghost";
-  const link = document.createElement("button");
-  link.type = "button";
-  link.className = "link-btn scene-seed-skeleton-link";
-  link.setAttribute("data-testid", "scene-seed-skeleton-link");
-  link.setAttribute("data-scene-id", scene.id);
-  link.textContent = "▤ seed run skeleton";
-  link.title = "Add placeholder elements for every part of a runnable scene this one still lacks (read-aloud, dressing, beats, exits, GM box…) — you fill them in";
-  const status = document.createElement("span");
-  status.className = "scene-assist-status hint";
-  link.addEventListener("click", async () => {
-    link.disabled = true;
-    status.textContent = "";
-    try {
-      const result = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/run-layout/seed`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ world: currentWorld() })
-      });
-      const n = result.seeded?.length ?? 0;
-      status.textContent = n ? `▤ seeded ${n} placeholder${n === 1 ? "" : "s"} (${result.kind})` : `▤ nothing missing for a ${result.kind} scene`;
-      if (n) await refreshElements();
-    } catch (err) {
-      status.textContent = `▤ ${err.message || "failed"}`;
-    } finally {
-      link.disabled = false;
-    }
-  });
-  wrap.append(link, status);
-  return wrap;
-}
+// (seed-run-skeleton Prep ghost retired 2026-09-02 — Option A band; the
+// route + wf_seed_run_skeleton remain for agents/tests.)
 
 // ---------------------------------------------------------------------------
 // Shared lane model (variants round, 2026-09-01): ONE home for the board's
@@ -3982,8 +3949,10 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
   const narrText = narration?.text ? String(narration.text).trim() : "";
   if (narrText) main.appendChild(runSpreadEl("p", "rs-sensory", narrText));
 
-  // SIDE opens with the objective (the GM's "what has to happen here").
-  if (scene.objectiveNote && String(scene.objectiveNote).trim()) {
+  // SIDE opens with the objective (the GM's "what has to happen here") —
+  // unless the GM flagged it off for Run (Option A band, 2026-09-02: the
+  // intent is often just the scene-locator note; absent flag = shown).
+  if (scene.objectiveNote && String(scene.objectiveNote).trim() && scene.objectiveInRun !== false) {
     const box = runSpreadEl("div", "rs-box rs-box--objective");
     box.appendChild(runSpreadEl("b", "rs-box-l", "Objective"));
     box.appendChild(document.createTextNode(String(scene.objectiveNote)));
@@ -4516,14 +4485,19 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   const header = document.createElement("div");
   header.className = "scene-place-header";
   const place = scene.locationEntityId ? nodeMap.get(scene.locationEntityId) : null;
+  // Option A front-matter band (Russell, 2026-09-02): place label + name on
+  // ONE line — the seven stacked blocks above the read-aloud compress into
+  // three band rows (title, intent, chips).
+  const titleRow = document.createElement("div");
+  titleRow.className = "scene-band-titlerow";
   if (designer) {
     header.setAttribute("data-testid", "planner-scene-place-header");
-    // Designer §C.1: mono uppercase teal place label above the scene name.
+    // Designer §C.1: mono uppercase teal place label, now INLINE before the name.
     const placeLabel = document.createElement("div");
     placeLabel.className = "scene-place-label";
     placeLabel.setAttribute("data-testid", "scene-place-label");
     placeLabel.textContent = (place?.name ?? scene.locationEntityId ?? "Unplaced").toUpperCase();
-    header.appendChild(placeLabel);
+    titleRow.appendChild(placeLabel);
   }
   // Russell (2026-08-16, Kilmarn exercise): the big header title is the
   // SCENE's name, not the place's — the teal label above already carries the
@@ -4544,7 +4518,8 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
       body: JSON.stringify({ world: currentWorld(), name: v })
     })
   });
-  header.appendChild(titleField.el);
+  titleRow.appendChild(titleField.el);
+  header.appendChild(titleRow);
   if (!scene.locationEntityId) {
     const noPlace = document.createElement("p");
     noPlace.className = "hint";
@@ -4578,7 +4553,41 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     // that should restart the "in Foundry" self-refresh poll while staged.
     onSaved: () => restartStagePollIfStaged()
   });
-  header.appendChild(objectiveField.el);
+  // Band row 2: intent + the "off in Run" toggle chip. The intent is often
+  // the GM's scene-locator note — absent flag = shown (pre-flag behavior).
+  const intentRow = document.createElement("div");
+  intentRow.className = "scene-band-intentrow";
+  intentRow.appendChild(objectiveField.el);
+  const intentChip = document.createElement("button");
+  intentChip.type = "button";
+  intentChip.className = "scene-band-chip scene-intent-run-toggle";
+  intentChip.setAttribute("data-testid", "intent-run-toggle");
+  const paintIntentChip = () => {
+    const shown = scene.objectiveInRun !== false;
+    intentChip.textContent = shown ? "shown in Run" : "GM only · off in Run";
+    intentChip.setAttribute("data-in-run", shown ? "true" : "false");
+    intentChip.title = shown
+      ? "The intent renders as the Run spread's Objective box — click to keep it GM-only"
+      : "GM-only: the Run spread hides this — click to show it as the Objective box";
+  };
+  paintIntentChip();
+  intentChip.addEventListener("click", async () => {
+    const next = !(scene.objectiveInRun !== false);
+    intentChip.disabled = true;
+    try {
+      await spApi(`/api/session-planner/scenes/${encodeURIComponent(scene.id)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), objectiveInRun: next })
+      });
+      scene.objectiveInRun = next;
+    } finally {
+      intentChip.disabled = false;
+      paintIntentChip();
+    }
+  });
+  intentRow.appendChild(intentChip);
+  header.appendChild(intentRow);
 
   // Phase 36 task 36.2, §7 -- the "stage it" toggle + subtle "in Foundry ·
   // updated Xm ago" status line. Locked decision: NO push button -- staged
@@ -4680,22 +4689,44 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   stageRow.appendChild(stageToggleLabel);
   renderStageStatus();
   if (scene.stagedForFoundry) restartStagePollIfStaged(); // a fresh load of an already-staged scene watches too, not just a just-flipped toggle
-  header.appendChild(stageRow);
 
-  // Friction Wave 1 W3b -- the scene<->map link row: an always-visible map
-  // chip (the exact "does this scene have a map?" glance the owner couldn't
-  // get) + a quiet picker over the world's existing stagecraft map assets
-  // (name + src). Saving writes `mapAssetId` through the ordinary scene
-  // patch route; a linked map also lets push-scene default its mapSrc (W3c).
-  header.appendChild(buildSceneMapRow(scene, mapAssets, restartStagePollIfStaged));
+  // Band row 3: stage + map as one quiet chip row (Friction Wave 1 W3b's
+  // always-visible map glance kept, just chip-shaped now).
+  const chipRow = document.createElement("div");
+  chipRow.className = "scene-band-chiprow";
+  chipRow.appendChild(stageRow);
+  chipRow.appendChild(buildSceneMapRow(scene, mapAssets, restartStagePollIfStaged));
+  header.appendChild(chipRow);
 
   // Phase 36 task 36.4b -- the "Stage" chip row, near the toggle above.
   const dressingRow = buildStageDressingRow(scene, assetRoster, stageDressingLookups);
   if (dressingRow) header.appendChild(dressingRow);
 
   // §C.4/§C.5 -- "The place" description grid OR the missing-description
-  // banner. Editing writes back to the graph NODE, not the scene.
-  if (place) header.appendChild(buildPlaceDescriptionBlock(scene, place));
+  // banner, now behind an "About the place" DISCLOSURE (Option A band):
+  // develop-this-place lives INSIDE the same section (no divider), and the
+  // whole thing opens itself only while the place has no description —
+  // develop matters most exactly then. Editing still writes the graph NODE.
+  if (place) {
+    const hasPlaceDesc = !!(typeof place.description === "string" && place.description.trim() !== "");
+    const about = document.createElement("details");
+    about.className = "scene-about-place";
+    about.setAttribute("data-testid", "scene-about-place");
+    if (!hasPlaceDesc) about.open = true;
+    const summary = document.createElement("summary");
+    summary.className = hasPlaceDesc ? "scene-about-summary" : "scene-about-summary scene-about-summary--empty";
+    const sumLbl = document.createElement("span");
+    sumLbl.className = "scene-about-summary-label";
+    sumLbl.textContent = "About the place";
+    const sumPreview = document.createElement("span");
+    sumPreview.className = "scene-about-summary-preview";
+    const previewText = hasPlaceDesc ? String(place.description).replace(/\s+/g, " ").trim() : "no description yet";
+    sumPreview.textContent = previewText.length > 90 ? `${previewText.slice(0, 90)}…` : previewText;
+    summary.append(sumLbl, sumPreview);
+    about.appendChild(summary);
+    about.appendChild(buildPlaceDescriptionBlock(scene, place));
+    header.appendChild(about);
+  }
   root.appendChild(header);
 
   // §C.6 -- Read-aloud (the serif narration box). In the designer shell this is
@@ -4758,11 +4789,14 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     // above and the toggle itself.
     if (scene.stagedForFoundry) restartStagePollIfStaged();
   };
-  // §C: a quiet, scene-level `✦` ghost link to propose elements for this room
-  // (additive/interruptible; the room is fully runnable without it).
-  elementsSection.appendChild(buildProposeElementsGhostLink(scene, refreshElements));
-  elementsSection.appendChild(buildSeedSkeletonGhostLink(scene, refreshElements));
   elementsSection.appendChild(listHost);
+  // §C (Option A band): the `✦` propose ghost moved to the BOTTOM, beside
+  // the other adders — assists follow the content, they don't lead it. On an
+  // empty scene the list above is empty, so this still reads at the top.
+  // The seed-run-skeleton ghost is RETIRED (Russell, 2026-09-02): new
+  // elements default sensibly via inference and get sorted in the lanes;
+  // the seed route + wf_seed_run_skeleton stay for agents/tests.
+  elementsSection.appendChild(buildProposeElementsGhostLink(scene, refreshElements));
   // §C (below the elements): `◇ From graph` inline picker + `▣ NPC or
   // creature` + `▤ From library` (Phase 37.6 task 1 retired `✦ Suggest
   // dressing` from this row -- see buildSceneActionsRow's own doc comment).

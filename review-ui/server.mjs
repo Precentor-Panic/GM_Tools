@@ -2118,7 +2118,7 @@ async function handleApi(req, res, url, parts) {
       }
     }
     const scene = updateScene(w, parts[3], {
-      name: body.name, objectiveNote: body.objectiveNote, mapAssetId: body.mapAssetId,
+      name: body.name, objectiveNote: body.objectiveNote, objectiveInRun: body.objectiveInRun, mapAssetId: body.mapAssetId,
       // Run layout keys (2026-08-26); the store validates shape.
       kind: body.kind, whereNote: body.whereNote, tags: body.tags, activeVariants: body.activeVariants
     });

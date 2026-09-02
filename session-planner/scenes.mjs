@@ -308,7 +308,7 @@ export function renameScene(world, sceneId, name, opts = {}) {
  */
 const SCENE_KINDS = new Set(["narrative", "combat", "transit"]);
 
-export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneRef, locationEntityId, stagedForFoundry, mapAssetId, kind, whereNote, tags, activeVariants } = {}, opts = {}) {
+export function updateScene(world, sceneId, { name, objectiveNote, objectiveInRun, foundrySceneRef, locationEntityId, stagedForFoundry, mapAssetId, kind, whereNote, tags, activeVariants } = {}, opts = {}) {
   if (name !== undefined) validateSceneName(name); // QA W2 fix (Group B #12)
   const scenes = readScenes(world);
   const scene = scenes.find((s) => s.id === sceneId);
@@ -317,6 +317,14 @@ export function updateScene(world, sceneId, { name, objectiveNote, foundrySceneR
   }
   if (name !== undefined) scene.name = name;
   if (objectiveNote !== undefined) scene.objectiveNote = objectiveNote;
+  // Prep-header band (Option A, 2026-09-02): the intent/objective is often
+  // just the GM's scene-locator note -- this flag drops it from the Run
+  // spread. Absent/undefined means SHOWN (the pre-flag behavior); only an
+  // explicit false hides it.
+  if (objectiveInRun !== undefined) {
+    if (objectiveInRun !== null && typeof objectiveInRun !== "boolean") throw new Error("Scene objectiveInRun must be boolean or null.");
+    scene.objectiveInRun = objectiveInRun;
+  }
   if (foundrySceneRef !== undefined) scene.foundrySceneRef = foundrySceneRef;
   if (locationEntityId !== undefined) scene.locationEntityId = locationEntityId;
   if (stagedForFoundry !== undefined) scene.stagedForFoundry = stagedForFoundry;

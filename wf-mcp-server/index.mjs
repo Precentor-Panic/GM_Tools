@@ -1740,17 +1740,19 @@ server.registerTool(
       "MUTATION -- direct write, no review gate. Mirrors POST /api/session-planner/scenes/:sceneId (patch-style -- only supplied fields change). " +
       "Run-layout keys: `kind` (narrative|combat|transit|null) drives the seed skeleton + a 'combat' pill; `whereNote` is the Run spread's " +
       "where-line; `tags` render as pills; `activeVariants` gates which variant-tagged elements Run mode shows (empty = show all) -- " +
-      "prefer wf_set_scene_active_variants for that one during live play.",
+      "prefer wf_set_scene_active_variants for that one during live play. `objectiveInRun: false` keeps the objective GM-only " +
+      "(the Run spread drops its Objective box; absent/true = shown).",
     inputSchema: {
       world: requiredWorldParam, sceneId: z.string(), name: z.string().optional(), objectiveNote: z.string().optional(),
+      objectiveInRun: z.boolean().nullable().optional(),
       kind: z.enum(["narrative", "combat", "transit"]).nullable().optional(), whereNote: z.string().nullable().optional(),
       tags: z.array(z.string()).optional(), activeVariants: z.array(z.string()).optional()
     }
   },
-  async ({ world, sceneId, name, objectiveNote, kind, whereNote, tags, activeVariants }) => {
+  async ({ world, sceneId, name, objectiveNote, objectiveInRun, kind, whereNote, tags, activeVariants }) => {
     try {
       const w = resolveWorld(world);
-      return text({ scene: updateScene(w, sceneId, { name, objectiveNote, kind, whereNote, tags, activeVariants }) });
+      return text({ scene: updateScene(w, sceneId, { name, objectiveNote, objectiveInRun, kind, whereNote, tags, activeVariants }) });
     } catch (err) {
       return errorText(err);
     }
