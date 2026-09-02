@@ -34,9 +34,15 @@
  * always false and `summary.edgesUpdated` never increments for anything
  * this module proposes. Every edge this module's dry run produces is
  * therefore always a CREATE, never an update — confirmed by reading
- * importGraph's edge loop, not assumed. Re-importing the same writeup twice
- * would create duplicate edges; this is importGraph's own existing,
- * unmodified behavior, not a gap introduced here.
+ * importGraph's edge loop, not assumed. Left unmitigated, re-importing the
+ * same writeup twice would create duplicate edges (a confirmed Kilmarn
+ * staged-intake failure) — which is why THIS module now runs its own
+ * deterministic edge-dedup pre-pass (dedupeProposalEdgesAgainstSnapshot,
+ * the last stage of normalizeProposalAgainstSnapshot) before the dry run:
+ * importGraph itself stays unmodified, and a proposed edge that exactly
+ * matches an existing (source, target, relationshipType) is removed from
+ * the proposal and surfaced on batch.scope.edgeDedup instead of being
+ * blindly re-created.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -107,30 +113,95 @@ export const MAX_WRITEUP_CHARS = 40000;
 // audit's context-FREE call sites -- proposeWfiFromWriteup previously saw
 // only the raw writeup text, nothing about what already exists in the
 // target world's graph. NAMES/TYPES only (never descriptions -- keeps this
-// cheap and avoids biasing extraction toward already-recorded prose), capped
-// at a small count, for grounding + dedup hints: the model can recognize
-// "Gerdur" in the writeup is probably the SAME Gerdur already in the graph
-// rather than a coincidental namesake, and match her exact name/type rather
-// than mint a near-duplicate. This is a WHOLE-WORLD census, not an
-// entity-centric neighborhood walk, so it does NOT reuse narrate.mjs's
+// cheap and avoids biasing extraction toward already-recorded prose), for
+// grounding + dedup hints: the model can recognize "Gerdur" in the writeup
+// is probably the SAME Gerdur already in the graph rather than a
+// coincidental namesake, and match her exact name/type rather than mint a
+// near-duplicate. This is a WHOLE-WORLD census, not an entity-centric
+// neighborhood walk, so it does NOT reuse narrate.mjs's
 // buildAdjacencyContext (there is no anchor entity for a holistic
 // extraction pass to walk outward from) -- buildAdjacencyContext stays this
 // project's default for any NEW entity-centric call site; this is a
 // different shape of context for a genuinely different kind of call.
-export const EXISTING_WORLD_SUMMARY_CAP = 60;
+//
+// Intake-quality pass (Kilmarn retro): the original small COUNT cap (60)
+// bit on a real world (kilmarn: 64 entities), silently truncating exactly
+// the list the dedup instruction depends on, and the census carried NO
+// relationship context at all -- the class of mistake the staged-intake
+// retro reported ("what things were, how they were related") traces
+// straight to that gap. Replaced by a CHAR budget over the census as a
+// whole: the entity list is NEVER truncated (dedup correctness depends on
+// every existing name being visible -- even a 500-entity world is only a
+// few thousand tokens of names), and the edge list gets whatever budget
+// remains, truncated with an honest count line if it must be.
+export const WRITEUP_CENSUS_CHAR_BUDGET = 24000;
 
 /**
+ * The census char budget, env-overridable (WF_WRITEUP_CENSUS_CHARS), read at
+ * call time -- same convention as resolveWriteupImportMaxTokens above.
+ *
+ * @param {object} [env]  injectable for tests; defaults to process.env
+ * @returns {number}
+ */
+export function resolveWriteupCensusChars(env = process.env) {
+  const parsed = Number.parseInt(env.WF_WRITEUP_CENSUS_CHARS ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : WRITEUP_CENSUS_CHAR_BUDGET;
+}
+
+/**
+ * Uncapped names+types census -- see the budget comment above for why no
+ * count cap: every existing name must be visible for the prompt's
+ * reuse-the-exact-name dedup instruction to work.
+ *
  * @param {object[]} [entities]  the live snapshot's entities (existingSnapshot.entities)
- * @param {number} [cap]
  * @returns {string}
  */
-export function renderExistingWorldSummary(entities, cap = EXISTING_WORLD_SUMMARY_CAP) {
+export function renderExistingWorldSummary(entities) {
   const list = Array.isArray(entities) ? entities : [];
   if (!list.length) return "(this world's graph is currently empty -- every entity here will be new)";
-  const shown = list.slice(0, cap);
-  const lines = shown.map((e) => `- ${e.name} (${e.type})`);
-  if (list.length > cap) lines.push(`...and ${list.length - cap} more existing entities not shown here.`);
-  return lines.join("\n");
+  return list.map((e) => `- ${e.name} (${e.type})`).join("\n");
+}
+
+/**
+ * Existing edges in name form (`- A -[relationshipType: label]-> B`), for
+ * the extraction prompt's relationships section -- so the model can see how
+ * already-known things relate instead of re-deriving (and mis-deriving, or
+ * re-proposing) those relationships from the writeup alone. Truncated to
+ * `budgetChars` with an honest "...and N more" tail line; an edge whose
+ * endpoint ids don't resolve to entities is skipped (broken data can't be
+ * name-matched by the model anyway).
+ *
+ * @param {object[]} [entities]  the live snapshot's entities (for id -> name)
+ * @param {object[]} [edges]     the live snapshot's edges
+ * @param {number} [budgetChars] max chars for the rendered list
+ * @returns {string}
+ */
+export function renderExistingEdgesSummary(entities, edges, budgetChars = WRITEUP_CENSUS_CHAR_BUDGET) {
+  const edgeList = Array.isArray(edges) ? edges : [];
+  if (!edgeList.length) return "(no relationships recorded in this world's graph yet)";
+  const nameById = new Map((Array.isArray(entities) ? entities : []).map((e) => [e.id, e.name]));
+  const lines = [];
+  for (const ed of edgeList) {
+    const source = nameById.get(ed.sourceId);
+    const target = nameById.get(ed.targetId);
+    if (!source || !target) continue;
+    const type = ed.relationshipType || "unspecified";
+    const label = ed.label ? `: ${ed.label}` : "";
+    lines.push(`- ${source} -[${type}${label}]-> ${target}`);
+  }
+  if (!lines.length) return "(no relationships recorded in this world's graph yet)";
+  const out = [];
+  let used = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const cost = lines[i].length + 1; // +1 newline
+    if (used + cost > budgetChars) {
+      out.push(`...and ${lines.length - i} more existing relationships not shown here.`);
+      break;
+    }
+    out.push(lines[i]);
+    used += cost;
+  }
+  return out.join("\n");
 }
 
 // All mutations from one writeup-import call land in a single synthetic
@@ -372,6 +443,11 @@ function fillFramingTemplate(vars) {
  *   (renderExistingWorldSummary above) for grounding + dedup hints. Omitted entirely ->
  *   the prompt just states the graph as empty, matching pre-task-4 behavior for any caller
  *   that doesn't (yet) pass a snapshot through.
+ * @param {object[]} [opts.existingEdges]  intake-quality pass: the target world's live
+ *   snapshot edges, rendered in name form into the prompt's relationships section
+ *   (renderExistingEdgesSummary above) so extraction sees how existing things relate
+ *   instead of re-deriving those relationships from the writeup alone. Omitted -> the
+ *   section honestly states no relationships are recorded.
  * @param {object} [opts.client]  injectable Anthropic-SDK-shaped client (for tests/DI)
  * @param {string} [opts.apiKey]
  * @param {string} [opts.model]
@@ -387,14 +463,24 @@ export async function proposeWfiFromWriteup(writeupText, opts = {}) {
   if (writeupText.length > MAX_WRITEUP_CHARS) {
     throw new WriteupTooLargeError(
       `Writeup is ${writeupText.length} characters, over the ${MAX_WRITEUP_CHARS}-character v1 guard. ` +
-      `Trim it or split it into multiple smaller writeup-import calls — chunking isn't built yet.`,
+      `Trim it, or split it into multiple smaller writeup-import calls — chunking isn't built yet. If you ` +
+      `split, accept and sync each piece before submitting the next, so every extraction is grounded in ` +
+      `the graph the earlier pieces already built.`,
       { length: writeupText.length, max: MAX_WRITEUP_CHARS }
     );
   }
 
+  // Entity census first (never truncated), edges into whatever remains of
+  // the shared char budget -- see WRITEUP_CENSUS_CHAR_BUDGET's own comment.
+  const existingWorldSummary = renderExistingWorldSummary(opts.existingEntities);
   const basePrompt = fillTemplate({
     writeupText,
-    existingWorldSummary: renderExistingWorldSummary(opts.existingEntities),
+    existingWorldSummary,
+    existingEdgesSummary: renderExistingEdgesSummary(
+      opts.existingEntities,
+      opts.existingEdges,
+      Math.max(0, resolveWriteupCensusChars() - existingWorldSummary.length)
+    ),
     retryNote: opts.note ? `Additional note from the reviewer: ${opts.note}` : ""
   });
 
@@ -420,15 +506,25 @@ export async function proposeWfiFromWriteup(writeupText, opts = {}) {
       // any fixed budget, so the honest move is immediate, actionable
       // guidance rather than one more multi-minute paid attempt.)
       const approx = approximateEntityCount(raw);
+      // Intake-quality pass: the OLD advice here led with "split the
+      // writeup" with no discipline attached -- and staged submissions with
+      // nothing synced in between is exactly the workflow that produced the
+      // Kilmarn relation/identity mistakes (each later piece extracted
+      // blind to what the earlier pieces created). Lead with the budget
+      // knob, and make the split path safe by stating the
+      // accept-and-sync-between-pieces discipline the graph-context census
+      // depends on.
       throw new WriteupTruncatedError(
         `Model response was truncated at max_tokens=${maxTokens} before the extraction finished -- ` +
         `roughly ${approx} entities had already been emitted when the budget ran out, so this writeup is too ` +
         `entity-dense for a single extraction pass. Not retrying: an identical call would truncate at the same ` +
-        `point and cost another full API call. Fixes, in preference order: (1) split the writeup into smaller ` +
-        `pieces (density, not length, is what blows the budget) and submit each separately -- an ` +
-        `already-chosen framing can be carried over on resubmit via wf_propose_from_writeup's \`framing\` ` +
-        `parameter, so the rubber-duck round is not re-asked; (2) raise the budget via the ` +
-        `WF_WRITEUP_IMPORT_MAX_TOKENS environment variable (currently ${maxTokens}).`,
+        `point and cost another full API call. Fixes, in preference order: (1) raise the budget via the ` +
+        `WF_WRITEUP_IMPORT_MAX_TOKENS environment variable (currently ${maxTokens}); (2) if you split the ` +
+        `writeup instead (density, not length, is what blows the budget), ACCEPT AND SYNC each piece before ` +
+        `submitting the next -- every extraction is grounded in the current graph, so a later piece will match ` +
+        `what an earlier piece created instead of duplicating or mis-relating it; an already-chosen framing ` +
+        `can be carried over on resubmit via wf_propose_from_writeup's \`framing\` parameter, so the ` +
+        `rubber-duck round is not re-asked.`,
         { maxTokens, approxEntityCount: approx, rawResponse: raw }
       );
     }
@@ -475,6 +571,12 @@ export async function proposeWfiFromWriteup(writeupText, opts = {}) {
  *                                re-framing round — see requestReframing below —
  *                                to inform a second round with WHY the first
  *                                one didn't land, not a blind repeat)
+ * @param {object[]} [opts.existingEntities]  intake-quality pass: names+types census
+ *   (renderExistingWorldSummary — deliberately NO edges here: a one-sentence glance
+ *   doesn't justify a few thousand tokens of relationship lines) so a framing of a
+ *   mature world reacts to what the world already contains rather than reading the
+ *   writeup as if it arrived in a vacuum. Omitted -> the section states the graph
+ *   as empty, matching prior behavior.
  * @param {object} [opts.client]
  * @param {string} [opts.apiKey]
  * @param {string} [opts.model]
@@ -490,13 +592,16 @@ export async function proposeFramingsFromWriteup(writeupText, opts = {}) {
   if (writeupText.length > MAX_WRITEUP_CHARS) {
     throw new WriteupTooLargeError(
       `Writeup is ${writeupText.length} characters, over the ${MAX_WRITEUP_CHARS}-character v1 guard. ` +
-      `Trim it or split it into multiple smaller writeup-import calls — chunking isn't built yet.`,
+      `Trim it, or split it into multiple smaller writeup-import calls — chunking isn't built yet. If you ` +
+      `split, accept and sync each piece before submitting the next, so every extraction is grounded in ` +
+      `the graph the earlier pieces already built.`,
       { length: writeupText.length, max: MAX_WRITEUP_CHARS }
     );
   }
 
   const basePrompt = fillFramingTemplate({
     writeupText,
+    existingWorldSummary: renderExistingWorldSummary(opts.existingEntities),
     retryNote: opts.note ? `Additional note from the reviewer: ${opts.note}` : ""
   });
 
@@ -890,29 +995,105 @@ export function normalizeProposalContainmentDirection(proposal, existingEntities
 }
 
 /**
+ * Intake-quality pass — edge dedup against the live snapshot. importGraph
+ * has NO edge-level dedup at all (see this module's top-of-file note): every
+ * proposed edge is unconditionally a CREATE, so a staged re-import of
+ * overlapping material duplicated edges by construction — a confirmed
+ * Kilmarn-retro failure mode, not a hypothetical. This pass removes a
+ * proposed edge that exactly matches an existing edge on
+ * (source name, target name, relationshipType) — names lowercased,
+ * relationshipType defaulted to normalizeEdge's own "social" on both sides,
+ * direction respected (an A->B match never swallows a genuine B->A
+ * proposal; the W5a containment pass has already canonicalized direction by
+ * the time this runs).
+ *
+ * Matched edges are RECORDED, never silently dropped — the returned
+ * `dedupedEdges` entries (with both the proposed and the existing label, so
+ * a reviewer can see whether the writeup was saying something new) are
+ * carried by importWriteup onto batch.scope.edgeDedup and into the
+ * suggestions/headline surfaces.
+ *
+ * Deliberate v1 limitation (flagged, not silent): a match whose LABEL
+ * differs is still dropped rather than converted into an upsert_edge
+ * UPDATE of the existing edge — the recorded proposedLabel/existingLabel
+ * pair keeps the reviewer informed meanwhile. Converting label-differing
+ * matches into genuine updates is the known follow-up.
+ *
+ * Existing edges reference endpoints by ID; proposed edges by NAME — so
+ * existing edges resolve through the snapshot's own entities. An existing
+ * edge whose endpoints don't resolve is skipped (broken data can't collide
+ * with a name-referencing proposal).
+ *
+ * @param {{entities:object[], edges:object[]}} proposal
+ * @param {object[]} existingEntities  the live snapshot's entities (id -> name)
+ * @param {object[]} existingEdges    the live snapshot's edges
+ * @returns {{proposal:object, dedupedEdges:Array<{source:string, target:string, type:string, existingEdgeId:string, proposedLabel:string|null, existingLabel:string|null}>}}
+ */
+export function dedupeProposalEdgesAgainstSnapshot(proposal, existingEntities, existingEdges) {
+  const nameById = new Map((existingEntities ?? []).map((e) => [e.id, e.name]));
+  const edgeKey = (src, dst, type) =>
+    `${String(src).trim().toLowerCase()}::${String(dst).trim().toLowerCase()}::${String(type ?? "social").trim().toLowerCase()}`;
+
+  const existingByKey = new Map();
+  for (const ed of existingEdges ?? []) {
+    const src = nameById.get(ed.sourceId);
+    const dst = nameById.get(ed.targetId);
+    if (!src || !dst) continue;
+    const key = edgeKey(src, dst, ed.relationshipType);
+    if (!existingByKey.has(key)) existingByKey.set(key, ed);
+  }
+  if (!existingByKey.size) return { proposal, dedupedEdges: [] };
+
+  const dedupedEdges = [];
+  const edges = (proposal.edges ?? []).filter((pedge) => {
+    const match = existingByKey.get(edgeKey(pedge.source, pedge.target, pedge.relationshipType));
+    if (!match) return true;
+    dedupedEdges.push({
+      source: pedge.source,
+      target: pedge.target,
+      type: match.relationshipType ?? "social",
+      existingEdgeId: match.id,
+      proposedLabel: pedge.label ?? null,
+      existingLabel: match.label ?? null
+    });
+    return false;
+  });
+
+  return { proposal: { ...proposal, edges }, dedupedEdges };
+}
+
+/**
  * The full pre-dry-run normalization pass, in the order the conservatism
  * rules require — importWriteup/regenerateWriteupImport call THIS, not the
  * individual passes. Type conflicts resolve FIRST (W2b — after which those
  * entities are exact name+type matches the near-miss pass correctly
  * ignores), then the W2a near-miss rename pass over what's left, then the
- * W5a containment-direction pass LAST (so its snapshot type lookups see the
- * already-canonicalized endpoint names).
+ * W5a containment-direction pass (so its snapshot type lookups see the
+ * already-canonicalized endpoint names), and the edge-dedup pass LAST of
+ * all — it must see fully canonicalized names AND final directions, so a
+ * shorthand-named or flipped duplicate of an existing edge still matches.
+ * Removing matched edges here, before previewWriteupImport, is also load-
+ * bearing for correctness: preview's newEdgeObjs-vs-proposalEdges zip check
+ * requires every proposal edge to become a fresh importGraph create.
  *
  * @param {{entities:object[], edges:object[]}} proposal
  * @param {object[]} existingEntities
+ * @param {object[]} [existingEdges]  omitted -> edge dedup is a no-op (empty dedupedEdges)
  * @param {object} [opts]  forwarded to the individual passes
- * @returns {{proposal:object, rewrites:Array, typeResolutions:Array, containmentFlips:Array, containmentUncertainties:Array}}
+ * @returns {{proposal:object, rewrites:Array, typeResolutions:Array, containmentFlips:Array, containmentUncertainties:Array, dedupedEdges:Array}}
  */
-export function normalizeProposalAgainstSnapshot(proposal, existingEntities, opts = {}) {
+export function normalizeProposalAgainstSnapshot(proposal, existingEntities, existingEdges = [], opts = {}) {
   const typePass = normalizeProposalTypeConflicts(proposal, existingEntities);
   const nearMissPass = normalizeProposalNameNearMisses(typePass.proposal, existingEntities, opts);
   const directionPass = normalizeProposalContainmentDirection(nearMissPass.proposal, existingEntities);
+  const dedupPass = dedupeProposalEdgesAgainstSnapshot(directionPass.proposal, existingEntities, existingEdges);
   return {
-    proposal: directionPass.proposal,
+    proposal: dedupPass.proposal,
     rewrites: nearMissPass.rewrites,
     typeResolutions: typePass.resolutions,
     containmentFlips: directionPass.flips,
-    containmentUncertainties: directionPass.uncertainties
+    containmentUncertainties: directionPass.uncertainties,
+    dedupedEdges: dedupPass.dedupedEdges
   };
 }
 
@@ -1166,33 +1347,56 @@ export function previewWriteupImport(proposal, existingSnapshot, opts = {}) {
  * @returns {Promise<{batchId:string, mutationCount:number, importSummary:object, suggestions:Array, headline:string}>}
  */
 export async function importWriteup(world, text, existingSnapshot, opts = {}) {
-  // Phase 37.6 task 4: thread the live snapshot's entities through for the
-  // prompt's existing-world-summary section (grounding + dedup hints) --
-  // this function already has existingSnapshot for the dry-run merge below,
-  // so no new fetch, just reusing what's already in hand.
-  const proposal = await proposeWfiFromWriteup(text, { ...(opts.llmOpts ?? {}), existingEntities: existingSnapshot.entities });
+  // Phase 37.6 task 4 + intake-quality pass: thread the live snapshot's
+  // entities AND edges through for the prompt's existing-world/relationships
+  // sections (grounding + dedup hints) -- this function already has
+  // existingSnapshot for the dry-run merge below, so no new fetch, just
+  // reusing what's already in hand.
+  const proposal = await proposeWfiFromWriteup(text, {
+    ...(opts.llmOpts ?? {}),
+    existingEntities: existingSnapshot.entities,
+    existingEdges: existingSnapshot.edges
+  });
   // W2a: deterministic near-miss normalization against the live snapshot
   // BEFORE the dry-run, so a confident shorthand/variant of an existing
-  // entity dedups into an UPDATE instead of a duplicate create.
-  const { proposal: normalized } = normalizeProposalAgainstSnapshot(proposal, existingSnapshot.entities ?? []);
+  // entity dedups into an UPDATE instead of a duplicate create — plus the
+  // edge-dedup pass, so a restated existing relationship is skipped (and
+  // recorded) instead of duplicated.
+  const { proposal: normalized, dedupedEdges } = normalizeProposalAgainstSnapshot(
+    proposal, existingSnapshot.entities ?? [], existingSnapshot.edges ?? []
+  );
   const { mutations, summary, suggestions } = previewWriteupImport(normalized, existingSnapshot, { mode: opts.mode });
   const diffed = attachDiffs(mutations, existingSnapshot.entities ?? [], existingSnapshot.edges ?? []);
 
   const batch = createBatch(
     world,
-    { mode: "writeup-import", text, ...(opts.extraScope ?? {}) },
+    {
+      mode: "writeup-import",
+      text,
+      // Review transparency for skipped duplicate edges — omitted entirely
+      // when nothing matched, so the no-dedup scope shape stays byte-
+      // identical to what it always was (same convention as extraScope).
+      ...(dedupedEdges.length ? { edgeDedup: dedupedEdges } : {}),
+      ...(opts.extraScope ?? {})
+    },
     opts.elapsedTimeDescriptor,
     diffed,
     opts.makeId ? { makeId: opts.makeId } : {}
   );
   const batchSummary = summarizeBatch(batch);
+  const headline =
+    renderHeadline(batchSummary) +
+    (dedupedEdges.length
+      ? ` ${dedupedEdges.length} proposed edge${dedupedEdges.length === 1 ? "" : "s"} matched existing edges and ${dedupedEdges.length === 1 ? "was" : "were"} skipped.`
+      : "");
 
   return {
     batchId: batch.id,
     mutationCount: batch.mutations.length,
     importSummary: summary,
     suggestions,
-    headline: renderHeadline(batchSummary)
+    edgeDedup: dedupedEdges,
+    headline
   };
 }
 
@@ -1234,13 +1438,21 @@ export async function regenerateWriteupImport(batch, note, existingSnapshot, opt
       `hand-authored or predates Phase 5, regeneration isn't possible.)`
     );
   }
-  const proposal = await proposeWfiFromWriteup(originalText, { ...(opts.llmOpts ?? {}), note, existingEntities: existingSnapshot.entities });
+  const proposal = await proposeWfiFromWriteup(originalText, {
+    ...(opts.llmOpts ?? {}),
+    note,
+    existingEntities: existingSnapshot.entities,
+    existingEdges: existingSnapshot.edges
+  });
   // W2a: same pre-dry-run normalization as importWriteup — a regenerate
-  // must not reintroduce the near-miss duplicates the original run avoided.
-  const { proposal: normalized } = normalizeProposalAgainstSnapshot(proposal, existingSnapshot.entities ?? []);
+  // must not reintroduce the near-miss (or duplicate-edge) results the
+  // original run avoided.
+  const { proposal: normalized, dedupedEdges } = normalizeProposalAgainstSnapshot(
+    proposal, existingSnapshot.entities ?? [], existingSnapshot.edges ?? []
+  );
   const { mutations, summary, suggestions } = previewWriteupImport(normalized, existingSnapshot, { mode: opts.mode });
   const diffed = attachDiffs(mutations, existingSnapshot.entities ?? [], existingSnapshot.edges ?? []);
-  return { mutations: diffed, summary, suggestions };
+  return { mutations: diffed, summary, suggestions, edgeDedup: dedupedEdges };
 }
 
 // =====================================================================

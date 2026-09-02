@@ -130,6 +130,10 @@ await test("wf_propose_from_writeup (rubber-duck off, the default) degrades to t
   assertNeverAuthError(result, "wf_propose_from_writeup");
   assert.equal(result.isError, false, `expected success, got: ${result.text}`);
   assert.ok(result.json.batchId, "even the honest zero-entity offline extraction still produces a real batch");
+  // Persona round (M5): the empty batch must SAY it's offline -- previously
+  // indistinguishable from "your writeup contained nothing extractable".
+  assert.equal(result.json.offline, true, "keyless response is stamped offline");
+  assert.match(result.json.offlineNote ?? "", /ANTHROPIC_API_KEY/, "and explains what that means");
 });
 
 await test("wf_set_rubber_duck_mode(true) + wf_propose_from_writeup (framing phase) + wf_select_framing both degrade offline instead of crashing keyless", async () => {
@@ -138,6 +142,7 @@ await test("wf_set_rubber_duck_mode(true) + wf_propose_from_writeup (framing pha
   assertNeverAuthError(phaseA, "wf_propose_from_writeup (framing phase)");
   assert.equal(phaseA.isError, false, `expected success, got: ${phaseA.text}`);
   assert.equal(phaseA.json.phase, "framing");
+  assert.equal(phaseA.json.offline, true, "the keyless framing phase is stamped offline too (M5)");
   assert.equal(phaseA.json.framings.length, 3);
 
   const phaseB = await callRaw("wf_select_framing", {

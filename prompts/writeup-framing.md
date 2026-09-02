@@ -14,11 +14,20 @@ three short, genuinely different readings of what this writeup is really
 *about* — the kind of quick gut reactions a co-GM might offer after skimming
 it once, before anyone sits down to do real work.
 
+## Entities already in this world's graph
+
+{{existingWorldSummary}}
+
 ## The writeup
 
 {{writeupText}}
 
 ## Your task
+
+The existing-entities list above is context, not material to react to on its
+own: use it so your readings connect the writeup to the world it is landing
+in (a returning name is probably the same person, not a namesake), rather
+than reading the writeup as if it arrived in a vacuum.
 
 Propose exactly three interpretive framings, each capturing a different
 emphasis or angle a GM could run this material as — for example (illustrative

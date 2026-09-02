@@ -38,7 +38,12 @@ const {
   MAX_FRAMING_ROUNDS,
   // Phase 37.6 task 4 (graph-context census)
   renderExistingWorldSummary,
-  EXISTING_WORLD_SUMMARY_CAP
+  // Intake-quality pass (Kilmarn retro): budgeted census + edge context + edge dedup
+  renderExistingEdgesSummary,
+  resolveWriteupCensusChars,
+  WRITEUP_CENSUS_CHAR_BUDGET,
+  dedupeProposalEdgesAgainstSnapshot,
+  normalizeProposalAgainstSnapshot
 } = await import("../graph-import/writeup-import.mjs");
 const { loadBatch } = await import("../mutation-engine/review-state.mjs");
 
@@ -199,8 +204,12 @@ test("W2c: a truncated FIRST attempt fails fast with one call -- never a second 
       assert.equal(err.maxTokens, 100);
       assert.equal(err.approxEntityCount, 3, "reports roughly how many entities the partial response had emitted");
       assert.match(err.message, /~?\b3 entities/i);
-      assert.match(err.message, /split the writeup/i, "advises splitting");
-      assert.match(err.message, /WF_WRITEUP_IMPORT_MAX_TOKENS/, "names the env override");
+      assert.match(err.message, /WF_WRITEUP_IMPORT_MAX_TOKENS/, "names the env override, and names it FIRST");
+      assert.ok(
+        err.message.indexOf("WF_WRITEUP_IMPORT_MAX_TOKENS") < err.message.indexOf("split the writeup"),
+        "raising the budget must be advised BEFORE splitting -- unsynced staged splits are the workflow that caused the Kilmarn intake mistakes"
+      );
+      assert.match(err.message, /ACCEPT AND SYNC each piece/i, "the split advice must carry the sync-between-pieces discipline");
       assert.match(err.message, /Not retrying/i);
       return true;
     }
@@ -549,12 +558,62 @@ test("renderExistingWorldSummary: lists name + type, one per line, nothing else 
   assert.ok(!out.includes("must NOT leak"), "descriptions must never appear in the compact summary");
 });
 
-test("renderExistingWorldSummary: caps at a small count, with an honest '...and N more' tail rather than silently truncating", () => {
-  const many = Array.from({ length: EXISTING_WORLD_SUMMARY_CAP + 15 }, (_, i) => ({ id: `e${i}`, name: `Entity ${i}`, type: "concept" }));
+// Intake-quality pass: the census is UNCAPPED -- the old 60-entity count cap
+// bit on the real kilmarn world (64 entities) and silently truncated exactly
+// the list the prompt's reuse-the-exact-name dedup instruction depends on.
+test("renderExistingWorldSummary: never truncates -- every existing entity's name+type renders, even well past the old count cap", () => {
+  const many = Array.from({ length: 200 }, (_, i) => ({ id: `e${i}`, name: `Entity ${i}`, type: "concept" }));
   const out = renderExistingWorldSummary(many);
   const lines = out.split("\n");
-  assert.equal(lines.length, EXISTING_WORLD_SUMMARY_CAP + 1, "cap-many lines plus one honest tail line");
-  assert.match(lines.at(-1), /\.\.\.and 15 more existing entities/);
+  assert.equal(lines.length, 200, "one line per entity, no cap, no tail line");
+  assert.match(lines.at(-1), /- Entity 199 \(concept\)/);
+});
+
+test("renderExistingEdgesSummary: renders edges in name form, resolving snapshot ids to entity names", () => {
+  const entities = [
+    { id: "e1", name: "Gerdur", type: "person" },
+    { id: "e2", name: "Alvor", type: "person" },
+    { id: "e3", name: "Riverwood", type: "place" }
+  ];
+  const edges = [
+    { id: "ed1", sourceId: "e1", targetId: "e2", relationshipType: "kinship", label: "sister of" },
+    { id: "ed2", sourceId: "e1", targetId: "e3", relationshipType: "presence" }
+  ];
+  const out = renderExistingEdgesSummary(entities, edges);
+  assert.match(out, /- Gerdur -\[kinship: sister of\]-> Alvor/);
+  assert.match(out, /- Gerdur -\[presence\]-> Riverwood/, "no label -> no colon segment");
+});
+
+test("renderExistingEdgesSummary: empty/absent edges -> honest no-relationships fallback; dangling endpoint ids are skipped", () => {
+  assert.match(renderExistingEdgesSummary([], []), /no relationships recorded/);
+  assert.match(renderExistingEdgesSummary([], undefined), /no relationships recorded/);
+  const out = renderExistingEdgesSummary(
+    [{ id: "e1", name: "Gerdur", type: "person" }],
+    [{ id: "ed1", sourceId: "e1", targetId: "missing", relationshipType: "kinship" }]
+  );
+  assert.match(out, /no relationships recorded/, "an edge whose endpoint can't resolve to a name renders nothing rather than a raw id");
+});
+
+test("renderExistingEdgesSummary: truncates to the char budget with an honest '...and N more' tail", () => {
+  const entities = [
+    { id: "a", name: "Alpha", type: "person" },
+    { id: "b", name: "Beta", type: "person" }
+  ];
+  const edges = Array.from({ length: 50 }, (_, i) => ({
+    id: `ed${i}`, sourceId: "a", targetId: "b", relationshipType: `type-${i}`
+  }));
+  const out = renderExistingEdgesSummary(entities, edges, 200);
+  const lines = out.split("\n");
+  assert.ok(lines.length < 51, "must have truncated");
+  assert.match(lines.at(-1), /\.\.\.and \d+ more existing relationships/);
+  assert.ok(out.length <= 200 + lines.at(-1).length + 1, "body stays within budget (tail line excluded)");
+});
+
+test("resolveWriteupCensusChars: env override wins, invalid/absent falls back to the default budget", () => {
+  assert.equal(resolveWriteupCensusChars({}), WRITEUP_CENSUS_CHAR_BUDGET);
+  assert.equal(resolveWriteupCensusChars({ WF_WRITEUP_CENSUS_CHARS: "5000" }), 5000);
+  assert.equal(resolveWriteupCensusChars({ WF_WRITEUP_CENSUS_CHARS: "nope" }), WRITEUP_CENSUS_CHAR_BUDGET);
+  assert.equal(resolveWriteupCensusChars({ WF_WRITEUP_CENSUS_CHARS: "-1" }), WRITEUP_CENSUS_CHAR_BUDGET);
 });
 
 test("proposeWfiFromWriteup: opts.existingEntities reaches the prompt as the existing-world-summary section", async () => {
@@ -583,6 +642,175 @@ test("importWriteup: threads the live existingSnapshot's entities through into t
   };
   await importWriteup("wf-writeup-context-test", "Gerdur also runs the tavern now.", existingSnapshot, { llmOpts: { client } });
   assert.match(client.calls[0].messages[0].content, /- Gerdur \(person\)/, "importWriteup must pass the live snapshot's entities through to the prompt");
+});
+
+test("proposeWfiFromWriteup: opts.existingEdges reaches the prompt as the relationships section, in name form", async () => {
+  const client = mockClient([JSON.stringify({ entities: [], edges: [] })]);
+  await proposeWfiFromWriteup("Gerdur runs the mill.", {
+    client,
+    existingEntities: [{ id: "e1", name: "Gerdur", type: "person" }, { id: "e2", name: "Alvor", type: "person" }],
+    existingEdges: [{ id: "ed1", sourceId: "e1", targetId: "e2", relationshipType: "kinship", label: "sister of" }]
+  });
+  const prompt = client.calls[0].messages[0].content;
+  assert.match(prompt, /Relationships already in this world's graph/);
+  assert.match(prompt, /- Gerdur -\[kinship: sister of\]-> Alvor/);
+});
+
+test("importWriteup: threads the live existingSnapshot's EDGES through into the prompt's relationships section", async () => {
+  const client = mockClient([JSON.stringify({ entities: [], edges: [] })]);
+  const existingSnapshot = {
+    entities: [
+      { id: "e1", name: "Gerdur", type: "person", tags: [], attributes: {} },
+      { id: "e2", name: "Riverwood", type: "place", tags: [], attributes: {} }
+    ],
+    edges: [{ id: "ed1", sourceId: "e1", targetId: "e2", relationshipType: "presence", label: "lives in" }],
+    entityTypes: EXISTING_ENTITY_TYPES
+  };
+  await importWriteup("wf-writeup-edge-context-test", "Gerdur went to the market.", existingSnapshot, { llmOpts: { client } });
+  assert.match(
+    client.calls[0].messages[0].content,
+    /- Gerdur -\[presence: lives in\]-> Riverwood/,
+    "importWriteup must pass the live snapshot's edges through to the prompt"
+  );
+});
+
+// ================================== edge dedup (intake-quality pass) ==
+// importGraph has NO edge-level dedup (see writeup-import.mjs's top-of-file
+// note) -- every proposed edge is unconditionally a CREATE, so staged
+// re-imports duplicated edges by construction. dedupeProposalEdgesAgainstSnapshot
+// is the deterministic pre-pass that closes this, running LAST in
+// normalizeProposalAgainstSnapshot so it sees canonicalized names/directions.
+
+const DEDUP_ENTITIES = [
+  { id: "e-vane", name: "Vane", type: "person" },
+  { id: "e-riverwood", name: "Riverwood", type: "place" },
+  { id: "e-gerdur", name: "Gerdur", type: "person" }
+];
+const DEDUP_EDGES = [
+  { id: "ed-1", sourceId: "e-vane", targetId: "e-riverwood", relationshipType: "presence", label: "haunts" },
+  { id: "ed-2", sourceId: "e-gerdur", targetId: "e-vane", relationshipType: "social", label: "distrusts" }
+];
+function dedupEdgeProposal(edges) {
+  return { entities: [], edges };
+}
+
+test("edge dedup: an exact (source, target, type) duplicate of an existing edge is dropped and recorded with both labels", () => {
+  const { proposal, dedupedEdges } = dedupeProposalEdgesAgainstSnapshot(
+    dedupEdgeProposal([
+      { source: "Vane", target: "Riverwood", relationshipType: "presence", label: "seen at night in", rationale: "x" }
+    ]),
+    DEDUP_ENTITIES,
+    DEDUP_EDGES
+  );
+  assert.equal(proposal.edges.length, 0, "the duplicate must be removed from the proposal");
+  assert.equal(dedupedEdges.length, 1);
+  assert.equal(dedupedEdges[0].existingEdgeId, "ed-1");
+  assert.equal(dedupedEdges[0].proposedLabel, "seen at night in", "a label-differing match still records what the writeup said");
+  assert.equal(dedupedEdges[0].existingLabel, "haunts");
+});
+
+test("edge dedup: matching is case-insensitive on names but respects direction and relationshipType", () => {
+  const { proposal, dedupedEdges } = dedupeProposalEdgesAgainstSnapshot(
+    dedupEdgeProposal([
+      // case-insensitive exact dup
+      { source: "vane", target: "RIVERWOOD", relationshipType: "presence", rationale: "x" },
+      // same endpoints, DIFFERENT type -> a genuinely new relationship, survives
+      { source: "Vane", target: "Riverwood", relationshipType: "ownership", rationale: "x" },
+      // REVERSED direction of ed-1 -> not a match, survives
+      { source: "Riverwood", target: "Vane", relationshipType: "presence", rationale: "x" }
+    ]),
+    DEDUP_ENTITIES,
+    DEDUP_EDGES
+  );
+  assert.equal(dedupedEdges.length, 1, "only the case-insensitive exact dup matches");
+  assert.equal(proposal.edges.length, 2);
+  assert.deepEqual(
+    proposal.edges.map((e) => e.relationshipType).sort(),
+    ["ownership", "presence"]
+  );
+});
+
+test("edge dedup: a proposed edge with no relationshipType matches an existing 'social' edge (normalizeEdge's own default)", () => {
+  const { proposal, dedupedEdges } = dedupeProposalEdgesAgainstSnapshot(
+    dedupEdgeProposal([{ source: "Gerdur", target: "Vane", rationale: "x" }]),
+    DEDUP_ENTITIES,
+    DEDUP_EDGES
+  );
+  assert.equal(proposal.edges.length, 0);
+  assert.equal(dedupedEdges[0].existingEdgeId, "ed-2");
+});
+
+test("edge dedup: pure pass -- the input proposal is not mutated, and no existing edges -> no-op", () => {
+  const input = dedupEdgeProposal([{ source: "Vane", target: "Riverwood", relationshipType: "presence", rationale: "x" }]);
+  dedupeProposalEdgesAgainstSnapshot(input, DEDUP_ENTITIES, DEDUP_EDGES);
+  assert.equal(input.edges.length, 1, "input untouched");
+  const { proposal, dedupedEdges } = dedupeProposalEdgesAgainstSnapshot(input, DEDUP_ENTITIES, []);
+  assert.equal(proposal.edges.length, 1);
+  assert.equal(dedupedEdges.length, 0);
+});
+
+test("edge dedup runs LAST in normalizeProposalAgainstSnapshot: a near-miss-renamed endpoint still dedups (proves pass order)", () => {
+  // "Master Vane" is the W2a pass's own documented real rewrite case -- after
+  // the rename to canon "Vane", the edge's endpoint matches ed-1 exactly.
+  const { proposal, dedupedEdges, rewrites } = normalizeProposalAgainstSnapshot(
+    {
+      entities: [{ name: "Master Vane", type: "person", rationale: "x" }],
+      edges: [{ source: "Master Vane", target: "Riverwood", relationshipType: "presence", rationale: "x" }]
+    },
+    DEDUP_ENTITIES,
+    DEDUP_EDGES
+  );
+  assert.equal(rewrites.length, 1, "the near-miss rename must have fired first");
+  assert.equal(proposal.edges.length, 0, "the renamed edge must then match the existing edge and be deduped");
+  assert.equal(dedupedEdges.length, 1);
+  assert.equal(dedupedEdges[0].source, "Vane", "recorded under the canonicalized name, not the raw extraction's");
+});
+
+test("importWriteup end-to-end: a restated existing relationship produces NO edge mutation, is recorded on batch.scope.edgeDedup, and the headline says so", async () => {
+  const response = JSON.stringify({
+    entities: [],
+    edges: [
+      { source: "Gerdur", target: "Riverwood", relationshipType: "presence", label: "lives in", rationale: "restated" },
+      { source: "Gerdur", target: "Alvor", relationshipType: "kinship", label: "sister of", rationale: "genuinely new" }
+    ]
+  });
+  const client = mockClient([response]);
+  const existingSnapshot = {
+    entities: [
+      { id: "e-g", name: "Gerdur", type: "person", tags: [], attributes: {} },
+      { id: "e-r", name: "Riverwood", type: "place", tags: [], attributes: {} },
+      { id: "e-a", name: "Alvor", type: "person", tags: [], attributes: {} }
+    ],
+    edges: [{ id: "ed-existing", sourceId: "e-g", targetId: "e-r", relationshipType: "presence", label: "lives in" }],
+    entityTypes: EXISTING_ENTITY_TYPES
+  };
+  const result = await importWriteup("wf-writeup-edge-dedup-test", "Gerdur, who lives in Riverwood, is Alvor's sister.", existingSnapshot, {
+    llmOpts: { client }
+  });
+
+  assert.equal(result.edgeDedup.length, 1);
+  assert.equal(result.edgeDedup[0].existingEdgeId, "ed-existing");
+  assert.match(result.headline, /1 proposed edge matched existing edges and was skipped/);
+
+  const batch = loadBatch("wf-writeup-edge-dedup-test", result.batchId);
+  assert.deepEqual(batch.scope.edgeDedup, result.edgeDedup, "the dedup record must persist on the batch for review transparency");
+  const edgeMutations = batch.mutations.filter((m) => m.op === "upsert_edge");
+  assert.equal(edgeMutations.length, 1, "only the genuinely-new edge becomes a mutation");
+  assert.equal(edgeMutations[0].data.relationshipType, "kinship");
+});
+
+test("importWriteup: with nothing deduped, scope carries NO edgeDedup key and the headline has no dedup suffix (byte-identical no-dedup shape)", async () => {
+  const client = mockClient([JSON.stringify({
+    entities: [{ name: "Gerdur", type: "person", description: "The miller.", rationale: "x" }],
+    edges: []
+  })]);
+  const result = await importWriteup("wf-writeup-no-dedup-test", "Gerdur runs the mill.", { entities: [], edges: [], entityTypes: EXISTING_ENTITY_TYPES }, {
+    llmOpts: { client }
+  });
+  assert.deepEqual(result.edgeDedup, []);
+  assert.ok(!result.headline.includes("matched existing edges"));
+  const batch = loadBatch("wf-writeup-no-dedup-test", result.batchId);
+  assert.ok(!("edgeDedup" in batch.scope), "no dedup -> scope shape unchanged from what it always was");
 });
 
 test("importWriteup: an update against a real existing snapshot produces a genuine field-level diff (not just '(created)')", async () => {
@@ -675,6 +903,25 @@ test("proposeFramingsFromWriteup: a well-formed writeup produces exactly 3 frami
   assert.equal(result.framings.length, 3);
   assert.deepEqual(result.framings.map((f) => f.id).sort(), ["a", "b", "c"]);
   for (const f of result.framings) assert.ok(f.sentence && f.sentence.length > 0);
+});
+
+// Intake-quality pass: the framing glance was the one remaining context-free
+// LLM call in the intake pipeline -- it now gets the same names+types census
+// the extraction call does (entities only; no edges, by design).
+test("proposeFramingsFromWriteup: opts.existingEntities reaches the framing prompt as the census; omitted -> honest empty-graph fallback", async () => {
+  const good = JSON.stringify({
+    framings: [{ id: "a", sentence: "x" }, { id: "b", sentence: "y" }, { id: "c", sentence: "z" }]
+  });
+  const client = mockClient([good]);
+  await proposeFramingsFromWriteup("Some writeup.", {
+    client,
+    existingEntities: [{ id: "e1", name: "Gerdur", type: "person" }]
+  });
+  assert.match(client.calls[0].messages[0].content, /- Gerdur \(person\)/);
+
+  const client2 = mockClient([good]);
+  await proposeFramingsFromWriteup("Some writeup.", { client: client2 });
+  assert.match(client2.calls[0].messages[0].content, /currently empty/);
 });
 
 test("proposeFramingsFromWriteup: a truncated first attempt doubles the token budget and retries, same truncation-handling as proposeWfiFromWriteup", async () => {

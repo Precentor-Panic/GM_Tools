@@ -167,3 +167,6 @@ node_modules/
 /Draw Steel-*.zip
 /rules-library/
 briefing/
+# Seeded design-canvas output (2MB generated payload; re-seed from the
+# committed .dc.html + canvas.json working files)
+design/session-planner/variants-canvas/run-variants.html

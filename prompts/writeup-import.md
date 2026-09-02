@@ -15,6 +15,10 @@ that should exist in the campaign's knowledge graph as a result.
 
 {{existingWorldSummary}}
 
+## Relationships already in this world's graph
+
+{{existingEdgesSummary}}
+
 ## The writeup
 
 {{writeupText}}
@@ -28,6 +32,13 @@ a different type guess — downstream matching is name+type exact, so a
 mismatch there creates an unwanted duplicate instead of updating the existing
 record. Still propose it normally (with its own rationale) if the writeup
 adds real new detail; don't skip it just because it already exists.
+
+Use the existing-relationships list the same way: it is the authoritative
+record of how already-known things relate, so ground your reading of the
+writeup in it — do not re-propose a relationship already listed there unless
+the writeup genuinely changes it (a new label, a reversed direction, a
+different kind of tie), and do not contradict it by guessing a different
+relationship between the same two entities than the one recorded.
 
 Read the writeup and propose:
 

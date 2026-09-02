@@ -209,18 +209,25 @@ export function offlineReskinSuggestClient() {
  * entity content, so no Fix-4 concern applies to them.
  *
  * Marker choice: BOTH prompts/writeup-import.md and prompts/writeup-
- * framing.md render a "## The writeup" section (confirmed by reading both
- * files directly, not assumed), so that heading alone can't distinguish
- * them -- prompts/writeup-import.md's own "## Entities already in this
- * world's graph" section is the one heading unique to the extraction
- * prompt, checked instead.
+ * framing.md render a "## The writeup" section AND (since the intake-quality
+ * pass gave the framing call the same names+types census) an "## Entities
+ * already in this world's graph" section -- confirmed by reading both files
+ * directly, not assumed -- so neither heading can distinguish them.
+ * prompts/writeup-import.md's "## Relationships already in this world's
+ * graph" section is the one heading unique to the extraction prompt
+ * (framing deliberately never gets edges -- see proposeFramingsFromWriteup's
+ * own doc comment), checked instead.
  */
 export function offlineWriteupClient() {
   return {
+    // Persona round (M5): lets the ops layer stamp `offline: true` onto a
+    // writeup-propose response, so an honestly-empty keyless extraction is
+    // distinguishable from "your writeup contained nothing extractable".
+    offline: true,
     messages: {
       create: async ({ messages } = {}) => {
         const prompt = firstPromptText(messages);
-        if (/^##\s*Entities already in this world's graph/m.test(prompt)) {
+        if (/^##\s*Relationships already in this world's graph/m.test(prompt)) {
           return offlineTextResponse({ entities: [], edges: [] });
         }
         const framings = ["a", "b", "c"].map((id) => ({

@@ -805,17 +805,33 @@ export async function proposeFromWriteupOp(dir, w, { text: writeupText, mode, fr
     }, opts);
   }
   const settings = getUserSettings(); // READ ONCE -- see this function's own doc comment
+  // Persona round (M5): a keyless run degrades to the offline writeup client,
+  // whose extraction is HONESTLY EMPTY -- previously indistinguishable from
+  // "the writeup contained nothing extractable". The offline client marks
+  // itself (offline-clients.mjs), and this op stamps the response so both
+  // front-ends can say what actually happened.
+  const offline = opts.llmOpts?.client?.offline === true;
   if (!settings.rubberDuckMode.enabled) {
     const { entities, edges, entityTypes } = loadSnapshot(dir, w).snapshot;
-    return importWriteup(w, writeupText, { entities, edges, entityTypes }, { mode, llmOpts: opts.llmOpts });
+    const result = await importWriteup(w, writeupText, { entities, edges, entityTypes }, { mode, llmOpts: opts.llmOpts });
+    return offline
+      ? { ...result, offline: true, offlineNote: "No ANTHROPIC_API_KEY configured -- the extraction ran against the offline placeholder client, so an empty batch here means OFFLINE, not that the writeup contained nothing." }
+      : result;
   }
-  const { framings } = await proposeFramingsFromWriteup(writeupText, opts.llmOpts ?? {});
+  // Intake-quality pass: ground the framing glance in the world's existing
+  // names+types census (entities only -- see proposeFramingsFromWriteup's
+  // own doc comment for why no edges here).
+  const { framings } = await proposeFramingsFromWriteup(writeupText, {
+    ...(opts.llmOpts ?? {}),
+    existingEntities: loadSnapshot(dir, w).snapshot.entities
+  });
   return {
     phase: "framing",
     framings,
     writeupText,
     mode: mode ?? "merge",
-    rubberDuck: { enabled: true, updatedAt: settings.rubberDuckMode.updatedAt }
+    rubberDuck: { enabled: true, updatedAt: settings.rubberDuckMode.updatedAt },
+    ...(offline ? { offline: true } : {})
   };
 }
 
@@ -960,7 +976,11 @@ export async function rejectWithLoopOp(dir, w, { batchId, scope, id, note, quick
   }
 
   const baseResult = rejectOp(w, { batchId, scope, id });
-  const decision = await resolveRejectLoop(batch, { note, quickPickReason }, { llmOpts: opts.llmOpts });
+  // Intake-quality pass: the re-framing round gets the same names+types
+  // census the initial framing call does (proposeFromWriteupOp above).
+  const decision = await resolveRejectLoop(batch, { note, quickPickReason }, {
+    llmOpts: { ...(opts.llmOpts ?? {}), existingEntities: loadSnapshot(dir, w).snapshot.entities }
+  });
 
   if (decision.kind === "regenerate") {
     const regenResult = await regenerateOp(dir, w, { batchId, scope: "batch", note: decision.note }, { writeupOpts: opts.llmOpts ? { llmOpts: opts.llmOpts } : {} });
