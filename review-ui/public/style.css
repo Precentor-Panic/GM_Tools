@@ -1782,6 +1782,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
    centre pane instead of Prep's 780px reading column (Russell, 2026-08-26:
    "the 2 column layout takes up an incredibly small area in the middle"). */
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"],
+:is(#view-session-planner, #app-shell) .scene-page[data-rail="open"],
 :is(#view-session-planner, #app-shell) .scene-page:has(.scene-elements-list[data-layout="board"]) {
   max-width: none; padding-left: 28px; padding-right: 28px;
 }
@@ -2126,36 +2127,8 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   background: var(--sp-accent-teal-selected); color: var(--sp-ink-heading); font-weight: 600;
 }
 
-/* ---- Cards layout: a responsive grid, card chrome, label-above-value. ---- */
-:is(#view-session-planner, #app-shell) .scene-elements-list[data-layout="cards"] {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 12px;
-}
-:is(#view-session-planner, #app-shell) .scene-elements-list[data-layout="cards"] .scene-element-row {
-  border: 1px solid var(--sp-border-hairline);
-  border-radius: var(--sp-radius-sm); padding: 13px 14px 12px;
-}
-:is(#view-session-planner, #app-shell) .scene-elements-list[data-layout="cards"] .scene-element-row--key {
-  border-top: 3px solid var(--element-type-color, var(--sp-accent-amber));
-  border-left: 1px solid var(--sp-border-hairline);
-  background: var(--sp-card-key-bg);
-}
-:is(#view-session-planner, #app-shell) .scene-elements-list[data-layout="cards"] .scene-element-row--mundane {
-  border-top: 3px solid var(--sp-border-control);
-  border-left: 1px solid var(--sp-border-hairline);
-  background: var(--sp-surface-card);
-}
-/* Label above its value (rather than the 76px beside-column of Page layout). */
-:is(#view-session-planner, #app-shell) .scene-elements-list[data-layout="cards"] .pf-line {
-  display: block; padding: 3px 0;
-}
-:is(#view-session-planner, #app-shell) .scene-elements-list[data-layout="cards"] .pf-label {
-  display: block; text-align: left; margin-bottom: 2px;
-}
-/* The add-element ghost row spans the full grid width, not a single cell. */
-:is(#view-session-planner, #app-shell) .scene-elements-list[data-layout="cards"] .scene-add-element-row {
-  grid-column: 1 / -1;
-}
+/* Cards layout removed 2026-08-31 (persona round): Run mode is the real
+   formatted view; Page | Layout remain. */
 
 /* ---- Run mode: hide edit chrome, enlarge read-aloud, collapse MUNDANE. ---- */
 /* All edit chrome hides (README §E) — hidden, not removed, so a switch back to
@@ -2271,6 +2244,50 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   border-left: 3px solid var(--element-type-color, var(--sp-border-control));
 }
 :is(#view-session-planner, #app-shell) .rs-block--thread { border-left: 3px dashed var(--sp-accent-amber); }
+/* Composite group card (run-spread consolidation pass): the lead's content,
+   then each further member as a bordered, labeled section on the SAME card.
+   Reuses the dashed-amber accent originally reserved for thread cards. */
+:is(#view-session-planner, #app-shell) .rs-group { border-left: 3px dashed var(--sp-accent-amber); }
+:is(#view-session-planner, #app-shell) .rs-group-sec {
+  border-top: 1px dashed var(--sp-border-dashed); margin-top: 8px; padding-top: 6px;
+}
+:is(#view-session-planner, #app-shell) .rs-group-sec-h {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 2px;
+}
+:is(#view-session-planner, #app-shell) .rs-group-sec-h > span:first-child {
+  font-family: var(--sp-font-mono); font-size: 9.5px; font-weight: 600; letter-spacing: var(--sp-mono-label-tracking);
+  text-transform: uppercase; color: var(--sp-ink-muted);
+}
+/* Folded side GM card (>=2 ungrouped gm boxes): one .rs-box, member sections. */
+:is(#view-session-planner, #app-shell) .rs-gmfold .rs-group-sec:first-of-type { border-top: none; margin-top: 4px; padding-top: 0; }
+/* Variant tabs (Treatment B, 2026-09-01): the card's states as a tab row.
+   Local flip only — clicking never writes data. Styling per the canvas
+   mockup: mono uppercase, active = ink + rust underline. */
+:is(#view-session-planner, #app-shell) .rs-tabs {
+  display: flex; gap: 14px; flex-wrap: wrap;
+  border-top: 1px dashed var(--sp-border-dashed); border-bottom: 1px dashed var(--sp-border-dashed);
+  margin-top: 8px; padding: 4px 0 0;
+}
+:is(#view-session-planner, #app-shell) .rs-tab {
+  font-family: var(--sp-font-mono); font-size: 9.5px; font-weight: 600; letter-spacing: var(--sp-mono-label-tracking);
+  text-transform: uppercase; border: none; border-bottom: 2px solid transparent; background: none;
+  padding: 3px 2px 4px; cursor: pointer; color: var(--sp-ink-muted);
+}
+:is(#view-session-planner, #app-shell) .rs-tab--active {
+  color: var(--sp-ink-heading); border-bottom-color: var(--sp-accent-rust);
+}
+:is(#view-session-planner, #app-shell) .rs-tabs + .rs-group-sec { border-top: none; margin-top: 0; padding-top: 6px; }
+/* Phase 4 draft-marking: unreviewed model-drafted content is always visibly
+   flagged — amber ✦ pill in Run, amber label-star + dashed rule in Prep. */
+:is(#view-session-planner, #app-shell) .rs-pill--draft {
+  color: var(--sp-accent-amber); border-color: var(--sp-accent-amber); margin-left: 6px;
+}
+:is(#view-session-planner, #app-shell) .pf-line[data-draft="true"] .pf-value {
+  border-bottom: 1px dashed var(--sp-accent-amber);
+}
+:is(#view-session-planner, #app-shell) .pf-line[data-draft="true"] .pf-label::after {
+  content: " ✦"; color: var(--sp-accent-amber);
+}
 :is(#view-session-planner, #app-shell) .rs-bhead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
 :is(#view-session-planner, #app-shell) .rs-bname { font-weight: 600; font-size: 15px; color: var(--sp-ink-heading); }
 :is(#view-session-planner, #app-shell) .rs-pill {
@@ -2410,6 +2427,84 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 }
 :is(#view-session-planner, #app-shell) .layout-card--key { border-left-color: var(--element-type-color, var(--sp-accent-amber)); }
 :is(#view-session-planner, #app-shell) .layout-card--placeholder { border-style: dashed; }
+:is(#view-session-planner, #app-shell) .layout-card--grouped { border-left: 3px dashed var(--sp-accent-amber); }
+/* G2 (2026-09-01): drop-ON-a-card join zone + grouped stacks on the board. */
+:is(#view-session-planner, #app-shell) .layout-card--join-target {
+  border: 2px dashed var(--sp-accent-amber); background: var(--sp-card-key-bg);
+}
+:is(#view-session-planner, #app-shell) .layout-stack-tabs {
+  display: flex; gap: 4px; flex-wrap: wrap; margin: 4px 0 2px;
+}
+:is(#view-session-planner, #app-shell) .layout-stack-tab {
+  font-family: var(--sp-font-mono); font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  border: 1px solid var(--sp-border-hairline); border-radius: 3px; padding: 1px 7px;
+  color: var(--sp-ink-secondary); background: var(--sp-surface-chrome);
+}
+:is(#view-session-planner, #app-shell) button.layout-stack-tab--add {
+  border-style: dashed; cursor: pointer; color: var(--sp-ink-muted); background: none;
+}
+:is(#view-session-planner, #app-shell) .layout-stack-member {
+  border-top: 1px dashed var(--sp-border-dashed); margin-top: 5px; padding: 4px 0 0 8px;
+  font-size: 12px; color: var(--sp-ink-secondary); cursor: grab;
+}
+:is(#view-session-planner, #app-shell) .layout-stack-member.layout-card--dragging { opacity: 0.4; }
+
+/* O1 (2026-09-01): the Prep layout rail — closed, the container is
+   display:contents (layout byte-identical to the plain list); open, a flex
+   row with the ~220px rail beside the rows (shell-rail's own pattern). */
+:is(#view-session-planner, #app-shell) .scene-prep-with-rail { display: contents; }
+:is(#view-session-planner, #app-shell) .scene-layout-rail { display: none; }
+:is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-prep-with-rail {
+  display: flex; gap: 16px; align-items: flex-start;
+}
+:is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-prep-with-rail > .scene-elements-list {
+  flex: 1; min-width: 0;
+}
+:is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-layout-rail {
+  display: block; width: 220px; flex: none; position: sticky; top: 8px;
+}
+:is(#view-session-planner, #app-shell) .rail-lane {
+  border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-md);
+  padding: 6px 8px 8px; margin-bottom: 10px; background: var(--sp-surface-chrome);
+}
+:is(#view-session-planner, #app-shell) .rail-lane.layout-lane--over {
+  border-color: var(--sp-accent-teal); background: var(--sp-accent-teal-selected);
+}
+:is(#view-session-planner, #app-shell) .rail-lane-title {
+  font-family: var(--sp-font-mono); font-size: 9px; font-weight: 600; letter-spacing: var(--sp-mono-label-tracking);
+  text-transform: uppercase; color: var(--sp-ink-muted); margin-bottom: 5px;
+}
+:is(#view-session-planner, #app-shell) .rail-lane-list { display: grid; gap: 4px; }
+:is(#view-session-planner, #app-shell) .rail-card {
+  display: flex; align-items: baseline; gap: 6px;
+  border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-sm);
+  background: var(--sp-surface-card); padding: 3px 8px; font-size: 12px; cursor: grab;
+  overflow: hidden;
+}
+:is(#view-session-planner, #app-shell) .rail-card--stack { border-left: 3px dashed var(--sp-accent-amber); }
+:is(#view-session-planner, #app-shell) .rail-card.layout-card--dragging { opacity: 0.4; }
+:is(#view-session-planner, #app-shell) .rail-card.layout-card--join-target {
+  border: 2px dashed var(--sp-accent-amber); background: var(--sp-card-key-bg);
+}
+:is(#view-session-planner, #app-shell) .rail-card-name {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+:is(#view-session-planner, #app-shell) .rail-card-count {
+  font-family: var(--sp-font-mono); font-size: 9px; color: oklch(0.52 0.10 65); flex: none;
+}
+:is(#view-session-planner, #app-shell) .rail-lane-empty {
+  font-size: 11px; color: var(--sp-ink-muted); font-style: italic; padding: 2px 0;
+}
+:is(#view-session-planner, #app-shell) .scene-element-glyph[draggable="true"] { cursor: grab; }
+/* The rail is a Prep-only affordance: hidden in Run with the edit chrome,
+   pointless in the board view, gone at mobile widths (the board covers it). */
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-rail-toggle-btn,
+:is(#view-session-planner, #app-shell) .scene-page:has(.scene-elements-list[data-layout="board"]) .scene-rail-toggle-btn { display: none; }
+@media (max-width: 760px) {
+  :is(#view-session-planner, #app-shell) .scene-rail-toggle-btn { display: none; }
+  :is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-prep-with-rail { display: contents; }
+  :is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-layout-rail { display: none; }
+}
 :is(#view-session-planner, #app-shell) .layout-card--dragging { opacity: 0.4; }
 :is(#view-session-planner, #app-shell) .layout-card-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 :is(#view-session-planner, #app-shell) .layout-card-top .layout-card-name { flex: 1 1 100%; }

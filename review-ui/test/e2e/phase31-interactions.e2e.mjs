@@ -228,10 +228,12 @@ test("scene-page `]` navigates to the next scene when focus is OUTSIDE an editab
   await page.goto(`${base}/#planner/scene/${b.id}`);
   await page.locator(`[data-testid="planner-scene-view"][data-scene-id="${b.id}"]`).waitFor({ state: "visible", timeout: 15000 });
 
-  // Put keyboard focus on a NON-editable control (the Page layout button) --
-  // "outside an editable" -- so the keydown target is a plain button, not a
-  // field. (Relying on ambient <body> focus is flaky across many page opens.)
-  await page.locator('[data-testid="layout-page-btn"]').click();
+  // Put keyboard focus on a NON-editable control -- "outside an editable" --
+  // so the keydown target is a plain button, not a field. (Relying on ambient
+  // <body> focus is flaky across many page opens.) The already-active Prep
+  // button is safe: clicking it is a no-op view-wise (layout-page-btn, the
+  // old parking spot, retired with the 2026-09-01 three-way merge).
+  await page.locator('[data-testid="mode-prep-btn"]').click();
   await page.keyboard.press("]");
   await page.waitForFunction((cid) => location.hash === `#planner/scene/${cid}`, c.id, { timeout: 8000 });
   await page.close();

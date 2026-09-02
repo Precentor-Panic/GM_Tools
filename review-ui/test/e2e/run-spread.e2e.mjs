@@ -107,10 +107,17 @@ test("every role lands in its column; explicit run beats inference; off is absen
   assert.equal(await side.locator(".rs-mult").textContent(), "×3");
   assert.match(await side.locator(".rs-bl").first().textContent(), /Guard \(MM\)/);
   assert.equal(await side.locator(".rs-card .rs-phrase").textContent(), "\"What is given cannot be returned.\"");
+  // Consolidation pass: the two ungrouped gm boxes (explicit "Backdrop —
+  // Present" + inferred "Backdrop — Night") fold into ONE "GM notes" card
+  // with per-member section labels; the side read-aloud is NOT role gm, so
+  // it keeps its own box.
+  const gmFold = side.locator('[data-testid="rs-gm-fold"]');
+  assert.equal(await gmFold.count(), 1, "two+ ungrouped side gm boxes fold into one card");
+  const secTitles = await gmFold.locator(".rs-group-sec-h span:first-child").allTextContents();
+  assert.deepEqual(secTitles, ["Present", "Night"], "member labels use the after-dash title");
   const boxTitles = await side.locator(".rs-box .rs-box-l").allTextContents();
-  assert.ok(boxTitles.includes("Backdrop — Present"), boxTitles.join("|"));
-  assert.ok(boxTitles.includes("Backdrop — Night"), "inferred GM box");
-  assert.ok(boxTitles.includes("Read Aloud — Whisper"), "explicit side read-aloud renders as a side box");
+  assert.ok(boxTitles.includes("GM notes"), boxTitles.join("|"));
+  assert.ok(boxTitles.includes("Read Aloud — Whisper"), "explicit side read-aloud renders as its own side box");
 
   // Off column never renders.
   assert.equal(await spread.locator("text=Never shown.").count(), 0);
@@ -123,15 +130,55 @@ test("activeVariants gates variant-tagged elements; empty shows all; untagged el
   await makeEl(scene.id, { name: "Backdrop — Night", fields: { looks: "Dark." }, run: { column: "side", role: "gm", variant: "Night" } });
   await makeEl(scene.id, { name: "Always", fields: { looks: "Constant." }, run: { column: "side", role: "gm" } });
 
+  // Variants round (2026-09-01): the fold's states render as TABS. Empty
+  // activeVariants = first tab active (adjudicated default); the active
+  // state's own heading is suppressed (the tab is its heading), so section
+  // headings show only the variant-less members.
   let { page, spread } = await openRun(scene.id);
-  let titles = await spread.locator(".rs-side .rs-box-l").allTextContents();
-  assert.deepEqual(titles, ["Backdrop — Present", "Backdrop — Night", "Always"], "empty activeVariants = show all");
+  const fold = spread.locator('[data-testid="rs-gm-fold"]');
+  let tabs = await fold.locator('[data-testid="rs-tab"]').allTextContents();
+  assert.deepEqual(tabs, ["Present", "Night"], "both states tab, in member order");
+  assert.equal(await fold.locator(".rs-tab--active").textContent(), "Present", "empty activeVariants -> FIRST tab active");
+  assert.match(await fold.textContent(), /Day\./, "the active state's content shows");
+  assert.ok(!(await fold.textContent()).includes("Dark."), "the inactive state's content does not");
+  assert.deepEqual(
+    await fold.locator(".rs-group-sec-h span:first-child").allTextContents(),
+    ["Always"],
+    "only variant-less members keep section headings; the tab is the active state's heading"
+  );
   await page.close();
 
+  // activeVariants seeds which tab starts active (a fresh open, no local flips).
   await updateSceneViaRoute(base, WORLD, scene.id, { activeVariants: ["Night"] });
   ({ page, spread } = await openRun(scene.id));
-  titles = await spread.locator(".rs-side .rs-box-l").allTextContents();
-  assert.deepEqual(titles, ["Backdrop — Night", "Always"]);
+  assert.equal(await spread.locator('[data-testid="rs-gm-fold"] .rs-tab--active').textContent(), "Night", "activeVariants seeds the tab");
+  assert.match(await spread.locator('[data-testid="rs-gm-fold"]').textContent(), /Dark\./);
+  await page.close();
+});
+
+// Phase 4 honesty rules (persona round): unreviewed model drafts are flagged,
+// and a numbers-less stat block admits it instead of looking prepped.
+test("Run flags draft fields with a ✦ pill (cleared by a GM edit) and nags on a stat block with no numbers", async () => {
+  const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "rs-square", name: "Honesty scene" });
+  const drafted = await makeEl(scene.id, { name: "The onlooker", fields: { gives: "model-drafted line" }, draft: true, run: { column: "main", role: "beat" } });
+  await makeEl(scene.id, { name: "Guards", fields: { statblockRef: "Guard (MM)" }, stat: { count: 2 }, run: { column: "side", role: "block" } });
+
+  let { page, spread } = await openRun(scene.id);
+  assert.equal(await spread.locator('[data-testid="rs-draft-pill"]').count(), 1, "the drafted beat carries the ✦ draft pill");
+  assert.match(
+    await spread.locator(".rs-side .rs-block .rs-empty").textContent(),
+    /No stats entered/,
+    "a name-only stat block says it has no numbers instead of rendering as prepped"
+  );
+  await page.close();
+
+  // A GM edit (ordinary patch, no draft flag) clears the mark.
+  await fetch(`${base}/api/scene-planning/scenes/${scene.id}/elements/${drafted.id}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ world: WORLD, fields: { gives: "my own words" } })
+  });
+  ({ page, spread } = await openRun(scene.id));
+  assert.equal(await spread.locator('[data-testid="rs-draft-pill"]').count(), 0, "editing the field cleared the draft mark");
   await page.close();
 });
 

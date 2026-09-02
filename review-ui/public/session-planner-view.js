@@ -64,7 +64,7 @@
 "use strict";
 import { createFlushableDebounce } from "./debounced-save.mjs";
 // Run layout vocabulary + inference -- the SAME file the stores use (session-planner/run-layout.mjs re-exports it).
-import { effectiveRun, variantVisible, elementIsEmpty, parseExitLine, titleAfterDash, ROLE_LABELS, RUN_ROLES, RUN_COLUMNS, ROLE_DEFAULT_COLUMN } from "./run-layout.mjs";
+import { effectiveRun, variantVisible, elementIsEmpty, parseExitLine, titleAfterDash, planRunSpread, runFieldLabel, ROLE_LABELS, RUN_ROLES, RUN_COLUMNS, ROLE_DEFAULT_COLUMN } from "./run-layout.mjs";
 // Phase 28 task 28.6: the SAME deterministic type->color hash graph-view.js
 // already established for node fill colors (no second type-color mapping) --
 // used to tint a KEY element's glyph/accent-rule with its real graph entity
@@ -800,19 +800,27 @@ let sceneRenderToken = 0;
 // `data-mode` attribute on the scene-page root + CSS, so toggling never
 // full-re-renders the element rows (edit state is preserved), matching this
 // app's "never full-re-render on keystroke" ethos.
-let scenePageLayout = "page"; // "page" | "cards"
-let scenePageMode = "prep";   // "prep" | "run"
-// QA W2 fix (Group A #1): Prep|Run must survive prev/next/rail navigation
+// Cards mode removed (persona round + Russell, 2026-08-31); then the two
+// remaining controls (Page|Layout + Prep|Run) merged into ONE three-way
+// Prep | Layout | Run control (variants round, 2026-09-01) -- the old
+// orthogonal pair allowed the nonsense state "board AND run" (the board sat
+// hidden under the spread). One view var, three states.
+let sceneView = "prep"; // "prep" (page list) | "board" (layout board) | "run" (spread)
+// O1 (variants round): the Prep layout rail's disclosure — view-local like
+// sceneView, persists across scene nav, resets with it.
+let railOpen = false;
+// QA W2 fix (Group A #1): the view must survive prev/next/rail navigation
 // between scenes -- it only resets when the world changes underneath it, or
 // when the caller explicitly leaves the planner surface (resetScenePageMode,
 // called by app-shell.js when it switches to World/Chronicle/Library).
 let scenePageModeWorld = null;
 
-// Exported so app-shell.js can reset Prep|Run when the shell navigates away
+// Exported so app-shell.js can reset the view when the shell navigates away
 // from the planner surface entirely (World/Chronicle/Library) -- scene
 // navigation WITHIN the planner must never call this.
 export function resetScenePageMode() {
-  scenePageMode = "prep";
+  sceneView = "prep";
+  railOpen = false;
   scenePageModeWorld = null;
 }
 
@@ -940,9 +948,21 @@ function buildElementFieldLine(scene, element, field, value, { autoEdit = false 
   // CSS can keep only the Gives line ([data-field="gives"]) on a collapsed
   // MUNDANE row without an :has() query.
   line.setAttribute("data-field", field);
+  // Phase 4 draft-marking (persona round): a field whose current value is
+  // unreviewed LLM output carries data-draft="true" (amber ✦ via CSS). The
+  // store clears the mark on any ordinary save; mirror that locally so the
+  // mark disappears the moment the GM's edit lands, before any re-render.
+  if (Array.isArray(element.draftFields) && element.draftFields.includes(field)) {
+    line.setAttribute("data-draft", "true");
+    line.title = "Model-drafted, not reviewed yet — editing this field clears the mark";
+  }
+  // Phase 4 (persona round): the label is role-aware via the ONE shared
+  // runFieldLabel mapping, so Prep shows the same word Run will print (a
+  // card-role element's Looks field reads EFFECT here too, not just in Run).
+  const fieldLabel = runFieldLabel(effectiveRun(element).run.role, field, SCENE_FIELD_LABELS[field] ?? field);
   const label = document.createElement("span");
   label.className = "pf-label";
-  label.textContent = SCENE_FIELD_LABELS[field] ?? field;
+  label.textContent = fieldLabel;
   const valueField = makeClickToEditField({
     tag: "span",
     className: "pf-value",
@@ -951,12 +971,19 @@ function buildElementFieldLine(scene, element, field, value, { autoEdit = false 
     inputTestid: "scene-element-field-input",
     inputDataAttrs: { "data-field": field },
     value,
-    placeholder: `${SCENE_FIELD_LABELS[field] ?? field}…`,
-    emptyText: `+ ${SCENE_FIELD_LABELS[field] ?? field}`,
+    placeholder: `${fieldLabel}…`,
+    emptyText: `+ ${fieldLabel}`,
     save: (v) => spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/${encodeURIComponent(element.id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ world: currentWorld(), fields: { [field]: v } })
+    }).then((r) => {
+      // The store just cleared this key from draftFields (no draft:true on
+      // an ordinary save) -- drop the local mark immediately.
+      line.removeAttribute("data-draft");
+      line.removeAttribute("title");
+      if (Array.isArray(element.draftFields)) element.draftFields = element.draftFields.filter((k) => k !== field);
+      return r;
     })
   });
   line.append(label, valueField.el);
@@ -1022,7 +1049,8 @@ function buildAddFieldControl(scene, element, fieldsEl, refreshList) {
       const opt = document.createElement("button");
       opt.type = "button";
       opt.className = "link-btn scene-add-field-option";
-      opt.textContent = SCENE_FIELD_LABELS[f];
+      // Role-aware, same mapping as the field lines and the Run spread.
+      opt.textContent = runFieldLabel(effectiveRun(element).run.role, f, SCENE_FIELD_LABELS[f]);
       opt.addEventListener("click", () => {
         menu.style.display = "none";
         // Insert an empty field-line already in edit mode -- a real value on
@@ -1263,6 +1291,20 @@ function buildSceneElementRow(scene, element, refreshList, nodeMap) {
   const glyph = document.createElement("span");
   glyph.className = "scene-element-glyph";
   glyph.textContent = element.kind === "graph" ? "◆" : "◦";
+  // O1 (variants round): the glyph doubles as the row's DRAG GRIP — only the
+  // glyph is draggable (never the row itself), so click-to-edit and text
+  // selection in the rest of the row stay untouched. Drop targets are the
+  // rail's lanes/cards (and the board's, though rows and board never
+  // coexist).
+  glyph.draggable = true;
+  glyph.setAttribute("data-testid", "scene-element-grip");
+  glyph.title = "Drag into a layout lane to place this element";
+  glyph.addEventListener("dragstart", (e) => {
+    laneDragId = element.id;
+    e.dataTransfer.setData("text/plain", element.id);
+    e.dataTransfer.effectAllowed = "move";
+  });
+  glyph.addEventListener("dragend", () => { laneDragId = null; });
   head.appendChild(glyph);
 
   if (element.kind === "graph" && element.graphEntityId) {
@@ -1395,6 +1437,7 @@ function runChipLabel(element) {
   const { run, inferred } = effectiveRun(element);
   const bits = [run.column, ROLE_LABELS[run.role] ?? run.role];
   if (run.variant) bits.push(run.variant);
+  if (run.group) bits.push(`⊞ ${run.group}`);
   return { text: bits.join(" · "), inferred, run };
 }
 
@@ -1422,6 +1465,10 @@ function buildRunRoleChip(scene, element, { onChange } = {}) {
     chip.setAttribute("data-inferred", inferred ? "true" : "false");
     chip.setAttribute("data-column", run.column);
     chip.setAttribute("data-role", run.role);
+    // Stamped so the popover's group <datalist> can offer the scene's
+    // existing group names by reading sibling chips -- no extra fetch.
+    if (run.group) chip.setAttribute("data-group", run.group);
+    else chip.removeAttribute("data-group");
     chip.title = inferred
       ? "Run placement is inferred from the name — click to set it explicitly"
       : "Where this element sits in the Run spread — click to change";
@@ -1459,6 +1506,24 @@ function buildRunRoleChip(scene, element, { onChange } = {}) {
     const vi = document.createElement("input"); vi.type = "text"; vi.className = "run-pop-variant"; vi.placeholder = "e.g. Night (optional)"; vi.value = run.variant ?? "";
     vi.setAttribute("data-testid", "run-pop-variant");
     vg.appendChild(vi); pop.appendChild(vg);
+    // Group (run-spread consolidation pass): elements sharing a group render
+    // as ONE composite card in Run. Free text + a datalist of the scene's
+    // existing group names (read off sibling chips' data-group stamps).
+    const gg = document.createElement("div"); gg.className = "run-pop-group";
+    const gh = document.createElement("div"); gh.className = "run-pop-title"; gh.textContent = "Group"; gg.appendChild(gh);
+    const gi = document.createElement("input"); gi.type = "text"; gi.className = "run-pop-variant"; gi.placeholder = "one card with... (optional)"; gi.value = run.group ?? "";
+    gi.setAttribute("data-testid", "run-pop-group");
+    const knownGroups = [...new Set(
+      [...document.querySelectorAll(".scene-element-run-chip[data-group]")].map((c) => c.getAttribute("data-group"))
+    )].filter(Boolean);
+    if (knownGroups.length) {
+      const dl = document.createElement("datalist");
+      dl.id = `run-pop-groups-${element.id}`;
+      for (const g of knownGroups) { const o = document.createElement("option"); o.value = g; dl.appendChild(o); }
+      gi.setAttribute("list", dl.id);
+      gg.appendChild(dl);
+    }
+    gg.appendChild(gi); pop.appendChild(gg);
     const actions = document.createElement("div"); actions.className = "run-pop-actions";
     const save = document.createElement("button"); save.type = "button"; save.className = "btn"; save.textContent = "Save";
     save.setAttribute("data-testid", "run-pop-save");
@@ -1472,6 +1537,8 @@ function buildRunRoleChip(scene, element, { onChange } = {}) {
       const next = { column, role };
       const variant = vi.value.trim();
       if (variant) next.variant = variant;
+      const group = gi.value.trim();
+      if (group) next.group = group;
       if (element.run?.placeholder) next.placeholder = true;
       save.disabled = true;
       try { await saveElementRun(scene, element, next); paint(); close(); onChange?.(); }
@@ -1525,26 +1592,137 @@ function buildSeedSkeletonGhostLink(scene, refreshElements) {
   return wrap;
 }
 
-function buildLayoutBoard(scene, elements, refreshList) {
-  const board = document.createElement("div");
-  board.className = "scene-layout-board";
-  board.setAttribute("data-testid", "scene-layout-board");
-  board.setAttribute("data-scene-id", scene.id);
+// ---------------------------------------------------------------------------
+// Shared lane model (variants round, 2026-09-01): ONE home for the board's
+// and the Prep rail's persistence contract -- entries (elements + grouped
+// stacks), lane arrays, the column-patch+reorder persist, the join gesture,
+// the one-layer cap, and drag wiring. Board and rail never coexist (board is
+// its own view; the rail lives in Prep), so each render owns one instance.
+// ---------------------------------------------------------------------------
+// dataTransfer.getData is unreadable during dragover (spec), so the
+// in-flight id also rides a module var (world-view.js's own convention) --
+// shared so a Prep row's grip drag lights the rail's targets too.
+let laneDragId = null;
+
+function createLaneModel(scene, elements, refreshList) {
+  // Variants round (2026-09-01, gesture G2): grouped elements cluster into
+  // ONE stack entry per group (lead = lowest-order member; the stack lives
+  // in the lead's lane), and dropping a card ONTO a card joins its group.
+  // Lane arrays hold ENTRIES: {kind:'el', el} | {kind:'stack', group, members}.
+  const entries = [];
+  const stacksByGroup = new Map();
+  for (const el of elements) {
+    const g = effectiveRun(el).run.group;
+    if (g) {
+      if (!stacksByGroup.has(g)) {
+        const entry = { kind: "stack", group: g, members: [] };
+        stacksByGroup.set(g, entry);
+        entries.push(entry);
+      }
+      stacksByGroup.get(g).members.push(el);
+    } else {
+      entries.push({ kind: "el", el });
+    }
+  }
+  const entryColumn = (entry) =>
+    effectiveRun(entry.kind === "stack" ? entry.members[0] : entry.el).run.column;
+  const entryHasId = (entry, id) =>
+    entry.kind === "stack" ? entry.members.some((m) => m.id === id) : entry.el.id === id;
+  const findEntryById = (id) => entries.find((en) => entryHasId(en, id));
 
   const lanes = { main: [], side: [], off: [] };
-  for (const el of elements) lanes[effectiveRun(el).run.column].push(el);
+  for (const en of entries) lanes[entryColumn(en)].push(en);
 
-  // Persist: optional column change on ONE element, then the full order.
-  const persist = async (movedId, newColumn) => {
-    if (movedId && newColumn) {
-      const el = elements.find((e) => e.id === movedId);
-      const { run } = effectiveRun(el);
-      if (run.column !== newColumn) {
-        const next = { ...run, column: newColumn };
-        await saveElementRun(scene, el, next);
+  const flattenIds = () =>
+    [...lanes.main, ...lanes.side, ...lanes.off].flatMap((en) =>
+      en.kind === "stack" ? en.members.map((m) => m.id) : [en.el.id]
+    );
+  const reorder = async () =>
+    spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/reorder`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world: currentWorld(), elementIds: flattenIds() })
+    });
+
+  // Persist an ENTRY move: column patch on every element whose column
+  // differs (a stack's members move together), then the full order.
+  const persist = async (entry, newColumn) => {
+    if (entry && newColumn) {
+      const moved = entry.kind === "stack" ? entry.members : [entry.el];
+      for (const el of moved) {
+        const { run } = effectiveRun(el);
+        if (run.column !== newColumn) await saveElementRun(scene, el, { ...run, column: newColumn });
       }
     }
-    const ids = [...lanes.main, ...lanes.side, ...lanes.off].map((e) => e.id);
+    await reorder();
+    await refreshList();
+  };
+
+  const moveEntry = (entry, column, index) => {
+    for (const k of Object.keys(lanes)) {
+      const i = lanes[k].indexOf(entry);
+      if (i >= 0) { lanes[k].splice(i, 1); lanes[column].splice(index, 0, entry); return; }
+    }
+  };
+
+  // A member sub-row dropped on a LANE (not on a card) leaves its group:
+  // run.group cleared (saveElementRun spreads the whole run, so a re-save
+  // without the key IS the clear), placed at the drop position.
+  const ungroupTo = async (memberId, column, index) => {
+    const stack = findEntryById(memberId);
+    if (!stack || stack.kind !== "stack") return;
+    const el = stack.members.find((m) => m.id === memberId);
+    const { run } = effectiveRun(el);
+    const next = { ...run, column };
+    delete next.group;
+    await saveElementRun(scene, el, next);
+    stack.members = stack.members.filter((m) => m.id !== memberId);
+    lanes[column].splice(index, 0, { kind: "el", el });
+    await reorder();
+    await refreshList();
+  };
+
+  // The ONE-LAYER CAP (adjudicated): a lead dragging its whole multi-member
+  // stack can never JOIN another card -- parent + tabs, never tabs-of-tabs.
+  // (The data model cannot nest anyway; this keeps the gesture honest.)
+  const joinAllowed = (draggedId, targetEntry) => {
+    if (!draggedId || entryHasId(targetEntry, draggedId)) return false;
+    const dragged = findEntryById(draggedId);
+    if (!dragged) return false;
+    if (dragged.kind === "stack" && dragged.members.length > 1 && dragged.members[0].id === draggedId) return false;
+    return true;
+  };
+
+  const makeGroupName = (leadEl) => {
+    const base = (titleAfterDash(leadEl.name, "") || leadEl.name || "group")
+      .toLowerCase().replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "group";
+    if (!stacksByGroup.has(base)) return base;
+    let n = 2;
+    while (stacksByGroup.has(`${base}-${n}`)) n++;
+    return `${base}-${n}`;
+  };
+
+  // Drop-ON-a-card = JOIN its group (creating one, slugged from the target's
+  // name, when the target is still ungrouped). Column follows the target;
+  // the joined element lands right after the group's last member.
+  const joinTo = async (targetEntry, draggedId) => {
+    if (!joinAllowed(draggedId, targetEntry)) return;
+    const dEl = elements.find((e) => e.id === draggedId);
+    if (!dEl) return;
+    const dRun = effectiveRun(dEl).run;
+    const tEl = targetEntry.kind === "stack" ? targetEntry.members[0] : targetEntry.el;
+    const tRun = effectiveRun(tEl).run;
+    let groupName = targetEntry.kind === "stack" ? targetEntry.group : tRun.group;
+    if (!groupName) {
+      groupName = makeGroupName(tEl);
+      await saveElementRun(scene, tEl, { ...tRun, group: groupName });
+    }
+    const next = { ...dRun, column: tRun.column, group: groupName };
+    await saveElementRun(scene, dEl, next);
+    // Order: dragged right after the target group's last member.
+    const lastId = targetEntry.kind === "stack" ? targetEntry.members[targetEntry.members.length - 1].id : tEl.id;
+    const ids = flattenIds().filter((x) => x !== draggedId);
+    ids.splice(ids.indexOf(lastId) + 1, 0, draggedId);
     await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/reorder`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1553,18 +1731,190 @@ function buildLayoutBoard(scene, elements, refreshList) {
     await refreshList();
   };
 
-  const moveTo = (id, column, index) => {
-    for (const k of Object.keys(lanes)) {
-      const i = lanes[k].findIndex((e) => e.id === id);
-      if (i >= 0) { const [el] = lanes[k].splice(i, 1); lanes[column].splice(index, 0, el); return; }
-    }
+
+
+  // "+ variant" on a stack: create a member born grouped, its variant a
+  // fresh "New state" name; the GM renames/fills it in Prep (the board has
+  // no text editing on purpose -- that's the Page view's job).
+  const addVariant = async (stack) => {
+    const lead = stack.members[0];
+    const lRun = effectiveRun(lead).run;
+    const lastVariantMember = [...stack.members].reverse().find((m) => effectiveRun(m).run.variant);
+    const role = lastVariantMember ? effectiveRun(lastVariantMember).run.role : "read";
+    const existing = new Set(stack.members.map((m) => effectiveRun(m).run.variant).filter(Boolean));
+    let variant = "New state";
+    for (let n = 2; existing.has(variant); n++) variant = `New state ${n}`;
+    await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        world: currentWorld(),
+        name: `${ROLE_LABELS[role] ?? role} — ${variant}`,
+        fields: {},
+        run: { column: lRun.column, role, group: stack.group, variant }
+      })
+    });
+    await refreshList();
   };
+
+  // Card-level join-zone wiring: the vertical MIDDLE band of a card is the
+  // join target (dashed amber); the edges fall through to the lane's
+  // reorder handler, so drop-between keeps meaning reorder.
+  const wireJoinTarget = (cardEl, targetEntry) => {
+    cardEl.addEventListener("dragover", (e) => {
+      if (!joinAllowed(laneDragId, targetEntry)) {
+        cardEl.classList.remove("layout-card--join-target");
+        return; // bubbles to the lane: reorder behavior (the one-layer cap's refusal path)
+      }
+      const r = cardEl.getBoundingClientRect();
+      const band = r.height * 0.25;
+      if (e.clientY > r.top + band && e.clientY < r.bottom - band) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = "move";
+        cardEl.classList.add("layout-card--join-target");
+      } else {
+        cardEl.classList.remove("layout-card--join-target");
+      }
+    });
+    cardEl.addEventListener("dragleave", () => cardEl.classList.remove("layout-card--join-target"));
+    cardEl.addEventListener("drop", async (e) => {
+      if (!cardEl.classList.contains("layout-card--join-target")) return; // edge drop -> lane reorder
+      e.preventDefault();
+      e.stopPropagation();
+      cardEl.classList.remove("layout-card--join-target");
+      await joinTo(targetEntry, e.dataTransfer.getData("text/plain"));
+    });
+  };
+
+  const wireDragSource = (node, id) => {
+    node.draggable = true;
+    node.addEventListener("dragstart", (e) => {
+      e.stopPropagation(); // a member sub-row's drag must not also start the stack's
+      laneDragId = id;
+      e.dataTransfer.setData("text/plain", id);
+      e.dataTransfer.effectAllowed = "move";
+      node.classList.add("layout-card--dragging");
+    });
+    node.addEventListener("dragend", () => {
+      laneDragId = null;
+      node.classList.remove("layout-card--dragging");
+    });
+  };
+  // Lane-space drop wiring shared by the board's full lanes AND the Prep
+  // rail's mini lanes — one drop contract (reorder / whole-entry move /
+  // member-out-ungroups), two card sizes. `cardSelector` names the direct
+  // children counted for the insertion index.
+  const wireLaneDropTarget = (laneEl, listEl, column, cardSelector) => {
+    const indexFromPointer = (y) => {
+      const kids = Array.from(listEl.querySelectorAll(`:scope > ${cardSelector}:not(.layout-card--dragging)`));
+      let i = 0;
+      for (const k of kids) { const r = k.getBoundingClientRect(); if (y > r.top + r.height / 2) i++; }
+      return i;
+    };
+    laneEl.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; laneEl.classList.add("layout-lane--over"); });
+    laneEl.addEventListener("dragleave", () => laneEl.classList.remove("layout-lane--over"));
+    laneEl.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      laneEl.classList.remove("layout-lane--over");
+      const id = e.dataTransfer.getData("text/plain");
+      if (!id) return;
+      const entry = findEntryById(id);
+      if (!entry) return;
+      const idx = indexFromPointer(e.clientY);
+      // A stack MEMBER (not the lead) dropped on lane space = ungroup here.
+      if (entry.kind === "stack" && entry.members[0].id !== id) {
+        await ungroupTo(id, column, idx);
+        return;
+      }
+      // Whole-entry move (plain card, or a stack dragged by its lead card).
+      const was = lanes[column].indexOf(entry);
+      moveEntry(entry, column, was >= 0 && was < idx ? idx - 1 : idx);
+      await persist(entry, column);
+    });
+  };
+
+  return {
+    entries, lanes, entryColumn, entryHasId, findEntryById, flattenIds,
+    persist, moveEntry, ungroupTo, joinAllowed, joinTo, addVariant,
+    wireJoinTarget, wireDragSource, wireLaneDropTarget
+  };
+}
+
+// O1 (variants round, 2026-09-01): the Prep-side layout rail — the board's
+// lanes shrunk to a ~220px column living BESIDE the Page rows, so the GM can
+// place elements while writing them. Same createLaneModel instance shape,
+// same persistence, mini cards (names only; a stack renders as lead + count).
+function buildLayoutRail(scene, elements, refreshList) {
+  const rail = document.createElement("div");
+  rail.className = "scene-layout-rail";
+  rail.setAttribute("data-testid", "scene-layout-rail");
+  const { lanes, wireJoinTarget, wireDragSource, wireLaneDropTarget } = createLaneModel(scene, elements, refreshList);
+
+  const buildMiniLane = (column, title) => {
+    const lane = document.createElement("div");
+    lane.className = `rail-lane layout-lane--${column}`;
+    lane.setAttribute("data-testid", "rail-lane");
+    lane.setAttribute("data-column", column);
+    const h = document.createElement("div");
+    h.className = "rail-lane-title";
+    h.textContent = title;
+    lane.appendChild(h);
+    const list = document.createElement("div");
+    list.className = "rail-lane-list";
+    lane.appendChild(list);
+    for (const entry of lanes[column]) {
+      const isStack = entry.kind === "stack";
+      const lead = isStack ? entry.members[0] : entry.el;
+      const card = document.createElement("div");
+      card.className = isStack ? "rail-card rail-card--stack" : "rail-card";
+      card.setAttribute("data-testid", "rail-card");
+      card.setAttribute("data-element-id", lead.id);
+      const nm = document.createElement("span");
+      nm.className = "rail-card-name";
+      nm.textContent = lead.name || "(unnamed)";
+      card.appendChild(nm);
+      if (isStack) {
+        const count = document.createElement("span");
+        count.className = "rail-card-count";
+        count.textContent = `⊞ ${entry.members.length}`;
+        count.title = `${entry.members.length} elements on one Run card — the full board (Layout) shows and splits them`;
+        card.appendChild(count);
+      }
+      wireDragSource(card, lead.id);
+      wireJoinTarget(card, entry);
+      list.appendChild(card);
+    }
+    if (!lanes[column].length) {
+      const empty = document.createElement("div");
+      empty.className = "rail-lane-empty";
+      empty.textContent = "drop here";
+      list.appendChild(empty);
+    }
+    wireLaneDropTarget(lane, list, column, ".rail-card");
+    return lane;
+  };
+
+  rail.append(buildMiniLane("main", "Main"), buildMiniLane("side", "Side"), buildMiniLane("off", "Off"));
+  return rail;
+}
+
+function buildLayoutBoard(scene, elements, refreshList) {
+  const board = document.createElement("div");
+  board.className = "scene-layout-board";
+  board.setAttribute("data-testid", "scene-layout-board");
+  board.setAttribute("data-scene-id", scene.id);
+
+  const {
+    lanes, persist, moveEntry,
+    addVariant, wireJoinTarget, wireDragSource, wireLaneDropTarget
+  } = createLaneModel(scene, elements, refreshList);
 
   const toolbar = document.createElement("div");
   toolbar.className = "layout-board-toolbar";
   const hint = document.createElement("span");
   hint.className = "layout-board-hint";
-  hint.textContent = "Drag cards between Main and Side (or onto the Off shelf) to lay the scene out for Run. ↑/↓ reorder within a lane.";
+  hint.textContent = "Drag cards between lanes to lay the scene out for Run; drop a card ONTO a card to make one card with states (one layer deep — drag a member out to split it off). ↑/↓ reorder within a lane.";
   const inferBtn = document.createElement("button");
   inferBtn.type = "button";
   inferBtn.className = "btn layout-board-infer-btn";
@@ -1594,6 +1944,117 @@ function buildLayoutBoard(scene, elements, refreshList) {
     return one.length > 72 ? `${one.slice(0, 72)}…` : one;
   };
 
+  const buildEntryButtons = (entry, column, idx, count) => {
+    const btns = document.createElement("div");
+    btns.className = "layout-card-btns";
+    const primaryId = entry.kind === "stack" ? entry.members[0].id : entry.el.id;
+    const up = document.createElement("button");
+    up.type = "button"; up.className = "icon-btn layout-card-up"; up.textContent = "↑"; up.title = "Move up";
+    up.setAttribute("data-testid", "layout-card-up"); up.setAttribute("data-element-id", primaryId);
+    up.disabled = idx === 0;
+    up.addEventListener("click", async () => { moveEntry(entry, column, idx - 1); await persist(); });
+    const down = document.createElement("button");
+    down.type = "button"; down.className = "icon-btn layout-card-down"; down.textContent = "↓"; down.title = "Move down";
+    down.setAttribute("data-testid", "layout-card-down"); down.setAttribute("data-element-id", primaryId);
+    down.disabled = idx === count - 1;
+    down.addEventListener("click", async () => { moveEntry(entry, column, idx + 1); await persist(); });
+    const sendTo = document.createElement("select");
+    sendTo.className = "layout-card-send";
+    sendTo.setAttribute("data-testid", "layout-card-send");
+    sendTo.setAttribute("data-element-id", primaryId);
+    for (const c of RUN_COLUMNS) {
+      const o = document.createElement("option"); o.value = c; o.textContent = c === column ? `in ${c}` : `→ ${c}`; o.selected = c === column;
+      sendTo.appendChild(o);
+    }
+    sendTo.title = "Send to another lane (keyboard-friendly alternative to dragging)";
+    sendTo.addEventListener("change", async () => {
+      const target = sendTo.value;
+      if (target === column) return;
+      moveEntry(entry, target, lanes[target].length);
+      await persist(entry, target);
+    });
+    btns.append(up, down, sendTo);
+    return btns;
+  };
+
+  const buildElementCard = (el) => {
+    const card = document.createElement("div");
+    card.className = "layout-card";
+    card.setAttribute("data-testid", "layout-card");
+    card.setAttribute("data-element-id", el.id);
+    const { run, inferred } = effectiveRun(el);
+    card.setAttribute("data-role", run.role);
+    if (el.kind === "graph") card.classList.add("layout-card--key");
+    if (run.placeholder) card.classList.add("layout-card--placeholder");
+
+    const top = document.createElement("div");
+    top.className = "layout-card-top";
+    const name = document.createElement("span");
+    name.className = "layout-card-name";
+    name.textContent = el.name || "(unnamed)";
+    top.appendChild(name);
+    top.appendChild(buildRunRoleChip(scene, el, { onChange: refreshList }));
+    card.appendChild(top);
+    const sub = primaryText(el);
+    if (sub) { const p = document.createElement("div"); p.className = "layout-card-text"; p.textContent = sub; card.appendChild(p); }
+    if (inferred) card.setAttribute("data-inferred", "true");
+    return card;
+  };
+
+  // A grouped STACK renders as one card: lead on top, a tab preview, the
+  // other members as individually-draggable sub-rows, and "+ variant".
+  const buildStackCard = (stack) => {
+    const card = document.createElement("div");
+    card.className = "layout-card layout-card--stack layout-card--grouped";
+    card.setAttribute("data-testid", "layout-stack");
+    card.setAttribute("data-group", stack.group);
+    const lead = stack.members[0];
+    card.setAttribute("data-element-id", lead.id);
+
+    const top = document.createElement("div");
+    top.className = "layout-card-top";
+    const name = document.createElement("span");
+    name.className = "layout-card-name";
+    name.textContent = lead.name || "(unnamed)";
+    top.appendChild(name);
+    top.appendChild(buildRunRoleChip(scene, lead, { onChange: refreshList }));
+    card.appendChild(top);
+
+    const variants = stack.members.map((m) => effectiveRun(m).run.variant).filter(Boolean);
+    const tabsRow = document.createElement("div");
+    tabsRow.className = "layout-stack-tabs";
+    for (const v of [...new Set(variants)]) {
+      const chip = document.createElement("span");
+      chip.className = "layout-stack-tab";
+      chip.textContent = v;
+      tabsRow.appendChild(chip);
+    }
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "layout-stack-tab layout-stack-tab--add";
+    addBtn.setAttribute("data-testid", "layout-stack-add-variant");
+    addBtn.textContent = "+ variant";
+    addBtn.title = "Add a new state to this card (rename and fill it in Prep)";
+    addBtn.addEventListener("click", async () => { addBtn.disabled = true; try { await addVariant(stack); } finally { addBtn.disabled = false; } });
+    tabsRow.appendChild(addBtn);
+    card.appendChild(tabsRow);
+
+    for (const m of stack.members.slice(1)) {
+      const row = document.createElement("div");
+      row.className = "layout-stack-member";
+      row.setAttribute("data-testid", "layout-stack-member");
+      row.setAttribute("data-element-id", m.id);
+      row.title = "A member of this card — drag it out to a lane to split it off";
+      const mn = document.createElement("span");
+      mn.className = "layout-stack-member-name";
+      mn.textContent = m.name || "(unnamed)";
+      row.appendChild(mn);
+      wireDragSource(row, m.id);
+      card.appendChild(row);
+    }
+    return card;
+  };
+
   const buildLane = (column, title) => {
     const lane = document.createElement("div");
     lane.className = `layout-lane layout-lane--${column}`;
@@ -1607,88 +2068,18 @@ function buildLayoutBoard(scene, elements, refreshList) {
     list.className = "layout-lane-list";
     lane.appendChild(list);
 
-    const cards = lanes[column];
-    cards.forEach((el, idx) => {
-      const card = document.createElement("div");
-      card.className = "layout-card";
-      card.setAttribute("data-testid", "layout-card");
-      card.setAttribute("data-element-id", el.id);
-      card.draggable = true;
-      const { run, inferred } = effectiveRun(el);
-      card.setAttribute("data-role", run.role);
-      if (el.kind === "graph") card.classList.add("layout-card--key");
-      if (run.placeholder) card.classList.add("layout-card--placeholder");
-
-      const top = document.createElement("div");
-      top.className = "layout-card-top";
-      const name = document.createElement("span");
-      name.className = "layout-card-name";
-      name.textContent = el.name || "(unnamed)";
-      top.appendChild(name);
-      top.appendChild(buildRunRoleChip(scene, el, { onChange: refreshList }));
-      card.appendChild(top);
-      const sub = primaryText(el);
-      if (sub) { const p = document.createElement("div"); p.className = "layout-card-text"; p.textContent = sub; card.appendChild(p); }
-      if (inferred) card.setAttribute("data-inferred", "true");
-
-      const btns = document.createElement("div");
-      btns.className = "layout-card-btns";
-      const up = document.createElement("button");
-      up.type = "button"; up.className = "icon-btn layout-card-up"; up.textContent = "↑"; up.title = "Move up";
-      up.setAttribute("data-testid", "layout-card-up"); up.setAttribute("data-element-id", el.id);
-      up.disabled = idx === 0;
-      up.addEventListener("click", async () => { moveTo(el.id, column, idx - 1); await persist(); });
-      const down = document.createElement("button");
-      down.type = "button"; down.className = "icon-btn layout-card-down"; down.textContent = "↓"; down.title = "Move down";
-      down.setAttribute("data-testid", "layout-card-down"); down.setAttribute("data-element-id", el.id);
-      down.disabled = idx === cards.length - 1;
-      down.addEventListener("click", async () => { moveTo(el.id, column, idx + 1); await persist(); });
-      const sendTo = document.createElement("select");
-      sendTo.className = "layout-card-send";
-      sendTo.setAttribute("data-testid", "layout-card-send");
-      sendTo.setAttribute("data-element-id", el.id);
-      for (const c of RUN_COLUMNS) {
-        const o = document.createElement("option"); o.value = c; o.textContent = c === column ? `in ${c}` : `→ ${c}`; o.selected = c === column;
-        sendTo.appendChild(o);
-      }
-      sendTo.title = "Send to another lane (keyboard-friendly alternative to dragging)";
-      sendTo.addEventListener("change", async () => {
-        const target = sendTo.value;
-        if (target === column) return;
-        moveTo(el.id, target, lanes[target].length);
-        await persist(el.id, target);
-      });
-      btns.append(up, down, sendTo);
-      card.appendChild(btns);
-
-      card.addEventListener("dragstart", (e) => {
-        e.dataTransfer.setData("text/plain", el.id);
-        e.dataTransfer.effectAllowed = "move";
-        card.classList.add("layout-card--dragging");
-      });
-      card.addEventListener("dragend", () => card.classList.remove("layout-card--dragging"));
+    const laneEntries = lanes[column];
+    laneEntries.forEach((entry, idx) => {
+      const card = entry.kind === "stack" ? buildStackCard(entry) : buildElementCard(entry.el);
+      card.appendChild(buildEntryButtons(entry, column, idx, laneEntries.length));
+      // The whole entry drags by its card (a stack drags as one, by its
+      // lead's id); every card is also a join target for OTHER cards.
+      wireDragSource(card, entry.kind === "stack" ? entry.members[0].id : entry.el.id);
+      wireJoinTarget(card, entry);
       list.appendChild(card);
     });
 
-    const indexFromPointer = (y) => {
-      const kids = Array.from(list.querySelectorAll(".layout-card:not(.layout-card--dragging)"));
-      let i = 0;
-      for (const k of kids) { const r = k.getBoundingClientRect(); if (y > r.top + r.height / 2) i++; }
-      return i;
-    };
-    lane.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; lane.classList.add("layout-lane--over"); });
-    lane.addEventListener("dragleave", () => lane.classList.remove("layout-lane--over"));
-    lane.addEventListener("drop", async (e) => {
-      e.preventDefault();
-      lane.classList.remove("layout-lane--over");
-      const id = e.dataTransfer.getData("text/plain");
-      if (!id) return;
-      // Index among the OTHER cards in this lane (the dragged one is removed first by moveTo).
-      const idx = indexFromPointer(e.clientY);
-      const was = lanes[column].findIndex((x) => x.id === id);
-      moveTo(id, column, was >= 0 && was < idx ? idx - 1 : idx);
-      await persist(id, column);
-    });
+    wireLaneDropTarget(lane, list, column, ".layout-card");
     return lane;
   };
 
@@ -1776,10 +2167,10 @@ async function renderSceneElementsList(scene, listHost, nodeMap) {
   wrap.setAttribute("data-scene-id", scene.id);
   // Phase 29 task 29.5: current Page|Cards layout, re-applied on every list
   // re-render so a structural op (add/remove/promote) preserves the toggle.
-  wrap.setAttribute("data-layout", scenePageLayout);
+  wrap.setAttribute("data-layout", sceneView === "board" ? "board" : "page");
 
   const refreshList = () => renderSceneElementsList(scene, listHost, nodeMap);
-  if (scenePageLayout === "board") {
+  if (sceneView === "board") {
     // Run layout (2026-08-26): the Layout board replaces the rows (the
     // ghost add row stays below it -- adding must stay as easy as ever).
     wrap.appendChild(buildLayoutBoard(scene, elements, refreshList));
@@ -1791,7 +2182,13 @@ async function renderSceneElementsList(scene, listHost, nodeMap) {
     wrap.appendChild(buildSceneElementRow(scene, element, refreshList, nodeMap));
   }
   wrap.appendChild(buildAddElementGhostRow(scene, refreshList));
-  listHost.appendChild(wrap);
+  // O1: the Prep layout rail rides beside the rows in one container —
+  // `display: contents` while the rail is closed (layout byte-identical to
+  // the plain list), a flex row when `.scene-page[data-rail="open"]`.
+  const withRail = document.createElement("div");
+  withRail.className = "scene-prep-with-rail";
+  withRail.append(wrap, buildLayoutRail(scene, elements, refreshList));
+  listHost.appendChild(withRail);
 }
 
 // ---------------------------------------------------------------------------
@@ -2456,7 +2853,7 @@ function buildProposeElementsGhostLink(scene, refreshElements) {
       await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ world: currentWorld(), name: el.name, fields: el.fields || {} })
+        body: JSON.stringify({ world: currentWorld(), name: el.name, fields: el.fields || {}, draft: true })
       }).catch(() => {});
     }
     status.textContent = `✦ added ${drafts.length} suggested element${drafts.length === 1 ? "" : "s"} — edit or remove freely.`;
@@ -2480,10 +2877,12 @@ function buildDraftFieldsGhostLink(scene, element, refreshList) {
     const data = await runSceneAssist(scene, { mode: "draft-fields", elementName: element.name });
     if (!data || !(data.elements || []).length) { link.disabled = false; return; }
     const draft = data.elements[0];
+    // draft:true -> the store marks these keys on element.draftFields so
+    // Prep and Run flag them as unreviewed LLM output until the GM edits.
     await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/${encodeURIComponent(element.id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ world: currentWorld(), fields: draft.fields || {} })
+      body: JSON.stringify({ world: currentWorld(), fields: draft.fields || {}, draft: true })
     }).catch(() => {});
     await refreshList();
   });
@@ -3264,8 +3663,8 @@ function buildSceneActionsRow(scene, refreshElements) {
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Phase 29 task 29.5 -- the two sub-bar segmented controls (Page|Cards layout,
-// Prep|Run mode). Pure presentation; view-local state (scenePageLayout /
-// scenePageMode). Returns the DOM group plus its four buttons so renderScenePage
+// Prep|Layout|Run). Pure presentation; view-local state (sceneView).
+// Returns the DOM group plus its buttons so renderScenePage
 // can wire the click handlers with closure access to the scene-page root, the
 // live elements-list, and the Wrap panel.
 // ---------------------------------------------------------------------------
@@ -3524,7 +3923,19 @@ function runSpreadSanitizeSvg(markup) {
   return document.adoptNode(root);
 }
 
+// Variants round (2026-09-01): the GM's LOCAL tab choices — unitKey -> variant
+// name (see planRunSpread's activeTabs contract). Ephemeral by adjudication:
+// never written to any route; survives run-version rebuilds (an MCP burn
+// landing mid-session must not reset the GM's tabs) and Prep<->Run flips;
+// cleared only when a DIFFERENT scene renders.
+let runTabState = new Map();
+let runTabStateScene = null;
+
 function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
+  if (runTabStateScene !== scene.id) {
+    runTabState = new Map();
+    runTabStateScene = scene.id;
+  }
   const spread = runSpreadEl("div", "scene-run-spread");
   spread.setAttribute("data-testid", "scene-run-spread");
   spread.setAttribute("data-scene-id", scene.id);
@@ -3568,14 +3979,16 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
   }
 
   // ---- Classify + filter: explicit run > inferred; variants; placeholders.
+  // Variants round (2026-09-01): variant gating is a STAMP, not a drop —
+  // planRunSpread turns gated members of folded cards into tabs, and drops
+  // only the loose ones. Off-column and empty placeholders stay hard drops.
   const active = Array.isArray(scene.activeVariants) ? scene.activeVariants : [];
   const placed = [];
   for (const el of elements) {
     const { run } = effectiveRun(el);
     if (run.column === "off") continue;
-    if (!variantVisible(run, active)) continue;
     if (run.placeholder && elementIsEmpty(el)) continue;
-    placed.push({ el, run });
+    placed.push({ el, run, variantHidden: !variantVisible(run, active) });
   }
 
   // Map slot: sketch elements render in place (below); with none, a
@@ -3595,64 +4008,155 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
   }
 
   // ---- Per-role builders.
-  let dressList = null; // consecutive dressing rows fold into one list
+  // Run-spread consolidation pass: the old "consecutive dressing rows fold
+  // into one list" adjacency machinery (dressList/closeDressing) is retired —
+  // planRunSpread (run-layout.mjs) now decides the whole column plan up
+  // front (ALL ungrouped dressing → one hoisted card, side gm boxes → one
+  // folded card at >=2, explicit run.group → composite cards), and this
+  // renderer consumes that plan verbatim.
   const exitsFooter = runSpreadEl("div", "rs-exits");
   let exitsCount = 0;
-
-  const closeDressing = () => { dressList = null; };
 
   const roleTitle = (el, run, fallback) => {
     const t = titleAfterDash(el.name, "");
     return t || (run.variant ? run.variant : (el.name || fallback));
   };
 
-  const buildRead = (el, run) => {
-    closeDressing();
+  // Phase 4 draft-marking (persona round): a quiet amber pill on any Run
+  // rendering of an element that still carries unreviewed model-drafted
+  // fields -- generated text must never be indistinguishable from prep the
+  // GM actually wrote. Cleared by editing the field(s) in Prep.
+  const draftPill = (el) => {
+    if (!Array.isArray(el.draftFields) || !el.draftFields.length) return null;
+    const pill = runSpreadEl("span", "rs-pill rs-pill--draft", "✦ draft");
+    pill.setAttribute("data-testid", "rs-draft-pill");
+    pill.title = "Contains model-drafted text not yet reviewed in Prep";
+    return pill;
+  };
+  const withDraftPill = (node, el) => {
+    const dp = draftPill(el);
+    if (dp) node.appendChild(dp);
+    return node;
+  };
+
+  // The CONTENT of one element, per role — no outer box, no heading. The
+  // per-role builders below (own box/heading) and the composite-card member
+  // sections (shared card, section heading) both render through this, so a
+  // role's field layout is defined exactly once.
+  const appendRoleContent = (el, run, host) => {
     const f = el.fields || {};
-    main.appendChild(runSpreadEl("div", "rs-h", roleTitle(el, run, "Read aloud")));
-    if (f.trigger) main.appendChild(runSpreadEl("div", "rs-when", f.trigger));
-    if (f.looks) main.appendChild(runSpreadEl("p", "rs-read", f.looks));
-    for (const k of ["gives", "means", "secret"]) {
-      if (f[k]) main.appendChild(runSpreadLabeledLine(k === "means" ? "GM" : SCENE_FIELD_LABELS[k], f[k], { secret: k === "secret" }));
+    switch (run.role) {
+      case "read":
+        if (f.trigger) host.appendChild(runSpreadEl("div", "rs-when", f.trigger));
+        if (f.looks) host.appendChild(runSpreadEl("p", "rs-read", f.looks));
+        for (const k of ["gives", "means", "secret"]) {
+          if (f[k]) host.appendChild(runSpreadLabeledLine(runFieldLabel("read", k, SCENE_FIELD_LABELS[k]), f[k], { secret: k === "secret" }));
+        }
+        break;
+      case "card":
+        if (f.gives) host.appendChild(runSpreadEl("p", "rs-phrase", f.gives));
+        if (f.looks) host.appendChild(runSpreadLabeledLine(runFieldLabel("card", "looks"), f.looks));
+        if (f.means) host.appendChild(runSpreadLabeledLine(runFieldLabel("card", "means"), f.means));
+        for (const c of runSpreadChecks(f)) host.appendChild(c);
+        if (f.secret) host.appendChild(runSpreadLabeledLine(runFieldLabel("card", "secret"), f.secret, { secret: true }));
+        for (const line of runSpreadFieldLines(f, ["trigger", "wants", "function"])) host.appendChild(line);
+        break;
+      case "gm":
+        if (f.trigger) host.appendChild(runSpreadEl("div", "rs-when", f.trigger));
+        for (const k of ["looks", "gives", "means", "wants", "function", "secret"]) {
+          if (f[k]) host.appendChild(runSpreadEl("div", "rs-boxp", f[k]));
+        }
+        for (const c of runSpreadChecks(f)) host.appendChild(c);
+        break;
+      case "block":
+        if (el.bestiary) {
+          const b = el.bestiary;
+          const parts = [];
+          if (b.ac != null) parts.push(`AC ${b.ac}`);
+          if (b.hp != null) parts.push(`HP ${b.hp}`);
+          if (b.cr != null) parts.push(`CR ${b.cr}`);
+          const src = b.name && b.name !== el.name ? ` — ${b.name}` : "";
+          if (parts.length || src) host.appendChild(runSpreadEl("span", "rs-bl", `${parts.join(" · ")}${src}`));
+          if (b.note) host.appendChild(runSpreadLabeledLine("Note", b.note));
+        } else if (f.statblockRef) {
+          host.appendChild(runSpreadEl("span", "rs-bl", String(f.statblockRef)));
+        }
+        // Phase 4 honesty rule (persona round): an empty stat block used to
+        // render as a clean nameplate that LOOKED prepped — "tonight I'd be
+        // flipping through the physical MM mid-fight." A name reference
+        // alone carries no numbers, so say so instead of implying readiness.
+        if (!el.bestiary && !(el.stat && (String(el.stat.raw ?? "").trim() || el.stat.ac != null || el.stat.hp != null))) {
+          host.appendChild(runSpreadEl("div", "rs-empty", "No stats entered — AC/HP/actions live in Prep (+ STAT BLOCK)."));
+        }
+        for (const c of runSpreadChecks(f)) host.appendChild(c);
+        if (f.looks) host.appendChild(runSpreadEl("p", "rs-p", f.looks));
+        for (const line of runSpreadFieldLines(f, ["trigger", "gives", "means", "wants", "function", "secret"])) host.appendChild(line);
+        if (el.stat?.raw && String(el.stat.raw).trim()) host.appendChild(runSpreadEl("pre", "rs-stat", String(el.stat.raw)));
+        break;
+      case "sketch": {
+        const svg = runSpreadSanitizeSvg(f.looks);
+        if (svg) host.appendChild(svg);
+        else host.appendChild(runSpreadEl("div", "rs-empty", `${el.name || "Sketch"}: no drawable SVG in its Looks field.`));
+        if (f.means) host.appendChild(runSpreadEl("div", "rs-cap", f.means));
+        break;
+      }
+      default: // beat, dressing-as-section, and anything unrecognized
+        if (f.trigger) host.appendChild(runSpreadEl("div", "rs-when", f.trigger));
+        if (f.looks) host.appendChild(runSpreadEl("p", "rs-p", f.looks));
+        for (const c of runSpreadChecks(f)) host.appendChild(c);
+        for (const line of runSpreadFieldLines(f, ["gives", "means", "wants", "function", "secret"])) host.appendChild(line);
+        break;
     }
+  };
+
+  const buildRead = (el, run, host) => {
+    host.appendChild(withDraftPill(runSpreadEl("div", "rs-h", roleTitle(el, run, "Read aloud")), el));
+    appendRoleContent(el, run, host);
   };
 
   const buildBeat = (el, run, host) => {
-    if (host === main) closeDressing();
-    const f = el.fields || {};
-    const wrap = host === main ? main : runSpreadEl("div", "rs-block rs-block--beat");
-    if (host !== main) {
-      const entityType = el.kind === "graph" && el.graphEntityId ? nodeMap?.get(el.graphEntityId)?.type : null;
-      if (entityType) wrap.style.setProperty("--element-type-color", colorForType(entityType));
-      const bh = runSpreadEl("div", "rs-bhead");
-      bh.appendChild(runSpreadEl("span", "rs-bname", el.name || "(unnamed)"));
-      if (el.kind === "graph") bh.appendChild(runSpreadEl("span", "rs-pill", entityType || "graph"));
-      wrap.appendChild(bh);
-    } else {
-      main.appendChild(runSpreadEl("div", "rs-h", el.name || "Beat"));
+    if (host === main) {
+      main.appendChild(withDraftPill(runSpreadEl("div", "rs-h", el.name || "Beat"), el));
+      appendRoleContent(el, { ...run, role: "beat" }, main);
+      return;
     }
-    if (f.trigger) wrap.appendChild(runSpreadEl("div", "rs-when", f.trigger));
-    if (f.looks) wrap.appendChild(runSpreadEl("p", "rs-p", f.looks));
-    for (const c of runSpreadChecks(f)) wrap.appendChild(c);
-    for (const line of runSpreadFieldLines(f, ["gives", "means", "wants", "function", "secret"])) wrap.appendChild(line);
-    if (host !== main) host.appendChild(wrap);
+    const wrap = runSpreadEl("div", "rs-block rs-block--beat");
+    const entityType = el.kind === "graph" && el.graphEntityId ? nodeMap?.get(el.graphEntityId)?.type : null;
+    if (entityType) wrap.style.setProperty("--element-type-color", colorForType(entityType));
+    const bh = runSpreadEl("div", "rs-bhead");
+    bh.appendChild(runSpreadEl("span", "rs-bname", el.name || "(unnamed)"));
+    if (el.kind === "graph") bh.appendChild(runSpreadEl("span", "rs-pill", entityType || "graph"));
+    withDraftPill(bh, el);
+    wrap.appendChild(bh);
+    appendRoleContent(el, { ...run, role: "beat" }, wrap);
+    host.appendChild(wrap);
   };
 
-  const buildDressing = (el, run, host) => {
-    if (host !== main) { buildBeat(el, run, host); return; } // dressing only makes sense as a list; on the side it's a small block
-    if (!dressList) {
-      main.appendChild(runSpreadEl("div", "rs-h", "Dressing"));
-      dressList = runSpreadEl("ul", "rs-dress");
-      main.appendChild(dressList);
-    }
+  const dressingLi = (el) => {
     const f = el.fields || {};
     const li = document.createElement("li");
     li.appendChild(runSpreadEl("b", null, el.name || "(unnamed)"));
+    withDraftPill(li, el);
     const lead = [f.looks, f.gives].filter((x) => x && String(x).trim()).join(" ");
     if (lead) li.appendChild(document.createTextNode(` — ${lead}`));
     for (const line of runSpreadFieldLines(f, ["trigger", "means", "wants", "function", "secret"])) li.appendChild(line);
     for (const c of runSpreadChecks(f)) li.appendChild(c);
-    dressList.appendChild(li);
+    return li;
+  };
+
+  // The ONE folded Dressing card — all the scene's ungrouped main dressing,
+  // regardless of how they were interleaved in Prep order.
+  const buildDressingCard = (members, host) => {
+    host.appendChild(runSpreadEl("div", "rs-h", "Dressing"));
+    const ul = runSpreadEl("ul", "rs-dress");
+    ul.setAttribute("data-testid", "rs-dressing-card");
+    for (const m of members) ul.appendChild(dressingLi(m.el));
+    host.appendChild(ul);
+  };
+
+  const buildDressing = (el, run, host) => {
+    if (host !== main) { buildBeat(el, run, host); return; } // dressing only makes sense as a list; on the side it's a small block
+    buildDressingCard([{ el, run }], host);
   };
 
   const buildExits = (el) => {
@@ -3676,8 +4180,6 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
   };
 
   const buildBlock = (el, run, host) => {
-    if (host === main) closeDressing();
-    const f = el.fields || {};
     const block = runSpreadEl("div", "rs-block");
     const entityType = el.kind === "graph" && el.graphEntityId ? nodeMap?.get(el.graphEntityId)?.type : null;
     if (entityType) block.style.setProperty("--element-type-color", colorForType(entityType));
@@ -3686,71 +4188,142 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
     if (el.kind === "graph") bh.appendChild(runSpreadEl("span", "rs-pill", entityType || "graph"));
     const count = el.stat && typeof el.stat.count === "number" ? el.stat.count : null;
     if (count && count > 1) bh.appendChild(runSpreadEl("span", "rs-mult", `×${count}`));
+    withDraftPill(bh, el);
     block.appendChild(bh);
-    // Linked bestiary entry -> the one line a GM needs mid-fight.
-    if (el.bestiary) {
-      const b = el.bestiary;
-      const parts = [];
-      if (b.ac != null) parts.push(`AC ${b.ac}`);
-      if (b.hp != null) parts.push(`HP ${b.hp}`);
-      if (b.cr != null) parts.push(`CR ${b.cr}`);
-      const src = b.name && b.name !== el.name ? ` — ${b.name}` : "";
-      if (parts.length || src) block.appendChild(runSpreadEl("span", "rs-bl", `${parts.join(" · ")}${src}`));
-      if (b.note) block.appendChild(runSpreadLabeledLine("Note", b.note));
-    } else if (f.statblockRef) {
-      block.appendChild(runSpreadEl("span", "rs-bl", String(f.statblockRef)));
-    }
-    for (const c of runSpreadChecks(f)) block.appendChild(c);
-    if (f.looks) block.appendChild(runSpreadEl("p", "rs-p", f.looks));
-    for (const line of runSpreadFieldLines(f, ["trigger", "gives", "means", "wants", "function", "secret"])) block.appendChild(line);
-    if (el.stat?.raw && String(el.stat.raw).trim()) block.appendChild(runSpreadEl("pre", "rs-stat", String(el.stat.raw)));
+    appendRoleContent(el, { ...run, role: "block" }, block);
     host.appendChild(block);
   };
 
   const buildCard = (el, run, host) => {
-    if (host === main) closeDressing();
-    const f = el.fields || {};
     const card = runSpreadEl("div", "rs-block rs-card");
     const bh = runSpreadEl("div", "rs-bhead");
     bh.appendChild(runSpreadEl("span", "rs-bname", el.name || "Card"));
+    withDraftPill(bh, el);
     card.appendChild(bh);
-    if (f.gives) card.appendChild(runSpreadEl("p", "rs-phrase", f.gives));
-    if (f.looks) card.appendChild(runSpreadLabeledLine("Effect", f.looks));
-    if (f.means) card.appendChild(runSpreadLabeledLine("Alternate", f.means));
-    for (const c of runSpreadChecks(f)) card.appendChild(c);
-    if (f.secret) card.appendChild(runSpreadLabeledLine("Failure", f.secret, { secret: true }));
-    for (const line of runSpreadFieldLines(f, ["trigger", "wants", "function"])) card.appendChild(line);
+    appendRoleContent(el, { ...run, role: "card" }, card);
     host.appendChild(card);
   };
 
   const buildGm = (el, run, host) => {
-    if (host === main) closeDressing();
-    const f = el.fields || {};
     const box = runSpreadEl("div", "rs-box");
-    box.appendChild(runSpreadEl("b", "rs-box-l", el.name || "GM"));
-    if (f.trigger) box.appendChild(runSpreadEl("div", "rs-when", f.trigger));
-    for (const k of ["looks", "gives", "means", "wants", "function", "secret"]) {
-      if (f[k]) box.appendChild(runSpreadEl("div", "rs-boxp", f[k]));
-    }
-    for (const c of runSpreadChecks(f)) box.appendChild(c);
+    box.appendChild(withDraftPill(runSpreadEl("b", "rs-box-l", el.name || "GM"), el));
+    appendRoleContent(el, { ...run, role: "gm" }, box);
     host.appendChild(box);
   };
 
   const buildSketch = (el, run, host) => {
-    if (host === main) closeDressing();
-    const f = el.fields || {};
     const wrap = runSpreadEl("div", "rs-sketch");
-    const svg = runSpreadSanitizeSvg(f.looks);
-    if (svg) wrap.appendChild(svg);
-    else wrap.appendChild(runSpreadEl("div", "rs-empty", `${el.name || "Sketch"}: no drawable SVG in its Looks field.`));
-    if (f.means) wrap.appendChild(runSpreadEl("div", "rs-cap", f.means));
+    appendRoleContent(el, { ...run, role: "sketch" }, wrap);
     host.appendChild(wrap);
   };
 
-  for (const { el, run } of placed) {
-    const host = run.column === "side" ? side : main;
+  // One member of a composite card or of the folded side GM card: a compact
+  // labeled section (heading via roleTitle so "Read Aloud — P-2 burns in
+  // place" reads as "P-2 burns in place"), variant shown as a quiet pill.
+  const buildMemberSection = (member, host, fallbackTitle, { suppressHeading = false } = {}) => {
+    const sec = runSpreadEl("div", "rs-group-sec");
+    const heading = roleTitle(member.el, member.run, fallbackTitle ?? (ROLE_LABELS[member.run.role] || "Item"));
+    // When a tab row represents this member (its variant IS the active tab),
+    // the tab is the heading — repeating it as a section header is noise.
+    // The draft pill still needs a home when suppressed.
+    if (!suppressHeading) {
+      const sh = runSpreadEl("div", "rs-group-sec-h");
+      sh.appendChild(runSpreadEl("span", null, heading));
+      withDraftPill(sh, member.el);
+      // The variant pill earns its place only when it ADDS something -- for a
+      // "Read Aloud — Night" member whose variant is also "Night", the
+      // heading already says it.
+      if (member.run.variant && member.run.variant.trim().toLowerCase() !== String(heading).trim().toLowerCase()) {
+        sh.appendChild(runSpreadEl("span", "rs-pill", member.run.variant));
+      }
+      sec.appendChild(sh);
+    } else if (Array.isArray(member.el.draftFields) && member.el.draftFields.length) {
+      const sh = runSpreadEl("div", "rs-group-sec-h");
+      withDraftPill(sh, member.el);
+      sec.appendChild(sh);
+    }
+    if (member.run.role === "dressing") {
+      const ul = runSpreadEl("ul", "rs-dress");
+      ul.appendChild(dressingLi(member.el));
+      sec.appendChild(ul);
+    } else if (member.run.role === "exits") {
+      buildExits(member.el); // exits always feed the shared footer, even from a group
+    } else {
+      appendRoleContent(member.el, member.run, sec);
+    }
+    host.appendChild(sec);
+  };
+
+  // Variants round (2026-09-01, Treatment B): a tabbed unit's states render
+  // as a clickable tab row. Clicking is a LOCAL flip only (adjudicated) —
+  // it writes the module-level runTabState and re-renders this spread from
+  // the args already in hand, never a route.
+  const buildTabRow = (unit) => {
+    const row = runSpreadEl("div", "rs-tabs");
+    row.setAttribute("data-testid", "rs-tabs");
+    for (const name of unit.tabs) {
+      const tab = runSpreadEl("button", name === unit.activeTab ? "rs-tab rs-tab--active" : "rs-tab", name);
+      tab.type = "button";
+      tab.setAttribute("data-testid", "rs-tab");
+      tab.setAttribute("data-variant", name);
+      tab.setAttribute("aria-pressed", name === unit.activeTab ? "true" : "false");
+      tab.title = "Show this state — local to this screen, nothing is written";
+      tab.addEventListener("click", () => {
+        runTabState.set(unit.key, name);
+        spread.replaceWith(buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap));
+      });
+      row.appendChild(tab);
+    }
+    return row;
+  };
+
+  // A composite card: the lead member renders as the card's own head +
+  // content, its states as a tab row, every other visible member as a
+  // labeled section underneath — "here's what the thread does" and its
+  // outcomes on ONE card.
+  const buildGroupCard = (unit, host) => {
+    const card = runSpreadEl("div", "rs-block rs-group");
+    card.setAttribute("data-testid", "rs-group");
+    card.setAttribute("data-group", unit.group);
+    const bh = runSpreadEl("div", "rs-bhead");
+    bh.appendChild(runSpreadEl("span", "rs-bname", unit.lead.el.name || unit.group));
+    if (unit.lead.run.variant) bh.appendChild(runSpreadEl("span", "rs-pill", unit.lead.run.variant));
+    withDraftPill(bh, unit.lead.el);
+    card.appendChild(bh);
+    if (unit.lead.run.role === "exits") buildExits(unit.lead.el);
+    else appendRoleContent(unit.lead.el, unit.lead.run, card);
+    const tabbed = Array.isArray(unit.tabs) && unit.tabs.length >= 2;
+    if (tabbed) card.appendChild(buildTabRow(unit));
+    for (const m of unit.members) {
+      if (m === unit.lead || m.hidden) continue;
+      buildMemberSection(m, card, undefined, { suppressHeading: tabbed && m.run.variant === unit.activeTab });
+    }
+    host.appendChild(card);
+  };
+
+  // The folded side GM card (>=2 ungrouped gm boxes, gated ones included —
+  // they render as tabs) — e.g. a scene's backdrop set as one tidy card
+  // instead of a stack of near-identical boxes.
+  const buildGmFold = (unit, host) => {
+    const box = runSpreadEl("div", "rs-box rs-gmfold");
+    box.setAttribute("data-testid", "rs-gm-fold");
+    box.appendChild(runSpreadEl("b", "rs-box-l", "GM notes"));
+    const tabbed = Array.isArray(unit.tabs) && unit.tabs.length >= 2;
+    if (tabbed) box.appendChild(buildTabRow(unit));
+    for (const m of unit.members) {
+      if (m.hidden) continue;
+      buildMemberSection(m, box, "GM", { suppressHeading: tabbed && m.run.variant === unit.activeTab });
+    }
+    host.appendChild(box);
+  };
+
+  const renderUnit = (unit, host) => {
+    if (unit.kind === "dressing") { buildDressingCard(unit.members, host); return; }
+    if (unit.kind === "gm-fold") { buildGmFold(unit, host); return; }
+    if (unit.kind === "group") { buildGroupCard(unit, host); return; }
+    const { el, run } = unit;
     switch (run.role) {
-      case "read": host === main ? buildRead(el, run) : buildGm(el, run, host); break;
+      case "read": host === main ? buildRead(el, run, host) : buildGm(el, run, host); break;
       case "dressing": buildDressing(el, run, host); break;
       case "beat": buildBeat(el, run, host); break;
       case "exits": buildExits(el); break;
@@ -3760,7 +4333,11 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
       case "sketch": buildSketch(el, run, host); break;
       default: buildBeat(el, run, host);
     }
-  }
+  };
+
+  const plan = planRunSpread(placed, { activeTabs: runTabState });
+  for (const unit of plan.main) renderUnit(unit, main);
+  for (const unit of plan.side) renderUnit(unit, side);
   if (exitsCount) main.appendChild(exitsFooter);
 
   if (!side.childNodes.length) side.appendChild(runSpreadEl("div", "rs-empty", "Nothing on the side yet — stat blocks, cards, GM boxes and sketches live here."));
@@ -3846,17 +4423,16 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   // when the world has changed since the mode was last set (or the caller
   // explicitly left the planner surface via resetScenePageMode). This is what
   // makes prev/next/rail navigation between scenes preserve Run mode.
-  scenePageLayout = "page";
   const activeWorld = currentWorld();
   if (scenePageModeWorld !== activeWorld) {
-    scenePageMode = "prep";
+    sceneView = "prep";
     scenePageModeWorld = activeWorld;
   }
   const root = document.createElement("div");
   root.className = "scene-page";
   root.setAttribute("data-testid", rootTestid);
   root.setAttribute("data-scene-id", scene.id);
-  root.setAttribute("data-mode", scenePageMode); // "prep" by default; "run" hides edit chrome via CSS
+  root.setAttribute("data-mode", sceneView === "run" ? "run" : "prep"); // "run" hides edit chrome via CSS
 
   // Top bar: breadcrumb (left) + Page|Cards / Prep|Run segmented controls +
   // Wrap toggle (right, filled by 28.4).
@@ -3870,21 +4446,36 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   if (stale()) return;
   topBar.appendChild(bc);
 
-  // Right-hand cluster: the two segmented controls, then the Wrap button. Wrap
-  // stays furthest right (README §C sub-bar order).
+  // Right-hand cluster: the ONE three-way view control, then the Wrap button.
+  // Wrap stays furthest right (README §C sub-bar order). Testids deliberately
+  // reuse the old pair's (mode-prep-btn / layout-board-btn / mode-run-btn) --
+  // dozens of e2e tests drive them; only layout-page-btn retired.
   const subBarRight = document.createElement("div");
   subBarRight.className = "scene-subbar-controls";
 
-  const layoutControl = buildSegmentedControl(scene.id, [
-    { key: "page", label: "Page", testid: "layout-page-btn", active: true },
-    { key: "cards", label: "Cards", testid: "layout-cards-btn", active: false },
-    { key: "board", label: "Layout", testid: "layout-board-btn", active: false }
+  const viewControl = buildSegmentedControl(scene.id, [
+    { key: "prep", label: "Prep", testid: "mode-prep-btn", active: sceneView === "prep" },
+    { key: "board", label: "Layout", testid: "layout-board-btn", active: sceneView === "board" },
+    { key: "run", label: "Run", testid: "mode-run-btn", active: sceneView === "run" }
   ]);
-  const modeControl = buildSegmentedControl(scene.id, [
-    { key: "prep", label: "Prep", testid: "mode-prep-btn", active: scenePageMode === "prep" },
-    { key: "run", label: "Run", testid: "mode-run-btn", active: scenePageMode === "run" }
-  ]);
-  subBarRight.append(layoutControl.group, modeControl.group);
+  subBarRight.append(viewControl.group);
+
+  // O1: the Prep layout rail's disclosure button. The rail itself is built
+  // by renderSceneElementsList; this just flips `data-rail` on the page
+  // (CSS turns the prep container into a flex row and reveals the rail).
+  const railBtn = document.createElement("button");
+  railBtn.type = "button";
+  railBtn.className = "btn scene-rail-toggle-btn";
+  railBtn.setAttribute("data-testid", "rail-toggle-btn");
+  railBtn.title = "Show the Run-layout lanes beside Prep — drag a row's ◆/◦ grip into a lane to place it";
+  const paintRail = () => {
+    railBtn.textContent = railOpen ? "▤ lanes ▾" : "▤ lanes ▸";
+    railBtn.setAttribute("aria-pressed", railOpen ? "true" : "false");
+    root.setAttribute("data-rail", railOpen ? "open" : "closed");
+  };
+  railBtn.addEventListener("click", () => { railOpen = !railOpen; paintRail(); });
+  paintRail();
+  subBarRight.appendChild(railBtn);
 
   const wrapBtn = document.createElement("button");
   wrapBtn.type = "button";
@@ -3904,23 +4495,9 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   runHost.setAttribute("data-testid", "scene-run-spread-host");
   root.appendChild(runHost);
 
-  // Layout toggle: flip the live scene-elements-list's data-layout attribute in
-  // place (no re-render -- edit state is preserved). scenePageLayout is also
-  // read by renderSceneElementsList so a later structural re-render keeps it.
-  const applyLayout = (layout) => {
-    const wasBoard = scenePageLayout === "board";
-    scenePageLayout = layout;
-    layoutControl.setActive(layout);
-    const list = root.querySelector('[data-testid="scene-elements-list"]');
-    if (list) list.setAttribute("data-layout", layout);
-    // The Layout board is a different DOM, not a CSS flip: entering or
-    // leaving it re-renders the list (a structural op; Page<->Cards stays
-    // the in-place attribute flip it always was).
-    if ((layout === "board") !== wasBoard) refreshElements();
-  };
-  layoutControl.buttons.page.addEventListener("click", () => applyLayout("page"));
-  layoutControl.buttons.cards.addEventListener("click", () => applyLayout("cards"));
-  layoutControl.buttons.board.addEventListener("click", () => applyLayout("board"));
+  // View switching (applyView) is wired further down, next to the run-poll
+  // machinery it starts/stops -- it needs wrapPanel/rebuildRunSpread, which
+  // are defined later in this function.
 
   // Place header (the room). In the designer shell this is one of the three
   // named sub-roots the phase30 contract pins (planner-scene-place-header).
@@ -4245,11 +4822,11 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   };
   const runPollTick = async () => {
     runPollTimer = null;
-    if (stale() || scenePageMode !== "run") return;
+    if (stale() || sceneView !== "run") return;
     if (document.visibilityState === "hidden") { runPollTimer = setTimeout(runPollTick, RUN_POLL_MS); return; }
     try {
       const { version } = await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/run-version${spWithWorld()}`);
-      if (stale() || scenePageMode !== "run") return;
+      if (stale() || sceneView !== "run") return;
       if (runVersion !== null && version !== runVersion) {
         await rebuildRunSpread();
         flashSpreadUpdated();
@@ -4258,28 +4835,47 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     } catch {
       // transient -- try again next tick
     }
-    if (!stale() && scenePageMode === "run") runPollTimer = setTimeout(runPollTick, RUN_POLL_MS);
+    if (!stale() && sceneView === "run") runPollTimer = setTimeout(runPollTick, RUN_POLL_MS);
   };
   const startRunPoll = () => {
     stopRunPoll();
     runVersion = null;
-    runPollTimer = setTimeout(runPollTick, RUN_POLL_MS);
+    // Baseline IMMEDIATELY (0ms), not on the first 3s tick: the old
+    // first-tick baseline silently swallowed any write landing in the first
+    // poll window (entered Run at t=0, agent writes at t=1, tick at t=3
+    // baselines the post-write version -> the change never renders until
+    // the NEXT write). Caught by run-tabs.e2e.mjs, a latent gap predating
+    // the variants round.
+    runPollTimer = setTimeout(runPollTick, 0);
   };
 
-  const applyMode = (mode) => {
-    scenePageMode = mode;
-    modeControl.setActive(mode);
-    root.setAttribute("data-mode", mode);
-    if (mode === "run" && !wrapPanel.hidden) {
-      wrapPanel.hidden = true;
-      wrapBtn.textContent = "Wrap ▸";
+  // The ONE three-way switch (variants round): prep|board share
+  // data-mode="prep" (board is a structural re-render of the list, exactly
+  // as the old applyLayout did); run flips data-mode + the poll.
+  const applyView = (view) => {
+    const wasBoard = sceneView === "board";
+    const wasRun = sceneView === "run";
+    sceneView = view;
+    viewControl.setActive(view);
+    root.setAttribute("data-mode", view === "run" ? "run" : "prep");
+    const list = root.querySelector('[data-testid="scene-elements-list"]');
+    if (list) list.setAttribute("data-layout", view === "board" ? "board" : "page");
+    if ((view === "board") !== wasBoard) refreshElements();
+    if (view === "run") {
+      if (!wrapPanel.hidden) {
+        wrapPanel.hidden = true;
+        wrapBtn.textContent = "Wrap ▸";
+      }
+      rebuildRunSpread();
+      startRunPoll();
+    } else if (wasRun) {
+      stopRunPoll();
     }
-    if (mode === "run") { rebuildRunSpread(); startRunPoll(); }
-    else stopRunPoll();
   };
-  if (scenePageMode === "run") { rebuildRunSpread(); startRunPoll(); } // navigated here already in Run
-  modeControl.buttons.prep.addEventListener("click", () => applyMode("prep"));
-  modeControl.buttons.run.addEventListener("click", () => applyMode("run"));
+  if (sceneView === "run") { rebuildRunSpread(); startRunPoll(); } // navigated here already in Run
+  viewControl.buttons.prep.addEventListener("click", () => applyView("prep"));
+  viewControl.buttons.board.addEventListener("click", () => applyView("board"));
+  viewControl.buttons.run.addEventListener("click", () => applyView("run"));
 
   // Inline events / encounters / notes (task-required, reusing existing
   // per-scene SessionNote + saved-encounter mechanisms). Not e2e-gated here.

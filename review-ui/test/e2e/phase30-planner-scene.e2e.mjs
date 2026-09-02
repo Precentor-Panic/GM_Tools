@@ -188,17 +188,26 @@ test("removing an element shows an undo toast; Undo restores it", async () => {
   await page.close();
 });
 
-test("Page <-> Cards flips the elements list layout in place", async () => {
+test("the view control is the ONE three-way Prep|Layout|Run (Cards and the separate Page|Layout pair are gone)", async () => {
   const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "p30-forge" });
   await makeEl(scene.id, { name: "A bell", fields: { gives: "a toll" } });
   const { page, root } = await openScene(scene.id);
 
   const list = root.locator('[data-testid="scene-elements-list"]');
   assert.equal(await list.getAttribute("data-layout"), "page");
-  await root.locator('[data-testid="layout-cards-btn"]').click();
-  assert.equal(await list.getAttribute("data-layout"), "cards");
-  await root.locator('[data-testid="layout-page-btn"]').click();
-  assert.equal(await list.getAttribute("data-layout"), "page");
+  assert.equal(await root.locator('[data-testid="layout-cards-btn"]').count(), 0, "Cards removed 2026-08-31 (persona round)");
+  assert.equal(await root.locator('[data-testid="layout-page-btn"]').count(), 0, "the separate Page button retired with the 2026-09-01 three-way merge");
+  // The one control: Prep | Layout | Run, in one segmented group.
+  const group = root.locator(".sp-segmented");
+  assert.equal(await group.count(), 1, "exactly one segmented group in the sub-bar");
+  assert.deepEqual(await group.locator(".sp-segmented-btn").allTextContents(), ["Prep", "Layout", "Run"]);
+
+  await root.locator('[data-testid="layout-board-btn"]').click();
+  await root.locator('[data-testid="layout-lane"]').first().waitFor({ timeout: 10000 });
+  assert.equal(await root.locator('[data-testid="layout-lane"]').count(), 3, "Layout view renders its three lanes");
+  assert.equal(await root.locator(".scene-page").getAttribute("data-mode"), "prep", "board is a prep-side view, not run");
+  await root.locator('[data-testid="mode-prep-btn"]').click();
+  assert.equal(await list.getAttribute("data-layout"), "page", "Prep restores the page list");
   await page.close();
 });
 

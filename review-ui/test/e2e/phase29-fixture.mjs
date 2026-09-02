@@ -348,15 +348,15 @@ export const setupPhase29Env = setupPhase28Env;
 //   state, not persisted" -- URL stays the sole location source of truth,
 //   no new route, no new persisted field anywhere).
 //
-//   `[data-testid="layout-page-btn"][data-scene-id]` /
-//   `[data-testid="layout-cards-btn"][data-scene-id]` -- segmented control.
-//   Selecting one sets `[data-testid="scene-elements-list"][data-layout=
-//   "page"|"cards"]` (this suite asserts the attribute flips, not a full
-//   visual-layout check -- that's 29.2/29.5's own polish concern). Defaults
-//   to `"page"` on a fresh page load.
-//
-//   `[data-testid="mode-prep-btn"][data-scene-id]` /
-//   `[data-testid="mode-run-btn"][data-scene-id]` -- segmented control.
+//   2026-09-01 (variants round): the old Page|Layout + Prep|Run PAIR merged
+//   into ONE three-way Prep|Layout|Run segmented control. Testids kept:
+//   `[data-testid="mode-prep-btn"]` (Prep = page list),
+//   `[data-testid="layout-board-btn"]` (Layout = the board),
+//   `[data-testid="mode-run-btn"]` (Run = the spread);
+//   `layout-page-btn` and `layout-cards-btn` are retired.
+//   Prep/Layout set `[data-testid="scene-elements-list"][data-layout=
+//   "page"|"board"]` (this suite asserts the attribute flips, not a full
+//   visual-layout check). Defaults to `"page"` on a fresh world.
 //   Selecting Run sets `[data-testid="scene-page"][data-mode="run"]`
 //   (default `"prep"`) and, WITHOUT a page reload:
 //     - every edit-chrome control this suite already has a testid for

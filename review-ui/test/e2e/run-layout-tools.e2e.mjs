@@ -89,6 +89,67 @@ test("row chip shows the inferred placement as 'auto'; the popover writes an exp
   await page.close();
 });
 
+test("popover Group input tags two elements into one group; Run then shows ONE composite card; a re-save without it ungroups", async () => {
+  const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "lt-square", name: "Group chip scene" });
+  const lead = await makeEl(scene.id, { name: "Charm — The token", fields: { gives: '"Kept words keep."' }, run: { column: "main", role: "card" } });
+  const outcome = await makeEl(scene.id, { name: "Read Aloud — Spent", fields: { looks: "It crumbles." }, run: { column: "main", role: "read" } });
+  const page = await openScene(scene.id);
+
+  async function setGroup(elementId, value) {
+    const chip = page.locator(`[data-testid="scene-element-run-chip"][data-element-id="${elementId}"]`);
+    await chip.click();
+    const pop = page.locator('[data-testid="scene-element-run-pop"]');
+    await pop.waitFor({ state: "visible" });
+    await pop.locator('[data-testid="run-pop-group"]').fill(value);
+    await pop.locator('[data-testid="run-pop-save"]').click();
+    await pop.waitFor({ state: "hidden" });
+    return chip;
+  }
+
+  const leadChip = await setGroup(lead.id, "token");
+  assert.match(await leadChip.textContent(), /⊞ token$/, "chip label carries the group");
+  assert.equal(await leadChip.getAttribute("data-group"), "token");
+
+  // Second element's popover offers the existing group name via the datalist
+  // (stamped off sibling chips), then joins it.
+  const outcomeChip = page.locator(`[data-testid="scene-element-run-chip"][data-element-id="${outcome.id}"]`);
+  await outcomeChip.click();
+  const pop = page.locator('[data-testid="scene-element-run-pop"]');
+  await pop.waitFor({ state: "visible" });
+  const gi = pop.locator('[data-testid="run-pop-group"]');
+  const listId = await gi.getAttribute("list");
+  assert.ok(listId, "group input is wired to a datalist once a group exists");
+  assert.equal(await pop.locator(`datalist#${listId} option`).getAttribute("value"), "token");
+  await gi.fill("token");
+  await pop.locator('[data-testid="run-pop-save"]').click();
+  await pop.waitFor({ state: "hidden" });
+
+  let stored = await els(scene.id);
+  assert.equal(stored.find((e) => e.id === lead.id).run.group, "token");
+  assert.equal(stored.find((e) => e.id === outcome.id).run.group, "token");
+
+  await page.locator('[data-testid="mode-run-btn"]').click();
+  const group = page.locator('[data-testid="rs-group"]');
+  await group.waitFor({ state: "visible", timeout: 15000 });
+  assert.equal(await group.count(), 1, "one composite card in Run");
+  assert.equal(await group.locator(".rs-bhead .rs-bname").textContent(), "Charm — The token");
+  assert.deepEqual(await group.locator(".rs-group-sec-h span:first-child").allTextContents(), ["Spent"]);
+  await page.close();
+
+  // Ungroup via a plain popover save with the field emptied.
+  const page2 = await openScene(scene.id);
+  const chip2 = page2.locator(`[data-testid="scene-element-run-chip"][data-element-id="${outcome.id}"]`);
+  await chip2.click();
+  const pop2 = page2.locator('[data-testid="scene-element-run-pop"]');
+  await pop2.waitFor({ state: "visible" });
+  await pop2.locator('[data-testid="run-pop-group"]').fill("");
+  await pop2.locator('[data-testid="run-pop-save"]').click();
+  await pop2.waitFor({ state: "hidden" });
+  await page2.close();
+  stored = await els(scene.id);
+  assert.ok(!stored.find((e) => e.id === outcome.id).run.group, "an emptied Group field saves a run without the key");
+});
+
 test("Layout board: lanes reflect columns; ↑/↓ and send-to-lane persist column + the full order; Infer tags the untagged", async () => {
   const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "lt-square", name: "Board scene" });
   const a = await makeEl(scene.id, { name: "A read", run: { column: "main", role: "read" } });
@@ -137,7 +198,11 @@ test("Layout board: a real drag from Main to Side persists the column change", a
   await board.waitFor({ state: "visible", timeout: 10000 });
   const card = board.locator(`[data-testid="layout-card"][data-element-id="${a.id}"]`);
   const sideLane = board.locator('[data-testid="layout-lane"][data-column="side"]');
-  await card.dragTo(sideLane);
+  // Target the lane's EMPTY bottom space, not its center — since G2
+  // (2026-09-01) a drop landing ON a card's middle band means "join its
+  // group", and this test is about the column move.
+  const laneBox = await sideLane.boundingBox();
+  await card.dragTo(sideLane, { targetPosition: { x: laneBox.width / 2, y: laneBox.height - 8 } });
   await page.waitForFunction((id) => !!document.querySelector(`[data-testid="layout-lane"][data-column="side"] [data-testid="layout-card"][data-element-id="${id}"]`), a.id, { timeout: 10000 });
   const stored = (await els(scene.id)).find((e) => e.id === a.id);
   assert.deepEqual(stored.run, { column: "side", role: "beat" });

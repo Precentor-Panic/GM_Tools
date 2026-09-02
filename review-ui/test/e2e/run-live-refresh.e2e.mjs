@@ -68,17 +68,19 @@ test("a scene patched over the route while open in Run re-renders on its own wit
   await page.locator('[data-testid="mode-run-btn"]').click();
   const spread = page.locator('[data-testid="scene-run-spread"]');
   await spread.waitFor({ state: "visible", timeout: 15000 });
-  assert.deepEqual(await spread.locator(".rs-side .rs-box-l").allTextContents(), ["Backdrop — Present"]);
+  // Variants round (2026-09-01): both backdrops fold into the tabbed GM
+  // notes card; activeVariants=["Present"] seeds that tab.
+  const foldTab = () => page.locator('[data-testid="scene-run-spread"] [data-testid="rs-gm-fold"] .rs-tab--active');
+  assert.deepEqual(await spread.locator(".rs-side .rs-box-l").allTextContents(), ["GM notes"]);
+  assert.equal(await foldTab().textContent(), "Present");
+  assert.match(await spread.locator('[data-testid="rs-gm-fold"]').textContent(), /Day\./);
 
-  // Let the poll take its first baseline, then change the scene from outside the page.
-  await page.waitForTimeout(3500);
+  // Change the scene from outside the page; the poll must pick it up.
   await updateSceneViaRoute(base, WORLD, scene.id, { activeVariants: ["Night"] });
   await createSceneElementViaRoute(base, WORLD, scene.id, { name: "Read Aloud — Later", fields: { looks: "The lamps come on." }, run: { column: "main", role: "read" } });
 
-  await waitFor(async () => {
-    const titles = await page.locator('[data-testid="scene-run-spread"] .rs-side .rs-box-l').allTextContents();
-    return titles.length === 1 && titles[0] === "Backdrop — Night";
-  }, { timeout: 12000 });
+  await waitFor(async () => (await foldTab().textContent().catch(() => "")) === "Night", { timeout: 12000 });
+  assert.match(await page.locator('[data-testid="scene-run-spread"] [data-testid="rs-gm-fold"]').textContent(), /Dark\./, "the re-seeded tab shows its state");
   assert.match(await page.locator('[data-testid="scene-run-spread"] .rs-main').textContent(), /The lamps come on/);
   assert.equal(await page.locator('[data-testid="scene-run-updated"]').count(), 1, "the 'updated just now' flash is shown");
 
@@ -86,7 +88,6 @@ test("a scene patched over the route while open in Run re-renders on its own wit
   await page.locator('[data-testid="mode-prep-btn"]').click();
   await updateSceneViaRoute(base, WORLD, scene.id, { activeVariants: ["Present"] });
   await page.waitForTimeout(4000);
-  const stillNight = await page.locator('[data-testid="scene-run-spread"] .rs-side .rs-box-l').allTextContents();
-  assert.deepEqual(stillNight, ["Backdrop — Night"], "no rebuild while in Prep");
+  assert.equal(await foldTab().textContent(), "Night", "no rebuild while in Prep");
   await page.close();
 });
