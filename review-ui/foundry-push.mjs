@@ -58,7 +58,27 @@ export async function pushEntityToFoundry(dir, world, entityId, opts = {}) {
     throw new Error(`No entity "${entityId}" found in the live graph for world "${world}" -- cannot push a description that doesn't exist.`);
   }
   const content = entity.description?.trim() || `${entity.name} — no description written yet.`;
+  await postHtmlToFoundryChat(`<p><strong>${escapeHtml(entity.name)}</strong></p><p>${escapeHtml(content)}</p>`, opts);
+  return { posted: true, entityId, entityName: entity.name };
+}
 
+/** Minimal HTML escape for GM_Tools-composed chat content — every caller builds its markup from ESCAPED text, never raw user HTML. */
+export function escapeHtml(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/**
+ * The generalized chat post (Aureus table wave B4/G13): log in as the GM
+ * headlessly and ChatMessage.create the given HTML — extracted from
+ * pushEntityToFoundry above so the rules oracle's "Post ruling to table"
+ * shares one login/post path instead of forking a second one. Same
+ * GM-direct-only, no-MCP-surface stance as the header documents; callers
+ * compose `html` exclusively from escapeHtml'd text.
+ *
+ * @param {string} html
+ * @param {object} [opts]  {baseUrl?, browserFactory?, alias?} — same injection seams as pushEntityToFoundry
+ */
+export async function postHtmlToFoundryChat(html, opts = {}) {
   const baseUrl = opts.baseUrl ?? DEFAULT_FOUNDRY_BASE_URL;
   const browserFactory = opts.browserFactory ?? chromium;
 
@@ -72,16 +92,15 @@ export async function pushEntityToFoundry(dir, world, entityId, opts = {}) {
     await page.locator('button[name="join"], button[type="submit"]').first().click();
     await page.waitForFunction(() => window.game?.ready === true, { timeout: 60000 });
 
-    await page.evaluate(async ({ content, entityName }) => {
+    await page.evaluate(async ({ content, alias }) => {
       await ChatMessage.create({
-        content: `<p><strong>${entityName}</strong></p><p>${content}</p>`,
-        speaker: { alias: "Game Master" },
+        content,
+        speaker: { alias },
         type: 0
       });
-    }, { content, entityName: entity.name });
+    }, { content: html, alias: opts.alias ?? "Game Master" });
   } finally {
     await browser.close();
   }
-
-  return { posted: true, entityId, entityName: entity.name };
+  return { posted: true };
 }

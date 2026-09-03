@@ -181,24 +181,42 @@ export function searchBooks(opts = {}) {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (!terms.length) return { installed: true, matches: [] };
 
-  const matches = [];
+  // Collect per-book, then interleave round-robin up to the cap — filling
+  // the cap from the first books in directory order silently starved
+  // late-alphabet books (a "grappl" search returned eight Fizban's monster
+  // pages and never reached the PHB's actual grappling rule; caught by the
+  // first live smoke). Round-robin keeps every matching book represented.
+  const perBook = [];
   for (const b of books) {
     if (bookFilter && b.book !== bookFilter) continue;
     const pages = loadBookPages(b.path, b.book);
     if (!pages) continue;
+    const bookMatches = [];
     for (const pg of pages) {
       const lower = pg.text.toLowerCase();
       if (!terms.every((t) => lower.includes(t))) continue;
       const matchIndex = lower.indexOf(terms[0]);
-      matches.push({
+      bookMatches.push({
         shelf: b.shelf,
         book: b.book,
         label: bookLabel(b.book),
         page: pg.page,
         snippet: buildSnippet(pg.text, matchIndex)
       });
-      if (matches.length >= limit) return { installed: true, matches };
+      if (bookMatches.length >= limit) break; // one book can never need more than the cap
     }
+    if (bookMatches.length) perBook.push(bookMatches);
+  }
+  const matches = [];
+  for (let round = 0; matches.length < limit; round++) {
+    let took = false;
+    for (const bookMatches of perBook) {
+      if (round < bookMatches.length && matches.length < limit) {
+        matches.push(bookMatches[round]);
+        took = true;
+      }
+    }
+    if (!took) break;
   }
   return { installed: true, matches };
 }
