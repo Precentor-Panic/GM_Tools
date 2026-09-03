@@ -119,7 +119,15 @@ export async function writeFoundryOps(dir, world, ops, opts = {}) {
     if (contents === "[]") {
       const allResults = readJsonArray(resultsPath);
       const results = allResults.filter((r) => opIds.has(r.opId));
-      writeFileSync(resultsPath, "[]", "utf8"); // consumer-side clear, §3
+      // Consumer-side clear, §3 — but only of THIS batch's own results
+      // (G12, Aureus table wave): the old unconditional `"[]"` write
+      // destroyed a sibling producer's late results (scene push, item
+      // push and compendium import all share this transport, correlated
+      // by opId and reconciled from pending ledgers). The contract
+      // already frames GM_Tools as consuming *recognized* opIds; this
+      // aligns the code with it.
+      const survivors = allResults.filter((r) => !opIds.has(r.opId));
+      writeFileSync(resultsPath, survivors.length ? JSON.stringify(survivors, null, 2) : "[]", "utf8");
       return { status: "applied", results, opsPath, resultsPath };
     }
   }

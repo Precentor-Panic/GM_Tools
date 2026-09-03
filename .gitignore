@@ -120,6 +120,9 @@ scene-narration/*/
 # (called out five times over in this file's own history above).
 truth-notes/*/
 !truth-notes/.gitkeep
+# Aureus table wave B1: session-planner/foundry-orphans.mjs is one-file-per-
+# world (human-review convention) -- the stale-scene sweep's work queue.
+foundry-orphans/*.json
 
 # Phase 35 task 35.1 (added at spec time, not after the fact -- per this
 # project's own recurring-gap lesson): combat-planning/item-store.mjs,

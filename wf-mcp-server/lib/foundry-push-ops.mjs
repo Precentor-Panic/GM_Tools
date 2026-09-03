@@ -2,10 +2,11 @@
  * Foundry Scene PUSH — Phase 32 task 32.3 (the thin push slice, GM_Tools's
  * write-channel proof). Composes the ops-channel writer (./foundry-ops.mjs's
  * writeFoundryOps) with the EXISTING scene store
- * (session-planner/scenes.mjs) -- shared verbatim by review-ui/server.mjs's
- * POST /api/foundry/push-scene route and wf-mcp-server/index.mjs's
- * wf_push_scene_to_foundry tool, per gm-tools-conventions' "front-ends are
- * thin wrappers, never logic duplicators." Sibling module to
+ * (session-planner/scenes.mjs) -- backing review-ui/server.mjs's
+ * POST /api/foundry/push-scene route (HTTP-only: no MCP push tool exists,
+ * DELIBERATELY -- see gm-tools-agent SKILL §8's "Where MCP ends"; an older
+ * revision of this header wrongly claimed one), per gm-tools-conventions'
+ * "front-ends are thin wrappers, never logic duplicators." Sibling module to
  * ./foundry-pull-ops.mjs (32.2) -- same location, same naming convention,
  * opposite direction.
  *
@@ -50,6 +51,8 @@ import { getBestiaryEntry } from "../../combat-planning/bestiary-store.mjs";
 import { getPartyMember } from "../../combat-planning/party-roster-store.mjs";
 import { loadSnapshot, foundryResultsPath } from "./snapshot.mjs";
 import { writeFoundryOps, makeOpId, FoundryOpsInFlightError } from "./foundry-ops.mjs";
+// B1/G1 (scene lifecycle): the orphan ledger backing the stale-scene sweep.
+import { recordOrphan, listOrphans, clearOrphan } from "../../session-planner/foundry-orphans.mjs";
 
 /**
  * Pixel dimensions of a local PNG/JPEG, or null when unreadable/unsupported.
@@ -642,4 +645,142 @@ export async function flushDirtyStagedScenes(dataDir, world, opts = {}) {
     ...(pendingCount > 0 ? { pendingCount } : {}),
     ...(outcome.status === "queued" ? { queued: true, note: outcome.note } : {})
   };
+}
+
+// ===========================================================================
+// Aureus table wave B1 (G1) -- the scene LIFECYCLE half: activate, remove
+// from Foundry, delete-everywhere, and the stale-scene sweep. Contract v4
+// kinds activate_scene / delete_scene (plans/phase-32-bridge-contract.md).
+//
+// SAFETY INVARIANT (both destructive paths): a delete_scene op is only ever
+// composed from a `foundrySceneRef` this module itself wrote on a
+// confirmed-applied push (or that ref's orphan-ledger copy captured at
+// delete time) -- never a hand-typed or index-scraped uuid. The module-side
+// creator independently refuses any uuid that doesn't resolve to a Scene.
+// Every route/UI path over these functions sits behind an explicit GM
+// confirmation; nothing here fires automatically.
+// ===========================================================================
+
+/**
+ * Activate the scene's pushed Foundry Scene (the table-facing act: players'
+ * clients follow the active scene). Requires a foundrySceneRef; activation
+ * is Foundry-side state only, so nothing is written to any GM_Tools store.
+ */
+export async function activateSceneInFoundry(dir, world, sceneId, opts = {}) {
+  const scene = getScene(world, sceneId);
+  if (!scene.foundrySceneRef) {
+    throw new Error(`activateSceneInFoundry: scene "${sceneId}" has no foundrySceneRef — push it to Foundry first (stage it, or push-scene).`);
+  }
+  const opId = opts.makeOpId ? opts.makeOpId() : makeOpId();
+  const outcome = await writeFoundryOps(dir, world, [{ opId, kind: "activate_scene", data: { sceneUuid: scene.foundrySceneRef } }], opts);
+  if (outcome.status === "queued") return { status: "queued", sceneId, opId, note: outcome.note };
+  const result = outcome.results.find((r) => r.opId === opId);
+  return { status: "applied", sceneId, opId, ok: !!result?.ok, ...(result?.ok ? {} : { error: result?.error ?? "no result for this op" }) };
+}
+
+/**
+ * Remove the scene's pushed Foundry Scene document while KEEPING the
+ * GM_Tools scene. Order is load-bearing: unstage FIRST (so the auto-flush's
+ * dirty predicate can't re-create the scene between the ref clearing and
+ * the next flush), clear any pendingPush, then compose delete_scene. The
+ * ref is cleared only on a confirmed ok — a queued/failed removal keeps it
+ * (safe: the scene is unstaged, nothing re-pushes; retry any time).
+ */
+export async function removeSceneFromFoundry(dir, world, sceneId, opts = {}) {
+  const scene = getScene(world, sceneId);
+  if (!scene.foundrySceneRef) {
+    throw new Error(`removeSceneFromFoundry: scene "${sceneId}" has no foundrySceneRef — nothing of it exists in Foundry.`);
+  }
+  const ref = scene.foundrySceneRef;
+  updateScene(world, sceneId, { stagedForFoundry: false });
+  setScenePendingPush(world, sceneId, null);
+  const opId = opts.makeOpId ? opts.makeOpId() : makeOpId();
+  const outcome = await writeFoundryOps(dir, world, [{ opId, kind: "delete_scene", data: { sceneUuid: ref } }], opts);
+  if (outcome.status === "queued") {
+    return { status: "queued", sceneId, opId, note: `${outcome.note} The scene is unstaged; its Foundry ref is kept for a retry.` };
+  }
+  const result = outcome.results.find((r) => r.opId === opId);
+  if (!result?.ok) {
+    return { status: "applied", sceneId, opId, ok: false, error: result?.error ?? "no result for this op" };
+  }
+  markScenePushed(world, sceneId, { foundrySceneRef: null, lastPushedAt: null }); // a future re-stage is a fresh create
+  return { status: "applied", sceneId, opId, ok: true, removedFoundryUuid: ref };
+}
+
+/**
+ * The Foundry-side half of deleting a GM_Tools scene — called by the DELETE
+ * route BEFORE its existing GM_Tools-records cascade (which stays
+ * single-homed in the route; this function never deletes GM_Tools records).
+ * Takes the already-fetched scene because the route deletes it right after.
+ *
+ * alsoRemoveFromFoundry=true (the route's explicit-confirm param): try the
+ * removal now; if it doesn't confirm, ORPHAN the ref anyway so the sweep
+ * can retry — the ref is about to die with the scene record either way.
+ * false (default): just capture the orphan so the sweep can offer removal
+ * later. No-op for a scene that was never pushed.
+ */
+export async function handleFoundrySceneOnDelete(dir, world, scene, { alsoRemoveFromFoundry = false } = {}, opts = {}) {
+  if (!scene?.foundrySceneRef) return { foundry: "none" };
+  if (alsoRemoveFromFoundry) {
+    const removal = await removeSceneFromFoundry(dir, world, scene.id, opts);
+    if (removal.status === "applied" && removal.ok) return { foundry: "removed", removedFoundryUuid: removal.removedFoundryUuid };
+    recordOrphan(world, { sceneId: scene.id, name: scene.name, foundrySceneRef: scene.foundrySceneRef }, opts);
+    return { foundry: "orphaned-after-failed-removal", detail: removal };
+  }
+  recordOrphan(world, { sceneId: scene.id, name: scene.name, foundrySceneRef: scene.foundrySceneRef }, opts);
+  return { foundry: "orphaned" };
+}
+
+/**
+ * Everything still living in Foundry that GM_Tools no longer stands behind:
+ * ledger orphans (scene deleted here) + live scenes that are unstaged but
+ * still carry a pushed ref. Read-only — the sweep UI renders this and the
+ * GM picks what to remove.
+ */
+export function listStaleFoundryScenes(dir, world) {
+  const unstagedWithRef = listScenesByRecency(world)
+    .filter((s) => s.foundrySceneRef && !s.stagedForFoundry)
+    .map((s) => ({ kind: "scene", id: s.id, name: s.name, foundrySceneRef: s.foundrySceneRef }));
+  const orphans = listOrphans(world).map((o) => ({ kind: "orphan", id: o.id, name: o.name, foundrySceneRef: o.foundrySceneRef, orphanedAt: o.orphanedAt }));
+  return { orphans, unstagedWithRef };
+}
+
+/**
+ * Bulk removal of GM-confirmed stale targets: ONE ops batch of individually
+ * targeted delete_scene ops (per-op soft-fail keeps the batch honest).
+ * targets: [{kind:'orphan'|'scene', id}] — resolved against the ledger /
+ * the scene's own ref ONLY (the safety invariant above); unknown ids are
+ * reported skipped, never guessed.
+ */
+export async function removeStaleFoundryScenes(dir, world, targets, opts = {}) {
+  const { orphans, unstagedWithRef } = listStaleFoundryScenes(dir, world);
+  const ops = [];
+  const resolved = [];
+  const skipped = [];
+  for (const t of Array.isArray(targets) ? targets : []) {
+    const pool = t.kind === "orphan" ? orphans : unstagedWithRef;
+    const match = pool.find((row) => row.id === t.id);
+    if (!match) { skipped.push({ ...t, reason: "not a current stale target" }); continue; }
+    const opId = opts.makeOpId ? opts.makeOpId() : makeOpId();
+    ops.push({ opId, kind: "delete_scene", data: { sceneUuid: match.foundrySceneRef } });
+    resolved.push({ ...t, opId, foundrySceneRef: match.foundrySceneRef, name: match.name });
+  }
+  if (!ops.length) return { status: "no-op", removed: [], failed: [], skipped };
+
+  const outcome = await writeFoundryOps(dir, world, ops, opts);
+  if (outcome.status === "queued") return { status: "queued", note: outcome.note, pending: resolved, skipped };
+
+  const removed = [];
+  const failed = [];
+  for (const t of resolved) {
+    const result = outcome.results.find((r) => r.opId === t.opId);
+    if (result?.ok) {
+      if (t.kind === "orphan") clearOrphan(world, t.id);
+      else markScenePushed(world, t.id, { foundrySceneRef: null, lastPushedAt: null });
+      removed.push({ kind: t.kind, id: t.id, name: t.name, foundryUuid: t.foundrySceneRef });
+    } else {
+      failed.push({ kind: t.kind, id: t.id, name: t.name, error: result?.error ?? "no result for this op" });
+    }
+  }
+  return { status: "applied", removed, failed, skipped };
 }
