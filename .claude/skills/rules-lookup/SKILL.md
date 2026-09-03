@@ -14,10 +14,21 @@ sits beside it and marker N = the PDF page for `Read` with `pages`.
 
 1. **Never answer a 5e or Draw Steel mechanics question from memory** when
    this library is present. Memory drafts, the library confirms.
-2. **Workflow:** `grep -in "<term>" <shelf>/<book>.txt` (case-insensitive, no
-   `^` anchors — extraction layout varies) → nearest `[[slug p.N]]` marker
-   above the hit is the citation → for tables, stat blocks, or anything
-   layout-dependent, `Read` the PDF at that page (marker N = `pages: "N"`).
+2. **Workflow — tool first, grep as fallback** (Aureus table wave, B4):
+   when the `world-fabric` MCP server is attached, call **`wf_rules_lookup`**
+   `{query, family?, book?}` — one call searches BOTH the structured 5etools
+   rules families (variant rules / actions / conditions / skills / senses /
+   tables, pre-cited `(SRC p.N)`) and this library's page-marked txt shelf
+   (snippet-capped by design). Compose your answer from its hits and cite
+   them. Terms are ALL-must-match substrings — prefer stems ("grappl" finds
+   grappled/grappling). Without the MCP server: `grep -in "<term>"
+   <shelf>/<book>.txt` (case-insensitive, no `^` anchors — extraction
+   layout varies) → nearest `[[slug p.N]]` marker above the hit is the
+   citation. Either way: for tables, stat blocks, or anything
+   layout-dependent, `Read` the PDF at that page (marker N = `pages: "N"`)
+   — the tool's capped snippets never carry a whole table.
+   (The app has the same search + a GM-only ask panel on the Library's
+   Rules tab; `GET /api/rules` is the HTTP mirror.)
 3. **Cite** as `(PHB p.N)` / `(DMG p.N)` etc. — page numbers are PDF pages,
    which may differ from printed folios; that's fine, they're reproducible.
 4. **Stat blocks for play** still come from the Plutonium index /

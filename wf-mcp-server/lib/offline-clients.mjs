@@ -452,3 +452,23 @@ export function offlinePrepContentClient(kind, { fieldName, entityType } = {}) {
     }
   };
 }
+
+/**
+ * OFFLINE DETERMINISTIC rules-answer client (POST /api/rules/ask). The
+ * honest keyless behavior: no ruling is invented — the canned text tells
+ * the GM the retrieval citations below the panel still stand and to read
+ * them directly. Retrieval itself is free and unaffected by keylessness.
+ */
+export function offlineRulesAnswerClient() {
+  return {
+    messages: {
+      create: async () => ({
+        content: [{
+          type: "text",
+          text: "(Offline — no ANTHROPIC_API_KEY is configured, so no ruling was composed. The retrieved citations below still stand; read them directly.)"
+        }],
+        stop_reason: "end_turn"
+      })
+    }
+  };
+}

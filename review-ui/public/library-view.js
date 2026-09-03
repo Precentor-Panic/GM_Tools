@@ -95,7 +95,11 @@ const TABS = [
   { id: "bestiary", label: "Bestiary", glyph: "✦" },
   { id: "hall", label: "Hero's Hall", glyph: "◉" },
   { id: "reliquary", label: "Reliquary", glyph: "◈" },
-  { id: "stagecraft", label: "Stagecraft", glyph: "▦" }
+  { id: "stagecraft", label: "Stagecraft", glyph: "▦" },
+  // Rules oracle (Aureus table wave B4/G11). The ✦-honesty convention holds:
+  // the ASK panel inside this tab reaches a real LLM route; the tab glyph
+  // itself is plain iconography (§ = the statute mark).
+  { id: "rules", label: "Rules", glyph: "§" }
 ];
 
 // ---------------------------------------------------------------------------
@@ -157,7 +161,7 @@ function trayRail(world, width) {
 // Entry point. `arg` is the tab hash segment (undefined/"" => bestiary).
 // Called by app-shell.js's renderShell for the #library surface.
 // ---------------------------------------------------------------------------
-const NORMALIZE = { bestiary: "bestiary", hall: "hall", reliquary: "reliquary", stagecraft: "stagecraft" };
+const NORMALIZE = { bestiary: "bestiary", hall: "hall", reliquary: "reliquary", stagecraft: "stagecraft", rules: "rules" };
 let renderToken = 0;
 let activeTab = "bestiary";
 
@@ -188,7 +192,8 @@ export async function renderLibrarySurface(arg) {
     bestiary: data.bestiary.filter((e) => e.status !== "discarded").length,
     hall: data.party.filter((m) => m.status !== "discarded").length,
     reliquary: data.items.filter((i) => i.status !== "discarded").length,
-    stagecraft: data.stagecraft.filter((a) => a.status !== "discarded").length
+    stagecraft: data.stagecraft.filter((a) => a.status !== "discarded").length,
+    rules: "§" // not a shelf — no count; the glyph repeats as a quiet non-number
   };
 
   // Tab bar (left) + per-tab filter controls (right).
@@ -216,7 +221,142 @@ export async function renderLibrarySurface(arg) {
   const ctx = { world, data, subbar, bodyRow };
   if (tab === "bestiary") buildBestiary(ctx);
   else if (tab === "hall") buildHall(ctx);
+  else if (tab === "rules") buildRulesTab(ctx);
   else buildShelf(ctx, tab);
+}
+
+// ---------------------------------------------------------------------------
+// Rules oracle tab (Aureus table wave B4/G11): free deterministic search over
+// the structured 5etools rules families + the GM's own page-marked
+// rules-library (cited, snippet-capped), and the GM-ONLY "Ask a ruling"
+// panel — ONE LLM call composing a cited ruling strictly from the retrieved
+// excerpts, with "Post ruling to table" pushing it into live Foundry chat
+// (public, per adjudication). No player-facing surface exists on purpose.
+// ---------------------------------------------------------------------------
+function buildRulesTab(ctx) {
+  const { bodyRow } = ctx;
+  const col = el("div", { style: "display: flex; flex-direction: column; gap: 14px; flex: 1; min-width: 0; padding: 14px; overflow-y: auto;" });
+  bodyRow.appendChild(col);
+
+  const citeOf = (m) => {
+    const label = m.family ? m.source : m.label;
+    return m.page != null ? `(${label} p.${m.page})` : `(${label})`;
+  };
+  const citePill = (m) => el("span", {
+    text: citeOf(m),
+    style: "font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .04em; border: 1px solid oklch(0.80 0.040 185); border-radius: 999px; padding: 1px 8px; color: oklch(0.38 0.060 185); background: oklch(0.965 0.014 185); white-space: nowrap;"
+  });
+
+  // ── free search ──────────────────────────────────────────────────────────
+  const searchRow = el("div", { style: "display: flex; gap: 8px; align-items: center; flex-wrap: wrap;" });
+  const input = el("input", { testid: "rules-search-input", placeholder: "Search the rules… (all terms must match)", style: "flex: 1; min-width: 220px; padding: 7px 10px; border: 1px solid oklch(0.86 0.010 80); border-radius: 5px; font-size: 13px;" });
+  const familySel = el("select", { testid: "rules-family-filter", style: "padding: 6px 8px; border: 1px solid oklch(0.86 0.010 80); border-radius: 5px; font-size: 12px;" });
+  for (const [v, t] of [["", "all families"], ["variantrules", "variant rules"], ["actions", "actions"], ["conditionsdiseases", "conditions"], ["skills", "skills"], ["senses", "senses"], ["tables", "tables"]]) {
+    familySel.appendChild(el("option", { value: v, text: t }));
+  }
+  const bookInput = el("input", { testid: "rules-book-filter", placeholder: "book (e.g. phb)", style: "width: 110px; padding: 7px 10px; border: 1px solid oklch(0.86 0.010 80); border-radius: 5px; font-size: 12px;" });
+  const searchBtn = el("div", { testid: "rules-search-btn", text: "Search", style: "padding: 7px 14px; border-radius: 5px; cursor: pointer; background: oklch(0.50 0.075 185); color: oklch(0.99 0.005 185); font-size: 12.5px;" });
+  searchRow.append(input, familySel, bookInput, searchBtn);
+  col.appendChild(searchRow);
+
+  const resultsHost = el("div", { testid: "rules-results", style: "display: flex; flex-direction: column; gap: 8px;" });
+  col.appendChild(resultsHost);
+
+  async function runSearch() {
+    const query = input.value.trim();
+    if (!query) return;
+    resultsHost.textContent = "Searching…";
+    try {
+      const p = new URLSearchParams({ query });
+      if (familySel.value) p.set("family", familySel.value);
+      if (bookInput.value.trim()) p.set("book", bookInput.value.trim());
+      const r = await api(`/api/rules?${p}`);
+      resultsHost.innerHTML = "";
+      const cards = [];
+      for (const m of r.structured.matches) {
+        cards.push(el("div", { testid: "rules-result", style: "border: 1px solid oklch(0.86 0.010 80); border-left: 3px solid oklch(0.50 0.075 185); border-radius: 5px; padding: 9px 12px; background: oklch(0.985 0.005 85);" }, [
+          el("div", { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 4px;" }, [
+            el("strong", { text: m.name, style: "font-size: 13px;" }), citePill(m),
+            ...(m.ruleType ? [el("span", { text: m.ruleType, style: "font-size: 10px; color: oklch(0.48 0.014 65);" })] : [])
+          ]),
+          el("div", { text: m.text, style: "font-size: 12.5px; line-height: 1.5; white-space: pre-wrap;" })
+        ]));
+      }
+      for (const m of r.books.matches) {
+        cards.push(el("div", { testid: "rules-result", style: "border: 1px solid oklch(0.86 0.010 80); border-left: 3px solid oklch(0.62 0.10 65); border-radius: 5px; padding: 9px 12px; background: oklch(0.985 0.005 85);" }, [
+          el("div", { style: "margin-bottom: 4px;" }, [citePill(m)]),
+          el("div", { text: `…${m.snippet}…`, style: "font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; font-style: italic;" })
+        ]));
+      }
+      if (!cards.length) {
+        const notes = [];
+        if (!r.structured.installed) notes.push("Plutonium data not found on this machine");
+        if (!r.books.installed) notes.push("the rules-library shelf is not on this machine");
+        resultsHost.appendChild(el("div", { text: notes.length ? `No matches — and ${notes.join("; ")}.` : "No matches. Snippets need EVERY term — try fewer, more specific words.", style: "font-size: 12.5px; color: oklch(0.48 0.014 65);" }));
+      } else {
+        for (const c of cards) resultsHost.appendChild(c);
+        resultsHost.appendChild(el("div", { text: "Page numbers are PDF pages (the rules-lookup convention); snippets are deliberately capped — open the cited PDF page for full tables.", style: "font-size: 11px; color: oklch(0.55 0.012 70);" }));
+      }
+    } catch (err) {
+      resultsHost.textContent = `Search failed: ${err.message}`;
+    }
+  }
+  searchBtn.addEventListener("click", runSearch);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") runSearch(); });
+
+  // ── ask a ruling (GM-only; ✦ = a real LLM call) ─────────────────────────
+  col.appendChild(el("div", { style: "border-top: 1px dashed oklch(0.80 0.010 80); margin: 4px 0;" }));
+  const askHead = el("div", { text: "✦ Ask a ruling (GM-only — one model call over the retrieved excerpts; the ruling can be posted publicly to Foundry chat)", style: "font-size: 12px; font-weight: 600; color: oklch(0.48 0.014 65);" });
+  const askRow = el("div", { style: "display: flex; gap: 8px; align-items: center;" });
+  const askInput = el("input", { testid: "rules-ask-input", placeholder: "e.g. Does grappling reduce my speed when I drag the target?", style: "flex: 1; padding: 7px 10px; border: 1px solid oklch(0.86 0.010 80); border-radius: 5px; font-size: 13px;" });
+  const askBtn = el("div", { testid: "rules-ask-btn", text: "✦ Ask", style: "padding: 7px 14px; border-radius: 5px; cursor: pointer; background: oklch(0.55 0.11 40); color: oklch(0.99 0.005 40); font-size: 12.5px;" });
+  askRow.append(askInput, askBtn);
+  const answerHost = el("div", { testid: "rules-answer-host", style: "display: none; flex-direction: column; gap: 8px;" });
+  col.append(askHead, askRow, answerHost);
+
+  let lastAsk = null;
+  askBtn.addEventListener("click", async () => {
+    const question = askInput.value.trim();
+    if (!question) return;
+    askBtn.textContent = "Consulting the library…";
+    answerHost.style.display = "none";
+    try {
+      const r = await api(`/api/rules/ask`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question }) });
+      answerHost.innerHTML = "";
+      answerHost.style.display = "flex";
+      if (r.noSources) {
+        answerHost.appendChild(el("div", { testid: "rules-answer-none", text: "Not found in the library — no excerpt matched the question's terms. Try the search above with different words.", style: "font-size: 12.5px; color: oklch(0.48 0.014 65);" }));
+      } else {
+        lastAsk = { question, answer: r.answer };
+        answerHost.appendChild(el("div", { testid: "rules-answer", text: r.answer, style: "border: 1px solid oklch(0.80 0.06 40); border-radius: 5px; padding: 11px 14px; background: oklch(0.975 0.012 60); font-size: 13px; line-height: 1.55; white-space: pre-wrap;" }));
+        const cites = [...r.hits.structured.matches, ...r.hits.books.matches];
+        answerHost.appendChild(el("div", { style: "display: flex; gap: 6px; flex-wrap: wrap;" }, cites.map(citePill)));
+        if (r.offline) {
+          answerHost.appendChild(el("div", { text: "Offline — no API key configured; the citations above are the retrieval hits.", style: "font-size: 11px; color: oklch(0.55 0.012 70);" }));
+        } else {
+          const postBtn = el("div", { testid: "rules-post-ruling-btn", text: "Post ruling to table", style: "align-self: flex-start; padding: 6px 12px; border: 1px solid oklch(0.80 0.040 185); border-radius: 5px; cursor: pointer; background: oklch(0.965 0.014 185); color: oklch(0.38 0.060 185); font-size: 12px;" });
+          const postStatus = el("span", { style: "font-size: 11px; color: oklch(0.55 0.012 70); margin-left: 8px;" });
+          postBtn.addEventListener("click", async () => {
+            if (!lastAsk) return;
+            postBtn.textContent = "Posting… (logs into Foundry, takes a few seconds)";
+            try {
+              await api(`/api/rules/post-ruling`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(lastAsk) });
+              postBtn.textContent = "Posted to Foundry chat.";
+            } catch (err) {
+              postBtn.textContent = "Post ruling to table";
+              postStatus.textContent = `Post failed: ${err.message} (is a Foundry client running?)`;
+            }
+          });
+          answerHost.appendChild(el("div", {}, [postBtn, postStatus]));
+        }
+      }
+    } catch (err) {
+      answerHost.style.display = "flex";
+      answerHost.textContent = `Ask failed: ${err.message}`;
+    } finally {
+      askBtn.textContent = "✦ Ask";
+    }
+  });
 }
 
 async function fetchLibraryData(world) {

@@ -398,7 +398,10 @@ import { developDescription } from "../mutation-engine/develop-description.mjs";
 // under review-ui/ (not wf-mcp-server/lib/) -- see foundry-push.mjs's own
 // header for why (playwright's runtime dependency only resolves from
 // review-ui's own node_modules).
-import { pushEntityToFoundry } from "./foundry-push.mjs";
+import { pushEntityToFoundry, postHtmlToFoundryChat, escapeHtml } from "./foundry-push.mjs";
+// G13 — the rules oracle's ask surface (GM-only; see the /api/rules/ask route).
+import { answerRulesQuestion } from "../rules-oracle/rules-answer.mjs";
+import { offlineRulesAnswerClient } from "../wf-mcp-server/lib/offline-clients.mjs";
 import { developScene } from "../mutation-engine/scene-develop.mjs";
 import { quickGenerate, groundPromptWithAnchor } from "../mutation-engine/quick-gen.mjs";
 
@@ -4063,6 +4066,45 @@ async function handleApi(req, res, url, parts) {
       limit: Number.isFinite(limit) ? limit : undefined
     });
     return sendJson(res, 200, result);
+  }
+
+  // POST /api/rules/ask  { question }
+  // G13 — the rules oracle's ONE LLM call (rules-oracle/rules-answer.mjs):
+  // a cited, table-ready ruling composed strictly from retrieved excerpts.
+  // GM-ONLY surface by adjudication (players could prompt-engineer
+  // favorable rulings — no player exposure; "oracle as table mechanic" is
+  // a recorded future idea). Keyless degrade: the canned offline client's
+  // honest no-ruling note, retrieval hits intact, offline:true stamped.
+  // Zero retrieved sources short-circuits BEFORE any model call.
+  if (method === "POST" && parts.length === 3 && parts[1] === "rules" && parts[2] === "ask") {
+    const body = await readBody(req);
+    const question = String(body.question ?? "").trim();
+    if (!question) {
+      return sendJson(res, 400, { error: "POST /api/rules/ask requires a non-empty `question`." });
+    }
+    const dir = resolveDir();
+    const result = await answerRulesQuestion(dir, question, offlineOpts(offlineRulesAnswerClient));
+    return sendJson(res, 200, { ...result, offline: isOffline() });
+  }
+
+  // POST /api/rules/post-ruling  { question, answer }
+  // G13 — post the (already-composed) ruling into live Foundry CHAT so the
+  // ruling is PUBLIC at the table (Russell's call). Reuses the one
+  // headless-GM chat-post path (foundry-push.mjs's postHtmlToFoundryChat);
+  // markup composed exclusively from escaped text. Genuinely slow
+  // (headless Chromium login) — the frontend carries the slow notice.
+  if (method === "POST" && parts.length === 3 && parts[1] === "rules" && parts[2] === "post-ruling") {
+    const body = await readBody(req);
+    const question = String(body.question ?? "").trim();
+    const answer = String(body.answer ?? "").trim();
+    if (!question || !answer) {
+      return sendJson(res, 400, { error: "POST /api/rules/post-ruling requires non-empty `question` and `answer`." });
+    }
+    const html =
+      `<div><p><strong>Ruling</strong> — ${escapeHtml(question)}</p>` +
+      `<p>${escapeHtml(answer).replace(/\n/g, "<br>")}</p></div>`;
+    const result = await postHtmlToFoundryChat(html, { alias: "Rules Oracle (GM)" });
+    return sendJson(res, 200, { ...result, question });
   }
 
   sendJson(res, 404, { error: `No route: ${req.method} ${url.pathname}` });
