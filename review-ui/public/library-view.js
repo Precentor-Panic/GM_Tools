@@ -32,6 +32,11 @@
 //    member's real combat readouts (attack bonus, saves, notable feats) instead.
 "use strict";
 import { mountSceneTray, setTrayDragPayload } from "./scene-tray.js";
+// "Aureus to the Table" task G6 -- the Reliquary's own "Available via
+// Plutonium" shelf reuses the shell's ONE shared toast (app-shell.js/
+// world-view.js/session-planner-view.js's own precedent), rather than the
+// Bestiary shelf's older inline-button-text-only feedback convention.
+import { showUndoToast } from "./plans-view.js";
 
 // ---------------------------------------------------------------------------
 // Palette / kind tables — copied from Library.dc.html's own SOURCES/KINDS.
@@ -1262,6 +1267,232 @@ function layoutBtnStyle(active) {
   return `padding: 3px 10px; border-radius: 4px; font-size: 11.5px; cursor: pointer; background: ${active ? TEAL : "transparent"}; color: ${active ? "oklch(0.99 0.005 185)" : "oklch(0.48 0.014 65)"};`;
 }
 
+// ---------------------------------------------------------------------------
+// "Aureus to the Table" task G6 -- the Reliquary's own "Available via
+// Plutonium" shelf, over the generalized family core's `items` family
+// (combat-planning/plutonium-source.mjs task G4 / review-ui route task G5).
+// Deliberately mirrors buildPlutoniumShelf's (the Bestiary tab's own shelf)
+// structure/testids/styling convention one-for-one -- search + facet
+// selects built once from the first response, windowed "show more" paging,
+// a not-installed empty state, a per-row dedupe marker -- rather than
+// force-generalizing the two into one shared builder (the Bestiary shelf is
+// CR-range-filtered creature stats; this one is type/rarity/source-filtered
+// items -- different enough fields that sharing the builder would mean
+// threading a pile of creature-vs-item conditionals through one function
+// for no real reuse win). Only `sourcePill` (a tiny, already-generic
+// helper) and the toast import above are actually shared.
+// ---------------------------------------------------------------------------
+function buildPlutoniumItemsShelf(ctx) {
+  const { world, data } = ctx;
+  const st = { query: "", type: "", rarity: "", source: "", offset: 0, rows: [], total: 0, installed: null, facets: null, loading: false };
+  const PAGE_SIZE = 25;
+
+  const section = el("div", { testid: "plutonium-items-shelf", style: "margin-top: 34px; border-top: 1px solid oklch(0.86 0.010 80); padding-top: 18px;" });
+  const headRow = el("div", { style: "display: flex; align-items: baseline; gap: 11px; flex-wrap: wrap;" }, [
+    el("div", { text: "Available via Plutonium", style: "font-family: Spectral, serif; font-size: 20px; font-weight: 500;" }),
+    sourcePill("plutonium", "plutonium-items-shelf-pill"),
+    el("span", { testid: "plutonium-items-shelf-count", style: "font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.60 0.012 70);" })
+  ]);
+  const blurb = el("div", {
+    // Honest framing, stated up front where the shelf starts -- same rule
+    // W4c's bestiary blurb states, worded for what THIS bridge actually does.
+    text: "Everything Plutonium's bundled 5etools item data says exists — browsable here so the Reliquary isn't blind to unimported gear. Read-only: adding a row here adds it to the Reliquary; pushing an actual Foundry item is separate.",
+    style: "font-size: 12px; color: oklch(0.52 0.014 65); margin: 5px 0 12px; max-width: 78ch; line-height: 1.5;"
+  });
+  section.append(headRow, blurb);
+
+  // --- filter controls ---
+  const controls = el("div", { style: "display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;" });
+  const inputStyle = "padding: 5px 9px; border: 1px solid oklch(0.84 0.010 80); border-radius: 5px; font-family: inherit; font-size: 12px; background: oklch(1 0 0); color: inherit;";
+  const search = el("input", { testid: "plutonium-items-search-input", placeholder: "Find an item…", style: `${inputStyle} width: 200px;` });
+  let debounce = null;
+  search.addEventListener("input", () => {
+    st.query = search.value;
+    clearTimeout(debounce);
+    debounce = setTimeout(() => fetchPage(true), 200);
+  });
+
+  const mkSelect = (testid, first, options, onChange) => {
+    const sel = el("select", { testid, style: inputStyle });
+    sel.appendChild(el("option", { value: first.value, text: first.label }));
+    for (const o of options) sel.appendChild(el("option", { value: o.value, text: o.label }));
+    sel.addEventListener("change", () => { onChange(sel.value); fetchPage(true); });
+    return sel;
+  };
+  const typeSelHost = el("span", {});
+  const raritySelHost = el("span", {});
+  const sourceSelHost = el("span", {});
+  controls.append(search, typeSelHost, raritySelHost, sourceSelHost);
+  section.appendChild(controls);
+
+  const rowsHost = el("div", { testid: "plutonium-items-rows", style: "display: flex; flex-direction: column; gap: 4px;" });
+  const footerHost = el("div", { style: "margin-top: 10px;" });
+  section.append(rowsHost, footerHost);
+
+  // Facet dropdowns built ONCE from the first response (whole-family
+  // facets), then left stable while filtering -- same convention as the
+  // Bestiary shelf's own buildFacetSelects.
+  let facetsBuilt = false;
+  function buildFacetSelects() {
+    if (facetsBuilt || !st.facets) return;
+    facetsBuilt = true;
+    typeSelHost.appendChild(mkSelect(
+      "plutonium-items-type-filter", { value: "", label: "Any type" },
+      st.facets.types.map((t) => ({ value: t.id, label: `${t.id} (${t.count})` })),
+      (v) => { st.type = v; }
+    ));
+    raritySelHost.appendChild(mkSelect(
+      "plutonium-items-rarity-filter", { value: "", label: "Any rarity" },
+      st.facets.rarities.map((r) => ({ value: r.id, label: `${r.id} (${r.count})` })),
+      (v) => { st.rarity = v; }
+    ));
+    sourceSelHost.appendChild(mkSelect(
+      "plutonium-items-source-filter", { value: "", label: "Any source" },
+      st.facets.sources.map((s) => ({ value: s.id, label: `${s.id} (${s.count})` })),
+      (v) => { st.source = v; }
+    ));
+  }
+
+  async function fetchPage(reset) {
+    if (reset) { st.offset = 0; st.rows = []; }
+    st.loading = true;
+    paintFooter();
+    const params = new URLSearchParams();
+    if (st.query.trim()) params.set("query", st.query.trim());
+    if (st.type) params.set("type", st.type);
+    if (st.rarity) params.set("rarity", st.rarity);
+    if (st.source) params.set("source", st.source);
+    params.set("offset", String(st.offset));
+    params.set("limit", String(PAGE_SIZE));
+    try {
+      const r = await api(`/api/combat-planning/plutonium-items?${params}`);
+      st.installed = r.installed;
+      st.total = r.total;
+      st.facets = st.facets || r.facets;
+      st.rows = st.rows.concat(r.rows || []);
+      st.offset = st.rows.length;
+      buildFacetSelects();
+    } catch { st.installed = st.installed ?? false; }
+    st.loading = false;
+    paintRows();
+    paintFooter();
+  }
+
+  function paintRows() {
+    rowsHost.innerHTML = "";
+    const countEl = headRow.querySelector('[data-testid="plutonium-items-shelf-count"]');
+    if (st.installed === false) {
+      countEl.textContent = "";
+      rowsHost.appendChild(el("div", {
+        testid: "plutonium-items-not-installed",
+        text: "Plutonium isn't installed in this Foundry data directory — nothing to browse. Install the Plutonium module and its bundled 5etools item data appears here automatically.",
+        style: "padding: 16px; border: 1px dashed oklch(0.86 0.010 80); border-radius: 4px; font-size: 12px; color: oklch(0.56 0.012 70);"
+      }));
+      return;
+    }
+    countEl.textContent = `${st.total} matching`;
+    if (!st.rows.length) {
+      rowsHost.appendChild(el("div", { text: "Nothing matches that. Loosen the search or a filter.", style: "font-size: 12px; color: oklch(0.56 0.012 70); padding: 8px 0;" }));
+      return;
+    }
+    for (const r of st.rows) rowsHost.appendChild(plutoniumItemRow(r));
+  }
+
+  function paintFooter() {
+    footerHost.innerHTML = "";
+    if (st.installed === false) return;
+    if (st.loading) {
+      footerHost.appendChild(el("div", { text: "Loading…", style: "font-size: 11.5px; color: oklch(0.58 0.012 70);" }));
+      return;
+    }
+    if (st.rows.length < st.total) {
+      const more = el("div", {
+        testid: "plutonium-items-show-more-btn",
+        text: `Show more (${st.rows.length} of ${st.total})`,
+        style: "display: inline-block; padding: 6px 14px; border: 1px solid oklch(0.84 0.010 80); border-radius: 5px; cursor: pointer; font-size: 12px; color: oklch(0.44 0.050 25); background: oklch(0.975 0.006 85);"
+      });
+      more.addEventListener("click", () => fetchPage(false));
+      footerHost.appendChild(more);
+    }
+  }
+
+  function plutoniumItemRow(r) {
+    const statBits = [
+      r.type ? r.type : null,
+      r.rarity && r.rarity !== "none" ? r.rarity : null,
+      r.reqAttune ? "attunement" : null,
+      r.isBase ? "mundane" : null
+    ].filter(Boolean).join(" · ");
+    const row = el("div", {
+      testid: "plutonium-item-row",
+      "data-name": r.name,
+      "data-source": r.source ?? "",
+      style: "display: flex; align-items: baseline; gap: 10px; padding: 6px 10px; border: 1px solid oklch(0.90 0.010 80); border-left: 3px solid oklch(0.78 0.070 25); border-radius: 4px; background: oklch(0.985 0.005 85);"
+    }, [
+      el("span", { testid: "plutonium-item-row-name", text: r.name, style: "font-family: Spectral, serif; font-size: 14.5px; font-weight: 500; flex: none;" }),
+      el("span", { text: statBits, style: "font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.52 0.014 65); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" }),
+      el("span", {
+        testid: "plutonium-item-row-source",
+        text: `${r.source ?? "?"}${r.page != null ? ` p${r.page}` : ""}`,
+        style: "font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.40 0.10 25); flex: none;"
+      })
+    ]);
+    row.appendChild(buildPlutoniumItemRowAction(r));
+    return row;
+  }
+
+  // THE one explicit bridge from the read-only Plutonium `items` family onto
+  // the curated Reliquary (POST .../items/add-from-plutonium; server-side
+  // dedupe guard -> 409 reads back as "already on the shelf"). An
+  // already-added item renders the quiet "on shelf" marker instead of the
+  // button (matched against the CURATED items this ctx was built with --
+  // a fresh Reliquary render after adding recomputes this from scratch, same
+  // as the Bestiary shelf's own dedupe-marker convention).
+  function buildPlutoniumItemRowAction(r) {
+    const provenance = `${r.source ?? "?"}${r.page != null ? ` p${r.page}` : ""} via Plutonium`;
+    const alreadyOnShelf = (data.items || []).some(
+      (i) => i.status !== "discarded" && i.name === r.name && i.sourceText === provenance
+    );
+    if (alreadyOnShelf) {
+      return el("span", {
+        testid: "plutonium-item-row-on-shelf",
+        text: "✓ on shelf",
+        title: "Already on the Reliquary shelf",
+        style: "flex: none; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.48 0.09 150); padding: 2px 8px; border: 1px solid oklch(0.80 0.070 150); border-radius: 20px; background: oklch(0.96 0.020 150);"
+      });
+    }
+    const btn = el("span", {
+      testid: "plutonium-item-row-add-btn",
+      text: "+ shelf",
+      title: "Adds this item to the Reliquary. Pushing an actual Foundry item stays a separate act.",
+      style: "flex: none; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.40 0.10 25); padding: 2px 8px; border: 1px dashed oklch(0.78 0.070 25); border-radius: 20px; cursor: pointer; white-space: nowrap;"
+    });
+    btn.addEventListener("click", async () => {
+      btn.textContent = "adding…";
+      try {
+        await api("/api/combat-planning/items/add-from-plutonium", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world, name: r.name, source: r.source })
+        });
+        showUndoToast(`"${r.name}" added to the Reliquary.`, () => {});
+        await renderLibrarySurface("reliquary"); // a NEW curated item exists -- full reload, same as the Bestiary shelf's own convention
+      } catch (err) {
+        if (err.status === 409) {
+          showUndoToast(`"${r.name}" is already on the shelf.`, () => {});
+          btn.textContent = "already on shelf";
+        } else {
+          btn.textContent = "+ shelf";
+          btn.title = `Could not add: ${err.message}`;
+        }
+      }
+    });
+    return btn;
+  }
+
+  fetchPage(true);
+  return section;
+}
+
 // ===========================================================================
 // RELIQUARY + STAGECRAFT — ONE shared tagged-shelf renderer
 // ===========================================================================
@@ -1368,6 +1599,11 @@ function buildShelf(ctx, which) {
     handAddForm
   ]);
   main.append(header, rowsHost, emptyHost, footer);
+  // "Aureus to the Table" task G6 -- Reliquary-only, BELOW the curated list
+  // and never mixed into it (the same separate-source-LAYER rule the
+  // Bestiary tab's own Plutonium shelf follows). Stagecraft has no
+  // equivalent Plutonium family wired to a route/UI yet -- out of scope here.
+  if (isReliquary) main.appendChild(buildPlutoniumItemsShelf(ctx));
 
   root.append(leftRail, main);
   bodyRow.appendChild(root);

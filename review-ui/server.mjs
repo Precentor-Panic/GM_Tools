@@ -204,6 +204,10 @@ import { suggestReskins } from "../combat-planning/reskin-suggest.mjs";
 // 5etools bestiary data indexed from <dataDir>/modules/plutonium/, never
 // mixed into the curated bestiary store). See that module's own header.
 import { loadPlutoniumIndex, searchPlutoniumIndex, plutoniumFacets, findPlutoniumCreature } from "../combat-planning/plutonium-source.mjs";
+// "Aureus to the Table" task G5 -- the generalized family core's `items`
+// family, the Reliquary's own read-only "Available via Plutonium" shelf.
+// Same read-only-source-layer rule as W4a above, generic path this time.
+import { loadPlutoniumFamily, searchPlutoniumFamily, familyFacets, findPlutoniumRecord } from "../combat-planning/plutonium-source.mjs";
 import { proposePartyMemberFromText, proposePartyMemberFromPdf } from "../combat-planning/party-roster-ingest.mjs";
 import {
   savePartyMember,
@@ -398,6 +402,13 @@ import {
 // deliberate validation error" (400) in statusForError below -- see that
 // function's own Phase 18 branch.
 import { AnthropicError } from "@anthropic-ai/sdk";
+
+// "Aureus to the Table" workstream B4, tasks G9/G10 -- the Rules Oracle.
+// Library-wide, no `world` -- rules text isn't world-scoped. The plutonium
+// dataDir comes from resolveDir() same as every other route in this file;
+// the rules-library/ shelf is repo-local (its own GM_TOOLS_RULES_DIR
+// override), not under dataDir at all. See rules-oracle/index.mjs's header.
+import { searchRules } from "../rules-oracle/index.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
@@ -2444,6 +2455,107 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { entry });
   }
 
+  // -----------------------------------------------------------------------
+  // "Aureus to the Table" task G5 -- the Reliquary's own read-only
+  // "Available via Plutonium" shelf, over the generalized family core's
+  // `items` family (combat-planning/plutonium-source.mjs task G4). Same
+  // read-only-source-LAYER rule as W4a/W4c above: browsing never writes,
+  // the add route below is the one explicit bridge.
+  // -----------------------------------------------------------------------
+
+  // GET /api/combat-planning/plutonium-items?query=&type=&rarity=&source=&offset=&limit=
+  // -> { installed, count, total, offset, limit, rows, facets: {sources, types, rarities} }
+  // Library-wide like the bestiary Plutonium shelf (no `world` -- the
+  // bundled module data isn't world-scoped), dataDir via resolveDir() ONLY.
+  // `total` is the FILTERED match count (for "show more" paging), `count`
+  // the whole family's size regardless of filter.
+  if (method === "GET" && parts.length === 3 && parts[1] === "combat-planning" && parts[2] === "plutonium-items") {
+    const dir = resolveDir();
+    const family = loadPlutoniumFamily(dir, "items");
+    const num = (v) => {
+      if (v === null || v === undefined || v === "") return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    const page = searchPlutoniumFamily(family.rows, {
+      query: q.get("query") ?? "",
+      filters: { type: q.get("type"), rarity: q.get("rarity"), source: q.get("source") },
+      offset: num(q.get("offset")) ?? 0,
+      limit: num(q.get("limit")) ?? 50
+    });
+    const rawFacets = familyFacets(family.rows, ["source", "type", "rarity"]);
+    return sendJson(res, 200, {
+      installed: family.installed,
+      count: family.count,
+      total: page.matched,
+      offset: page.offset,
+      limit: page.limit,
+      rows: page.rows,
+      facets: { sources: rawFacets.source, types: rawFacets.type, rarities: rawFacets.rarity }
+    });
+  }
+
+  // POST /api/combat-planning/items/add-from-plutonium   { world, name, source } -> {item}
+  // THE one explicit bridge from the read-only Plutonium `items` family onto
+  // the curated Reliquary. WORLD-SCOPED (unlike the bestiary sibling route
+  // above): an item's relevance belongs to the campaign whose party holds
+  // it, mirroring item-store.mjs's own per-world scoping (its header's own
+  // "PER-WORLD ... NOT bestiary-store.mjs's ... library-wide scoping" note)
+  // -- the shelf being BROWSED is still the one library-wide Plutonium
+  // dataset (the GET route above), only the WRITE is world-scoped.
+  // resolveWorld(body.world), no client-supplied dataDir, same convention as
+  // every route in this file. Creates an ACCEPTED item (a deliberate
+  // per-item act, same "hand-add accepts immediately" convention as
+  // items/hand-add) with a "SOURCE pPAGE via Plutonium" sourceText
+  // provenance line -- item-store.mjs's ItemRecord carries no separate
+  // rawFields/note slot the way bestiary-store.mjs does, so sourceText alone
+  // is both the display provenance AND the dedupe key here (mirrors how the
+  // bestiary sibling route above stamps its own provenance). DEDUPE GUARD:
+  // the same (name, source) item twice in the SAME world -> 409 ("already
+  // exists" -> statusForError), matched against non-discarded items with the
+  // exact same name + provenance -- a discarded earlier copy doesn't block a
+  // re-add (same rule as the bestiary sibling).
+  if (method === "POST" && parts.length === 4 && parts[1] === "combat-planning" && parts[2] === "items" && parts[3] === "add-from-plutonium") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const source = typeof body.source === "string" ? body.source.trim() : "";
+    if (!name || !source) {
+      throw new Error("POST /api/combat-planning/items/add-from-plutonium: `name` and `source` are both required (the dataset's identity pair).");
+    }
+    const dir = resolveDir();
+    const record = findPlutoniumRecord(dir, "items", { name, source });
+    if (!record) {
+      throw new Error(`No Plutonium item matches name="${name}" source="${source}" (is Plutonium installed, and is the pair exactly as the shelf lists it?).`);
+    }
+    const provenance = `${record.source}${record.page != null ? ` p${record.page}` : ""} via Plutonium`;
+    const duplicate = listItems(w).find(
+      (i) => i.status !== "discarded" && i.name === record.name && i.sourceText === provenance
+    );
+    if (duplicate) {
+      throw new Error(
+        `Item "${record.name}" (${provenance}) already exists on the Reliquary shelf (id "${duplicate.id}") -- not adding a second copy.`
+      );
+    }
+    // A short, honest readable summary from the real record's own fields --
+    // there's no rawFields slot to hold the full stat set the way bestiary
+    // entries do, so this is intentionally a compact line, not a stat block.
+    const descriptionBits = [
+      record.rarity && record.rarity !== "none" ? (record.wondrous ? `${record.rarity} wondrous item` : record.rarity) : null,
+      record.reqAttune ? (typeof record.reqAttune === "string" ? `requires attunement (${record.reqAttune})` : "requires attunement") : null,
+      typeof record.value === "number" ? `${(record.value / 100).toFixed(2)} gp` : null,
+      typeof record.weight === "number" ? `${record.weight} lb.` : null
+    ].filter(Boolean);
+    const item = saveItem(w, {
+      name: record.name,
+      type: record.type,
+      description: descriptionBits.length ? descriptionBits.join(", ") : null,
+      sourceText: provenance,
+      status: "accepted"
+    });
+    return sendJson(res, 200, { item });
+  }
+
   // POST /api/combat-planning/party-roster/ingest   { world, text } or { world, pdfBase64 }
   // World-scoped -- resolveWorld(body.world), no client-supplied dataDir.
   // Makes a real LLM call via party-roster-ingest.mjs's extraction. QA W1
@@ -3765,6 +3877,32 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world);
     const member = updatePartyMemberConditions(w, parts[3], body.conditions);
     return sendJson(res, 200, { member });
+  }
+
+  // GET /api/rules?query=&family=&book=&limit=
+  // "Aureus to the Table" G10 -- thin composition over rules-oracle/index.mjs's
+  // searchRules(): the structured (Plutonium) arm resolves its dataDir via
+  // resolveDir() exactly like every other route in this file (NO client-
+  // supplied dataDir override -- the same security convention); the books
+  // (rules-library/) arm is repo-local and reads GM_TOOLS_RULES_DIR itself,
+  // nothing to resolve here. `query` is required (400 if missing/empty) --
+  // both backends already degrade gracefully to installed:false on their
+  // own when not installed/populated, so this route needs no other guard.
+  if (method === "GET" && parts.length === 2 && parts[1] === "rules") {
+    const query = (q.get("query") ?? "").trim();
+    if (!query) {
+      return sendJson(res, 400, { error: "GET /api/rules requires a non-empty `query` parameter." });
+    }
+    const dir = resolveDir();
+    const limitParam = q.get("limit");
+    const limit = limitParam !== null && limitParam !== "" ? Number(limitParam) : undefined;
+    const result = searchRules(dir, {
+      query,
+      family: q.get("family") || undefined,
+      book: q.get("book") || undefined,
+      limit: Number.isFinite(limit) ? limit : undefined
+    });
+    return sendJson(res, 200, result);
   }
 
   sendJson(res, 404, { error: `No route: ${req.method} ${url.pathname}` });

@@ -143,6 +143,13 @@ import { listPartyMembers, savePartyMember } from "../combat-planning/party-rost
 import { listItems, saveItem } from "../combat-planning/item-store.mjs";
 import { listStagecraftAssets, saveStagecraftAsset } from "../session-planner/stagecraft-store.mjs";
 
+// G10 -- Rules Oracle (workstream B4): library-wide, no `world`, same
+// resolveDir()-only convention every other Foundry-data reader in this
+// server uses. See rules-oracle/index.mjs's own header for the composed
+// structured (Plutonium)/book-shelf (rules-library/) contract.
+import { searchRules } from "../rules-oracle/index.mjs";
+import { RULE_FAMILIES } from "../rules-oracle/rules-index.mjs";
+
 // Chronicle: world-clock/fortune/log/pending-intents (reads) + chronicle-run/
 // queue-intent (mutations, both mirroring review-ui/server.mjs's own
 // /api/chronicle/* composition via wf-mcp-server/lib/chronicle-ops.mjs).
@@ -2721,6 +2728,38 @@ server.registerTool(
     try {
       const w = resolveWorld(world);
       return text(setFortune(w, stopId));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+server.registerTool(
+  "wf_rules_lookup",
+  {
+    title: "Look up TTRPG rules text (Plutonium's bundled mechanics data + Russell's owned rulebook shelf)",
+    description:
+      "READ. Library-wide -- NO `world` parameter (rules text isn't world-scoped, see wf_list_bestiary). Composes " +
+      "TWO sources (rules-oracle/index.mjs's searchRules): a STRUCTURED index over Plutonium's bundled 5etools " +
+      "mechanics data (variant rules, actions, conditions/diseases/statuses, skills, senses, tables -- `family` " +
+      "narrows this arm) and a full-text search over the extracted rulebook shelf at rules-library/ (5e + Draw " +
+      "Steel -- `book` narrows this arm, e.g. 'phb', 'ds-heroes'). Either arm independently degrades to " +
+      "`installed:false` (Plutonium not installed / rules-library/ not populated on this machine) without " +
+      "blocking the other. CITE a books hit as `(LABEL p.N)` -- N is the PDF page, never the printed folio. " +
+      "Snippets are DELIBERATELY CAPPED (short windows around the match, at most a handful per call) -- for a " +
+      "full table, stat block, or multi-paragraph rule, read the cited PDF page directly rather than assuming " +
+      "the snippet is the whole entry.",
+    inputSchema: {
+      query: z.string().min(1).describe("Search terms, ALL of which must match (case-insensitive) a hit's name/text."),
+      family: z.enum(Object.keys(RULE_FAMILIES)).optional().describe("Narrows the structured (Plutonium) arm only, e.g. 'conditionsdiseases'."),
+      book: z.string().optional().describe("Narrows the books arm only to one shelf slug, e.g. 'phb', 'ds-heroes'."),
+      limit: z.number().int().positive().optional().describe("Per-arm cap. Structured caps at 50, books caps at 8, regardless of a higher value here.")
+    }
+  },
+  async ({ query, family, book, limit }) => {
+    try {
+      const dir = resolveDir();
+      return text(searchRules(dir, { query, family, book, limit }));
     } catch (err) {
       return errorText(err);
     }
