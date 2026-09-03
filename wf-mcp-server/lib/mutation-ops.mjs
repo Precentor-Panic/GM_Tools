@@ -36,6 +36,9 @@ import { markPrepContentStale } from "../../mutation-engine/prep-content.mjs";
 // Absence of any record = zero gating (the standing gin-up guarantee).
 import { listNarrativeState } from "../../mutation-engine/narrative-state.mjs";
 import { gateSnapshotForTable, partitionForTable, renderAllusionInstruction } from "../../mutation-engine/narrative-gate.mjs";
+// World-timeline bandaid: one git commit per synced batch in the world's
+// own data dir (never throws — sync/rollback never fail on the timeline).
+import { commitWorldTimeline } from "../../mutation-engine/world-timeline.mjs";
 import { applyHeadless } from "../../graph-import/headless-apply.mjs";
 // Friction Wave 1 (W1b): convert-create-to-update re-diffs the converted
 // mutation (and its re-pointed edges) against the live snapshot so the card
@@ -1495,18 +1498,32 @@ export async function syncOp(dir, w, { batchId }) {
   if (path === "live") {
     batch.status = "synced";
     saveBatch(w, batch);
+    // World-timeline commit (never throws; sync NEVER fails on it). Live
+    // path: the snapshot re-export is async, so this commit may lag one
+    // export — commitWorldTimeline's header documents the accepted lag.
+    const timeline = commitWorldTimeline(dir, w, { batchId, scopeMode: batch.scope?.mode });
     const { path: mutationsFilePath, ...rest } = liveResult;
-    return { path: "live", ...rest, mutationsFilePath, batchId, syncedCount: accepted.length };
+    return {
+      path: "live", ...rest, mutationsFilePath, batchId, syncedCount: accepted.length,
+      ...(timeline.warning ? { timelineWarning: timeline.warning } : {}),
+      ...(timeline.sha ? { timelineCommit: timeline.sha } : {})
+    };
   }
 
   const idAssignments = writeBackIdAssignments(batch, accepted, headlessResult.idAssignments);
   batch.status = "synced";
   saveBatch(w, batch);
+  // World-timeline commit — the headless path is deterministic (the
+  // snapshot was just rewritten synchronously), so this commit captures
+  // exactly the synced state.
+  const timeline = commitWorldTimeline(dir, w, { batchId, scopeMode: batch.scope?.mode });
   return {
     path: "headless",
     status: "applied",
     batchId,
     syncedCount: accepted.length,
+    ...(timeline.warning ? { timelineWarning: timeline.warning } : {}),
+    ...(timeline.sha ? { timelineCommit: timeline.sha } : {}),
     snapshotPath,
     liveAttempt: liveResult,
     summary: headlessResult.summary,
@@ -1534,15 +1551,24 @@ export async function rollbackOp(dir, w, { batchId }) {
   const { path, liveResult, headlessResult, snapshotPath } = await applyMutationsWithHeadlessFallback(dir, w, restoreMutations);
 
   if (path === "live") {
+    // Timeline revert commit — same never-throws contract as syncOp's.
+    const timeline = commitWorldTimeline(dir, w, { batchId, scopeMode: undefined, movedTime: false, action: "wf-rollback" });
     const { path: mutationsFilePath, ...rest } = liveResult;
-    return { path: "live", ...rest, mutationsFilePath, batchId, restoredCount: restoreMutations.length, skipped };
+    return {
+      path: "live", ...rest, mutationsFilePath, batchId, restoredCount: restoreMutations.length, skipped,
+      ...(timeline.warning ? { timelineWarning: timeline.warning } : {}),
+      ...(timeline.sha ? { timelineCommit: timeline.sha } : {})
+    };
   }
 
+  const timeline = commitWorldTimeline(dir, w, { batchId, scopeMode: undefined, movedTime: false, action: "wf-rollback" });
   return {
     path: "headless",
     status: "applied",
     batchId,
     restoredCount: restoreMutations.length,
+    ...(timeline.warning ? { timelineWarning: timeline.warning } : {}),
+    ...(timeline.sha ? { timelineCommit: timeline.sha } : {}),
     snapshotPath,
     liveAttempt: liveResult,
     summary: headlessResult.summary,
