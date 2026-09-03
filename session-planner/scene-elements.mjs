@@ -150,12 +150,19 @@ export const SceneElementFields = z.object({
 // this field existed parses because absent-optional is fine, while an
 // unknown key would 400). min(1) so an empty string can never form a group;
 // clearing = saving a run without the key (updateElement's run REPLACES).
+// `revealTab` (narrative-state round, run-layout v4): when true on a member
+// with a `variant`, that variant is the SEEDED active tab whenever the
+// element's bound graph entity (its own graphEntityId, else the group's
+// first-bound member's) has revealState 'revealed' in the narrative-state
+// sidecar — the mid-session reveal wire. Optional for the same .strict()
+// backward-compat reason as `group` above; local tab clicks still override.
 export const RunLayout = z.object({
   column: z.enum(RUN_COLUMNS),
   role: z.enum(RUN_ROLES),
   variant: z.string().optional(),
   placeholder: z.boolean().optional(),
-  group: z.string().min(1).optional()
+  group: z.string().min(1).optional(),
+  revealTab: z.boolean().optional()
 }).strict();
 
 export const SceneElement = z.object({

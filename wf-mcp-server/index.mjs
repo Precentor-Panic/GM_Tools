@@ -184,8 +184,9 @@ const server = new McpServer({ name: "world-fabric", version: "0.1.0" });
 // read-alouds as labeled sections beneath. Explicit only; inference never invents one.
 const runLayoutParam = z.object({
   column: z.enum(RUN_COLUMNS), role: z.enum(RUN_ROLES), variant: z.string().optional(), placeholder: z.boolean().optional(),
-  group: z.string().min(1).optional()
-}).nullable().optional().describe("Explicit Run-spread placement {column, role, variant?, placeholder?, group?}; null clears to inference. Elements sharing `group` merge into one composite Run card (lead = lowest-order member).");
+  group: z.string().min(1).optional(),
+  revealTab: z.boolean().optional()
+}).nullable().optional().describe("Explicit Run-spread placement {column, role, variant?, placeholder?, group?, revealTab?}; null clears to inference. Elements sharing `group` merge into one composite Run card (lead = lowest-order member). `revealTab` (needs `variant`): when the element's bound graph entity (its own graphEntityId, else the group's first-bound member's) has narrative-state revealState 'revealed', this variant becomes the card's SEEDED active tab — the mid-session reveal wire; local tab clicks at the table still override.");
 
 // Persona round (2026-08-31, finding M1): the scene-element `fields` bag LOOKS
 // open here (a zod record, for wire flexibility) but the store re-validates
@@ -2118,15 +2119,18 @@ server.registerTool(
       "activeVariants); optional free-string `group` -- elements sharing a group render as ONE composite Run card (lead = " +
       "lowest-order member; use it to keep a payload/thread card and its outcome read-alouds together instead of as near-duplicate " +
       "sibling cards). Pass `clear:true` to drop the explicit layout and fall back to inference (a re-set without `group` clears " +
-      "just the group).",
+      "just the group). `revealTab:true` (needs `variant`): when the element's bound graph entity has narrative-state " +
+      "revealState 'revealed', this variant becomes the card's SEEDED active tab (the mid-session reveal wire; local table " +
+      "tab clicks still override).",
     inputSchema: {
       world: requiredWorldParam, sceneId: z.string(), elementId: z.string(),
       column: z.enum(RUN_COLUMNS).optional(), role: z.enum(RUN_ROLES).optional(), variant: z.string().nullable().optional(),
       group: z.string().nullable().optional(),
+      revealTab: z.boolean().optional(),
       clear: z.boolean().optional()
     }
   },
-  async ({ world, sceneId, elementId, column, role, variant, group, clear }) => {
+  async ({ world, sceneId, elementId, column, role, variant, group, revealTab, clear }) => {
     try {
       const w = resolveWorld(world);
       if (clear) {
@@ -2138,6 +2142,7 @@ server.registerTool(
       const run = { column, role };
       if (variant) run.variant = variant;
       if (group) run.group = group;
+      if (revealTab && variant) run.revealTab = true;
       const element = updateElement(w, sceneId, elementId, { run });
       touchScene(w, sceneId);
       return text({ element });

@@ -1551,6 +1551,19 @@ function buildRunRoleChip(scene, element, { onChange } = {}) {
       gg.appendChild(dl);
     }
     gg.appendChild(gi); pop.appendChild(gg);
+    // revealTab (narrative-state round, run-layout v4): only meaningful on a
+    // member WITH a variant, so the checkbox tracks the variant input's
+    // emptiness live rather than silently saving a no-op flag.
+    const rg = document.createElement("div"); rg.className = "run-pop-group";
+    const rl = document.createElement("label"); rl.className = "run-pop-opt";
+    const rc = document.createElement("input"); rc.type = "checkbox"; rc.checked = !!run.revealTab;
+    rc.setAttribute("data-testid", "run-pop-revealtab");
+    rl.append(rc, document.createTextNode(" Seed tab on reveal"));
+    rl.title = "When the linked graph entity's narrative state flips to 'revealed', this state becomes the card's default tab (local tab clicks still override).";
+    const syncRevealEnabled = () => { rc.disabled = !vi.value.trim(); if (rc.disabled) rc.checked = false; };
+    vi.addEventListener("input", syncRevealEnabled);
+    syncRevealEnabled();
+    rg.appendChild(rl); pop.appendChild(rg);
     const actions = document.createElement("div"); actions.className = "run-pop-actions";
     const save = document.createElement("button"); save.type = "button"; save.className = "btn"; save.textContent = "Save";
     save.setAttribute("data-testid", "run-pop-save");
@@ -1566,6 +1579,7 @@ function buildRunRoleChip(scene, element, { onChange } = {}) {
       if (variant) next.variant = variant;
       const group = gi.value.trim();
       if (group) next.group = group;
+      if (rc.checked && variant) next.revealTab = true;
       if (element.run?.placeholder) next.placeholder = true;
       save.disabled = true;
       try { await saveElementRun(scene, element, next); paint(); close(); onChange?.(); }
@@ -3910,6 +3924,25 @@ function runSpreadSanitizeSvg(markup) {
 let runTabState = new Map();
 let runTabStateScene = null;
 
+// Narrative-state reveal map for the v4 revealTab seed (entityId ->
+// revealState). Fetched ASYNC by refreshRunRevealStates (rebuildRunSpread
+// awaits it, so the 3s run poll picks up a reveal flip on its next rebuild);
+// buildRunSpread itself stays sync and reads this cache — a local tab click
+// re-renders from cached args without a fetch, exactly like runTabState.
+// Fetch failure or zero linked elements = empty map = seed never fires.
+let runRevealStates = new Map();
+
+async function refreshRunRevealStates(elements) {
+  const ids = [...new Set((elements || []).map((e) => e.graphEntityId).filter(Boolean))];
+  if (!ids.length) { runRevealStates = new Map(); return; }
+  try {
+    const { records } = await spApi(`/api/narrative-state${spWithWorld({ ids: ids.join(",") })}`);
+    runRevealStates = new Map((records || []).map((r) => [r.entityId, r.revealState]));
+  } catch {
+    runRevealStates = new Map();
+  }
+}
+
 function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
   if (runTabStateScene !== scene.id) {
     runTabState = new Map();
@@ -4316,7 +4349,7 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
     }
   };
 
-  const plan = planRunSpread(placed, { activeTabs: runTabState });
+  const plan = planRunSpread(placed, { activeTabs: runTabState, revealStates: runRevealStates });
   for (const unit of plan.main) renderUnit(unit, main);
   for (const unit of plan.side) renderUnit(unit, side);
   if (exitsCount) main.appendChild(exitsFooter);
@@ -4840,6 +4873,10 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
       const { scene: fresh } = await spApi(`/api/session-planner/scenes/${encodeURIComponent(scene.id)}${spWithWorld()}`);
       if (fresh) Object.assign(scene, fresh);
     } catch { /* keep the render-time copy */ }
+    // Reveal map for the v4 revealTab tab seed — refreshed here (not in the
+    // sync buildRunSpread) so the run poll's rebuild picks up a mid-session
+    // reveal flip while local tab clicks keep re-rendering from cache.
+    await refreshRunRevealStates(elements || []);
     if (stale()) return;
     runHost.innerHTML = "";
     runHost.appendChild(buildRunSpread(scene, elements || [], freshNarration, place, mapAssets, nodeMap));

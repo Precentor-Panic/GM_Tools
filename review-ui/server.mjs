@@ -160,7 +160,7 @@ import {
   tickClockOp,
   listNarrativeStateOp
 } from "../wf-mcp-server/lib/narrative-state-ops.mjs";
-import { getNarrativeState } from "../mutation-engine/narrative-state.mjs";
+import { getNarrativeState, getRevealStates } from "../mutation-engine/narrative-state.mjs";
 import { renderGmTruthBlock } from "../mutation-engine/narrative-gate.mjs";
 // (fieldsSchemaForType/`z` were only needed by the offline prep-content
 // client, now moved to wf-mcp-server/lib/offline-clients.mjs -- see the
@@ -3106,7 +3106,19 @@ async function handleApi(req, res, url, parts) {
   if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "scenes" && parts[4] === "run-version") {
     const w = resolveWorld(q.get("world"));
     const scene = getScene(w, parts[3]);
-    const payload = JSON.stringify([scene, listElementsForScene(w, parts[3]), getCurrentSceneNarration(w, parts[3])]);
+    const elements = listElementsForScene(w, parts[3]);
+    // Narrative-state round: the linked entities' reveal states join the
+    // fingerprint — a mid-session reveal flip (wf_set_reveal_state / a wrap)
+    // must trigger the poll's rebuild so the v4 revealTab seed lands at the
+    // table without a reload. try/catch: an unreadable sidecar store never
+    // breaks the poll (degrades to the old fingerprint inputs).
+    let revealStates = [];
+    try {
+      const dir = resolveDir();
+      const ids = [...new Set(elements.map((e) => e.graphEntityId).filter(Boolean))];
+      revealStates = [...getRevealStates(dir, w, ids).entries()].map(([id, r]) => [id, r.revealState]);
+    } catch { revealStates = []; }
+    const payload = JSON.stringify([scene, elements, getCurrentSceneNarration(w, parts[3]), revealStates]);
     const version = createHash("sha1").update(payload).digest("hex").slice(0, 16);
     return sendJson(res, 200, { version });
   }

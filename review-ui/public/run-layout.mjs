@@ -49,7 +49,13 @@
 // per-unit `tabs`/`activeTab` (local-flip tab state via opts.activeTabs;
 // scene.activeVariants seeds; first tab is the default) so folded cards
 // render their states as clickable tabs. Loose gated elements still drop.
-export const RUN_LAYOUT_VERSION = 3;
+// v4 (narrative-state round): `revealTab` added to the run-layout shape
+// (optional boolean — every v3 element parses unchanged) and planRunSpread
+// gained opts.revealStates (Map entityId -> revealState or record): a
+// member marked revealTab whose bound graph entity is 'revealed' becomes
+// the SEEDED active tab — mid-session gap coverage for an NPC/thread whose
+// card flips state when the table learns the truth. Local picks still win.
+export const RUN_LAYOUT_VERSION = 4;
 
 export const RUN_COLUMNS = ["main", "side", "off"];
 export const RUN_ROLES = ["read", "dressing", "beat", "exits", "block", "card", "gm", "sketch"];
@@ -208,6 +214,15 @@ export function elementIsEmpty(element) {
 export function planRunSpread(placed, opts = {}) {
   const items = Array.isArray(placed) ? placed : [];
   const activeTabs = opts.activeTabs instanceof Map ? opts.activeTabs : new Map();
+  // opts.revealStates: Map of graph entityId -> revealState string (or a
+  // whole narrative-state record — both accepted). Absent/empty = the
+  // revealTab seed never fires, byte-identical to v3 behavior.
+  const revealStates = opts.revealStates instanceof Map ? opts.revealStates : new Map();
+  const revealStateOf = (entityId) => {
+    if (!entityId) return undefined;
+    const v = revealStates.get(entityId);
+    return typeof v === "string" ? v : v?.revealState;
+  };
   const groups = new Map(); // "column::group" -> {column, group, members:[]}
   const seq = []; // ordered: {type:'single', item, column} | {type:'group', key} (at first occurrence)
   for (const item of items) {
@@ -241,6 +256,22 @@ export function planRunSpread(placed, opts = {}) {
     if (tabs.length) {
       const local = activeTabs.get(unitKey);
       if (local && tabs.includes(local)) activeTab = local;
+      // v4 reveal seed (between the local pick and the activeVariants
+      // seed): a member marked run.revealTab whose bound graph entity —
+      // its own graphEntityId, else the first member's in the unit that
+      // has one — is 'revealed' becomes the seeded tab. This is the
+      // mid-session reveal wire: flip the entity's reveal state (at a
+      // wrap, or live via wf_set_reveal_state) and the card's default
+      // state follows on the next rebuild, while a local tab click still
+      // overrides for this table, this session.
+      if (!activeTab) {
+        const unitBindId = members.find((m) => m.el?.graphEntityId)?.el?.graphEntityId;
+        const revealSeed = members.find((m) =>
+          m.run?.revealTab && m.run?.variant &&
+          revealStateOf(m.el?.graphEntityId ?? unitBindId) === "revealed"
+        );
+        if (revealSeed) activeTab = revealSeed.run.variant;
+      }
       // else: the first member activeVariants left visible (the stamp is
       // the gating result, so "not variantHidden" IS "variant is active or
       // no gating") — else the adjudicated first-tab default.

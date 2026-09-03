@@ -218,5 +218,15 @@ await test("briefing tools: upsert (create + patch), list in order, reorder, del
   await callExpectError("wf_upsert_briefing_card", { world: WORLD, body: "no title" });
 });
 
+await test("wf_set_element_run carries revealTab (v4): persists with a variant, silently dropped without one, cleared by a re-set", async () => {
+  const { scene } = await call("wf_create_scene", { world: WORLD, name: "Reveal wire — the cellar" });
+  const { element } = await call("wf_add_scene_element", { world: WORLD, sceneId: scene.id, name: "Marek — Revealed", fields: { looks: "The smile drops." } });
+  const { element: set } = await call("wf_set_element_run", { world: WORLD, sceneId: scene.id, elementId: element.id, column: "side", role: "gm", variant: "Revealed", group: "marek", revealTab: true });
+  assert.deepEqual(set.run, { column: "side", role: "gm", variant: "Revealed", group: "marek", revealTab: true });
+  // revealTab without a variant is meaningless — the tool drops it rather than persisting a no-op flag.
+  const { element: noVariant } = await call("wf_set_element_run", { world: WORLD, sceneId: scene.id, elementId: element.id, column: "side", role: "gm", revealTab: true });
+  assert.deepEqual(noVariant.run, { column: "side", role: "gm" });
+});
+
 await client.close();
 rmSync(scratchDir, { recursive: true, force: true });

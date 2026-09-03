@@ -41,8 +41,8 @@ function flattenPlan(plan) {
   return ids;
 }
 
-test("RUN_LAYOUT_VERSION is 3 (the variant-tabs shape)", () => {
-  assert.equal(RUN_LAYOUT_VERSION, 3);
+test("RUN_LAYOUT_VERSION is 4 (the revealTab-seed shape)", () => {
+  assert.equal(RUN_LAYOUT_VERSION, 4);
 });
 
 test("runFieldLabel: the ONE role-aware label mapping Prep and Run both consume", () => {
@@ -266,4 +266,74 @@ test("golden legacy plan: an ungrouped scene with no interleaving reproduces the
   assert.equal(plan.main[2].el.id, beat.el.id);
   assert.equal(plan.main[3].el.id, exits.el.id, "exits stay in the element flow (the renderer owns the footer placement)");
   assert.deepEqual(plan.side.map((u) => u.kind), ["gm-fold", "element"]);
+});
+
+// --------------------------------------------------------------------------
+// v4: revealTab seeding from narrative-state reveal states (opts.revealStates)
+// --------------------------------------------------------------------------
+
+function revealItem(role, opts = {}) {
+  const it = item(role, opts);
+  if (opts.revealTab) it.run.revealTab = true;
+  if (opts.entityId) it.el.graphEntityId = opts.entityId;
+  return it;
+}
+
+test("revealTab seed: a revealed bound entity flips the group's seeded tab to the marked state", () => {
+  const cover = revealItem("gm", { group: "marek", variant: "Cover", entityId: "marek" });
+  const truth = revealItem("gm", { group: "marek", variant: "Revealed", revealTab: true, entityId: "marek" });
+  // Not yet revealed: first-tab default holds.
+  let plan = planRunSpread([cover, truth], { revealStates: new Map([["marek", "hinted"]]) });
+  assert.equal(plan.side[0].activeTab, "Cover");
+  // Revealed: the revealTab member's variant seeds.
+  plan = planRunSpread([cover, truth], { revealStates: new Map([["marek", "revealed"]]) });
+  assert.equal(plan.side[0].activeTab, "Revealed");
+});
+
+test("revealTab seed accepts full records as map values, not just state strings", () => {
+  const cover = revealItem("gm", { group: "g", variant: "Cover", entityId: "e9" });
+  const truth = revealItem("gm", { group: "g", variant: "Out", revealTab: true, entityId: "e9" });
+  const plan = planRunSpread([cover, truth], { revealStates: new Map([["e9", { revealState: "revealed" }]]) });
+  assert.equal(plan.side[0].activeTab, "Out");
+});
+
+test("local tab pick still OVERRIDES the revealTab seed (table sovereignty)", () => {
+  const cover = revealItem("gm", { group: "marek", variant: "Cover", entityId: "marek" });
+  const truth = revealItem("gm", { group: "marek", variant: "Revealed", revealTab: true, entityId: "marek" });
+  const plan = planRunSpread([cover, truth], {
+    revealStates: new Map([["marek", "revealed"]]),
+    activeTabs: new Map([["side::marek", "Cover"]])
+  });
+  assert.equal(plan.side[0].activeTab, "Cover");
+});
+
+test("group-lead binding fallback: a revealTab member with no own graphEntityId binds to the unit's first-bound member", () => {
+  const lead = revealItem("gm", { group: "vane", variant: "Public", entityId: "vane" });
+  const state = revealItem("gm", { group: "vane", variant: "Unmasked", revealTab: true }); // no own entity id
+  let plan = planRunSpread([lead, state], { revealStates: new Map([["vane", "revealed"]]) });
+  assert.equal(plan.side[0].activeTab, "Unmasked");
+  plan = planRunSpread([lead, state], { revealStates: new Map([["vane", "unrevealed"]]) });
+  assert.equal(plan.side[0].activeTab, "Public");
+});
+
+test("no revealStates opt (or an unbound unit) = byte-identical v3 behavior", () => {
+  const cover = revealItem("gm", { group: "g", variant: "A", entityId: "x" });
+  const truth = revealItem("gm", { group: "g", variant: "B", revealTab: true, entityId: "x" });
+  const without = planRunSpread([cover, truth]);
+  assert.equal(without.side[0].activeTab, "A", "no map -> first-tab default, seed never fires");
+  const unbound = planRunSpread(
+    [revealItem("gm", { group: "h", variant: "A" }), revealItem("gm", { group: "h", variant: "B", revealTab: true })],
+    { revealStates: new Map([["x", "revealed"]]) }
+  );
+  assert.equal(unbound.side[0].activeTab, "A", "a unit with no graphEntityId anywhere never seeds");
+});
+
+test("revealTab seed ranks BELOW local pick but ABOVE the activeVariants seed", () => {
+  // activeVariants gating would seed "Cover" (the only non-hidden variant),
+  // but the revealed entity's revealTab member wins the seed slot.
+  const cover = revealItem("gm", { group: "m", variant: "Cover", entityId: "m1" });
+  const truth = revealItem("gm", { group: "m", variant: "Out", revealTab: true, entityId: "m1" });
+  truth.variantHidden = true; // activeVariants gated it out
+  const plan = planRunSpread([cover, truth], { revealStates: new Map([["m1", "revealed"]]) });
+  assert.equal(plan.side[0].activeTab, "Out", "reveal seed outranks the activeVariants seed");
 });
