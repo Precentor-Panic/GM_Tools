@@ -950,6 +950,209 @@ async function renderPlanDetail(container, planId) {
       panelHost.appendChild(panel);
     }
   });
+
+  root.appendChild(buildSessionWrapPanel(plan));
+}
+
+// ---------------------------------------------------------------------------
+// Session wrap-up (narrative-state layer): the float-then-fire lifecycle's
+// firing step, on the Plan page because "a session" IS a plan here. Three
+// steps in one collapsed panel:
+//   1. the withheld roster (every narrative-state record != revealed),
+//   2. agent-SUGGESTED transitions from the plan's session notes — GM edits/
+//      deselects freely; nothing applies until the explicit Apply (the GM
+//      action IS the review; these are sidecar writes, the graph is
+//      untouched, so the no-silent-auto-write invariant is out of scope),
+//   3. a player-facing "truth notes" recap generated from ONLY what the
+//      apply just revealed.
+// Scene-level "Wrap this scene" (graph proposals + element promotion) stays
+// its own panel — this one is about what the TABLE now knows.
+// ---------------------------------------------------------------------------
+function buildSessionWrapPanel(plan) {
+  const details = document.createElement("details");
+  details.className = "session-wrap-panel";
+  details.setAttribute("data-testid", "session-wrap-panel");
+  const summary = document.createElement("summary");
+  summary.textContent = "Session wrap-up — reveals & player notes";
+  details.appendChild(summary);
+
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.textContent = "What did the table learn this session? Suggestions come from this plan's scene notes; nothing changes until you Apply. Reveals feed the knowledge gate and any reveal-seeded Run tabs.";
+  details.appendChild(hint);
+
+  const rosterHost = document.createElement("div");
+  rosterHost.className = "wrap-reveal-roster";
+  details.appendChild(rosterHost);
+
+  const actions = document.createElement("div");
+  actions.className = "wrap-reveal-actions";
+  const suggestBtn = document.createElement("button");
+  suggestBtn.type = "button";
+  suggestBtn.className = "btn btn--ghost";
+  suggestBtn.setAttribute("data-testid", "wrap-suggest-btn");
+  suggestBtn.textContent = "Suggest from session notes";
+  const applyBtn = document.createElement("button");
+  applyBtn.type = "button";
+  applyBtn.className = "btn";
+  applyBtn.setAttribute("data-testid", "wrap-apply-btn");
+  applyBtn.textContent = "Apply reveal changes";
+  const statusEl = document.createElement("span");
+  statusEl.className = "hint";
+  statusEl.setAttribute("data-testid", "wrap-status");
+  actions.append(suggestBtn, applyBtn, statusEl);
+  details.appendChild(actions);
+
+  const notesHost = document.createElement("div");
+  notesHost.className = "wrap-truth-notes";
+  details.appendChild(notesHost);
+
+  const STATES = ["hidden", "unrevealed", "hinted", "revealed"];
+  let rows = []; // [{entityId, current, select, rationaleEl}]
+
+  async function loadRoster() {
+    rosterHost.innerHTML = "";
+    rows = [];
+    let candidates = [];
+    try {
+      ({ candidates } = await plApi(`/api/scene-planning/plans/${encodeURIComponent(plan.id)}/wrap-candidates${plWithWorld()}`));
+    } catch (err) {
+      rosterHost.textContent = `Could not load withheld truths: ${err.message}`;
+      return;
+    }
+    if (!candidates.length) {
+      const empty = document.createElement("p");
+      empty.className = "hint";
+      empty.setAttribute("data-testid", "wrap-roster-empty");
+      empty.textContent = "Nothing is withheld right now — every narrative-state record is revealed (or none exist).";
+      rosterHost.appendChild(empty);
+      return;
+    }
+    for (const c of candidates) {
+      const row = document.createElement("div");
+      row.className = "wrap-reveal-row";
+      row.setAttribute("data-testid", "wrap-reveal-row");
+      row.setAttribute("data-entity-id", c.entityId);
+      const label = document.createElement("span");
+      label.className = "wrap-reveal-name";
+      label.textContent = c.entityName;
+      label.title = c.truth ? `GM truth: ${c.truth}` : "";
+      const stateNow = document.createElement("span");
+      stateNow.className = "hint";
+      stateNow.textContent = `${c.revealState}${c.stance ? ` · ${c.stance}` : ""} →`;
+      const select = document.createElement("select");
+      select.setAttribute("data-testid", "wrap-reveal-select");
+      for (const s of STATES) {
+        const opt = document.createElement("option");
+        opt.value = s;
+        opt.textContent = s === c.revealState ? `${s} (no change)` : s;
+        select.appendChild(opt);
+      }
+      select.value = c.revealState;
+      const rationaleEl = document.createElement("span");
+      rationaleEl.className = "hint wrap-reveal-rationale";
+      row.append(label, stateNow, select, rationaleEl);
+      rosterHost.appendChild(row);
+      rows.push({ entityId: c.entityId, current: c.revealState, select, rationaleEl });
+    }
+  }
+
+  async function loadNotes() {
+    notesHost.innerHTML = "";
+    let current = null;
+    try {
+      ({ current } = await plApi(`/api/scene-planning/plans/${encodeURIComponent(plan.id)}/truth-notes${plWithWorld()}`));
+    } catch { /* no notes yet */ }
+    if (!current) return;
+    const head = document.createElement("div");
+    head.className = "hint";
+    head.textContent = `Player notes — session ${current.sessionNumber ?? "?"}:`;
+    const pre = document.createElement("pre");
+    pre.className = "wrap-truth-notes-md";
+    pre.setAttribute("data-testid", "wrap-truth-notes-md");
+    pre.textContent = current.markdown;
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "btn btn--ghost";
+    copyBtn.textContent = "Copy for players";
+    copyBtn.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(current.markdown); copyBtn.textContent = "Copied."; } catch { /* clipboard unavailable */ }
+    });
+    notesHost.append(head, pre, copyBtn);
+  }
+
+  suggestBtn.addEventListener("click", async () => {
+    suggestBtn.disabled = true;
+    statusEl.textContent = "Reading this plan's session notes…";
+    try {
+      const data = await plApi(`/api/scene-planning/plans/${encodeURIComponent(plan.id)}/wrap-suggest`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      });
+      let landed = 0;
+      for (const s of data.suggestions || []) {
+        const row = rows.find((r) => r.entityId === s.entityId);
+        if (!row) continue;
+        row.select.value = s.suggestedState;
+        row.rationaleEl.textContent = s.rationale || "";
+        landed++;
+      }
+      statusEl.textContent = data.offline
+        ? "No API key configured — suggestions unavailable; set states by hand."
+        : landed
+          ? `${landed} suggestion${landed === 1 ? "" : "s"} — edit freely, then Apply.`
+          : "No transitions suggested — the notes didn't touch anything withheld.";
+    } catch (err) {
+      statusEl.textContent = `Suggest failed: ${err.message}`;
+    } finally {
+      suggestBtn.disabled = false;
+    }
+  });
+
+  applyBtn.addEventListener("click", async () => {
+    const decisions = rows
+      .filter((r) => r.select.value !== r.current)
+      .map((r) => ({ entityId: r.entityId, to: r.select.value }));
+    if (!decisions.length) {
+      statusEl.textContent = "No changes selected.";
+      return;
+    }
+    applyBtn.disabled = true;
+    statusEl.textContent = "Applying…";
+    try {
+      const applied = await plApi(`/api/scene-planning/plans/${encodeURIComponent(plan.id)}/wrap-apply`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), decisions })
+      });
+      const revealedIds = decisions.filter((d) => d.to === "revealed").map((d) => d.entityId);
+      statusEl.textContent = `Applied ${decisions.length} change${decisions.length === 1 ? "" : "s"}.`;
+      if (revealedIds.length) {
+        statusEl.textContent += " Generating player notes…";
+        try {
+          await plApi(`/api/scene-planning/plans/${encodeURIComponent(plan.id)}/truth-notes`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ world: currentWorld(), revealedEntityIds: revealedIds })
+          });
+          statusEl.textContent = `Applied ${decisions.length} — player notes below.`;
+        } catch (err) {
+          statusEl.textContent = `Applied, but player notes failed: ${err.message}`;
+        }
+      }
+      void applied;
+      await loadRoster();
+      await loadNotes();
+    } catch (err) {
+      statusEl.textContent = `Apply failed: ${err.message}`;
+    } finally {
+      applyBtn.disabled = false;
+    }
+  });
+
+  details.addEventListener("toggle", () => {
+    if (details.open) { loadRoster(); loadNotes(); }
+  }, { once: false });
+
+  return details;
 }
 
 // ---------------------------------------------------------------------------

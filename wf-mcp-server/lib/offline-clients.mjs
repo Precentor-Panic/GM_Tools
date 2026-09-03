@@ -354,6 +354,55 @@ export function offlineScanMentionsClient() {
 }
 
 /**
+ * OFFLINE DETERMINISTIC wrap-suggest client (see POST /api/scene-planning/
+ * plans/:planId/wrap-suggest -- session-planner/session-wrap.mjs's
+ * suggestWrapTransitions). suggestWrapTransitions' own validation drops any
+ * suggestion whose entityId isn't a real roster member, so the only HONEST
+ * offline answer is "no suggestions" -- inventing a plausible-looking
+ * entityId here would either get silently dropped (best case, misleading
+ * about what "offline" produced) or, worse, coincidentally match a real
+ * roster entry and look like a genuine suggestion. `note` is a top-level
+ * sibling (never inside a persisted field -- there is none here, this
+ * response has nothing a GM's apply step would write verbatim) explaining
+ * why the roster is empty; the route also stamps `offline:true` on the HTTP
+ * response, same convention as every other route in this file.
+ */
+export function offlineWrapSuggestClient() {
+  return {
+    messages: {
+      create: async () => offlineTextResponse({
+        suggestions: [],
+        note: "Offline pass -- no model configured, so no reveal-state suggestions could be made; review the candidates manually."
+      })
+    }
+  };
+}
+
+/**
+ * OFFLINE DETERMINISTIC truth-notes client (see POST /api/scene-planning/
+ * plans/:planId/truth-notes -- session-planner/session-wrap.mjs's
+ * generateTruthNotes). Unlike develop-description's suggestion card,
+ * generateTruthNotes SAVES its markdown straight to the truth-notes store as
+ * the plan's new `current` entry -- there is no separate GM accept step
+ * downstream to catch a disclaimer before it reaches players. `markdown`
+ * therefore stays a short, honest, parenthetical placeholder (never
+ * "ANTHROPIC_API_KEY" instructional text, matching Fix 4's spirit) rather
+ * than a full offline essay -- a GM reading the recap sees plainly that
+ * nothing was generated, and can write the real recap by hand. The route
+ * also stamps `offline:true` on the HTTP response, same convention as every
+ * other route in this file.
+ */
+export function offlineTruthNotesClient() {
+  return {
+    messages: {
+      create: async () => offlineTextResponse({
+        markdown: "(Offline — no model was available to draft this recap. Write the session's reveals up by hand for now.)"
+      })
+    }
+  };
+}
+
+/**
  * A single field's own offline placeholder value, honest to its real zod
  * type (an empty array for an array-typed field -- e.g. every template's
  * shared `potentialRolls` -- OFFLINE_CONTENT_PLACEHOLDER for a string one).

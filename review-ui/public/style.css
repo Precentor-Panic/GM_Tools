@@ -490,6 +490,16 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .narrative-clock-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .narrative-transition-list { margin: 0.4rem 0 0; padding-left: 1.2rem; font-size: 0.85rem; }
 .narrative-transition-list li { margin-bottom: 0.15rem; }
+
+/* Session wrap-up panel (Plan page: reveals + player truth notes) */
+.session-wrap-panel { margin-top: 1.25rem; }
+.session-wrap-panel > summary { cursor: pointer; font-weight: 600; }
+.wrap-reveal-roster { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.6rem 0; }
+.wrap-reveal-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.wrap-reveal-name { font-weight: 600; }
+.wrap-reveal-rationale { font-style: italic; }
+.wrap-reveal-actions { display: flex; align-items: center; gap: 0.6rem; margin: 0.4rem 0 0.8rem; }
+.wrap-truth-notes-md { white-space: pre-wrap; border: 1px solid var(--border, #ccc); border-radius: 4px; padding: 0.6rem 0.8rem; max-width: 60rem; font-size: 0.9rem; }
 .entity-detail-narration .narrate-this-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem; }
 .entity-detail-narration .narration-reset-row { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.4rem; }
 .entity-detail-narration .narration-reset-confirm { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.4rem; }

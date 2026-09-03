@@ -113,6 +113,14 @@ scene-elements/*
 scene-narration/*/
 !scene-narration/.gitkeep
 
+# Session Wrap workstream: session-planner/truth-notes.mjs is per-(world,
+# planId)-file under a per-world subdir, same convention as
+# scene-narration/ above -- added at spec time (not after the fact), per
+# this project's own recurring "new store, missing .gitignore entry" gap
+# (called out five times over in this file's own history above).
+truth-notes/*/
+!truth-notes/.gitkeep
+
 # Phase 35 task 35.1 (added at spec time, not after the fact -- per this
 # project's own recurring-gap lesson): combat-planning/item-store.mjs,
 # session-planner/stagecraft-store.mjs, session-planner/token-store.mjs, and

@@ -303,7 +303,9 @@ import {
   offlineQuickGenClient,
   offlineNarrateClient,
   offlineScanMentionsClient,
-  offlinePrepContentClient
+  offlinePrepContentClient,
+  offlineWrapSuggestClient,
+  offlineTruthNotesClient
 } from "../wf-mcp-server/lib/offline-clients.mjs";
 
 // Phase 22 (task 22.7) -- Scene Engine routes. Thin wrappers only, same
@@ -333,6 +335,14 @@ import { createPlan, getPlan, listPlansForWorld, addSceneToPlan, removeSceneFrom
 // notes then delegate straight to the EXISTING, completely unmodified
 // importWriteup -- no logic duplicated here.
 import { proposeUpdatesForPlan, proposeUpdatesForScene } from "../session-planner/plan-updates.mjs";
+
+// Session Wrap -- post-session reveal-state review + player-facing truth
+// notes (session-planner/session-wrap.mjs's own header has the full write-
+// discipline/player-safety story). Thin wrappers only, same convention as
+// every route in this file: resolveWorld()/resolveDir() with NO
+// client-supplied dataDir override anywhere below.
+import { listWrapCandidates, suggestWrapTransitions, applyWrapTransitions, generateTruthNotes } from "../session-planner/session-wrap.mjs";
+import { getCurrentTruthNotes, getTruthNotesHistory } from "../session-planner/truth-notes.mjs";
 
 // Phase 28 task 28.1 -- per-scene ordered elements + per-scene narration.
 // Thin wrappers only, same convention as every other route in this file:
@@ -3266,6 +3276,74 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world);
     const result = await proposeUpdatesForPlan(dir, w, parts[3], { llmOpts: offlineOpts(offlineWriteupClient) });
     return sendJson(res, 200, result);
+  }
+
+  // ---------------------------------------------------------------------
+  // Session Wrap -- post-session reveal-state review + player-facing truth
+  // notes. Thin wrappers over session-planner/session-wrap.mjs /
+  // session-planner/truth-notes.mjs -- see session-wrap.mjs's own header
+  // for the write-discipline story (reveal transitions are direct sidecar
+  // writes with no review batch; the GM's own decisions ARE the review
+  // gate) and the player-safety split between the two LLM calls. Sibling
+  // placement to the propose-updates routes above, same planId-scoped URL
+  // shape (planId currently unused by listWrapCandidates itself -- kept
+  // plan-scoped in the URL for the UI's sake, same as propose-updates).
+  // ---------------------------------------------------------------------
+
+  // GET /api/scene-planning/plans/:planId/wrap-candidates?world=   -> listWrapCandidates
+  if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "plans" && parts[4] === "wrap-candidates") {
+    const dir = resolveDir();
+    const w = resolveWorld(q.get("world"));
+    const result = listWrapCandidates(dir, w);
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/scene-planning/plans/:planId/wrap-suggest   { world }   -> suggestWrapTransitions
+  // Keyless degrade: offlineWrapSuggestClient's honest "no suggestions"
+  // response, same offlineOpts()/`offline:true`-stamping convention as
+  // every other LLM-backed route in this file. Same HTTP-round-trip
+  // limitation as propose-updates above -- a real injected test client
+  // can't survive fetch(); tests wanting one call suggestWrapTransitions
+  // directly, in-process.
+  if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "plans" && parts[4] === "wrap-suggest") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const result = await suggestWrapTransitions(dir, w, parts[3], offlineOpts(offlineWrapSuggestClient));
+    return sendJson(res, 200, { ...result, offline: isOffline() });
+  }
+
+  // POST /api/scene-planning/plans/:planId/wrap-apply   { world, decisions:[{entityId,to,note?}] }   -> applyWrapTransitions
+  // GM-approved decisions only -- direct sidecar writes, no review batch
+  // (see session-wrap.mjs's header). Validated here (non-empty array) since
+  // applyWrapTransitions itself is permissive about an empty list.
+  if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "plans" && parts[4] === "wrap-apply") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    if (!Array.isArray(body.decisions) || !body.decisions.length) {
+      throw new Error("POST wrap-apply: `decisions` must be a non-empty array of {entityId, to} objects.");
+    }
+    const result = applyWrapTransitions(dir, w, body.decisions, { planId: parts[3] });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/scene-planning/plans/:planId/truth-notes   { world, revealedEntityIds:[...] }   -> generateTruthNotes
+  // Keyless degrade: offlineTruthNotesClient's honest placeholder recap
+  // (persisted, since generateTruthNotes saves directly -- see that
+  // client's own doc comment for why the placeholder stays clean/short).
+  if (method === "POST" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "plans" && parts[4] === "truth-notes") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const result = await generateTruthNotes(dir, w, parts[3], body.revealedEntityIds ?? [], offlineOpts(offlineTruthNotesClient));
+    return sendJson(res, 200, { entry: result, offline: isOffline() });
+  }
+
+  // GET /api/scene-planning/plans/:planId/truth-notes?world=   -> {current, history}
+  if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "plans" && parts[4] === "truth-notes") {
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, { current: getCurrentTruthNotes(w, parts[3]), history: getTruthNotesHistory(w, parts[3]) });
   }
 
   // ===========================================================================

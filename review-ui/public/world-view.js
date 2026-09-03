@@ -1145,7 +1145,7 @@ function toggleRelPanel(host, sel) {
   };
   search.addEventListener("input", renderResults);
   const caption = el("div", { class: "wv-inline-caption" },
-    "Creates an untyped related edge. Wrap-up reads your session notes and proposes what it actually is — you approve it then.");
+    "Creates an untyped related edge. Sharpen it later: a scene's Wrap-up → \"Propose from notes\" re-reads your table notes against the graph, or edit the edge directly.");
   panel.append(head, search, results, caption);
   host.appendChild(panel);
   renderResults();
@@ -1159,7 +1159,7 @@ async function markRelated(sel, other) {
       body: JSON.stringify({ world: currentWorld(), sourceId: sel.id, targetId: other.id, relationshipType: "related" })
     });
     await reload();
-    showUndoToast("Marked related — Wrap-up will propose what it really is", async () => {
+    showUndoToast("Marked related — sharpen the type later (scene Wrap-up, or edit the edge)", async () => {
       if (created && created.edgeId) {
         await wApi(`/api/graph/edges/${encodeURIComponent(created.edgeId)}`, {
           method: "DELETE", headers: { "Content-Type": "application/json" },
@@ -1356,7 +1356,7 @@ function renderInspector() {
     }
     body.appendChild(relWrap);
   } else {
-    body.appendChild(el("div", { class: "wv-inspector-hint" }, "No links yet. That's fine — say it's related and let Wrap-up sharpen it later."));
+    body.appendChild(el("div", { class: "wv-inspector-hint" }, "No links yet. That's fine — say it's related now; a scene Wrap-up's \"Propose from notes\" (or a direct edit) can sharpen the type later."));
   }
 
   // Appears in (async via scenesForEntity)
