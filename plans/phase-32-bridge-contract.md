@@ -573,11 +573,82 @@ but the mechanism is sound and does not need a bespoke fix the way `create_scene
 An unresolvable `packId` or `entryId` (unknown pack, or a document id not present in that pack) is a per-op
 failure (`ok:false`, §3), not a thrown/aborted batch — same convention as every other kind in this section.
 
-### Reserved kinds — still NOT implemented (unchanged from v1; no phase has claimed these yet)
+### `kind: "activate_scene"` — (v4, Aureus table wave, NEW)
+
+```json
+{ "opId": "...", "kind": "activate_scene", "data": { "sceneUuid": "Scene.abc123" } }
+```
+
+`scene.activate()` — the TABLE-facing act (players' clients follow the active scene). Deliberately NOT
+`view()`, which is per-client and already has native GM UI. Refuses (per-op `ok:false`) any uuid that doesn't
+resolve to a Scene document. Result `foundryUuid` = the scene's own uuid (identity round-trip).
+
+### `kind: "delete_scene"` — (v4, Aureus table wave, NEW — the bridge's FIRST destructive op)
+
+```json
+{ "opId": "...", "kind": "delete_scene", "data": { "sceneUuid": "Scene.abc123" } }
+```
+
+`scene.delete()` — removes ONLY that document (plus its own embedded tokens/levels; Foundry has no cascade
+beyond a document). Safety is layered on BOTH sides and both layers are load-bearing: the module creator
+refuses any uuid that doesn't resolve to a Scene; the GM_Tools producers only ever compose this kind from a
+`foundrySceneRef` (or its orphan-ledger copy) that GM_Tools itself wrote on a confirmed push — never a
+hand-typed or index-scraped uuid — and every producer path sits behind an explicit GM confirmation. Result
+`foundryUuid` = the deleted scene's uuid (captured before deletion).
+
+### `kind: "import_via_plutonium"` — (v4, Aureus table wave, NEW — BEST-EFFORT by contract)
+
+```json
+{ "opId": "...", "kind": "import_via_plutonium",
+  "data": { "kind": "item", "entry": { "name": "Bag of Holding", "source": "DMG", "...": "the FULL raw 5etools record" },
+            "actorUuid": "Actor.xyz (optional — import into this actor's inventory)" } }
+```
+
+Drives the **Plutonium module's own importer** programmatically (`game.modules.get("plutonium").api.importer`
+— `creature`/`spell` class bindings' `pImportEntry`, and the generic `pGetImporter({prop:"item"})` factory for
+items), i.e. Plutonium's full 5etools→dnd5e conversion at import fidelity. The op carries the **complete raw
+5etools record** (composed by GM_Tools from its read-only Plutonium index) so the module stays dumb and the
+ops file self-contained. `data.kind` ∈ `item | creature | spell`.
+
+**Best-effort**: the Plutonium API is minified, undocumented and version-sensitive (probed live per
+`plans/plutonium-import-spike.md`; verified against Bundle.js v2.17.2.v14). Module absent, api missing, or the
+importer returning no document are all clean per-op failures naming what was missing — never a batch abort,
+and never a reason for a GM_Tools sync to fail.
+
+### `kind: "create_item"` — (v4, Aureus table wave, NEW — deliberately LOW-FIDELITY; was reserved)
+
+```json
+{ "opId": "...", "kind": "create_item",
+  "data": { "name": "Dry Wand of Scrying", "type": "consumable", "img": "icons/...", 
+            "system": { "description": { "value": "<p>...</p>" }, "rarity": "rare",
+                        "uses": { "value": 1, "max": 2, "recovery": [] } },
+            "actorUuid": "Actor.xyz (optional)" } }
+```
+
+`Item.create` (or `actor.createEmbeddedDocuments("Item", ...)` with `actorUuid`) with a GM_Tools-composed
+dnd5e `system` payload. This is the hand-authored/custom item path — NOT a 5etools converter (Plutonium is the
+converter; `import_via_plutonium` is the fidelity path). `system.uses` is the lostech charges knob. The
+fidelity boundary is deliberate and documented at every producer: no activities/spell effects — the GM fills
+mechanics in Foundry where they matter.
+
+### `kind: "update_item"` — (v4, Aureus table wave, NEW — the scarcity patch)
+
+```json
+{ "opId": "...", "kind": "update_item",
+  "data": { "itemUuid": "Item.abc", "patch": { "name": "Necklace of Fireballs (one bead)",
+            "system.uses": { "value": 1, "max": 1, "recovery": [] } } } }
+```
+
+`item.update(patch)` where the patch is a **whitelist** — `name`, `img`, `system.uses`,
+`system.description.value` only — so this op can never silently rewrite an item's mechanics wholesale. The
+lostech flow composes `import_via_plutonium` (full fidelity) then `update_item` (charges down, recovery off).
+Refuses non-Item uuids and empty/non-whitelisted patches per-op.
+
+### Reserved kinds — still NOT implemented (no phase has claimed these yet)
 
 | `kind` | Indicative `data` shape | Notes |
 |---|---|---|
-| `create_actor` | `{ name: string, type: string, img?: string, system?: object }` | Push a bestiary/roster entry back INTO Foundry — not part of Phase 36's scope (36 pushes scenes/tokens/art, not actors) |
+| `create_actor` | `{ name: string, type: string, img?: string, system?: object }` | Push a bestiary/roster entry back INTO Foundry with a hand-composed system payload. v4 note: `import_via_plutonium {kind:"creature"}` covers the real use case (stat blocks at Plutonium fidelity); this stays reserved for a hypothetical non-5etools actor push. |
 
 `walls`/`lighting` on `create_scene` (sketched in `plans/phase-32-deferred.md` §3a) and ambient-light
 *placement* remain explicitly undesigned/out of scope — Phase 36 does not adopt them; a future phase that wants
@@ -646,6 +717,15 @@ oversight** — 32.1/32.2/32.3 should not "fix" it into consistency.
 
 ## Changelog
 
+- **v4** (Aureus table wave FW-1, 2026-09-03; foundry_worldFabric `0ae12da`) — additive-only, **no
+  `*_VERSION` constant bumped** (new op kinds soft-fail per-op on an old module — the established compat
+  story):
+  - NEW implemented op kinds: `activate_scene`, `delete_scene` (the bridge's first destructive op — layered
+    both-sides safety documented in §2), `import_via_plutonium` (best-effort, drives Plutonium's own importer
+    with the full raw 5etools record; spike record `plans/plutonium-import-spike.md`), `create_item`
+    (low-fidelity hand-authored path, was reserved), `update_item` (whitelisted scarcity patch).
+  - `create_actor` stays reserved with a v4 note (`import_via_plutonium {kind:"creature"}` covers the real
+    stat-block use case).
 - **v1** (Phase 32 task 32.0) — initial contract. `FOUNDRY_INDEX_VERSION = 1`,
   `FOUNDRY_OPS_SCHEMA_VERSION = 1`, `FOUNDRY_RESULTS_SCHEMA_VERSION = 1`.
 - **v2** (Phase 36 task 36.0, this amendment) — all additive/corrective, **no `*_VERSION` constant bumped**
