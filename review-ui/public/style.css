@@ -4075,6 +4075,15 @@ main[hidden] { display: none !important; }
 }
 #app-shell .conn-settings-note { font-size: 11.5px; line-height: 1.45; color: var(--sp-ink-muted); margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--sp-border-hairline); }
 
+/* Aureus table wave B1 (G3) -- Foundry scene cleanup (stale-scene sweep) */
+#app-shell .conn-stale-scenes-panel { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--sp-border-hairline); }
+#app-shell .conn-stale-scenes-panel > .conn-section-label { margin-bottom: 6px; }
+#app-shell .conn-stale-scenes-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
+#app-shell .conn-stale-scene-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 9px; font-size: 12px;
+  border: 1px solid var(--sp-border-hairline); border-radius: 4px; background: var(--sp-surface-card); cursor: pointer;
+}
+
 /* Phase 37 (Chronicle): run-spinner pulse, ported from Chronicle.dc.html. */
 @keyframes chpulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 

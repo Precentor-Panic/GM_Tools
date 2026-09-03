@@ -196,8 +196,42 @@ etiquette for planner state.
   (`{installed:false}` when the module isn't there). Never a write.
 - `POST /api/combat-planning/bestiary/add-from-plutonium` `{name, source}` —
   the ONE bridge onto the curated shelf (accepted entry, real stats, 409 on
-  duplicate). Importing the actor into Foundry itself stays a manual
-  Plutonium act at prep time — say so rather than implying it's done.
+  duplicate). As of "Aureus to the Table" G8 (below), an added entry IS
+  directly importable into Foundry from the curated shelf — no longer a
+  manual Plutonium act; don't tell the user it still is.
+
+**Item/bestiary-actor PUSH — "Aureus to the Table" workstream B2 (G7/G8),
+destructive/external precedent, HTTP-only like push-scene above:**
+- `POST /api/foundry/push-item` `{world, itemId, actorUuid?}` — pushes a
+  Reliquary row into Foundry. Plutonium-sourced rows (added via
+  add-from-plutonium above) drive `import_via_plutonium` — Plutonium's own
+  5etools→dnd5e conversion at full fidelity; hand-authored rows compose a
+  deliberately low-fidelity `create_item` (name/type/description/uses only —
+  no activities/spell effects). `actorUuid` lands the item directly in that
+  actor's inventory instead of the world items list. The "lostech" flow
+  (Russell's design driver — stock items with reduced/non-recharging
+  charges) composes a SECOND `update_item` scarcity patch after a
+  Plutonium-sourced import when the row carries local `pushOverrides`
+  (`POST /api/combat-planning/items/:itemId/push-overrides` `{world,
+  overrides|null}` sets/clears them — `displayName`/`usesValue`/`usesMax`/
+  `recharges`/`descriptionNote`). Refuses (400) an already-pushed row
+  (`foundryItemRef` already set) — remove it in Foundry first for a re-push.
+- `POST /api/foundry/push-bestiary-entry` `{world, entryId}` — same
+  `import_via_plutonium` fidelity path, Bestiary-only; ONLY Plutonium-
+  provenance curated entries are eligible (refuses hand-authored/SRD entries
+  and Plutonium `_copy` reprint shells with a clear error). `world` here is
+  only needed to resolve the Foundry transport dir — the bestiary itself
+  stays library-wide (rule 2's bestiary exception is unaffected).
+- Both routes are direct-GM, review-free (a curated/accepted catalogue row
+  → a live Foundry document is a table-prep act, not a canon proposal) and
+  best-effort for the Plutonium path (Plutonium absent/API missing/importer
+  returning nothing are clean per-op failures, never a thrown error up to
+  you) — see `wf-mcp-server/lib/foundry-item-push-ops.mjs`'s own header for
+  the full fidelity boundary and the documented orphan-risk edge case
+  (import succeeds, the scarcity patch fails → no ref written, a retry would
+  create a second Foundry item). Not exposed as MCP tools — same
+  destructive/external precedent as `push-scene` above; only use these when
+  the user has explicitly asked for a push.
 
 **Review extras (W1) — batch routes beyond the MCP verbs:**
 - `POST /api/batches/:batchId/mutations/:mutationId/convert-to-existing`

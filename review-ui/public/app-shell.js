@@ -548,6 +548,21 @@ function toggleSceneDeleteConfirm(item, scene, countEl) {
   });
   const warn = el("p", { class: "hint" });
   warn.textContent = "Delete this scene entirely? It will be removed from every plan it's in — the underlying location survives, but this scene itself is gone for good.";
+
+  // Aureus table wave B1 (G3): a scene that's ever been pushed to Foundry
+  // carries a `foundrySceneRef` -- deleting the GM_Tools record alone
+  // orphans that Foundry Scene document (the sweep can still offer removal
+  // later, see the Settings stale-scenes panel), so offer the choice right
+  // here too. Default OFF -- the safer, non-destructive-to-Foundry default;
+  // an explicit opt-in is required to also remove the live document now.
+  let alsoFoundryCheckbox = null;
+  let alsoFoundryLabel = null;
+  if (scene.foundrySceneRef) {
+    alsoFoundryLabel = el("label", { class: "shell-scene-library-item-delete-also-foundry-label hint" });
+    alsoFoundryCheckbox = el("input", { type: "checkbox", "data-testid": "scene-delete-also-foundry" });
+    alsoFoundryLabel.append(alsoFoundryCheckbox, document.createTextNode(" Also remove the pushed Foundry scene"));
+  }
+
   const status = el("span", { class: "hint" });
   const confirmBtn = el("button", { class: "btn btn--accept", type: "button", "data-testid": "shell-scene-library-item-delete-confirm-btn" });
   confirmBtn.textContent = "Yes, delete";
@@ -561,7 +576,7 @@ function toggleSceneDeleteConfirm(item, scene, countEl) {
       await shApi(`/api/session-planner/scenes/${encodeURIComponent(scene.id)}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ world: currentWorld() })
+        body: JSON.stringify({ world: currentWorld(), alsoRemoveFromFoundry: !!alsoFoundryCheckbox?.checked })
       });
       sceneNameCache.delete(scene.id);
       item.remove();
@@ -577,7 +592,7 @@ function toggleSceneDeleteConfirm(item, scene, countEl) {
   });
   cancelBtn.addEventListener("click", (e) => { e.stopPropagation(); panel.remove(); });
 
-  panel.append(warn, confirmBtn, cancelBtn, status);
+  panel.append(warn, ...(alsoFoundryLabel ? [alsoFoundryLabel] : []), confirmBtn, cancelBtn, status);
   item.appendChild(panel);
 }
 

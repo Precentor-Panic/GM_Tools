@@ -578,11 +578,42 @@ function buildBestiary(ctx) {
     const rf = e.rawFields || {};
     const rating = ratingOf(e);
 
-    // header
-    statRail.appendChild(el("div", { style: "padding: 12px 15px; border-bottom: 1px solid oklch(0.88 0.010 80); display: flex; align-items: center; gap: 9px;" }, [
+    // header. "Aureus to the Table" task G8: a Plutonium-provenance entry
+    // (sourcePill === "plutonium") gets an "Import to Foundry" action here.
+    // Deliberately NO separate "in Foundry" pill invented: the moment a push
+    // confirms, foundryActorRef is set and deriveSourcePill's OWN existing
+    // "foundry" branch takes over on the next read -- the button's own
+    // condition (sourcePill === "plutonium") then simply stops matching, and
+    // the header's existing sourcePill badge already reads "Foundry world"
+    // (gm-tools-conventions: reuse an existing primitive over inventing a
+    // second one that would say the same thing).
+    const headerChildren = [
       sourcePill(e.sourcePill, "library-source-pill"),
       el("span", { text: rf.name || "Unnamed", style: "flex: 1; min-width: 0; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" })
-    ]));
+    ];
+    if (e.sourcePill === "plutonium") {
+      headerChildren.push(foundryPushButton({
+        testid: "library-bestiary-import-btn",
+        label: "Import to Foundry",
+        title: "Imports this creature straight from here — stat fidelity is Plutonium's own conversion; needs a live Foundry client with Plutonium enabled.",
+        onPush: async () => {
+          const result = await api("/api/foundry/push-bestiary-entry", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ world, entryId: e.id })
+          });
+          if (result.status === "queued") {
+            showUndoToast(`"${rf.name}" is queued — no live Foundry client picked it up yet.`, () => {});
+            return;
+          }
+          if (!result.ok) {
+            showUndoToast(`Foundry reported a failure: ${result.error}`, () => {});
+            return;
+          }
+          showUndoToast(`"${rf.name}" imported into Foundry.`, () => {});
+          await renderLibrarySurface("bestiary");
+        }
+      }));
+    }
+    statRail.appendChild(el("div", { style: "padding: 12px 15px; border-bottom: 1px solid oklch(0.88 0.010 80); display: flex; align-items: center; gap: 9px;" }, headerChildren));
 
     const scroll = el("div", { style: "flex: 1; overflow-y: auto; padding: 14px 15px 20px;" });
     scroll.append(
@@ -843,8 +874,10 @@ function buildPlutoniumShelf(ctx) {
     el("span", { testid: "plutonium-shelf-count", style: "font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.60 0.012 70);" })
   ]);
   const blurb = el("div", {
-    // The W4c manual-import rule, stated up front where the shelf starts.
-    text: "Everything Plutonium's bundled 5etools data says exists — browsable here so the library isn't blind to unimported creatures. Read-only: importing an actor into Foundry stays a manual Plutonium act at prep time.",
+    // "Aureus to the Table" task G8 -- honest copy: browsing here is
+    // read-only, but adding a creature to the curated shelf below now makes
+    // it directly importable (no more "manual Plutonium act" framing).
+    text: "Everything Plutonium's bundled 5etools data says exists — browsable here so the library isn't blind to unimported creatures. Read-only for browsing; a creature added to the curated shelf below is importable straight from here — stat fidelity is Plutonium's own conversion; needs a live Foundry client with Plutonium enabled.",
     style: "font-size: 12px; color: oklch(0.52 0.014 65); margin: 5px 0 12px; max-width: 78ch; line-height: 1.5;"
   });
   section.append(headRow, blurb);
@@ -1001,8 +1034,9 @@ function buildPlutoniumShelf(ctx) {
 // shelf" marker instead of the button (matched against the curated entries'
 // own provenance line). Success refreshes the whole Bestiary surface so the
 // new curated entry appears in the grid above with its Plutonium pill.
-// Import into Foundry stays a manual Plutonium act at prep time -- the
-// button's own title says so.
+// "Aureus to the Table" task G8 -- once on the curated shelf, the entry's
+// own "Import to Foundry" affordance (buildBestiary's paintStatRail) takes
+// over; this button's own title says so honestly now.
 function buildPlutoniumRowAction(c, ctx) {
   const provenance = `${c.source ?? "?"}${c.page != null ? ` p${c.page}` : ""} via Plutonium`;
   const alreadyOnShelf = (ctx?.data?.bestiary || []).some(
@@ -1019,7 +1053,7 @@ function buildPlutoniumRowAction(c, ctx) {
   const btn = el("span", {
     testid: "plutonium-row-add-btn",
     text: "+ shelf",
-    title: "Add this creature's stats to the curated shelf. Importing the actor into Foundry stays a manual Plutonium act at prep time.",
+    title: "Add this creature's stats to the curated shelf. From there it's importable straight into Foundry — stat fidelity is Plutonium's own conversion; needs a live Foundry client with Plutonium enabled.",
     style: "flex: none; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.40 0.10 25); padding: 2px 8px; border: 1px dashed oklch(0.78 0.070 25); border-radius: 20px; cursor: pointer; white-space: nowrap;"
   });
   btn.addEventListener("click", async () => {
@@ -1786,6 +1820,9 @@ function buildShelf(ctx, which) {
         } catch { /* leave the affordance clickable to retry */ }
         await reload();
       }));
+      // "Aureus to the Table" task G8 -- Push to Foundry / "in Foundry" pill,
+      // plus the "-> into <owner>'s inventory" secondary option.
+      topRowChildren.push(reliquaryFoundryPushElement(r, world, data, reload));
     }
     bodyCol.appendChild(el("div", { style: "display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap;" }, topRowChildren));
     if (r.desc) bodyCol.appendChild(el("div", { text: r.desc, style: "font-size: 12px; color: oklch(0.48 0.014 65); line-height: 1.45; margin-top: 5px; max-width: 78ch;" }));
@@ -1879,6 +1916,12 @@ function buildShelf(ctx, which) {
     tagsRow.appendChild(addBtn);
     bodyCol.appendChild(tagsRow);
 
+    // "Aureus to the Table" task G8 -- the "lostech…" local-overrides editor,
+    // Reliquary-items only, behind its own per-row toggle (never opened by default).
+    if (isReliquary && r.kind === "item") {
+      bodyCol.appendChild(reliquaryLostechEditor(r, world));
+    }
+
     row.appendChild(bodyCol);
     return row;
   }
@@ -1907,7 +1950,15 @@ function normalizeShelf(list, isReliquary) {
           // today -- an actor-owned item's ownerPartyMemberId isn't
           // rendered either -- so "unowned renders cleanly" already holds
           // structurally; this flag is purely the ADDED provenance quiet-text).
-          worldItem: !!r.foundryItemRef && !r.ownerPartyMemberId && !r.ownerFoundryActorUuid
+          worldItem: !!r.foundryItemRef && !r.ownerPartyMemberId && !r.ownerFoundryActorUuid,
+          // "Aureus to the Table" task G8 -- carried through raw (not
+          // reshaped) for the Push-to-Foundry affordance + lostech overrides
+          // editor in shelfRow below.
+          foundryItemRef: r.foundryItemRef ?? null,
+          pushOverrides: r.pushOverrides ?? null,
+          ownerPartyMemberId: r.ownerPartyMemberId ?? null,
+          ownerFoundryActorUuid: r.ownerFoundryActorUuid ?? null,
+          sourceText: r.sourceText ?? null
         }
       : {
           id: r.id, kind: r.kind, name: r.name, meta: r.meta,
@@ -1928,6 +1979,232 @@ function normalizeShelf(list, isReliquary) {
           src: r.src ?? null,
           foundryImagePath: r.foundryRef?.imagePath ?? null
         });
+}
+
+// ---------------------------------------------------------------------------
+// "Aureus to the Table" task G8 -- the shared direct-Foundry-push button,
+// used by both the curated Bestiary's "Import to Foundry" (buildBestiary's
+// paintStatRail) and the Reliquary's "Push to Foundry" (shelfRow below).
+// Deliberately a THIN, generic button (label/title/onPush caller-supplied)
+// rather than graphPromoteAffordance's fixed badge-vs-button toggle: the two
+// push actions differ in what "already pushed" looks like on their own row
+// (foundryItemRef vs foundryActorRef, plus the Reliquary's overrides editor
+// living alongside it) enough that the CALLER decides whether/what to render
+// once pushed, instead of this helper owning that state.
+// ---------------------------------------------------------------------------
+function foundryPushButton({ testid, label, title, onPush }) {
+  const btn = el("span", {
+    testid,
+    text: label,
+    title,
+    style: "flex: none; font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.04em; color: oklch(0.44 0.050 185); padding: 2px 8px; border: 1px dashed oklch(0.72 0.045 185); border-radius: 20px; cursor: pointer; white-space: nowrap;"
+  });
+  btn.addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    const original = btn.textContent;
+    btn.textContent = "pushing…";
+    btn.style.opacity = "0.6";
+    try {
+      await onPush();
+    } catch (err) {
+      btn.textContent = original;
+      btn.style.opacity = "1";
+      showUndoToast(err.status === 409 ? "Already in Foundry — remove it there first if you want a re-push." : `Could not push: ${err.message}`, () => {});
+    }
+  });
+  return btn;
+}
+
+/** The quiet, already-pushed marker every foundryPushButton caller swaps to once a ref is confirmed -- mirrors graphPromoteAffordance's own badge styling. */
+function foundryPushedBadge(testid, text, title) {
+  return el("span", {
+    testid,
+    text,
+    title,
+    style: "flex: none; padding: 2px 8px; border-radius: 20px; font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.04em; color: oklch(0.44 0.050 185); background: oklch(0.94 0.020 185); border: 1px solid oklch(0.80 0.035 185); white-space: nowrap;"
+  });
+}
+
+/**
+ * "Aureus to the Table" task G8 -- Reliquary row Push-to-Foundry. Renders
+ * the quiet "in Foundry" pill once `r.foundryItemRef` is set (written only
+ * on a confirmed-applied push, per foundry-item-push-ops.mjs's own
+ * contract); otherwise a `foundryPushButton` plus, when the item's owning
+ * party member (r.ownerPartyMemberId) carries a `foundryActorRef` of its
+ * own, a secondary "-> into <name>'s inventory" option that composes the
+ * SAME push with an explicit `actorUuid`.
+ */
+function reliquaryFoundryPushElement(r, world, data, reload) {
+  if (r.foundryItemRef) {
+    return foundryPushedBadge("tagged-shelf-row-in-foundry-badge", "in Foundry", "This item has a real Foundry document.");
+  }
+  const wrap = el("span", { style: "display: inline-flex; align-items: center; gap: 7px;" });
+
+  async function doPush(actorUuid, onOk) {
+    const result = await api("/api/foundry/push-item", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ world, itemId: r.id, ...(actorUuid ? { actorUuid } : {}) })
+    });
+    if (result.status === "queued") {
+      showUndoToast(`"${r.name}" is queued — no live Foundry client picked it up yet.`, () => {});
+      return;
+    }
+    if (!result.ok) {
+      showUndoToast(`Foundry reported a failure: ${result.error}`, () => {});
+      return;
+    }
+    showUndoToast(`"${r.name}" pushed to Foundry.`, () => {});
+    await onOk();
+  }
+
+  wrap.appendChild(foundryPushButton({
+    testid: "tagged-shelf-row-push-btn",
+    label: "Push to Foundry",
+    title: "Pushes this item straight from here — a Plutonium-sourced row imports at Plutonium's own conversion fidelity, a hand-authored row pushes a minimal item. Needs a live Foundry client (with Plutonium enabled for the Plutonium-sourced path).",
+    onPush: () => doPush(undefined, reload)
+  }));
+
+  const owner = r.ownerPartyMemberId ? (data.party || []).find((m) => m.id === r.ownerPartyMemberId) : null;
+  if (owner?.foundryActorRef) {
+    const intoBtn = el("span", {
+      testid: "tagged-shelf-row-push-into-actor-btn",
+      text: `→ into ${owner.name}'s inventory`,
+      title: `Pushes this item directly into ${owner.name}'s Foundry actor sheet instead of the world items list.`,
+      style: "font-size: 10.5px; color: oklch(0.50 0.075 185); cursor: pointer; white-space: nowrap;"
+    });
+    intoBtn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      const original = intoBtn.textContent;
+      intoBtn.textContent = "pushing…";
+      try {
+        await doPush(owner.foundryActorRef, reload);
+      } catch (err) {
+        intoBtn.textContent = original;
+        showUndoToast(err.status === 409 ? "Already in Foundry — remove it there first if you want a re-push." : `Could not push: ${err.message}`, () => {});
+      }
+    });
+    wrap.appendChild(intoBtn);
+  }
+  return wrap;
+}
+
+/**
+ * "Aureus to the Table" task G8 -- the Reliquary row's "lostech…" toggle +
+ * inline overrides editor (item-store.mjs's PushOverridesSchema). Closed by
+ * default, per row. `recharges` defaults OFF in the UI (unchecked) even when
+ * the row carries no overrides yet -- Russell's own design driver ("the
+ * lostech default is scarcity"), stated again as a one-line hint in the
+ * panel itself. `descriptionNote` is saved but never pushed (see
+ * foundry-item-push-ops.mjs's header for why) -- labelled honestly.
+ */
+function reliquaryLostechEditor(r, world) {
+  const wrap = el("div", { style: "margin-top: 8px;" });
+  const toggleLabel = () => (r.pushOverrides ? "lostech overrides set…" : "lostech…");
+  const toggle = el("span", {
+    testid: "tagged-shelf-row-lostech-toggle",
+    text: toggleLabel(),
+    style: "font-size: 10.5px; color: oklch(0.50 0.075 185); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px;"
+  });
+  const panelHost = el("div", {});
+  wrap.append(toggle, panelHost);
+
+  let open = false;
+  toggle.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    open = !open;
+    panelHost.innerHTML = "";
+    if (open) panelHost.appendChild(buildPanel());
+  });
+
+  function fieldBox(testid, label, input) {
+    const box = el("div", { testid, style: "display: flex; flex-direction: column; gap: 3px;" });
+    box.append(
+      el("label", { text: label, style: "font-family: 'IBM Plex Mono', monospace; font-size: 8.5px; letter-spacing: 0.05em; text-transform: uppercase; color: oklch(0.53 0.012 70);" }),
+      input
+    );
+    return box;
+  }
+
+  function buildPanel() {
+    const ov = r.pushOverrides || {};
+    const inputStyle = "padding: 4px 7px; border: 1px solid oklch(0.84 0.010 80); border-radius: 4px; font: inherit; font-size: 11.5px; background: oklch(1 0 0); color: inherit;";
+    const nameInput = el("input", { testid: "tagged-shelf-row-lostech-displayName", type: "text", value: ov.displayName || "", style: `${inputStyle} width: 170px;` });
+    const valueInput = el("input", { testid: "tagged-shelf-row-lostech-usesValue", type: "number", min: "0", value: ov.usesValue ?? "", style: `${inputStyle} width: 56px;` });
+    const maxInput = el("input", { testid: "tagged-shelf-row-lostech-usesMax", type: "number", min: "1", value: ov.usesMax ?? "", style: `${inputStyle} width: 56px;` });
+    const noteInput = el("input", { testid: "tagged-shelf-row-lostech-descriptionNote", type: "text", value: ov.descriptionNote || "", style: `${inputStyle} width: 220px;` });
+    const rechargeCheckbox = el("input", { testid: "tagged-shelf-row-lostech-recharges", type: "checkbox" });
+    rechargeCheckbox.checked = ov.recharges === true; // default OFF -- scarcity is the lostech default
+
+    const rechargeRow = el("label", { style: "display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: oklch(0.48 0.014 65); padding-bottom: 4px;" }, [
+      rechargeCheckbox,
+      el("span", { text: "recharges on rest" })
+    ]);
+    const hint = el("div", {
+      text: "Lostech default is scarcity — leave \"recharges on rest\" unchecked unless this is TRUE lostech (it still recharges).",
+      style: "font-size: 10.5px; color: oklch(0.58 0.012 70); flex-basis: 100%; line-height: 1.4;"
+    });
+    const noteHint = el("div", {
+      text: "Saved, but not pushed yet — Foundry's own item description isn't read back here to append to.",
+      style: "font-size: 10px; color: oklch(0.62 0.012 70); font-style: italic; flex-basis: 100%;"
+    });
+
+    const saveBtn = el("span", {
+      testid: "tagged-shelf-row-lostech-save-btn",
+      text: "Save overrides",
+      style: "padding: 5px 12px; border: 1px solid oklch(0.72 0.045 185); border-radius: 5px; font-size: 11.5px; color: oklch(0.30 0.060 185); cursor: pointer; background: oklch(0.90 0.030 185); white-space: nowrap;"
+    });
+    const clearBtn = el("span", {
+      testid: "tagged-shelf-row-lostech-clear-btn",
+      text: "Clear",
+      style: "font-size: 11px; color: oklch(0.58 0.012 70); cursor: pointer; white-space: nowrap;"
+    });
+
+    async function persist(overridesOrNull) {
+      try {
+        const { item } = await api(`/api/combat-planning/items/${encodeURIComponent(r.id)}/push-overrides`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world, overrides: overridesOrNull })
+        });
+        r.pushOverrides = item.pushOverrides;
+        showUndoToast(overridesOrNull ? "Lostech overrides saved." : "Lostech overrides cleared.", () => {});
+      } catch (err) {
+        showUndoToast(`Could not save overrides: ${err.message}`, () => {});
+      }
+      open = false;
+      panelHost.innerHTML = "";
+      toggle.textContent = toggleLabel();
+    }
+
+    saveBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const overrides = {};
+      if (nameInput.value.trim()) overrides.displayName = nameInput.value.trim();
+      if (valueInput.value !== "") overrides.usesValue = Number(valueInput.value);
+      if (maxInput.value !== "") overrides.usesMax = Number(maxInput.value);
+      overrides.recharges = rechargeCheckbox.checked;
+      if (noteInput.value.trim()) overrides.descriptionNote = noteInput.value.trim();
+      persist(overrides);
+    });
+    clearBtn.addEventListener("click", (ev) => { ev.stopPropagation(); persist(null); });
+
+    const panel = el("div", {
+      testid: "tagged-shelf-row-lostech-panel",
+      style: "display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin-top: 6px; padding: 10px 12px; border: 1px dashed oklch(0.72 0.045 185); border-radius: 5px; background: oklch(0.975 0.014 185); max-width: 600px;"
+    }, [
+      fieldBox("tagged-shelf-row-lostech-displayName-box", "Display name", nameInput),
+      fieldBox("tagged-shelf-row-lostech-usesValue-box", "Uses", valueInput),
+      fieldBox("tagged-shelf-row-lostech-usesMax-box", "Max", maxInput),
+      rechargeRow,
+      fieldBox("tagged-shelf-row-lostech-descriptionNote-box", "Description note (not pushed yet)", noteInput),
+      hint,
+      noteHint,
+      saveBtn,
+      clearBtn
+    ]);
+    return panel;
+  }
+
+  return wrap;
 }
 
 // ---------------------------------------------------------------------------

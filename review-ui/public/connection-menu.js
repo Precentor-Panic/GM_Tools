@@ -92,7 +92,18 @@ const panelState = {
   settingsOpen: false,
   worldsOpen: false,
   syncing: false,
-  syncMessage: ""
+  syncMessage: "",
+  // Aureus table wave B1 (G3) -- the stale-scene sweep panel's own state.
+  // `staleWorld` tracks which world `staleScenes` was fetched for (or
+  // attempted for, on a failure) so a re-render never re-fires the fetch
+  // mid-flight or after a settled result/error for the SAME world; a world
+  // switch while the panel is open naturally re-triggers a fresh fetch.
+  staleWorld: null,
+  staleLoading: false,
+  staleScenes: null, // {orphans, unstagedWithRef} | null
+  staleError: null,
+  staleSelected: new Set(), // Set of "<kind>:<id>" keys
+  staleActionStatus: ""
 };
 
 // ---------------------------------------------------------------------------
@@ -661,7 +672,115 @@ function renderSettingsSection() {
     body.innerHTML = "";
     body.appendChild(el("div", { class: "conn-history-empty" }, "Could not load settings."));
   });
+
+  sec.appendChild(renderStaleScenesPanel(w));
   return sec;
+}
+
+// ---------------------------------------------------------------------------
+// Aureus table wave B1 (G3) -- the "Foundry scene cleanup" stale-scene sweep
+// panel. Lives HERE (not the legacy #view-settings/app.js's renderSettings,
+// which Phase 34 task 34.2 hash-redirected away and is no longer reachable
+// by any navigation) -- this "Campaign & keys" disclosure IS the actual,
+// reachable Settings surface a GM lands on today via the gear chip. Fetches
+// GET /api/foundry/stale-scenes once per (panel-open, world) pair --
+// loadStaleScenes guards on `panelState.staleWorld` so an unrelated
+// re-render (e.g. a settings-grid field save) never re-fires the fetch
+// mid-flight or after a settled result for the SAME world.
+// ---------------------------------------------------------------------------
+function staleKey(row) { return `${row.kind}:${row.id}`; }
+
+function loadStaleScenes(world) {
+  panelState.staleWorld = world;
+  panelState.staleLoading = true;
+  panelState.staleError = null;
+  cmApi(`/api/foundry/stale-scenes?world=${encodeURIComponent(world)}`).then((result) => {
+    panelState.staleScenes = result;
+    panelState.staleLoading = false;
+    if (panelOpen) renderPanel();
+  }).catch((err) => {
+    panelState.staleScenes = null;
+    panelState.staleError = err.message;
+    panelState.staleLoading = false;
+    if (panelOpen) renderPanel();
+  });
+}
+
+function renderStaleScenesPanel(world) {
+  const wrap = el("div", { class: "conn-stale-scenes-panel", "data-testid": "stale-scenes-panel" });
+  wrap.appendChild(el("div", { class: "conn-section-label" }, "Foundry scene cleanup"));
+
+  if (panelState.staleWorld !== world && !panelState.staleLoading) {
+    panelState.staleSelected = new Set();
+    panelState.staleActionStatus = "";
+    loadStaleScenes(world);
+  }
+
+  if (panelState.staleWorld === world && panelState.staleLoading && !panelState.staleScenes) {
+    wrap.appendChild(el("div", { class: "hint" }, "Checking Foundry for stale scenes…"));
+    return wrap;
+  }
+  if (panelState.staleWorld === world && panelState.staleError) {
+    wrap.appendChild(el("div", { class: "hint" }, `Could not load: ${panelState.staleError}`));
+    return wrap;
+  }
+  const data = panelState.staleWorld === world ? panelState.staleScenes : null;
+  if (!data) return wrap; // fetch just kicked off above -- nothing to show yet this render
+
+  const rows = [...data.orphans, ...data.unstagedWithRef];
+  if (!rows.length) {
+    wrap.appendChild(el("div", { class: "hint", "data-testid": "stale-scenes-empty" }, "Nothing stale — Foundry matches your staged scenes."));
+    return wrap;
+  }
+
+  const list = el("div", { class: "conn-stale-scenes-list" });
+  for (const row of rows) {
+    const key = staleKey(row);
+    const item = el("label", { class: "conn-stale-scene-row", "data-testid": "stale-scene-row", "data-kind": row.kind, "data-id": row.id });
+    const cb = el("input", { type: "checkbox" });
+    cb.checked = panelState.staleSelected.has(key);
+    cb.addEventListener("change", () => {
+      if (cb.checked) panelState.staleSelected.add(key);
+      else panelState.staleSelected.delete(key);
+    });
+    item.appendChild(cb);
+    const label = row.kind === "orphan" ? `${row.name} — deleted scene, still in Foundry` : `${row.name} — unstaged, still in Foundry`;
+    item.appendChild(el("span", {}, label));
+    list.appendChild(item);
+  }
+  wrap.appendChild(list);
+
+  const removeBtn = el("button", { type: "button", class: "btn btn--reject", "data-testid": "stale-scenes-remove-btn" }, "Remove selected from Foundry");
+  const status = el("div", { class: "hint", "data-testid": "stale-scenes-status" }, panelState.staleActionStatus);
+  removeBtn.addEventListener("click", async () => {
+    const targets = rows.filter((r) => panelState.staleSelected.has(staleKey(r))).map((r) => ({ kind: r.kind, id: r.id }));
+    if (!targets.length) { panelState.staleActionStatus = "Select at least one scene first."; renderPanel(); return; }
+    if (!confirm(`Remove ${targets.length} scene${targets.length === 1 ? "" : "s"} from Foundry? This cannot be undone from here.`)) return;
+    removeBtn.disabled = true;
+    try {
+      const result = await cmApi("/api/foundry/remove-stale", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world, targets, confirm: true })
+      });
+      if (result.status === "queued") {
+        panelState.staleActionStatus = result.note; // verbatim -- the server's own wording
+      } else {
+        const removedCount = result.removed?.length ?? 0;
+        const failedCount = result.failed?.length ?? 0;
+        panelState.staleActionStatus = failedCount
+          ? `Removed ${removedCount}, ${failedCount} failed.`
+          : `Removed ${removedCount} scene${removedCount === 1 ? "" : "s"} from Foundry.`;
+      }
+      panelState.staleSelected = new Set();
+      loadStaleScenes(world); // refresh -- confirmed removals drop off, failures stay for retry
+    } catch (err) {
+      panelState.staleActionStatus = `Could not remove: ${err.message}`;
+    } finally {
+      renderPanel();
+    }
+  });
+  wrap.append(removeBtn, status);
+  return wrap;
 }
 
 function makeSettingRow(label, value, save, placeholder) {

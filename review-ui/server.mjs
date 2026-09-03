@@ -218,7 +218,7 @@ import {
 } from "../combat-planning/party-roster-store.mjs";
 // Phase 35 task 35.1, §1/§4/§8 -- item store (Reliquary) + the shared tags
 // helper API. Thin route wrappers only, per gm-tools-conventions.
-import { listItems, getItem, saveItem, acceptItem, discardItem, addItemTag, removeItemTag, promoteItemToGraph } from "../combat-planning/item-store.mjs";
+import { listItems, getItem, saveItem, acceptItem, discardItem, addItemTag, removeItemTag, promoteItemToGraph, setItemPushOverrides } from "../combat-planning/item-store.mjs";
 // Phase 35 task 35.1, §2/§8 -- stagecraft asset store (map/splash/music).
 import {
   listStagecraftAssets,
@@ -250,11 +250,27 @@ import { pullFoundryActorsToStores } from "../wf-mcp-server/lib/foundry-pull-ops
 // Phase 36 task 36.2 -- `flushDirtyStagedScenes`, the quiet-push flush
 // engine (same file, extended -- see that module's own header note).
 import { pushSceneToFoundry, flushDirtyStagedScenes } from "../wf-mcp-server/lib/foundry-push-ops.mjs";
+// Aureus table wave B1 (G2) -- the scene LIFECYCLE half (same file, extended
+// again): activate/remove-from-Foundry/delete-cascade/stale-sweep. See
+// foundry-push-ops.mjs's own "Aureus table wave B1 (G1)" header comment for
+// the full safety-invariant story.
+import {
+  activateSceneInFoundry,
+  removeSceneFromFoundry,
+  handleFoundrySceneOnDelete,
+  listStaleFoundryScenes,
+  removeStaleFoundryScenes
+} from "../wf-mcp-server/lib/foundry-push-ops.mjs";
 // Phase 38 task 38.2, §4 -- import-on-accept (a compendiumRef Stagecraft
 // browse row's accept composes `import_compendium_scene` through the SAME
 // ops channel, asynchronous like a staged push). Sibling module to
 // foundry-push-ops.mjs -- see its own header comment.
 import { importCompendiumSceneOnAccept, reconcilePendingCompendiumImports } from "../wf-mcp-server/lib/stagecraft-import-ops.mjs";
+// "Aureus to the Table" workstream B2 task G8 -- the Reliquary item / curated
+// Bestiary actor PUSH routes. Sibling module to foundry-push-ops.mjs (scene
+// push) -- see foundry-item-push-ops.mjs's own header for the fidelity
+// boundary (import_via_plutonium vs. create_item) and the lostech two-op flow.
+import { pushItemToFoundry, pushBestiaryEntryToFoundry } from "../wf-mcp-server/lib/foundry-item-push-ops.mjs";
 
 // Phase 34 task 34.1 -- Connection-Menu backend glue: connection-state
 // derivation + sync-now (foundry-connection.mjs composes readFoundryIndex
@@ -448,6 +464,7 @@ function statusForError(err) {
   // framing round, not a whole writeup-import batch).
   if (err.name === "PrepFramingRoundLimitError") return 409;
   if (err.name === "NoNarratableBatchError") return 404; // task 14.7: no accepted mutation exists yet for this entity
+  if (err.name === "FoundryOpsInFlightError") return 409; // Aureus table wave B1 (G2): a prior ops batch from ANY source hasn't cleared yet -- retryable, not a bad request
   if (/already exists/i.test(err.message ?? "")) return 409; // task 14.2: creating a world id that's already taken
   if (/no (batch|region|entity|world|snapshot) found/i.test(err.message ?? "")) return 404;
   if (/not found/i.test(err.message ?? "")) return 404;
@@ -2242,15 +2259,35 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { scene });
   }
 
-  // DELETE /api/session-planner/scenes/:sceneId   { world } (body or query, matching
-  // the sibling members/plan-membership DELETE convention) -- Phase 27 task 27.1, F1.
-  // A TRUE delete (scenes.mjs's deleteScene cascade) -- distinct from the plan-scoped
+  // DELETE /api/session-planner/scenes/:sceneId   { world, alsoRemoveFromFoundry? } (body or
+  // query, matching the sibling members/plan-membership DELETE convention) -- Phase 27 task
+  // 27.1, F1. A TRUE delete (scenes.mjs's deleteScene cascade) -- distinct from the plan-scoped
   // DELETE /api/scene-planning/plans/:planId/scenes/:sceneId unlink-only route below.
+  //
+  // Aureus table wave B1 (G2): fetch the scene FIRST (before the cascade
+  // destroys its foundrySceneRef) and hand it to handleFoundrySceneOnDelete
+  // BEFORE deleteScene runs -- that call either orphans the ref for the
+  // stale-sweep to pick up later (the default, alsoRemoveFromFoundry
+  // absent/false) or also tries the live Foundry removal now
+  // (alsoRemoveFromFoundry: true), and its result rides along on the
+  // response as `foundry`. A scene that was never pushed (or an already-
+  // unknown sceneId -- getScene throws, caught so deleteScene's own
+  // idempotent {deleted:false} for an unknown id is UNCHANGED) yields
+  // `foundry:'none'`, and every existing caller that only reads `deleted`
+  // sees byte-identical behavior to before this change.
   if (method === "DELETE" && parts.length === 4 && parts[1] === "session-planner" && parts[2] === "scenes") {
     const body = await readBody(req);
     const w = resolveWorld(body.world ?? q.get("world"));
+    let scene = null;
+    try {
+      scene = getScene(w, parts[3]);
+    } catch {
+      // Unknown sceneId -- deleteScene below stays idempotent ({deleted:false}); nothing to orphan.
+    }
+    const dir = resolveDir();
+    const foundry = await handleFoundrySceneOnDelete(dir, w, scene, { alsoRemoveFromFoundry: body.alsoRemoveFromFoundry === true });
     const result = deleteScene(w, parts[3]);
-    return sendJson(res, 200, result);
+    return sendJson(res, 200, { ...result, foundry });
   }
 
   // GET /api/session-planner/brief?world=...&sceneId=...&corridorTolerance=...
@@ -2712,6 +2749,129 @@ async function handleApi(req, res, url, parts) {
     const dir = resolveDir();
     const w = resolveWorld(body.world);
     return sendJson(res, 200, await syncNow(dir, w));
+  }
+
+  // -----------------------------------------------------------------------
+  // Aureus table wave B1 (G2) -- the scene LIFECYCLE routes: activate a
+  // pushed scene at the table, remove a pushed scene from Foundry while
+  // keeping the GM_Tools record, and the stale-scene sweep (orphaned refs
+  // left behind by a scene delete, plus unstaged-but-still-pushed scenes).
+  // Thin wrappers ONLY over wf-mcp-server/lib/foundry-push-ops.mjs's new
+  // lifecycle exports -- see that module's own header comment for the full
+  // safety-invariant story (every destructive path sits behind an explicit
+  // GM confirmation; delete_scene ops are only ever composed from a ref that
+  // module itself wrote on a confirmed push). World-scoped (resolveWorld),
+  // no client-supplied dataDir honored, same convention as every route in
+  // this file. The scene DELETE route's own Foundry handling
+  // (handleFoundrySceneOnDelete) is a separate, surgical edit to the
+  // EXISTING `DELETE /api/session-planner/scenes/:sceneId` route above, not
+  // duplicated here.
+  // -----------------------------------------------------------------------
+
+  // POST /api/foundry/activate-scene   { world, sceneId }
+  // -> {status:'applied', sceneId, opId, ok, error?} | {status:'queued', sceneId, opId, note}
+  // A scene with no foundrySceneRef throws a clean, caller-facing error
+  // ("push it to Foundry first" is the fix, not a server bug) -- 400 via
+  // statusForError, same as every other validation throw in this file.
+  if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "activate-scene") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    if (!body.sceneId) throw new Error("POST /api/foundry/activate-scene requires sceneId.");
+    const result = await activateSceneInFoundry(dir, w, body.sceneId);
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/foundry/remove-scene   { world, sceneId, confirm }
+  // Server-side enforcement of explicit GM confirmation (this is a
+  // destructive Foundry-side delete of the pushed Scene document, though the
+  // GM_Tools scene record survives) -- 400 unless body.confirm === true,
+  // checked BEFORE any Foundry work happens.
+  if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "remove-scene") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    if (body.confirm !== true) {
+      throw new Error("POST /api/foundry/remove-scene requires confirm:true -- this removes the scene's pushed Foundry Scene document; the GM must explicitly confirm.");
+    }
+    if (!body.sceneId) throw new Error("POST /api/foundry/remove-scene requires sceneId.");
+    const result = await removeSceneFromFoundry(dir, w, body.sceneId);
+    return sendJson(res, 200, result);
+  }
+
+  // GET /api/foundry/stale-scenes?world=...
+  // -> {orphans:[{kind:'orphan',id,name,foundrySceneRef,orphanedAt}], unstagedWithRef:[{kind:'scene',id,name,foundrySceneRef}]}
+  // Read-only -- the sweep UI renders this and the GM picks what to remove.
+  if (method === "GET" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "stale-scenes") {
+    const dir = resolveDir();
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, listStaleFoundryScenes(dir, w));
+  }
+
+  // POST /api/foundry/remove-stale   { world, targets:[{kind:'orphan'|'scene', id}], confirm }
+  // Same explicit-confirm enforcement as remove-scene above, plus a
+  // non-empty `targets` array -- an empty sweep selection is a no-op the UI
+  // should never be able to submit, but the server enforces it too.
+  if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "remove-stale") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    if (body.confirm !== true) {
+      throw new Error("POST /api/foundry/remove-stale requires confirm:true -- this removes the selected scenes' pushed Foundry Scene documents; the GM must explicitly confirm.");
+    }
+    if (!Array.isArray(body.targets) || body.targets.length === 0) {
+      throw new Error("POST /api/foundry/remove-stale requires a non-empty `targets` array.");
+    }
+    const result = await removeStaleFoundryScenes(dir, w, body.targets);
+    return sendJson(res, 200, result);
+  }
+
+  // -----------------------------------------------------------------------
+  // "Aureus to the Table" workstream B2 task G8 -- item/bestiary-actor PUSH.
+  // Same direct-GM, review-free, HTTP-only-no-MCP-mirror convention as
+  // push-scene above (see foundry-item-push-ops.mjs's own header for the
+  // fidelity boundary and the lostech flow).
+  // -----------------------------------------------------------------------
+
+  // POST /api/foundry/push-item   { world, itemId, actorUuid? }
+  // -> {status:'applied', itemId, opId, ok, foundryUuid?, item?, error?, importedUuid?} | {status:'queued', itemId, opId, phase, note}
+  // Refuses (400 via statusForError, a clean caller-facing error, not a
+  // server bug) an item that already carries a foundryItemRef, or a
+  // Plutonium-sourced item whose raw record is no longer available.
+  if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "push-item") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    if (!body.itemId) throw new Error("POST /api/foundry/push-item requires itemId.");
+    const result = await pushItemToFoundry(dir, w, body.itemId, { actorUuid: body.actorUuid });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/foundry/push-bestiary-entry   { world, entryId }
+  // -> {status:'applied', entryId, opId, ok, foundryUuid?, entry?, error?} | {status:'queued', entryId, opId, note}
+  // `world` is required even though the bestiary itself is library-wide --
+  // it's only used to resolve the Foundry transport dir for this push (see
+  // pushBestiaryEntryToFoundry's own doc comment). Refuses a non-Plutonium
+  // entry, a `_copy` reprint shell, or one already pushed.
+  if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "push-bestiary-entry") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    if (!body.entryId) throw new Error("POST /api/foundry/push-bestiary-entry requires entryId.");
+    const result = await pushBestiaryEntryToFoundry(dir, body.entryId, { world: w });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/combat-planning/items/:itemId/push-overrides   { world, overrides|null }   -> {item}
+  // The "lostech" local-override editor's persisted state (item-store.mjs's
+  // PushOverridesSchema) -- `overrides: null` clears it. Validated by
+  // setItemPushOverrides itself (a stray/misspelled key or an out-of-range
+  // value is a loud ZodError, 400 via statusForError's default fallthrough).
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "items" && parts[4] === "push-overrides") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const item = setItemPushOverrides(w, parts[3], body.overrides ?? null);
+    return sendJson(res, 200, { item });
   }
 
   // GET /api/settings?world=...  -> the full stored AppSettings object (session-planner/app-settings.mjs)

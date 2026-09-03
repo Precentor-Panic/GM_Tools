@@ -191,6 +191,14 @@ function projectReadFields(entry) {
     // Phase 37.6b: same read-time-fallback-to-null convention as note/rating above.
     graphEntityId: entry.graphEntityId ?? null,
     reskinOfEntryId: entry.reskinOfEntryId ?? null,
+    // "Aureus to the Table" task G7 -- same read-time-fallback-to-null
+    // convention as graphEntityId/reskinOfEntryId immediately above (this
+    // store's own established precedent, NOT item-store.mjs's write-time-
+    // explicit-null convention). The ledger shape mirrors
+    // item-store.mjs's own pendingPush / scenes.mjs's pendingPush exactly
+    // (`{opId, ...}`, see wf-mcp-server/lib/foundry-item-push-ops.mjs's
+    // pushBestiaryEntryToFoundry / reconcilePendingBestiaryResults).
+    pendingPush: entry.pendingPush ?? null,
     sourcePill: deriveSourcePill(entry)
   };
 }
@@ -513,6 +521,36 @@ export function createReskinnedBestiaryEntry(sourceEntry, suggestion, opts = {})
   if (note) updateBestiaryEntryNote(created.id, note);
   acceptBestiaryEntry(created.id);
   return getBestiaryEntry(created.id);
+}
+
+/**
+ * "Aureus to the Table" task G7 -- writes (or clears) the entry's own
+ * `foundryActorRef` -- the SAME field eligibleTokenActors (foundry-push-
+ * ops.mjs's composeSceneOps helper) already reads to decide whether a
+ * bestiary row is token-eligible for a scene push's roster scan; a
+ * bestiary entry pushed via pushBestiaryEntryToFoundry becomes
+ * token-eligible the moment this is set to a real `Actor.<id>` uuid, no
+ * separate flag needed. Written only on a confirmed-applied `ok:true`
+ * result (see wf-mcp-server/lib/foundry-item-push-ops.mjs's own header).
+ * No status check -- same "ongoing table-use action" reasoning as
+ * updateBestiaryEntryNote/Rating above.
+ * @returns {object}   the updated BestiaryEntry (projection included)
+ */
+export function setBestiaryFoundryActorRef(entryId, refOrNull) {
+  const entry = readEntry(entryId);
+  return projectReadFields(writeEntry({ ...entry, foundryActorRef: refOrNull ?? null }));
+}
+
+/**
+ * "Aureus to the Table" task G7 -- writes (or clears, `pending: null`) the
+ * entry's pending-push ledger entry, the SAME "ops written but not
+ * confirmed within the poll window" mechanism scenes.mjs/item-store.mjs
+ * already established.
+ * @returns {object}   the updated BestiaryEntry (projection included)
+ */
+export function setBestiaryPendingPush(entryId, pending) {
+  const entry = readEntry(entryId);
+  return projectReadFields(writeEntry({ ...entry, pendingPush: pending ?? null }));
 }
 
 export { ConcurrentWriteError };

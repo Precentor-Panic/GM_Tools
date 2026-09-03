@@ -79,3 +79,98 @@ catch (e) { console.log("copy-shell failed as expected:", e.message); }
 ## Evidence
 
 _(paste console outputs + Plutonium version here when run)_
+
+## Producer live smoke (run with the spike)
+
+**Status: NOT RUN** — same reason as the spike above (no live Foundry
+client in the build environment, 2026-09-03). This section is the
+end-to-end smoke for the workstream B2 (G7/G8) producers built on top of
+the spike's verified API surface — `wf-mcp-server/lib/foundry-item-push-
+ops.mjs`'s `pushItemToFoundry`/`pushBestiaryEntryToFoundry`, and their two
+HTTP routes (`POST /api/foundry/push-item`, `POST /api/foundry/push-
+bestiary-entry`). Everything below this line is DOCUMENTED, not executed —
+run it against `wf-test-5e` (or any dnd5e world with Plutonium enabled)
+alongside the spike's own procedure.
+
+### Setup
+
+1. Start `review-ui`'s server (`node review-ui/server.mjs`, or however the
+   live session normally launches it) pointed at the SAME `WF_DATA_DIR` the
+   target Foundry world reads/writes.
+2. Open the target world in a live Foundry client with Plutonium enabled and
+   the World Fabric ops-channel watcher active (same precondition
+   `push-scene`'s own live smoke already requires).
+3. In the Library's Reliquary tab, use the "Available via Plutonium" shelf
+   (G6) to add a REAL stock item (e.g. "Bag of Holding", DMG) onto the
+   curated shelf — confirms `sourceText` really does stamp `"DMG p155 via
+   Plutonium"` against the real bundled dataset, not a fixture.
+
+### Case 1 — Plutonium-sourced item, no overrides
+
+4. Click "Push to Foundry" on the added row.
+5. **Expect**: within a few seconds (one Foundry watcher tick), the row's
+   button is replaced by the quiet "in Foundry" pill; the new World Item
+   appears in Foundry's own Items sidebar with a real dnd5e `system` payload
+   (rarity/weight/etc. populated by Plutonium's own conversion, not
+   GM_Tools's).
+6. Confirm `combat-planning/items/<world>.json`'s matching row now carries a
+   real `foundryItemRef` (an `Item.<id>` uuid), and that the Foundry item's
+   `_stats`/flags show it came through Plutonium's importer (not a bare
+   `Item.create`).
+
+### Case 2 — the lostech two-op flow
+
+7. Add a second stock item with real charges (e.g. "Wand of Magic Missiles",
+   or any item with `system.uses` after import) to the shelf.
+8. Open its "lostech…" toggle, set `usesValue: 1`, `usesMax: 1`, leave
+   "recharges on rest" UNCHECKED, save.
+9. Click "Push to Foundry".
+10. **Expect**: TWO visible Foundry-side effects in sequence — the item is
+    created (Plutonium's own conversion), then its `system.uses` is patched
+    down to `{value:1, max:1, recovery:[]}`. Confirm in Foundry's own item
+    sheet that Uses reads 1/1 and the Recovery dropdown shows no configured
+    recovery (non-recharging) — the scarcity actually took.
+11. Repeat with "recharges on rest" CHECKED instead: **expect** the update
+    patch carries no `recovery` key at all, so whatever recovery profile
+    Plutonium's own conversion assigned survives untouched (open the item
+    sheet and confirm Recovery still shows Plutonium's own configured
+    value, not cleared).
+
+### Case 3 — hand-authored item
+
+12. Use the Reliquary's "or write one by hand" form to add a plain item
+    with a description, no Plutonium provenance.
+13. Push it. **Expect**: a real Foundry Item appears with the GM_Tools-
+    composed `system.description.value` (the plain-text description
+    wrapped in `<p>…</p>`) and no activities/spell effects — confirms the
+    fidelity boundary holds against a real dnd5e sheet, not just the ops
+    JSON shape.
+
+### Case 4 — actorUuid (into an actor's inventory)
+
+14. With a party member in the world that already has a `foundryActorRef`
+    (pulled via `pull-actors`/`sync-now`), push a Reliquary item using the
+    row's "→ into `<name>`'s inventory" option.
+15. **Expect**: the item appears directly in that actor's own sheet
+    inventory, NOT in the world Items sidebar.
+
+### Case 5 — curated Bestiary push
+
+16. On the Bestiary tab, add a real creature from "Available via Plutonium"
+    onto the curated shelf, then click its "Import to Foundry" button.
+17. **Expect**: a real Actor document appears (Plutonium's creature
+    importer), the curated entry's `foundryActorRef` is set, and — the
+    load-bearing cross-check — that entry now shows up as a droppable
+    token option in a scene's tray roster (composeSceneOps' own token-
+    eligibility scan reads the SAME `foundryActorRef` field this push
+    writes).
+
+### Case 6 — best-effort failure framing
+
+18. Disable Plutonium (or point at a world without it) and attempt a push.
+    **Expect**: a clean per-op failure surfaced as `ok:false` with an honest
+    error (naming Plutonium/the API as missing), NOT a thrown 500 — matches
+    `import_via_plutonium`'s own "best-effort" contract.
+
+Record real console/network output + Plutonium version here once this is
+actually run.

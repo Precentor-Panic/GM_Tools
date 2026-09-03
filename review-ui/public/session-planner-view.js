@@ -3735,6 +3735,71 @@ function buildStageDressingRow(scene, assetRoster, lookups) {
 }
 
 // ---------------------------------------------------------------------------
+// Aureus table wave B1 (G3) -- shared "activate at the table" row, used by
+// BOTH the Prep chip row (renderScenePage's own chipRow, above) and the Run
+// header top bar (buildRunSpread's own wiring) -- one builder, two testid
+// prefixes, so e2e can tell which surface fired the click while both hit
+// the EXACT SAME POST /api/foundry/activate-scene route. Only ever rendered
+// for a scene carrying a foundrySceneRef (never-pushed scenes have nothing
+// to activate) -- callers gate on that themselves, this builder assumes it.
+// Copy is pinned verbatim per the design contract: "Activated at the
+// table." on a confirmed apply, the server's own `note` text untouched on a
+// queued (no live Foundry client picked it up within the poll window)
+// result -- no paraphrasing either one.
+// ---------------------------------------------------------------------------
+function buildActivateFoundryRow(scene, btnTestid, pillTestid) {
+  const row = document.createElement("div");
+  row.className = "scene-activate-foundry-row";
+
+  const pill = document.createElement("span");
+  pill.className = "scene-in-foundry-pill";
+  pill.setAttribute("data-testid", pillTestid);
+  pill.title = "This scene has a pushed Foundry Scene document.";
+  pill.textContent = "in Foundry";
+  row.appendChild(pill);
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn btn--ghost scene-activate-foundry-btn";
+  btn.setAttribute("data-testid", btnTestid);
+  btn.setAttribute("data-scene-id", scene.id);
+  btn.textContent = "Activate";
+
+  const status = document.createElement("span");
+  status.className = "hint scene-activate-foundry-status";
+  status.setAttribute("data-testid", `${btnTestid}-status`);
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    const priorLabel = btn.textContent;
+    btn.textContent = "Activating…";
+    status.textContent = "";
+    try {
+      const result = await spApi("/api/foundry/activate-scene", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld(), sceneId: scene.id })
+      });
+      if (result.status === "queued") {
+        status.textContent = result.note; // verbatim -- the server's own wording, never paraphrased
+      } else if (result.ok) {
+        status.textContent = "Activated at the table.";
+      } else {
+        status.textContent = result.error || "Could not activate.";
+      }
+    } catch (err) {
+      status.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = priorLabel;
+    }
+  });
+
+  row.append(btn, status);
+  return row;
+}
+
+// ---------------------------------------------------------------------------
 // Friction Wave 1 W3b -- the scene<->map link row. Always rendered (unlike
 // the dressing row above, which is absent without roster assets): the whole
 // point is that "no map linked" is VISIBLE, not an absence you have to infer.
@@ -3970,6 +4035,11 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
   where.appendChild(document.createTextNode(scene.whereNote?.trim() ? scene.whereNote : (place?.name ?? "Unplaced")));
   if (linkedMap && !/\bmap\s*:/i.test(scene.whereNote || "")) { where.appendChild(document.createElement("br")); where.appendChild(document.createTextNode(`Map: ${linkedMap.name}`)); }
   head.appendChild(where);
+  // Aureus table wave B1 (G3): the SAME shared activate-row builder as the
+  // Prep chip row, right in the Run header top bar -- this is the live-
+  // table moment (activating from Run while actually running the scene),
+  // hence its own distinct testid.
+  if (scene.foundrySceneRef) head.appendChild(buildActivateFoundryRow(scene, "run-activate-foundry-btn", "run-in-foundry-pill"));
   spread.appendChild(head);
 
   const grid = runSpreadEl("div", "rs-grid");
@@ -4698,6 +4768,59 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     tick(0);
   }
 
+  // Aureus table wave B1 (G3): the toggle itself stays FLIP-ONLY (no
+  // Foundry call rides along on unstage) -- this is a purely additional,
+  // inline, non-modal nudge rendered AFTER a successful unstage of a scene
+  // that still has a foundrySceneRef (i.e. Foundry itself still has a live
+  // copy). Never shown on initial page load (renderUnstageOffer is only
+  // ever invoked from inside the toggle's own change handler below) -- an
+  // already-unstaged-with-ref scene from a PRIOR visit is the stale-sweep's
+  // job (Settings' "Foundry scene cleanup" panel), not this one-shot nudge.
+  const unstageOfferLine = document.createElement("div");
+  unstageOfferLine.className = "scene-unstage-foundry-offer";
+  unstageOfferLine.setAttribute("data-testid", "scene-unstage-foundry-offer");
+  unstageOfferLine.setAttribute("data-scene-id", scene.id);
+  function renderUnstageOffer(show) {
+    unstageOfferLine.remove();
+    unstageOfferLine.innerHTML = "";
+    if (!show) return;
+    unstageOfferLine.appendChild(document.createTextNode("Scene remains in Foundry — "));
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "btn btn--ghost scene-unstage-remove-foundry-btn";
+    removeBtn.setAttribute("data-testid", "scene-unstage-remove-foundry-btn");
+    removeBtn.textContent = "Remove from Foundry…";
+    const offerStatus = document.createElement("span");
+    offerStatus.className = "hint";
+    offerStatus.setAttribute("data-testid", "scene-unstage-remove-foundry-status");
+    removeBtn.addEventListener("click", async () => {
+      if (!confirm("Remove this scene's pushed Foundry Scene document? The GM_Tools scene itself is unaffected.")) return;
+      removeBtn.disabled = true;
+      try {
+        const result = await spApi("/api/foundry/remove-scene", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: currentWorld(), sceneId: scene.id, confirm: true })
+        });
+        if (result.status === "queued") {
+          offerStatus.textContent = result.note; // verbatim -- the server's own wording
+        } else if (result.ok) {
+          scene.foundrySceneRef = null;
+          offerStatus.textContent = "Removed from Foundry.";
+          setTimeout(() => renderUnstageOffer(false), 1500); // quiet self-dismiss shortly after a confirmed removal
+        } else {
+          offerStatus.textContent = result.error || "Could not remove.";
+        }
+      } catch (err) {
+        offerStatus.textContent = err.message;
+      } finally {
+        removeBtn.disabled = false;
+      }
+    });
+    unstageOfferLine.append(removeBtn, offerStatus);
+    stageRow.appendChild(unstageOfferLine);
+  }
+
   stageToggle.addEventListener("change", async () => {
     const staged = stageToggle.checked;
     stageToggle.disabled = true;
@@ -4715,8 +4838,8 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
       stageToggle.disabled = false;
       stageToggle.setAttribute("data-staged", scene.stagedForFoundry ? "true" : "false");
       renderStageStatus();
-      if (scene.stagedForFoundry) restartStagePollIfStaged();
-      else stopStagePoll();
+      if (scene.stagedForFoundry) { restartStagePollIfStaged(); renderUnstageOffer(false); }
+      else { stopStagePoll(); renderUnstageOffer(!!scene.foundrySceneRef); }
     }
   });
   stageRow.appendChild(stageToggleLabel);
@@ -4729,6 +4852,12 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   chipRow.className = "scene-band-chiprow";
   chipRow.appendChild(stageRow);
   chipRow.appendChild(buildSceneMapRow(scene, mapAssets, restartStagePollIfStaged));
+  // Aureus table wave B1 (G3): once a scene has ever been pushed
+  // (foundrySceneRef set), show a quiet "in Foundry" pill plus an Activate
+  // affordance right here in Prep -- the SAME shared row builder backs the
+  // Run header's own copy (buildActivateFoundryRow below), just a different
+  // testid prefix so e2e can tell which surface fired the click.
+  if (scene.foundrySceneRef) chipRow.appendChild(buildActivateFoundryRow(scene, "scene-activate-foundry-btn", "scene-in-foundry-pill"));
   header.appendChild(chipRow);
 
   // Phase 36 task 36.4b -- the "Stage" chip row, near the toggle above.

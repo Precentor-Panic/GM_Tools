@@ -35,6 +35,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 import { addTag, removeTag } from "./tags.mjs";
 // Phase 35.5a (task #44) -- "promote a Reliquary item to a graph node." Same
@@ -121,6 +122,18 @@ export function saveItem(
     // pre-Phase-35.5a item on disk simply has this key absent, which reads
     // the same as null everywhere it's checked (`item.graphEntityId`).
     graphEntityId: null,
+    // "Aureus to the Table" task G7 -- same write-time-explicit-null
+    // convention as graphEntityId above (not bestiary-store.mjs's read-time-
+    // fallback convention; this store already had its own precedent before
+    // G7 existed). pendingPush mirrors scenes.mjs's own ledger shape
+    // (`{opId, phase, ...}` -- see wf-mcp-server/lib/foundry-item-push-ops.mjs)
+    // for a push whose ops write queued but wasn't confirmed applied within
+    // the poll window; pushOverrides is the "lostech" local-override editor's
+    // persisted state (displayName/usesValue/usesMax/recharges/
+    // descriptionNote -- see setItemPushOverrides below), null until a GM
+    // opts in via the Reliquary row's "lostech…" toggle.
+    pendingPush: null,
+    pushOverrides: null,
     createdAt: now
   };
   const items = readItems(world);
@@ -312,6 +325,87 @@ function setItemGraphEntityId(world, itemId, graphEntityId) {
   const items = readItems(world);
   const idx = findItemIndex(world, itemId, items);
   const updated = { ...items[idx], graphEntityId };
+  const next = [...items];
+  next[idx] = updated;
+  writeItems(world, next);
+  return updated;
+}
+
+// ===========================================================================
+// "Aureus to the Table" task G7 -- the Foundry-push narrow setters.
+// Mirrors session-planner/scenes.mjs's markScenePushed/setScenePendingPush
+// narrowness EXACTLY: each setter touches ONLY its own field(s), read-modify-
+// write, no status check (a push is an ongoing table-use action against an
+// already-accepted-or-not-yet-reviewed catalogue row, not a re-ingest a
+// human decision should gate -- same reasoning as updateBestiaryEntryNote's
+// own "no status check" convention). All three throw the same clear
+// "No item found" error as findItemIndex on an unknown id.
+// ===========================================================================
+
+/**
+ * PushOverrides -- the "lostech" local-override editor's persisted shape.
+ * Every field optional; `null` clears the whole thing (see
+ * setItemPushOverrides below). `.strict()` so a stray/misspelled key is a
+ * loud validation error, not a silently-dropped typo.
+ */
+export const PushOverridesSchema = z
+  .object({
+    displayName: z.string().min(1).optional(),
+    usesValue: z.number().int().min(0).optional(),
+    usesMax: z.number().int().min(1).optional(),
+    recharges: z.boolean().optional(),
+    descriptionNote: z.string().optional()
+  })
+  .strict();
+
+/**
+ * Writes (or clears) the item's own `foundryItemRef` -- the narrow "this
+ * catalogue row now has a real Foundry document" ack, written by
+ * wf-mcp-server/lib/foundry-item-push-ops.mjs's pushItemToFoundry ONLY on a
+ * confirmed-applied `ok:true` result (never on `queued`/`ok:false` -- see
+ * that module's own header for the full contract).
+ * @returns {object}   the updated ItemRecord
+ */
+export function setItemFoundryRef(world, itemId, ref) {
+  const items = readItems(world);
+  const idx = findItemIndex(world, itemId, items);
+  const updated = { ...items[idx], foundryItemRef: ref ?? null };
+  const next = [...items];
+  next[idx] = updated;
+  writeItems(world, next);
+  return updated;
+}
+
+/**
+ * Writes (or clears, `pending: null`) the item's own pending-push ledger
+ * entry -- the SAME "ops written but not confirmed within the poll window"
+ * mechanism scenes.mjs's setScenePendingPush already established, shaped
+ * `{opId, phase:"import"|"update", ...}` (see foundry-item-push-ops.mjs).
+ * @returns {object}   the updated ItemRecord
+ */
+export function setItemPendingPush(world, itemId, pending) {
+  const items = readItems(world);
+  const idx = findItemIndex(world, itemId, items);
+  const updated = { ...items[idx], pendingPush: pending ?? null };
+  const next = [...items];
+  next[idx] = updated;
+  writeItems(world, next);
+  return updated;
+}
+
+/**
+ * Writes (or clears, `overridesOrNull: null`) the item's "lostech" local
+ * overrides -- validated against PushOverridesSchema (a caller passing an
+ * unknown key or an out-of-range value gets a loud ZodError, never a
+ * silently-dropped/coerced field). No status check, same reasoning as this
+ * section's header comment.
+ * @returns {object}   the updated ItemRecord
+ */
+export function setItemPushOverrides(world, itemId, overridesOrNull) {
+  const items = readItems(world);
+  const idx = findItemIndex(world, itemId, items);
+  const validated = overridesOrNull == null ? null : PushOverridesSchema.parse(overridesOrNull);
+  const updated = { ...items[idx], pushOverrides: validated };
   const next = [...items];
   next[idx] = updated;
   writeItems(world, next);
