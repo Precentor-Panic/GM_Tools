@@ -60,6 +60,33 @@ Each entity and each edge needs a `rationale`: one or two sentences citing
 what specific part of the writeup this was extracted from, for a human
 reviewer to check your work against the source text later.
 
+### GM-only secrets: `truth`, `stance`, `revealState`
+
+An entity can carry three OPTIONAL fields for material the writeup states as
+true but that the players (or characters in the fiction) don't yet know.
+Secret/GM-only material goes in `truth`, NEVER in `description`;
+`description` is what players could plausibly know or observe — never put a
+secret there just because it's convenient.
+
+- **`truth`** (string): the GM-only fact itself, written as prose the GM can
+  read straight off the entity later. Omit entirely when the writeup gives
+  you nothing secret to say about this entity.
+- **`revealState`**: one of `hidden`, `unrevealed`, `hinted`, `revealed` —
+  how far the truth has surfaced to the players so far. If the writeup uses
+  "playerKnown: false"-style notation, or says outright that the players
+  don't know this thing exists at all, that maps to `revealState: "hidden"`.
+  Omit if the writeup gives no signal either way.
+- **`stance`**: describes how the TRUTH is held, not who holds it — one of
+  `concealing`, `unaware`, `undisclosed`. Read the writeup's own framing:
+  "X hides that…", "X covers up…", "X lies about…" → `concealing` (someone
+  is actively suppressing it — e.g. a town's official history that its
+  council actively rewrote after a scandal is `concealing`). "X doesn't know
+  that…", "unbeknownst to X…" → `unaware` (nobody in a position to act on it
+  even realizes it's true — e.g. a ruin whose original purpose no one living
+  understands is `unaware`). If the writeup just states a plain secret with
+  no framing about who's hiding it or failing to notice it, OMIT `stance`
+  entirely — do not default-guess `undisclosed` just to fill the field.
+
 Respond with ONLY a single JSON object of this exact shape, no prose, no
 markdown code fences:
 
@@ -102,6 +129,10 @@ Field notes:
   neutral/unclear.
 - `description`/`summary`/`tags`/`attributes`/`label`/`notes` are all
   optional — omit rather than guessing filler content.
+- `truth`/`stance`/`revealState` (entities): optional GM-only fields — see
+  "GM-only secrets" above. `revealState` is one of `hidden`, `unrevealed`,
+  `hinted`, `revealed`; `stance` is one of `concealing`, `unaware`,
+  `undisclosed` (omit rather than guessing).
 - Every entity and every edge MUST have `rationale`. This is the one field
   that is never optional.
 

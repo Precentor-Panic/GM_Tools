@@ -116,7 +116,14 @@ export function summarizeBatch(batch, opts = {}) {
       // WHY this row targets an existing entity the writeup never named
       // exactly. Null for every other producer, same convention as
       // scanResultKind above.
-      writeupNormalization: m.entityContext?.writeupNormalization ?? null
+      writeupNormalization: m.entityContext?.writeupNormalization ?? null,
+      // Narrative-state layer (WS4): writeup-import's per-entity GM
+      // truth/stance/revealState carrier ({truth?, stance?, revealState?})
+      // -- surfaced so the review card can paint the GM-TRUTH block the GM
+      // is actually accepting (it lands in the sidecar store on accept,
+      // never in the graph). Null for every producer that never sets it,
+      // same convention as the two carriers above.
+      narrativeState: m.entityContext?.narrativeState ?? null
     }));
     return { regionId, entities, headline: renderRegionHeadline(regionId, entities) };
   });

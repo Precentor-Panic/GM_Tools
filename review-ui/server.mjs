@@ -1278,6 +1278,7 @@ async function handleApi(req, res, url, parts) {
     const result = acceptMutationIds(w, parts[2], mutationIds, {
       entities,
       edges,
+      dir, // narrative-state landing hook (truth/stance/revealState from intake)
       reviewedMutationIds: body.reviewedMutationIds ?? []
     });
     return sendJson(res, 200, result);

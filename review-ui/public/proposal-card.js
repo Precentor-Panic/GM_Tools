@@ -474,6 +474,51 @@ export function renderProposalCard(m, opts = {}) {
     ]);
   }
 
+  // WS4 (narrative-state intake carry): when a writeup-import mutation
+  // carries GM-only truth/stance/revealState (graph-import/writeup-
+  // import.mjs's narrativeStateContext), the card says so rather than the
+  // secret being invisible on review -- mirrors the writeupNormalization
+  // block immediately above (same defensive batchDetailPayload-row-vs-raw-
+  // StoredMutation read, same note-block placement), but visually distinct
+  // (a different accent hue) since this is a different kind of fact: not
+  // "here's what the pipeline normalized" but "here's what will NEVER be
+  // written to the graph, only to the narrative-state sidecar, on accept."
+  let narrativeStateRow = null;
+  const ns = m.narrativeState ?? m.entityContext?.narrativeState ?? null;
+  if (ns && (ns.truth || ns.stance || ns.revealState)) {
+    const badge = (text, testid) =>
+      el("span", {
+        testid,
+        text,
+        style: "padding: 1px 8px; border: 1px solid oklch(0.62 0.10 320); border-radius: 20px; font-size: 10px; " +
+          "letter-spacing: 0.02em; color: oklch(0.36 0.10 320); background: oklch(0.955 0.030 320); flex: none;"
+      });
+    narrativeStateRow = el("div", {
+      testid: "proposal-card-narrative-state",
+      "data-stance": ns.stance ?? "",
+      "data-reveal-state": ns.revealState ?? "",
+      style: "display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; padding: 7px 9px; " +
+        "border: 1px dashed oklch(0.60 0.10 320); border-radius: 4px; background: oklch(0.965 0.024 320);"
+    }, [
+      el("div", { style: "display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;" }, [
+        el("span", {
+          text: "◈ GM TRUTH (lands in narrative state on accept — never in the graph)",
+          style: "font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.05em; " +
+            "text-transform: uppercase; color: oklch(0.40 0.11 320); flex: none;"
+        }),
+        ...(ns.stance ? [badge(ns.stance, "proposal-card-narrative-stance-badge")] : []),
+        ...(ns.revealState ? [badge(ns.revealState, "proposal-card-narrative-reveal-badge")] : [])
+      ]),
+      ...(ns.truth
+        ? [el("span", {
+            testid: "proposal-card-narrative-truth-text",
+            text: ns.truth,
+            style: "font-size: 11.5px; line-height: 1.45; font-style: italic; color: oklch(0.34 0.035 320);"
+          })]
+        : [])
+    ]);
+  }
+
   // Footer: rationale + accept/reject
   const why = el("div", {
     testid: "proposal-card-why",
@@ -543,6 +588,7 @@ export function renderProposalCard(m, opts = {}) {
   root.append(header, diffRows);
   if (editorWrap) root.appendChild(editorWrap);
   if (normalizationRow) root.appendChild(normalizationRow);
+  if (narrativeStateRow) root.appendChild(narrativeStateRow);
   if (nearMatchesRow) root.appendChild(nearMatchesRow);
   root.appendChild(footer);
   paint();

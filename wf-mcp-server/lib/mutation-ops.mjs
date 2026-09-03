@@ -34,7 +34,7 @@ import { markPrepContentStale } from "../../mutation-engine/prep-content.mjs";
 // Narrative-state knowledge gate: hidden entities are scrubbed from
 // table-facing narration context, withheld truths become an allusion block.
 // Absence of any record = zero gating (the standing gin-up guarantee).
-import { listNarrativeState } from "../../mutation-engine/narrative-state.mjs";
+import { listNarrativeState, setNarrativeTruth, setRevealState } from "../../mutation-engine/narrative-state.mjs";
 import { gateSnapshotForTable, partitionForTable, renderAllusionInstruction } from "../../mutation-engine/narrative-gate.mjs";
 // World-timeline bandaid: one git commit per synced batch in the world's
 // own data dir (never throws — sync/rollback never fail on the timeline).
@@ -467,9 +467,11 @@ export function reviewGrainOp(w, { batchId, grain, regionId, entityId }) {
  * @param {object[]} opts.entities             live snapshot, for pre-state capture
  * @param {object[]} opts.edges
  * @param {string[]} [opts.reviewedMutationIds] subset of mutationIds that count as genuinely reviewed
+ * @param {string} [opts.dir]                   the WF data dir — needed by the narrative-state landing hook
+ *                                              below; absent → that hook no-ops with a logged warning
  */
 export function acceptMutationIds(w, batchId, mutationIds, opts = {}) {
-  const { entities, edges, reviewedMutationIds } = opts;
+  const { entities, edges, reviewedMutationIds, dir } = opts;
   const batch = loadBatch(w, batchId);
   const updated = acceptMutations(w, batchId, mutationIds, entities ?? [], edges ?? []);
   // Phase 3.5 task 3.5.4: if this batch resolves any pending-ledger entries,
@@ -501,6 +503,42 @@ export function acceptMutationIds(w, batchId, mutationIds, opts = {}) {
     markPrepContentStale(w, entityId);
   }
 
+  // Narrative-state landing (WS4 of the Layer-2 plan): a writeup-import
+  // extraction carries per-entity GM truth/stance/revealState on
+  // entityContext.narrativeState (never in mutation `data` — truth must not
+  // enter the graph). The GM accepting the mutation IS the review, so this
+  // is the moment it lands in the sidecar, with full provenance. Iterates
+  // the mutations directly (not entityIdsForMutations) because the payload
+  // is per-mutation; writes the STORE directly rather than going through
+  // narrative-state-ops (the entity may not be in the snapshot yet — accept
+  // precedes sync). Same fires-regardless-of-review-scope placement as the
+  // two hooks above. Requires opts.dir; a caller that can't supply it
+  // degrades to a logged warning, never a failed accept — but note the
+  // truths in that batch then silently stay un-landed until re-accepted.
+  const idSet = new Set(mutationIds);
+  const truthCarriers = batch.mutations.filter(
+    (m) => idSet.has(m.mutationId) && m.entityContext?.narrativeState && m.id
+  );
+  if (truthCarriers.length) {
+    if (!dir) {
+      console.warn(
+        `acceptMutationIds: ${truthCarriers.length} mutation(s) in batch "${batchId}" carry narrativeState but no ` +
+        `opts.dir was supplied — GM truths NOT landed in the narrative-state store.`
+      );
+    } else {
+      for (const m of truthCarriers) {
+        const ns = m.entityContext.narrativeState;
+        const provenance = { sourceBatchId: batchId, sourceMutationId: m.mutationId, source: "intake" };
+        if (ns.truth || ns.stance) {
+          setNarrativeTruth(dir, w, m.id, ns.truth ?? null, { ...provenance, ...(ns.stance ? { stance: ns.stance } : {}) });
+        }
+        if (ns.revealState) {
+          setRevealState(dir, w, m.id, ns.revealState, { source: "intake" });
+        }
+      }
+    }
+  }
+
   const reviewedSet = new Set(reviewedMutationIds ?? mutationIds);
   const reviewedIds = mutationIds.filter((id) => reviewedSet.has(id));
   const unreviewedIds = mutationIds.filter((id) => !reviewedSet.has(id));
@@ -527,6 +565,7 @@ export async function acceptOp(dir, w, { batchId, scope, id }) {
   return acceptMutationIds(w, batchId, mutationIds, {
     entities,
     edges,
+    dir, // narrative-state landing hook (truth/stance/revealState from intake)
     reviewedMutationIds: scope === "batch" ? [] : mutationIds
   });
 }

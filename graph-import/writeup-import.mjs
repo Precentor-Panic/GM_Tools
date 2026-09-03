@@ -334,6 +334,20 @@ const RawWfiEntity = z.object({
   playerKnown: z.boolean().optional(),
   canonLocked: z.boolean().optional(),
   role: z.enum(["pc", "npc"]).optional(),
+  // WS4 (narrative-state intake carry): the sidecar layer's per-entity
+  // fields (mutation-engine/narrative-state.mjs), OPTIONAL here for the same
+  // reason as the Phase 12 fields just above -- extraction quality must not
+  // come to depend on the model guessing these. Without these three keys
+  // explicitly named, zod's default z.object() behavior SILENTLY STRIPS any
+  // unknown key, so an LLM that dutifully emits `truth` per the prompt would
+  // have it vanish before previewWriteupImport ever saw it. `description`
+  // stays the player-safe surface; `truth` is GM-only and must never reach
+  // a mutation's `data` (see entityMutationData / narrativeStateContext
+  // below) -- it only ever travels via entityContext.narrativeState for a
+  // later accept-time hook (a separate workstream) to land in the sidecar.
+  truth: z.string().optional(),
+  stance: z.enum(["concealing", "unaware", "undisclosed"]).optional(),
+  revealState: z.enum(["hidden", "unrevealed", "hinted", "revealed"]).optional(),
   rationale: z.string()
 });
 
@@ -1112,9 +1126,35 @@ function entityMutationData(entity) {
     // the object literal below regardless.
     status, playerKnown, canonLocked, role
   } = entity;
+  // WS4 note: truth/stance/revealState are deliberately NOT destructured or
+  // returned below -- this function is a WHITELIST, not a strip, so the GM-
+  // only narrative-state fields simply never enter a mutation's `data` (and
+  // therefore never the graph) regardless of whether the entity object this
+  // was called with happens to carry them. See narrativeStateContext below
+  // for where they actually travel instead.
   return {
     name, type, description, summary, importance, imageUrl, tags, attributes, foundryRef, namespace,
     status, playerKnown, canonLocked, role
+  };
+}
+
+// WS4: pull an entity's narrative-state fields (truth/stance/revealState)
+// into the shape entityContext.narrativeState carries — omitted entirely
+// (not even an empty object) when the proposal entity carries none of the
+// three, so a proposal with no narrative-state material produces the exact
+// same mutation shape this pipeline always has (no new key at all). Mirrors
+// the writeupNormalization precedent immediately below: an open,
+// zod-`.any()` entityContext carrier (schema.mjs) rather than a new field on
+// the .strict() Mutation/StoredMutation schema.
+function narrativeStateContext(pe) {
+  const { truth, stance, revealState } = pe;
+  if (truth === undefined && stance === undefined && revealState === undefined) return {};
+  return {
+    narrativeState: {
+      ...(truth !== undefined ? { truth } : {}),
+      ...(stance !== undefined ? { stance } : {}),
+      ...(revealState !== undefined ? { revealState } : {})
+    }
   };
 }
 
@@ -1228,7 +1268,12 @@ export function previewWriteupImport(proposal, existingSnapshot, opts = {}) {
         // carried onto the mutation so the review card can SAY what happened
         // (grain.mjs surfaces it on batch-detail rows) instead of the
         // rename/merge being silent.
-        ...(pe.writeupNormalization ? { writeupNormalization: pe.writeupNormalization } : {})
+        ...(pe.writeupNormalization ? { writeupNormalization: pe.writeupNormalization } : {}),
+        // WS4: GM-only truth/stance/revealState, carried for a later
+        // accept-time hook (a separate workstream) to land in the
+        // narrative-state sidecar -- see narrativeStateContext's own doc
+        // comment for why this never touches `data` above.
+        ...narrativeStateContext(pe)
       }
     });
   }
