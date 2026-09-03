@@ -89,6 +89,19 @@ import {
   markPrepContentStaleOp
 } from "./lib/prep-content-ops.mjs";
 
+// Narrative-state layer ("Layer 2", plans/ontology-assessment-2026-09-02.md):
+// per-entity reveal state / GM-only truth / stance / clocks, stored beside
+// the world snapshot (worlds/<world>/narrative-state/). Sidecar class —
+// direct writes, no review batch (see narrative-state-ops.mjs's header for
+// the invariant reasoning), never synced to the graph or Foundry.
+import {
+  getNarrativeStateOp,
+  setNarrativeStateOp,
+  setRevealStateOp,
+  tickClockOp,
+  listNarrativeStateOp
+} from "./lib/narrative-state-ops.mjs";
+
 // Phase 32 task 32.2 -- Foundry actor PULL ingest (the phase's primary
 // deliverable): worlds/<world>/world-fabric-foundry-index.json ->
 // bestiary/party-roster, review-gated. Shared verbatim with
@@ -1263,6 +1276,171 @@ server.registerTool(
     try {
       const w = resolveWorld(world);
       return text(markPrepContentStaleOp(w, { entityId }));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// ======================================================================================
+// Narrative-state layer ("Layer 2") -- reveal state / GM truth / stance /
+// clocks. Everything below is a DIRECT sidecar write with no review batch
+// (adjudicated: the graph is untouched, so the no-silent-auto-write
+// invariant doesn't apply; the GM action IS the review — see
+// lib/narrative-state-ops.mjs's header). Records live beside the world
+// snapshot (worlds/<world>/narrative-state/) so the git world-timeline
+// captures graph + table-knowledge atomically. An entity with NO record is
+// fully open: no gating anywhere, which is what keeps quick generation fast.
+// ======================================================================================
+
+const revealStateParam = z.enum(["hidden", "unrevealed", "hinted", "revealed"]).describe(
+  "hidden = players don't know this entity EXISTS (excluded from table-facing prompts entirely); " +
+  "unrevealed = existence known, truth withheld; hinted = players have caught a hint; revealed = fully open."
+);
+const stanceParam = z.enum(["concealing", "unaware", "undisclosed"]).describe(
+  "Why the truth is withheld — about the TRUTH, not the holder: 'concealing' (someone knows and actively hides " +
+  "it), 'unaware' (the holder doesn't know it themselves; for places/objects, no one living knows), " +
+  "'undisclosed' (merely obscure, hasn't come up). Stance reaches table-facing prompts as roleplay guidance; " +
+  "the truth text never does."
+);
+const clockParam = z.object({
+  value: z.number().int().min(0),
+  max: z.number().int().min(1),
+  cadence: z.string().optional().describe("Freeform display hint ('per session'); no auto-tick in v1.")
+}).describe("A progress clock for this entity/thread.");
+
+// --- wf_get_narrative_state ---------------------------------------------------------------
+
+server.registerTool(
+  "wf_get_narrative_state",
+  {
+    title: "Read an entity's narrative state (reveal/truth/stance/clock)",
+    description:
+      "Pure read of mutation-engine/narrative-state.mjs's sidecar record for one entity. " +
+      "narrativeState:null means the entity has NO record — fully open, zero gating anywhere. " +
+      "The `truth` field is GM-only prose: it never syncs to the graph and never reaches a table-facing prompt.",
+    inputSchema: { world: worldParam, dataDir: dataDirParam, entityId: z.string() }
+  },
+  async ({ world, dataDir, entityId }) => {
+    try {
+      return text(getNarrativeStateOp(resolveDir(dataDir), resolveWorld(world), { entityId }));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_set_narrative_state ---------------------------------------------------------------
+
+server.registerTool(
+  "wf_set_narrative_state",
+  {
+    title: "Set an entity's narrative state (any subset: reveal/truth/stance/clock)",
+    description:
+      "DIRECT write, no review batch (sidecar class — the graph is untouched; reveal state, truth, stance and " +
+      "clocks are the GM's own table-state bookkeeping). Any subset of the four fields in one call; pass null to " +
+      "clear truth/stance/clock; omitted fields are untouched. Creating a record via truth/stance/clock alone " +
+      "starts it at revealState 'unrevealed' (writing a truth means withholding it). `truth` is GM-only: kept out " +
+      "of every table-facing prompt structurally; put the player-safe surface in the entity's ordinary " +
+      "description instead. Reveal changes append to the record's permanent transition history.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      entityId: z.string().describe("An already-committed entity id from the live snapshot."),
+      revealState: revealStateParam.optional(),
+      truth: z.string().min(1).nullable().optional().describe("GM-only truth prose (null clears). Surface stays in the entity's description."),
+      stance: stanceParam.nullable().optional(),
+      clock: clockParam.nullable().optional(),
+      note: z.string().optional().describe("Optional note stamped onto a reveal transition."),
+      sessionNumber: z.number().int().optional().describe("Session number to stamp onto a reveal transition.")
+    }
+  },
+  async ({ world, dataDir, entityId, revealState, truth, stance, clock, note, sessionNumber }) => {
+    try {
+      return text(setNarrativeStateOp(resolveDir(dataDir), resolveWorld(world), { entityId, revealState, truth, stance, clock, note, sessionNumber }));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_set_reveal_state ------------------------------------------------------------------
+
+server.registerTool(
+  "wf_set_reveal_state",
+  {
+    title: "Move an entity's reveal state (appends to its transition history)",
+    description:
+      "The focused reveal transition: hidden|unrevealed|hinted|revealed. Appends to the record's append-only " +
+      "transition history with source/note/sessionNumber; setting the state it already has is a safe no-op. " +
+      "DIRECT sidecar write, no review batch. Reveal state is what the table-facing knowledge gate reads: " +
+      "'hidden' entities vanish from table prompts entirely; 'unrevealed'/'hinted' ones are alluded to but " +
+      "never disclosed; 'revealed' lifts the gate.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      entityId: z.string(),
+      to: revealStateParam,
+      note: z.string().optional(),
+      sessionNumber: z.number().int().optional()
+    }
+  },
+  async ({ world, dataDir, entityId, to, note, sessionNumber }) => {
+    try {
+      return text(setRevealStateOp(resolveDir(dataDir), resolveWorld(world), { entityId, to, note, sessionNumber }));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_tick_clock ------------------------------------------------------------------------
+
+server.registerTool(
+  "wf_tick_clock",
+  {
+    title: "Tick an entity's clock",
+    description:
+      "Advance (default +1) or rewind (negative delta) the entity's clock, clamped to [0, max]. Errors — not a " +
+      "quiet success — for an entity with no clock set (set one via wf_set_narrative_state first). No auto-tick " +
+      "exists in v1: clocks move only when the GM (or an explicitly GM-directed agent call) ticks them.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      entityId: z.string(),
+      delta: z.number().int().optional().describe("Steps to advance (negative to rewind). Default 1.")
+    }
+  },
+  async ({ world, dataDir, entityId, delta }) => {
+    try {
+      return text(tickClockOp(resolveDir(dataDir), resolveWorld(world), { entityId, delta }));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_list_narrative_state --------------------------------------------------------------
+
+server.registerTool(
+  "wf_list_narrative_state",
+  {
+    title: "List a world's narrative-state records (filterable)",
+    description:
+      "Every entity with a narrative-state record (names joined from the live snapshot; an orphaned record — " +
+      "entity gone from the graph — shows its raw id rather than being hidden). Filter with `revealState`, or " +
+      "pass `ids` for a bulk lookup of just those entities (the run-spread tab-seeding fetch). Entities absent " +
+      "from the result have no record and are fully open.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      revealState: revealStateParam.optional(),
+      ids: z.array(z.string()).optional().describe("Bulk mode: return records for exactly these entity ids.")
+    }
+  },
+  async ({ world, dataDir, revealState, ids }) => {
+    try {
+      return text(listNarrativeStateOp(resolveDir(dataDir), resolveWorld(world), { revealState, ids }));
     } catch (err) {
       return errorText(err);
     }

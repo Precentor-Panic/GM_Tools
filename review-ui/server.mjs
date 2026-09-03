@@ -152,6 +152,14 @@ import {
   regeneratePrepFieldOp,
   markPrepContentStaleOp
 } from "../wf-mcp-server/lib/prep-content-ops.mjs";
+// Narrative-state layer ("Layer 2") — reveal/truth/stance/clock sidecar,
+// direct-write (no review batch; see narrative-state-ops.mjs's header).
+import {
+  getNarrativeStateOp,
+  setNarrativeStateOp,
+  tickClockOp,
+  listNarrativeStateOp
+} from "../wf-mcp-server/lib/narrative-state-ops.mjs";
 // (fieldsSchemaForType/`z` were only needed by the offline prep-content
 // client, now moved to wf-mcp-server/lib/offline-clients.mjs -- see the
 // import block above.)
@@ -1364,6 +1372,57 @@ async function handleApi(req, res, url, parts) {
   if (method === "GET" && parts.length === 4 && parts[1] === "entities" && parts[3] === "narration-history") {
     const w = resolveWorld(q.get("world"));
     return sendJson(res, 200, getEntityNarrationHistoryOp(w, { entityId: parts[2] }));
+  }
+
+  // GET /api/entities/:entityId/narrative-state?world=...
+  // The entity's Layer-2 sidecar record (reveal/truth/stance/clock), or
+  // {narrativeState:null} = no record = fully open, zero gating. Pure read.
+  if (method === "GET" && parts.length === 4 && parts[1] === "entities" && parts[3] === "narrative-state") {
+    const w = resolveWorld(q.get("world"));
+    const dir = resolveDir();
+    return sendJson(res, 200, getNarrativeStateOp(dir, w, { entityId: parts[2] }));
+  }
+
+  // POST /api/entities/:entityId/narrative-state
+  //   { world, revealState?, truth?, stance?, clock?, note?, sessionNumber? }
+  // Combined direct write (POST, not PUT — this server's routes are
+  // GET/POST only): any subset of the four fields; null clears
+  // truth/stance/clock; omitted = untouched. No review batch — sidecar
+  // class, the graph is untouched (narrative-state-ops.mjs's header).
+  if (method === "POST" && parts.length === 4 && parts[1] === "entities" && parts[3] === "narrative-state") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const dir = resolveDir();
+    return sendJson(res, 200, setNarrativeStateOp(dir, w, {
+      entityId: parts[2],
+      revealState: body.revealState,
+      truth: body.truth,
+      stance: body.stance,
+      clock: body.clock,
+      note: body.note,
+      sessionNumber: body.sessionNumber
+    }));
+  }
+
+  // POST /api/entities/:entityId/narrative-state/tick  { world, delta }
+  if (method === "POST" && parts.length === 5 && parts[1] === "entities" && parts[3] === "narrative-state" && parts[4] === "tick") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const dir = resolveDir();
+    return sendJson(res, 200, tickClockOp(dir, w, { entityId: parts[2], delta: body.delta }));
+  }
+
+  // GET /api/narrative-state?world=&state=&ids=a,b,c
+  // World-wide listing (names joined from the snapshot), `state` filter, or
+  // `ids` bulk mode — the run-spread tab-seeding fetch.
+  if (method === "GET" && parts.length === 2 && parts[1] === "narrative-state") {
+    const w = resolveWorld(q.get("world"));
+    const dir = resolveDir();
+    const idsParam = q.get("ids");
+    return sendJson(res, 200, listNarrativeStateOp(dir, w, {
+      revealState: q.get("state") || undefined,
+      ids: idsParam ? idsParam.split(",").filter(Boolean) : undefined
+    }));
   }
 
   // POST /api/entities/:entityId/narrate  { world, dataDir, note }

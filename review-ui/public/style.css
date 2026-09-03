@@ -480,6 +480,16 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .graph-editor-toolbar .btn--ghost:disabled { opacity: 0.4; }
 
 .entity-detail-narration { margin: 0.75rem 0 1rem; }
+
+/* Narrative-state panel (Layer 2: reveal/stance/truth/clock) */
+.narrative-state-body { margin: 0.5rem 0 1.25rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.narrative-state-form { display: flex; flex-direction: column; gap: 0.5rem; max-width: 46rem; }
+.narrative-state-form label { display: flex; align-items: center; gap: 0.5rem; }
+.narrative-truth-label { font-size: 0.78rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--warn, #a15c00); }
+.narrative-state-form textarea { width: 100%; resize: vertical; }
+.narrative-clock-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.narrative-transition-list { margin: 0.4rem 0 0; padding-left: 1.2rem; font-size: 0.85rem; }
+.narrative-transition-list li { margin-bottom: 0.15rem; }
 .entity-detail-narration .narrate-this-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem; }
 .entity-detail-narration .narration-reset-row { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.4rem; }
 .entity-detail-narration .narration-reset-confirm { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.4rem; }

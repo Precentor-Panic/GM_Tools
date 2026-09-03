@@ -1090,7 +1090,191 @@ async function renderEntityDetail(entityId) {
   metaEl.textContent = entity.type + (entity.description ? ` — ${entity.description}` : "");
 
   await renderEntityNarrationSection(entity);
+  await renderNarrativeStateSection(entity);
   await renderPrepContentSection(entity, bodyEl);
+}
+
+/**
+ * Narrative-state panel ("Layer 2"): reveal state / stance / GM-only truth /
+ * clock, plus the record's transition history. Self-contained like the
+ * narration and prep sections — fetches its own store, renders into its own
+ * container. An entity with NO record is fully open (zero gating anywhere),
+ * and the panel says so rather than inventing a default record; the editor
+ * only writes when the GM saves.
+ */
+async function renderNarrativeStateSection(entity) {
+  const wrap = document.getElementById("entity-detail-narrative-state");
+  wrap.innerHTML = "";
+
+  let record = null;
+  try {
+    ({ narrativeState: record } = await api(`/api/entities/${encodeURIComponent(entity.id)}/narrative-state${withWorld()}`));
+  } catch { /* treat a fetch failure as "no record" — the editor can still create one */ }
+
+  const statusRow = document.createElement("div");
+  statusRow.className = "hint";
+  statusRow.textContent = record
+    ? `Reveal: ${record.revealState}${record.stance ? ` · stance: ${record.stance}` : ""}${record.clock ? ` · clock ${record.clock.value}/${record.clock.max}` : ""}`
+    : "No narrative state — fully open: nothing gated, nothing withheld from table prompts.";
+  wrap.appendChild(statusRow);
+
+  const form = document.createElement("div");
+  form.className = "narrative-state-form";
+
+  // Reveal state
+  const revealLabel = document.createElement("label");
+  revealLabel.textContent = "Reveal state ";
+  const revealSel = document.createElement("select");
+  revealSel.dataset.testid = "narrative-reveal-select";
+  for (const s of ["hidden", "unrevealed", "hinted", "revealed"]) {
+    const opt = document.createElement("option");
+    opt.value = s;
+    opt.textContent = s;
+    revealSel.appendChild(opt);
+  }
+  revealSel.value = record?.revealState ?? "unrevealed";
+  revealLabel.appendChild(revealSel);
+
+  // Stance
+  const stanceLabel = document.createElement("label");
+  stanceLabel.textContent = "Stance ";
+  const stanceSel = document.createElement("select");
+  stanceSel.dataset.testid = "narrative-stance-select";
+  for (const [v, t] of [["", "unspecified"], ["concealing", "concealing"], ["unaware", "unaware"], ["undisclosed", "undisclosed"]]) {
+    const opt = document.createElement("option");
+    opt.value = v;
+    opt.textContent = t;
+    stanceSel.appendChild(opt);
+  }
+  stanceSel.value = record?.stance ?? "";
+  stanceLabel.appendChild(stanceSel);
+
+  const stanceHint = document.createElement("div");
+  stanceHint.className = "hint";
+  stanceHint.textContent = "Why it's withheld — concealing: actively hidden · unaware: the holder doesn't know · undisclosed: just hasn't come up. Stance may reach table prompts as roleplay guidance; the truth text never does.";
+
+  // Truth
+  const truthLabel = document.createElement("div");
+  truthLabel.className = "narrative-truth-label";
+  truthLabel.textContent = "GM TRUTH — never shown to players or table prompts. Player-safe surface belongs in the entity description.";
+  const truthArea = document.createElement("textarea");
+  truthArea.dataset.testid = "narrative-truth-input";
+  truthArea.rows = 3;
+  truthArea.placeholder = "What is actually going on (GM-only).";
+  truthArea.value = record?.truth ?? "";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "btn";
+  saveBtn.dataset.testid = "narrative-state-save";
+  saveBtn.textContent = record ? "Save narrative state" : "Create narrative state";
+  const saveStatus = document.createElement("span");
+  saveStatus.className = "hint";
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    saveStatus.textContent = "";
+    try {
+      const truth = truthArea.value.trim();
+      await api(`/api/entities/${encodeURIComponent(entity.id)}/narrative-state`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          world: CURRENT_WORLD,
+          revealState: revealSel.value,
+          truth: truth === "" ? null : truth,
+          stance: stanceSel.value === "" ? null : stanceSel.value
+        })
+      });
+      showToast("Narrative state saved.");
+      await renderNarrativeStateSection(entity);
+    } catch (err) {
+      saveBtn.disabled = false;
+      saveStatus.textContent = `Save failed: ${err.message}`;
+    }
+  });
+
+  // Clock
+  const clockRow = document.createElement("div");
+  clockRow.className = "narrative-clock-row";
+  const clockValue = document.createElement("input");
+  clockValue.type = "number";
+  clockValue.min = "0";
+  clockValue.style.width = "4em";
+  clockValue.value = record?.clock ? String(record.clock.value) : "0";
+  const clockMax = document.createElement("input");
+  clockMax.type = "number";
+  clockMax.min = "1";
+  clockMax.style.width = "4em";
+  clockMax.value = record?.clock ? String(record.clock.max) : "6";
+  const clockCadence = document.createElement("input");
+  clockCadence.type = "text";
+  clockCadence.placeholder = "cadence (optional)";
+  clockCadence.value = record?.clock?.cadence ?? "";
+  const setClockBtn = document.createElement("button");
+  setClockBtn.className = "btn btn--ghost";
+  setClockBtn.dataset.testid = "narrative-clock-set";
+  setClockBtn.textContent = record?.clock ? "Update clock" : "Set clock";
+  const clearClockBtn = document.createElement("button");
+  clearClockBtn.className = "btn btn--ghost";
+  clearClockBtn.textContent = "Clear clock";
+  clearClockBtn.hidden = !record?.clock;
+  const clockStatus = document.createElement("span");
+  clockStatus.className = "hint";
+  async function postClock(clock) {
+    try {
+      await api(`/api/entities/${encodeURIComponent(entity.id)}/narrative-state`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: CURRENT_WORLD, clock })
+      });
+      await renderNarrativeStateSection(entity);
+    } catch (err) {
+      clockStatus.textContent = `Clock update failed: ${err.message}`;
+    }
+  }
+  setClockBtn.addEventListener("click", () => {
+    const clock = { value: Number(clockValue.value), max: Number(clockMax.value) };
+    if (clockCadence.value.trim()) clock.cadence = clockCadence.value.trim();
+    postClock(clock);
+  });
+  clearClockBtn.addEventListener("click", () => postClock(null));
+  const tickBtn = document.createElement("button");
+  tickBtn.className = "btn btn--ghost";
+  tickBtn.dataset.testid = "narrative-clock-tick";
+  tickBtn.textContent = "Tick +1";
+  tickBtn.hidden = !record?.clock;
+  tickBtn.addEventListener("click", async () => {
+    try {
+      await api(`/api/entities/${encodeURIComponent(entity.id)}/narrative-state/tick`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: CURRENT_WORLD, delta: 1 })
+      });
+      await renderNarrativeStateSection(entity);
+    } catch (err) {
+      clockStatus.textContent = `Tick failed: ${err.message}`;
+    }
+  });
+  clockRow.append("Clock ", clockValue, " / ", clockMax, clockCadence, setClockBtn, tickBtn, clearClockBtn, clockStatus);
+
+  form.append(revealLabel, stanceLabel, stanceHint, truthLabel, truthArea, saveBtn, saveStatus, clockRow);
+  wrap.appendChild(form);
+
+  // Transition history — append-only record of every reveal move.
+  if (record?.transitions?.length) {
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = `Reveal history (${record.transitions.length})`;
+    details.appendChild(summary);
+    const list = document.createElement("ul");
+    list.className = "narrative-transition-list";
+    for (const t of record.transitions) {
+      const li = document.createElement("li");
+      li.textContent = `${t.from ?? "—"} → ${t.to} · ${t.at}${t.sessionNumber != null ? ` · session ${t.sessionNumber}` : ""} · ${t.source}${t.note ? ` — ${t.note}` : ""}`;
+      list.appendChild(li);
+    }
+    details.appendChild(list);
+    wrap.appendChild(details);
+  }
 }
 
 /**
