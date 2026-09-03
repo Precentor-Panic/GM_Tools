@@ -181,3 +181,50 @@ bakes in the gaps.
    ontologies converge instead of drifting further.
 6. **Then re-cut the Aureus master list** against whatever lands (the
    surface/truth split gets a real home before, not after, the seed).
+
+---
+
+## Addendum (execution, same week): the narrative-state layer SHIPPED
+
+The §6 directions were adjudicated with Russell (git-as-timeline endorsed;
+reveal state + clocks + truth/surface split built now; reveal transitions
+at session wrap; the variants system reused for mid-session coverage) plus
+one addition of his: **`stance`** — the entity's relationship to its truth
+(`concealing` / `unaware` / `undisclosed`, about the TRUTH not the holder),
+which safely crosses the knowledge gate as roleplay guidance even where the
+truth text cannot. Built as eight workstreams (see CLAUDE.md's status
+paragraph for the full build record):
+
+1. **Sidecar store** `mutation-engine/narrative-state.mjs` — per-entity
+   `{revealState: hidden|unrevealed|hinted|revealed, truth, stance,
+   clock{value,max,cadence}, transitions[]}` living in the WORLD data dir
+   (`worlds/<world>/narrative-state/`) so timeline commits capture graph +
+   table-knowledge atomically. Absence of a record = zero gating (the
+   gin-up flow is untaxed, asserted by regression tests).
+2. **Knowledge gate** — table-facing builders (narration ×2, read-aloud
+   drafts) exclude `hidden` entities entirely (edges scrubbed too — raw
+   ids are name-shaped) and carry a per-stance allude-don't-disclose block
+   for withheld truths; GM-facing prep now gets truth+stance injected
+   plainly (description alone is surface after the split).
+3. **Intake carry** — writeup-import emits `truth`/`stance`/`revealState`
+   per entity (the closed schema previously silently DROPPED them — §5's
+   blocker), carried on `entityContext.narrativeState`, reviewed on the
+   proposal card, landed in the sidecar by the accept choke-point hook
+   with provenance. **The Aureus ingest is unblocked**; its master list
+   should be re-cut to the real fields before seeding (§6.6 stands).
+4. **Git world-timeline** — a commit per synced batch in the world dir
+   (allowlist: snapshot + narrative-state only), `time:moved|time:static`
+   flags from the chronicle-run record, branch = alternate timeline
+   (`plans/world-timeline.md`; Foundry-closed caveat).
+5. **Reveal-seeded Run tabs** (run-layout v4) — `revealTab` states seed a
+   card's active tab when the bound entity flips to `revealed`; local
+   clicks still override.
+6. **Session wrap** on the Plan page — withheld roster, LLM-suggested
+   transitions from session notes (GM approves; `source:"wrap"` +
+   sessionNumber stamped), and a player-facing truth-notes recap generated
+   from ONLY the newly-revealed set.
+
+Still open from this doc: the hygiene debt (§4 — status enum, `related`
+edge, stale module prompt vocabularies, dead-field cull incl. the module's
+`playerKnown`, now superseded by the sidecar), auto-tick clocks, and any
+module-side (Foundry) work — all deliberately untouched.

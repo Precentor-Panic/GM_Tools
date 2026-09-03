@@ -29,7 +29,7 @@ that's not a bug, it means no live client is watching.
 | `wf_get_entity` | One entity (by ID or name) + its direct edges |
 | `wf_get_adjacent` | BFS subgraph within N hops of an entity — the blast-radius primitive |
 | `wf_get_entities_by_type` | All entities of a Layer-0 type |
-| `wf_get_session_state` | Snapshot metadata (session number, counts, export time) — **not** doom-clock/thread state, that's Layer 2 (M13), not built yet |
+| `wf_get_session_state` | Snapshot metadata (session number, counts, export time) — doom-clock/thread state lives in the GM_Tools-side narrative-state layer instead (see the narrative-state tools below); the Foundry module's own M13 remains unbuilt |
 | `wf_apply_mutations` | Write `upsert_entity` / `upsert_edge` / `delete_entity` / `delete_edge` / `upsert_type` mutations |
 
 ### Phase 1 — conversational mutation review tools
@@ -159,6 +159,32 @@ both rubber-duck phases") is `wf_propose_from_writeup` (above) — already
 returns a framing phase when rubber-duck mode is on, and `wf_select_framing`
 (above) is already its pick companion. No `wf_receive_information` tool was
 added; nothing was missing.
+
+### Narrative state — "Layer 2" (reveal state · GM truth · stance · clocks)
+
+The sidecar layer from `plans/ontology-assessment-2026-09-02.md`: per-entity
+records stored **beside the world snapshot**
+(`worlds/<world>/narrative-state/<entityId>.json`, so the git world-timeline
+captures graph + table-knowledge atomically), never synced to the graph or
+Foundry. All DIRECT writes, no review batch — the graph is untouched, so the
+no-silent-auto-write invariant is out of scope; the GM action is the review.
+An entity with **no record is fully open**: zero gating anywhere (the
+quick-generation flow is deliberately untaxed). `truth` is GM-only prose and
+structurally never reaches a table-facing prompt; `stance`
+(`concealing`/`unaware`/`undisclosed` — about the TRUTH, not the holder) may
+cross as roleplay guidance. Reveal state feeds the knowledge gate
+(`hidden` entities vanish from table prompts; `unrevealed`/`hinted` are
+alluded to, never disclosed) and the Run spread's `revealTab` tab seeding
+(`wf_set_element_run`'s `revealTab` param: when the element's bound entity is
+`revealed`, its variant becomes the card's seeded tab).
+
+| Tool | Purpose |
+|------|---------|
+| `wf_get_narrative_state` | One entity's record (or `null` = fully open). Pure read. |
+| `wf_set_narrative_state` | Any subset of reveal/truth/stance/clock in one call; `null` clears truth/stance/clock; creation via truth/stance/clock alone starts at `unrevealed`. |
+| `wf_set_reveal_state` | The focused transition (`hidden`→`unrevealed`→`hinted`→`revealed` in any order), appended to the record's permanent transition history; same-state is a safe no-op. |
+| `wf_tick_clock` | Advance/rewind the clock, clamped `[0, max]`; errors (never quietly succeeds) with no clock set. No auto-tick in v1. |
+| `wf_list_narrative_state` | Every record in a world (names joined; orphans surfaced by raw id), `revealState` filter, or `ids` bulk mode. |
 
 ## Keyless / offline safety
 

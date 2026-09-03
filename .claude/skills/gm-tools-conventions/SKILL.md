@@ -41,6 +41,21 @@ Any code that writes `world-fabric-mutations.json` (the existing Foundry bridge 
 
 If a task seems to call for deviating from any of the above (introducing a new dependency, a database, a build step, a queue system), that's a decision worth flagging explicitly in your report rather than making silently — these were deliberate choices made against this project's actual scale, not defaults left unexamined.
 
+## Store-location convention — one deliberate exception
+
+Sidecar stores default to a GM_Tools-side directory (`entity-narration/`,
+`prep-content/`, `review-state/`, `truth-notes/`, …) with a
+`GM_TOOLS_*_DIR` env override for test isolation. **The one deliberate
+exception is `mutation-engine/narrative-state.mjs`**, whose default root is
+the WORLD data dir (`<WF_DATA_DIR>/worlds/<world>/narrative-state/`): the
+git world-timeline (`mutation-engine/world-timeline.mjs`) commits
+`worlds/<world>/`, and a timeline branch must fork the graph AND what the
+table knows in one atomic commit. Don't "fix" that store's location back to
+the GM_Tools side, and don't move other stores into the world dir without
+the same argument. Every new store still gets the env override, the
+`.gitignore` entry (GM_Tools-side stores), and the no-leak-into-real-dirs
+regression test.
+
 ## Where things live
 
 - `PLAN.md` — architecture, the full tool list, current phase status.
