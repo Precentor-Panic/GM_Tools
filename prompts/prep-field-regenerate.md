@@ -24,6 +24,8 @@ Name: {{entityName}}
 Type: {{entityType}}
 Known graph connections: {{neighborhoodContext}}
 
+{{gmTruthContext}}
+
 ## This entity's current prep content (for consistency — do not restate it)
 
 {{currentFieldsJson}}

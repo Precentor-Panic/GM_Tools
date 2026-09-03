@@ -50,6 +50,11 @@ import { loadSnapshot } from "../wf-mcp-server/lib/snapshot.mjs";
 import { neighborhood } from "../wf-mcp-server/lib/graph.mjs";
 import { getScene } from "./scenes.mjs";
 import { listElementsForScene, SceneElementFields } from "./scene-elements.mjs";
+// Narrative-state knowledge gate (table-facing draft-read-aloud) + GM-truth
+// injection (GM-facing propose-elements/draft-fields). Absence of any
+// record = zero gating and empty truth context — byte-identical prompts.
+import { listNarrativeState } from "../mutation-engine/narrative-state.mjs";
+import { partitionForTable, renderAllusionInstruction, renderGmTruthBlock } from "../mutation-engine/narrative-gate.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPT_TEMPLATE = readFileSync(join(__dirname, "..", "prompts", "scene-element-functional-prep.md"), "utf8");
@@ -98,12 +103,13 @@ function describeExistingElements(elements) {
 }
 
 /** draft-read-aloud mode: place + objective + neighborhood -> `{ narration }`. Separate small helper (own prompt/response shape) rather than folding into the elements branch below. */
-async function draftReadAloud(scene, place, neighborEntities, opts) {
+async function draftReadAloud(scene, place, neighborEntities, withheldGuidance, opts) {
   const prompt = fillTemplate(READ_ALOUD_PROMPT_TEMPLATE, {
     placeName: place?.name ?? "(this scene has no anchor place)",
     placeDescription: place?.description ?? "(none recorded)",
     neighborhoodContext: describeNeighborhood(place, neighborEntities),
-    objective: (scene.objectiveNote ?? "").trim() || "(no objective set for this scene)"
+    objective: (scene.objectiveNote ?? "").trim() || "(no objective set for this scene)",
+    withheldGuidance: withheldGuidance ?? ""
   });
 
   const { text } = await callModelDetailed(prompt, {
@@ -142,8 +148,31 @@ export async function assistScenePrep(dir, world, sceneId, params = {}, opts = {
   const place = scene.locationEntityId ? entities.find((e) => e.id === scene.locationEntityId) ?? null : null;
   const neighborEntities = place ? neighborhood(entities, edges, place.id, 1).entities : [];
 
+  // Narrative-state records for the gate/injection below. try/catch: an
+  // unreadable sidecar store degrades to today's exact ungated behavior —
+  // scene prep must never fail because of it.
+  let statesById = new Map();
+  try {
+    for (const record of listNarrativeState(dir, world)) statesById.set(record.entityId, record);
+  } catch { statesById = new Map(); }
+
   if (mode === "draft-read-aloud") {
-    return draftReadAloud(scene, place, neighborEntities, opts);
+    // TABLE-FACING: the sharpest pre-gate leak (full neighbor descriptions
+    // feeding player-audible prose). Hidden neighbors are dropped entirely;
+    // unrevealed/hinted ones with a truth or stance join the allusion block.
+    // The anchor PLACE itself stays even when hidden — the GM deliberately
+    // pointed the scene at it — but joins the allusion block instead.
+    const { visible, withheld } = partitionForTable(neighborEntities, statesById);
+    const placeRecord = place ? statesById.get(place.id) : undefined;
+    if (place && placeRecord?.revealState === "hidden") {
+      withheld.unshift({
+        id: place.id,
+        name: place.name,
+        revealState: "hidden",
+        ...(placeRecord.stance ? { stance: placeRecord.stance } : {})
+      });
+    }
+    return draftReadAloud(scene, place, visible, renderAllusionInstruction(withheld), opts);
   }
 
   const existing = listElementsForScene(world, sceneId);
@@ -162,10 +191,22 @@ export async function assistScenePrep(dir, world, sceneId, params = {}, opts = {
         // sensory line; no trigger or checks needed for these).
         "Propose 4 to 7 elements that plausibly belong in this room, grounded specifically in the place's description and its graph neighbors above (never generic filler that could sit in any room). Most should be genuinely INTERACTABLE, with a real trigger and payload — the useful bones a GM runs at the table. Include 1 to 3 that are pure MUNDANE SET DRESSING instead: an ordinary sensory/atmosphere object or detail that makes the room feel real, keyed with just a `name` and a short `gives` (its sensory/flavor payload) — no trigger or checks required for these. Key every element the way a one-page dungeon keys its objects, whichever kind it is.";
 
+  // GM-FACING: full access, plus explicit truth/stance injection — with the
+  // truth/surface split, the graph description alone is surface-only, so GM
+  // prep would silently get WORSE without pulling the sidecar truths in.
+  const truthBlocks = [place, ...neighborEntities]
+    .filter((e, i, arr) => e && arr.findIndex((o) => o?.id === e.id) === i)
+    .map((e) => renderGmTruthBlock(statesById.get(e.id), { name: e.name }))
+    .filter(Boolean);
+  const gmTruthContext = truthBlocks.length
+    ? `## GM truths in play here (GM-only — plainly usable in this prep, never player-surface)\n\n${truthBlocks.join("\n\n")}`
+    : "";
+
   const prompt = fillTemplate(PROMPT_TEMPLATE, {
     placeName: place?.name ?? "(this scene has no anchor place)",
     placeDescription: place?.description ?? "(none recorded)",
     neighborhoodContext: describeNeighborhood(place, neighborEntities),
+    gmTruthContext,
     existingElements: describeExistingElements(existing),
     instruction,
     retryNote: ""

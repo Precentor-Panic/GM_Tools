@@ -28,6 +28,12 @@ import { loadSnapshot } from "./snapshot.mjs";
 import { findEntity } from "./graph.mjs";
 import { buildAdjacencyContext, DEFAULT_ENTITY_NARRATE_DEPTH } from "../../mutation-engine/narrate.mjs";
 import { markHumanReviewed } from "../../mutation-engine/human-review.mjs";
+// GM-truth injection: prep is GM-facing, so it gets the entity's narrative-
+// state truth/stance plainly (with the truth/surface split, the graph
+// description alone is surface-only — prep would silently get worse without
+// this). No record => empty block => byte-identical prompts.
+import { getNarrativeState } from "../../mutation-engine/narrative-state.mjs";
+import { renderGmTruthBlock } from "../../mutation-engine/narrative-gate.mjs";
 import {
   proposeFramingsForEntity,
   requestPrepReframing,
@@ -57,6 +63,12 @@ function loadEntityAndContext(dir, w, entityId) {
     throw new Error(`No committed entity "${entityId}" found in world "${w}"'s live snapshot -- "develop this node" only applies to an already-committed entity.`);
   }
   const ctx = buildAdjacencyContext(entities, edges, entityId, DEFAULT_ENTITY_NARRATE_DEPTH);
+  // Rides on the ctx bag (already a loose {entityLabel, neighborDescriptions}
+  // shape) so prep-content.mjs's fill sites can read it without a signature
+  // change; try/catch so an unreadable sidecar store degrades to ungated.
+  try {
+    ctx.gmTruthBlock = renderGmTruthBlock(getNarrativeState(dir, w, entityId), { name: entity.name });
+  } catch { ctx.gmTruthBlock = ""; }
   return { entity, ctx };
 }
 

@@ -480,6 +480,7 @@ export async function proposeFramingsForEntity(entity, neighborhoodContext, opts
     entityType: entity.type,
     entityDescription: entity.description || entity.summary || "(no description recorded)",
     neighborhoodContext: neighborhoodContextText(neighborhoodContext),
+    gmTruthContext: neighborhoodContext?.gmTruthBlock || "",
     angleGuidance,
     retryNote: opts.note ? `Additional note: ${opts.note}` : ""
   });
@@ -602,6 +603,7 @@ export async function generatePrepContent(entity, neighborhoodContext, framingNo
     entityType: entity.type,
     entityDescription: entity.description || entity.summary || "(no description recorded)",
     neighborhoodContext: neighborhoodContextText(neighborhoodContext),
+    gmTruthContext: neighborhoodContext?.gmTruthBlock || "",
     framingNote: framingNote || "(no specific framing chosen -- use your own best judgment)",
     fieldsSpec,
     retryNote: ""
@@ -684,6 +686,7 @@ export async function regeneratePrepField(entity, neighborhoodContext, currentFi
     entityName: entity.name,
     entityType: entity.type,
     neighborhoodContext: neighborhoodContextText(neighborhoodContext),
+    gmTruthContext: neighborhoodContext?.gmTruthBlock || "",
     currentFieldsJson: JSON.stringify(currentFields ?? {}, null, 2),
     fieldName,
     fieldDescription: fieldDescription(entity.type, fieldName),

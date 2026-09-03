@@ -45,4 +45,6 @@ Rules:
 - Respond with ONLY the prose. No headers, no markdown formatting, no JSON,
   no preamble like "Here's the narration:".
 
+{{withheldGuidance}}
+
 {{steeringNote}}

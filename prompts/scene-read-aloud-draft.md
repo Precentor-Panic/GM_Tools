@@ -30,6 +30,8 @@ mechanics — no stat blocks, no explicit skill checks, no meta commentary.
 Stay consistent with the recorded description; extend it, don't contradict
 it.
 
+{{withheldGuidance}}
+
 Respond with ONLY a single JSON object of this exact shape — no prose, no
 markdown code fences:
 

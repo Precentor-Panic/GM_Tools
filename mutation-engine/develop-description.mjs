@@ -85,6 +85,12 @@ export async function developDescription(entities, edges, entityId, vision, opts
     entityLabel,
     currentDescription: entity.description && entity.description.trim() ? entity.description.trim() : "(none recorded yet)",
     neighborhoodContext: renderNeighborhood(neighborDescriptions),
+    // Narrative-state GM-truth injection (opts.gmTruthBlock, supplied by the
+    // route/op caller): the suggested text lands in the entity DESCRIPTION,
+    // which is player-surface after the truth/surface split — the template
+    // instructs the model to write surface coherent with the truth, never
+    // restating it. "" = no record = today's exact prompt.
+    gmTruthContext: opts.gmTruthBlock || "",
     vision: trimmedVision
   });
 

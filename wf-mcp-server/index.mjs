@@ -935,8 +935,9 @@ server.registerTool(
   async ({ world, batchId, note }) => {
     try {
       const w = resolveWorld(world);
+      const dir = resolveDir();
       // Keyless safety -- see lib/offline-clients.mjs.
-      const result = await narrateOp(w, { batchId, note }, offlineOpts(offlineNarrateClient));
+      const result = await narrateOp(dir, w, { batchId, note }, offlineOpts(offlineNarrateClient));
       return text(result);
     } catch (err) {
       return errorText(err);

@@ -31,6 +31,11 @@ import { supersedeEntityNarration, getCurrentEntityNarration, getEntityNarration
 // point (acceptMutationIds below) that Phase 10 task 10.3 already used for
 // narration invalidation -- a clean fit, no second hook point added.
 import { markPrepContentStale } from "../../mutation-engine/prep-content.mjs";
+// Narrative-state knowledge gate: hidden entities are scrubbed from
+// table-facing narration context, withheld truths become an allusion block.
+// Absence of any record = zero gating (the standing gin-up guarantee).
+import { listNarrativeState } from "../../mutation-engine/narrative-state.mjs";
+import { gateSnapshotForTable, partitionForTable, renderAllusionInstruction } from "../../mutation-engine/narrative-gate.mjs";
 import { applyHeadless } from "../../graph-import/headless-apply.mjs";
 // Friction Wave 1 (W1b): convert-create-to-update re-diffs the converted
 // mutation (and its re-pointed edges) against the live snapshot so the card
@@ -1287,9 +1292,92 @@ export function convertCreateToUpdateOfExistingOp(dir, w, { batchId, mutationId,
 // (server.mjs's) offline narration client when no ANTHROPIC_API_KEY is
 // configured. Omitted -> real client construction, byte-identical to every
 // pre-fix caller (every existing MCP-surface caller, which never passes this).
-export async function narrateOp(w, { batchId, note, currentLocation, reachableAreas }, opts = {}) {
+
+/**
+ * Narrative-state records for a world as a Map keyed by entityId. Wrapped in
+ * try/catch: narration is TABLE-facing output that must keep working even if
+ * the sidecar store is unreadable — an unreadable store degrades to today's
+ * exact ungated behavior, never a failed narration.
+ */
+function narrativeStatesById(dir, w) {
+  try {
+    const map = new Map();
+    for (const record of listNarrativeState(dir, w)) map.set(record.entityId, record);
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * The table-facing knowledge gate for entity-grain narration: hidden
+ * entities (and every edge touching one) scrubbed from the grounding
+ * snapshot, and an allusion block for withheld truths SCOPED to the
+ * narrated entity's own one-hop adjacency — never the whole world's secret
+ * roster, which would bloat every prompt.
+ *
+ * The narrated TARGET itself is never scrubbed even when hidden — the GM
+ * explicitly asked for this narration — but a hidden target is always
+ * listed in the allusion block instead (allude, don't disclose), per the
+ * adjudicated plan.
+ */
+function tableGateForEntityNarration(dir, w, entities, edges, targetId) {
+  const statesById = narrativeStatesById(dir, w);
+  if (!statesById.size) return { entities, edges, withheldGuidance: "" }; // zero records = zero gating, byte-identical prompts
+  const gated = gateSnapshotForTable(entities, edges, statesById, { keepIds: targetId ? [targetId] : [] });
+  let withheldGuidance = "";
+  if (targetId) {
+    const scope = new Set([targetId]);
+    for (const edge of gated.edges) {
+      if (edge.sourceId === targetId) scope.add(edge.targetId);
+      if (edge.targetId === targetId) scope.add(edge.sourceId);
+    }
+    const scopedEntities = gated.entities.filter((e) => scope.has(e.id));
+    const { withheld } = partitionForTable(scopedEntities, statesById);
+    const targetRecord = statesById.get(targetId);
+    if (targetRecord?.revealState === "hidden") {
+      withheld.unshift({
+        id: targetId,
+        name: entities.find((e) => e.id === targetId)?.name ?? targetId,
+        revealState: "hidden",
+        ...(targetRecord.stance ? { stance: targetRecord.stance } : {})
+      });
+    }
+    withheldGuidance = renderAllusionInstruction(withheld);
+  }
+  return { entities: gated.entities, edges: gated.edges, withheldGuidance };
+}
+
+/**
+ * Signature change with the knowledge gate: narrateOp now takes `dir` first
+ * like nearly every other op in this module — batch narration must read the
+ * narrative-state store to know which accepted targets hold withheld truths.
+ * A batch mutation targeting an unrevealed/hidden entity still narrates (the
+ * GM accepted it and asked), but the prompt carries the allusion block.
+ */
+export async function narrateOp(dir, w, { batchId, note, currentLocation, reachableAreas }, opts = {}) {
   const batch = loadBatch(w, batchId);
-  return narrateBatch(batch, { world: w, note, currentLocation, reachableAreas }, opts);
+  const statesById = narrativeStatesById(dir, w);
+  let withheldGuidance = "";
+  if (statesById.size) {
+    const seen = new Set();
+    const withheld = [];
+    for (const m of batch.mutations) {
+      if (!m.id || seen.has(m.id)) continue;
+      seen.add(m.id);
+      const record = statesById.get(m.id);
+      if (record && record.revealState !== "revealed" && (record.truth || record.stance || record.revealState === "hidden")) {
+        withheld.push({
+          id: m.id,
+          name: m.entityContext?.name ?? m.id,
+          revealState: record.revealState,
+          ...(record.stance ? { stance: record.stance } : {})
+        });
+      }
+    }
+    withheldGuidance = renderAllusionInstruction(withheld);
+  }
+  return narrateBatch(batch, { world: w, note, currentLocation, reachableAreas, withheldGuidance }, opts);
 }
 
 // --- Phase 10: per-entity narration -----------------------------------------
@@ -1309,7 +1397,9 @@ export async function narrateOp(w, { batchId, note, currentLocation, reachableAr
 export async function narrateEntityOp(dir, w, { batchId, mutationId, note }, opts = {}) {
   const batch = loadBatch(w, batchId);
   const { entities, edges } = loadSnapshot(dir, w).snapshot;
-  return narrateEntity(batch, mutationId, { world: w, entities, edges, note }, opts);
+  const targetId = batch.mutations.find((m) => m.mutationId === mutationId)?.id;
+  const gate = tableGateForEntityNarration(dir, w, entities, edges, targetId);
+  return narrateEntity(batch, mutationId, { world: w, entities: gate.entities, edges: gate.edges, withheldGuidance: gate.withheldGuidance, note }, opts);
 }
 
 // --- Task 14.7: "Narrate This" from the standalone entity page --------------
@@ -1376,7 +1466,8 @@ export async function narrateEntityStandaloneOp(dir, w, { entityId, note }, opts
     );
   }
   const { entities, edges } = loadSnapshot(dir, w).snapshot;
-  return narrateEntity(found.batch, found.mutationId, { world: w, entities, edges, note }, opts);
+  const gate = tableGateForEntityNarration(dir, w, entities, edges, entityId);
+  return narrateEntity(found.batch, found.mutationId, { world: w, entities: gate.entities, edges: gate.edges, withheldGuidance: gate.withheldGuidance, note }, opts);
 }
 
 /** wf_get_entity_narration / review-ui's per-row narration fetch: the one entry with status:'current', or null if never narrated (or superseded with nothing to replace it yet). */

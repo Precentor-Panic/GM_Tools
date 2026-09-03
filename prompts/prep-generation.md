@@ -21,6 +21,8 @@ Type: {{entityType}}
 Current recorded description: {{entityDescription}}
 Known graph connections: {{neighborhoodContext}}
 
+{{gmTruthContext}}
+
 ## Chosen framing
 
 {{framingNote}}

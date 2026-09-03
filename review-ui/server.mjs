@@ -160,6 +160,8 @@ import {
   tickClockOp,
   listNarrativeStateOp
 } from "../wf-mcp-server/lib/narrative-state-ops.mjs";
+import { getNarrativeState } from "../mutation-engine/narrative-state.mjs";
+import { renderGmTruthBlock } from "../mutation-engine/narrative-gate.mjs";
 // (fieldsSchemaForType/`z` were only needed by the offline prep-content
 // client, now moved to wf-mcp-server/lib/offline-clients.mjs -- see the
 // import block above.)
@@ -1331,7 +1333,7 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world);
     // QA W1 Fix 3 (grep-driven audit): degrades to a clean placeholder
     // narration instead of throwing keyless.
-    const result = await narrateOp(w, { batchId: parts[2], note: body.note }, offlineOpts(offlineNarrateClient));
+    const result = await narrateOp(resolveDir(), w, { batchId: parts[2], note: body.note }, offlineOpts(offlineNarrateClient));
     return sendJson(res, 200, result);
   }
 
@@ -1724,7 +1726,16 @@ async function handleApi(req, res, url, parts) {
     // QA W1 Fix 4: `offline:true` is stamped on the RESPONSE (never inside
     // `suggestion` itself, which is the clean body Accept persists verbatim)
     // so the frontend can render the disclaimer as chrome above the text.
-    const result = await developDescription(entities, edges, parts[3], body.vision, offlineOpts(offlineDevelopDescriptionClient));
+    // Narrative-state GM-truth injection: the suggestion becomes the
+    // entity's DESCRIPTION (player-surface), so the prompt gets the truth
+    // as context WITH the never-restate-it instruction (develop-description
+    // template). No record => empty block => today's exact prompt.
+    let gmTruthBlock = "";
+    try {
+      const record = getNarrativeState(dir, w, parts[3]);
+      gmTruthBlock = renderGmTruthBlock(record, { name: entities.find((e) => e.id === parts[3])?.name });
+    } catch { /* unreadable sidecar store degrades to ungated */ }
+    const result = await developDescription(entities, edges, parts[3], body.vision, { ...offlineOpts(offlineDevelopDescriptionClient), gmTruthBlock });
     return sendJson(res, 200, { ...result, offline: isOffline() });
   }
 

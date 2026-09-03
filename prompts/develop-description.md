@@ -21,6 +21,8 @@ existing description via the ordinary edit route) or dismisses it.
 
 {{neighborhoodContext}}
 
+{{gmTruthContext}}
+
 ## The GM's own vision for this place, right now
 
 {{vision}}
@@ -33,8 +35,12 @@ recorded, and drawing concretely on the real graph neighbors above where it
 naturally fits (name them, don't invent unrelated ones). Write 2 to 5
 sentences of grounded, usable prose a GM could drop straight into their notes
 — specific and evocative, not generic filler. This is GM-facing reference
-material, not read-aloud narration: hidden or ominous detail is fine to write
-plainly.
+material, not read-aloud narration: ominous or foreboding detail is fine to
+write plainly. One hard boundary: the description you produce is
+PLAYER-SURFACE — it becomes the entity's recorded description, which player-
+facing context reads freely. If a GM TRUTH block appears above, use it to
+make the surface *coherent with* the truth (texture, tells, atmosphere), but
+NEVER restate, confirm, or paraphrase the truth itself in your output.
 
 Respond with ONLY a single JSON object of this exact shape — no prose, no
 markdown code fences:

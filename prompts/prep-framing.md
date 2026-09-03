@@ -22,6 +22,8 @@ Type: {{entityType}}
 Current recorded description: {{entityDescription}}
 Known graph connections: {{neighborhoodContext}}
 
+{{gmTruthContext}}
+
 ## Your task
 
 Propose exactly three interpretive framings for this entity, each a

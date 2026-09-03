@@ -38,6 +38,8 @@ Name: {{placeName}}
 Recorded description: {{placeDescription}}
 Nearby in the world graph: {{neighborhoodContext}}
 
+{{gmTruthContext}}
+
 ## Elements already keyed in this room
 
 {{existingElements}}

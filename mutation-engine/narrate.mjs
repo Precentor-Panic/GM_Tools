@@ -372,7 +372,7 @@ async function runNarrationCall(prompt, opts, errorContext) {
 export async function narrateBatch(batch, ctx = {}, opts = {}) {
   assertBatchNarratable(batch);
 
-  const { world, currentLocation, reachableAreas, note } = ctx;
+  const { world, currentLocation, reachableAreas, note, withheldGuidance } = ctx;
   const mutationSummary = renderMutationSummary(batch.mutations) || "(no mutations)";
 
   const prompt = fillTemplate({
@@ -381,6 +381,10 @@ export async function narrateBatch(batch, ctx = {}, opts = {}) {
     reachableAreas: Array.isArray(reachableAreas) && reachableAreas.length ? reachableAreas.join(", ") : "(not specified)",
     elapsedTimeDescriptor: batch.elapsedTimeDescriptor ?? "(not specified)",
     mutationSummary,
+    // Narrative-state knowledge gate (table-facing output): the ops layer
+    // passes renderAllusionInstruction()'s block when accepted targets hold
+    // unrevealed truths; empty (today's exact prompt) when nothing is gated.
+    withheldGuidance: withheldGuidance ?? "",
     steeringNote: note ? `Additional guidance from the GM for this narration -- follow it: ${note}` : ""
   });
 
@@ -444,7 +448,7 @@ export async function narrateEntity(batch, mutationId, ctx = {}, opts = {}) {
     );
   }
 
-  const { world, entities, edges, note, adjacencyDepth } = ctx;
+  const { world, entities, edges, note, adjacencyDepth, withheldGuidance } = ctx;
   const mutationSummary = renderMutationSummary([mutation]) || "(no mutations)";
 
   let currentLocation = "(not specified)";
@@ -466,6 +470,9 @@ export async function narrateEntity(batch, mutationId, ctx = {}, opts = {}) {
     reachableAreas,
     elapsedTimeDescriptor: batch.elapsedTimeDescriptor ?? "(not specified)",
     mutationSummary,
+    // Same knowledge-gate slot as narrateBatch — the ops layer supplies the
+    // allusion block (scoped to this entity's own adjacency); "" = ungated.
+    withheldGuidance: withheldGuidance ?? "",
     steeringNote: note ? `Additional guidance from the GM for this narration -- follow it: ${note}` : ""
   });
 

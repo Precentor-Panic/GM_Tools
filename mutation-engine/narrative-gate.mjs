@@ -64,6 +64,32 @@ export function partitionForTable(entities, statesById) {
   return { visible, withheld };
 }
 
+/**
+ * Gate a whole snapshot slice for a TABLE-facing prompt: remove `hidden`
+ * entities AND every edge touching one. The edge filter matters as much as
+ * the entity filter — buildAdjacencyContext degrades a neighbor missing
+ * from the entities array to its raw id string, and ids are routinely
+ * slugged from names, so an unfiltered edge would leak the hidden entity's
+ * name-shaped id into the prompt.
+ *
+ * `keepIds`: entities kept visible even when hidden — the case where the GM
+ * explicitly targeted a hidden entity (narrating it, anchoring a scene on
+ * it); the caller then lists it in the allusion block instead of refusing.
+ */
+export function gateSnapshotForTable(entities, edges, statesById, { keepIds = [] } = {}) {
+  const keep = new Set(keepIds);
+  const hiddenIds = new Set();
+  for (const entity of entities || []) {
+    const id = entityIdOf(entity);
+    if (!keep.has(id) && stateFor(statesById, id)?.revealState === "hidden") hiddenIds.add(id);
+  }
+  if (!hiddenIds.size) return { entities: entities ?? [], edges: edges ?? [] };
+  return {
+    entities: (entities ?? []).filter((e) => !hiddenIds.has(entityIdOf(e))),
+    edges: (edges ?? []).filter((e) => !hiddenIds.has(e.sourceId) && !hiddenIds.has(e.targetId))
+  };
+}
+
 // Per-stance table guidance. The prompt never holds the truth text, so even
 // "undisclosed" (no in-fiction resistance) translates to defer-to-GM — the
 // model must not invent an answer it does not have.
