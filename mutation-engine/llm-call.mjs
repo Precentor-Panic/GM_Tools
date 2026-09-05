@@ -67,11 +67,23 @@ export function parseJsonResponse(text) {
  */
 export async function callModelDetailed(prompt, opts) {
   const client = opts.client ?? new Anthropic({ apiKey: opts.apiKey });
-  const response = await client.messages.create({
+  const request = {
     model: opts.model,
     max_tokens: opts.maxTokens ?? 2048,
     messages: [{ role: "user", content: prompt }]
-  });
+  };
+  // The SDK refuses a non-streaming create() whose max_tokens implies the
+  // request could run past 10 minutes ("Streaming is required for operations
+  // that may take longer than 10 minutes") — hit for real the first time
+  // WF_WRITEUP_IMPORT_MAX_TOKENS was raised to 49152 for the Aureus ingest.
+  // stream().finalMessage() resolves to the same Message shape create()
+  // returns, so downstream handling is identical; injected test/offline
+  // clients that only implement messages.create keep working via the
+  // fallback branch.
+  const response =
+    typeof client.messages?.stream === "function"
+      ? await client.messages.stream(request).finalMessage()
+      : await client.messages.create(request);
   const textBlock = (response.content ?? []).find((b) => b.type === "text");
   return { text: textBlock?.text ?? "", truncated: response.stop_reason === "max_tokens" };
 }
