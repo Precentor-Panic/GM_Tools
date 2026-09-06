@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import {
   partitionForTable,
   renderAllusionInstruction,
-  renderGmTruthBlock
+  renderGmTruthBlock,
+  gateSnapshotForTable,
+  isGmOnlyEdge
 } from "../mutation-engine/narrative-gate.mjs";
 
 let passed = 0;
@@ -158,6 +160,46 @@ test("stance-only record still renders a GM block (the stance is prep-relevant e
   const block = renderGmTruthBlock({ revealState: "unrevealed", stance: "unaware" });
   assert.match(block, /Stance: unaware/);
   assert.ok(!/undefined/.test(block));
+});
+
+// ------------------------------------------------- GM-only edge scrubbing
+
+const EDGES = [
+  { id: "e1", sourceId: "marek", targetId: "guild", label: "member of", notes: null },
+  { id: "e2", sourceId: "marek", targetId: "guild", label: "on the payroll of", notes: "GM-only truth." },
+  { id: "e3", sourceId: "vane", targetId: "guild", label: "patron (undecided)", notes: "GM-only, undecided." },
+  { id: "e4", sourceId: "inn", targetId: "source", label: "sits above", notes: null }
+];
+
+test("isGmOnlyEdge matches the notes prefix, case-insensitive, and nothing else", () => {
+  assert.equal(isGmOnlyEdge(EDGES[1]), true);
+  assert.equal(isGmOnlyEdge(EDGES[2]), true);
+  assert.equal(isGmOnlyEdge({ notes: "gm-only" }), true);
+  assert.equal(isGmOnlyEdge(EDGES[0]), false);
+  assert.equal(isGmOnlyEdge({ notes: "the GM-only shelf" }), false);
+  assert.equal(isGmOnlyEdge({}), false);
+  assert.equal(isGmOnlyEdge(undefined), false);
+});
+
+test("gateSnapshotForTable drops GM-only edges even with ZERO reveal records (the marker is the record)", () => {
+  const { entities, edges } = gateSnapshotForTable(ENTITIES, EDGES, states({}));
+  assert.equal(entities.length, ENTITIES.length);
+  assert.deepEqual(edges.map((e) => e.id), ["e1", "e4"]);
+});
+
+test("gateSnapshotForTable with no records and no marked edges returns inputs untouched (zero-records contract)", () => {
+  const plain = [EDGES[0], EDGES[3]];
+  const out = gateSnapshotForTable(ENTITIES, plain, states({}));
+  assert.equal(out.entities, ENTITIES);
+  assert.equal(out.edges, plain);
+});
+
+test("hidden-entity edge scrub and GM-only scrub compose; keepIds never un-gates a GM-only edge", () => {
+  const st = states({ source: { revealState: "hidden" } });
+  const gated = gateSnapshotForTable(ENTITIES, EDGES, st);
+  assert.deepEqual(gated.edges.map((e) => e.id), ["e1"]); // e4 touches hidden, e2/e3 GM-only
+  const kept = gateSnapshotForTable(ENTITIES, EDGES, st, { keepIds: ["source"] });
+  assert.deepEqual(kept.edges.map((e) => e.id), ["e1", "e4"]); // e4 back, GM-only still out
 });
 
 console.log(`\n${passed} passed`);

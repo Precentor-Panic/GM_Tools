@@ -65,8 +65,26 @@ export function partitionForTable(entities, statesById) {
 }
 
 /**
+ * A GM-only edge: a relationship whose LABEL itself encodes truth-tier
+ * material between entities that are individually visible ("on the payroll
+ * of", "double policy scandal"). The intake stamps these `notes: "GM-only
+ * truth."` — an entity's truth text is structurally unreachable from table
+ * prompts, but an edge label rides into adjacency context unless filtered
+ * here. Found live in the Aureus seed verify (2026-09-06): five such edges
+ * between non-hidden entities would have leaked through every table-facing
+ * prompt. The marker is the notes prefix, not a schema field, deliberately —
+ * no interchange/migration change for a v1 predicate one grep can audit.
+ */
+const GM_ONLY_EDGE_RE = /^\s*GM-only/i;
+export function isGmOnlyEdge(edge) {
+  return GM_ONLY_EDGE_RE.test(edge?.notes ?? "");
+}
+
+/**
  * Gate a whole snapshot slice for a TABLE-facing prompt: remove `hidden`
- * entities AND every edge touching one. The edge filter matters as much as
+ * entities, every edge touching one, AND every GM-only-marked edge (see
+ * isGmOnlyEdge above — the marker gates regardless of reveal records, since
+ * the marker itself is the record). The edge filter matters as much as
  * the entity filter — buildAdjacencyContext degrades a neighbor missing
  * from the entities array to its raw id string, and ids are routinely
  * slugged from names, so an unfiltered edge would leak the hidden entity's
@@ -75,6 +93,8 @@ export function partitionForTable(entities, statesById) {
  * `keepIds`: entities kept visible even when hidden — the case where the GM
  * explicitly targeted a hidden entity (narrating it, anchoring a scene on
  * it); the caller then lists it in the allusion block instead of refusing.
+ * keepIds never un-gates a GM-only edge: keeping a hidden entity visible is
+ * a GM targeting decision about the entity, not license for truth labels.
  */
 export function gateSnapshotForTable(entities, edges, statesById, { keepIds = [] } = {}) {
   const keep = new Set(keepIds);
@@ -83,10 +103,15 @@ export function gateSnapshotForTable(entities, edges, statesById, { keepIds = []
     const id = entityIdOf(entity);
     if (!keep.has(id) && stateFor(statesById, id)?.revealState === "hidden") hiddenIds.add(id);
   }
-  if (!hiddenIds.size) return { entities: entities ?? [], edges: edges ?? [] };
+  const hasGmOnlyEdge = (edges ?? []).some(isGmOnlyEdge);
+  // Unmarked, record-free worlds return their inputs untouched — the pinned
+  // zero-records byte-identical contract is preserved exactly.
+  if (!hiddenIds.size && !hasGmOnlyEdge) return { entities: entities ?? [], edges: edges ?? [] };
   return {
     entities: (entities ?? []).filter((e) => !hiddenIds.has(entityIdOf(e))),
-    edges: (edges ?? []).filter((e) => !hiddenIds.has(e.sourceId) && !hiddenIds.has(e.targetId))
+    edges: (edges ?? []).filter(
+      (e) => !hiddenIds.has(e.sourceId) && !hiddenIds.has(e.targetId) && !isGmOnlyEdge(e)
+    )
   };
 }
 

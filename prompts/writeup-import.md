@@ -87,6 +87,14 @@ secret there just because it's convenient.
   no framing about who's hiding it or failing to notice it, OMIT `stance`
   entirely — do not default-guess `undisclosed` just to fill the field.
 
+**Edges that encode a secret**: sometimes the RELATIONSHIP is the secret —
+"X is secretly on Y's payroll", "X covertly reports to Y". When an edge's
+label or existence states truth-tier material (anything you would put in a
+`truth` field), the edge's `notes` MUST begin with `GM-only` (e.g.
+`"GM-only truth."`). Table-facing prompts scrub edges so marked; an
+unmarked truth edge leaks the secret through every player-facing context.
+An ordinary, publicly-observable relationship never gets the marker.
+
 Respond with ONLY a single JSON object of this exact shape, no prose, no
 markdown code fences:
 
