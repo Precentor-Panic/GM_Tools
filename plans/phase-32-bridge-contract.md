@@ -381,9 +381,13 @@ Capture is Foundry-native Journal entries. Two deliberate filters, both in the p
   backstory journal never leaves Foundry.
 - **GM notes excluded**: a note authored by a GM-role user is dropped (a GM note is not a player belief).
 
-Author attribution prefers `_stats.createdBy` ("who believes this") over `lastModifiedBy` (a GM editing a player's
-note flips the latter, not the former). Full untruncated page text (the world-scan text-extraction shape without
-its 280-char cap).
+Author attribution is `createdBy ?? sole non-GM OWNER in ownership ?? lastModifiedBy`. The ownership step is not
+belt-and-braces: the live aureus world showed `_stats.createdBy` arriving **null** on real player-created journals,
+which sent attribution straight to `lastModifiedBy` — so a GM opening and touching a player's note re-attributed it
+to the GM, and the GM filter above then dropped it from the export entirely. Ownership is the signal an edit does
+not move (Foundry grants the creating player OWNER automatically); it is used only when exactly one non-GM user
+holds OWNER, so a GM-only or co-owned note falls through unchanged. `lastModifiedBy` is still reported verbatim.
+Full untruncated page text (the world-scan text-extraction shape without its 280-char cap).
 
 ```
 {
@@ -396,7 +400,7 @@ its 280-char cap).
       journalUuid: "JournalEntry.abc",
       title: "What I think is going on",
       text: "full untruncated player text …",
-      authorId: "user7",            // createdBy ?? lastModifiedBy ?? null
+      authorId: "user7",            // createdBy ?? sole non-GM OWNER ?? lastModifiedBy ?? null
       authorName: "Alice",          // joined via users[]; raw id fallback; null if no author
       authorRole: 1,                // for the GM-exclusion filter; null if author unknown
       characterUuid: "Actor.pc7",   // the author's assigned PC, or null
