@@ -45,6 +45,7 @@ const dataDir = join(scratchDir, "foundrydata");
 process.env.GM_TOOLS_REVIEW_STATE_DIR = join(scratchDir, "review-state");
 process.env.GM_TOOLS_PENDING_LEDGER_DIR = join(scratchDir, "pending-resolution");
 process.env.GM_TOOLS_HUMAN_REVIEW_DIR = join(scratchDir, "human-review");
+process.env.GM_TOOLS_PLAYER_NOTES_ANALYSIS_DIR = join(scratchDir, "player-notes-analysis");
 process.env.WF_DATA_DIR = dataDir;
 
 const WORLD = "review-ui-routes-test-world";
@@ -394,4 +395,25 @@ test("POST /api/chronicle/intents rejects a name over 200 characters with a clea
   const { status, body } = await postJson("/api/chronicle/intents", { world: WORLD, name: "x".repeat(201) });
   assert.equal(status, 400);
   assert.ok(/200 characters/.test(body.error), `expected a clear length-cap message, got: ${body.error}`);
+});
+
+// Player-notes analysis routes (GM-only). Keyless-degrade + world-id hardening.
+test("POST /api/player-notes/analyze degrades cleanly with no API key (offline:true, empty)", async () => {
+  const { status, body } = await postJson("/api/player-notes/analyze", { world: WORLD });
+  assert.equal(status, 200);
+  assert.equal(body.offline, true, "no ANTHROPIC_API_KEY in test env -> offline stamp");
+  assert.deepEqual(body.flags, [], "offline pass yields no flags");
+  assert.ok("noteCount" in body);
+});
+
+test("GET /api/player-notes/analysis returns {current, history} (absence is valid, not a 404)", async () => {
+  const { status, body } = await getJson(`/api/player-notes/analysis?world=${WORLD}`);
+  assert.equal(status, 200);
+  assert.ok("current" in body && "history" in body);
+  assert.ok(Array.isArray(body.history));
+});
+
+test("SECURITY: player-notes/analysis rejects a malicious world id", async () => {
+  const { status } = await getJson(`/api/player-notes/analysis?world=${encodeURIComponent("../../../../etc")}`);
+  assert.notEqual(status, 200, "a traversal-shaped world id must not resolve");
 });

@@ -102,6 +102,11 @@ import {
   listNarrativeStateOp
 } from "./lib/narrative-state-ops.mjs";
 
+// Player-notes analysis (GM-only, truth-aware; reads the player-notes bridge
+// file). Capture stays Foundry/bridge-side — only analyze is a tool.
+// (offlineOpts + offlinePlayerNotesClient come from the offline-clients import below.)
+import { analyzePlayerNotesOp } from "./lib/player-notes-ops.mjs";
+
 // Phase 32 task 32.2 -- Foundry actor PULL ingest (the phase's primary
 // deliverable): worlds/<world>/world-fabric-foundry-index.json ->
 // bestiary/party-roster, review-gated. Shared verbatim with
@@ -170,7 +175,8 @@ import {
   offlineTextureClient,
   offlineWriteupClient,
   offlineNarrateClient,
-  offlinePrepContentClient
+  offlinePrepContentClient,
+  offlinePlayerNotesClient
 } from "./lib/offline-clients.mjs";
 
 const server = new McpServer({ name: "world-fabric", version: "0.1.0" });
@@ -1450,6 +1456,41 @@ server.registerTool(
   async ({ world, dataDir, revealState, ids }) => {
     try {
       return text(listNarrativeStateOp(resolveDir(dataDir), resolveWorld(world), { revealState, ids }));
+    } catch (err) {
+      return errorText(err);
+    }
+  }
+);
+
+// --- wf_analyze_player_notes -------------------------------------------------------------
+
+server.registerTool(
+  "wf_analyze_player_notes",
+  {
+    title: "Analyze player notes (GM-only) — confusion / close-to-truth / threads",
+    description:
+      "Reads the world's player notes (from the world-fabric-player-notes.json bridge file — players write them " +
+      "in Foundry journals under the 'Session Notes' folder) and runs one cheap pass flagging each note as " +
+      "'confusion' (lost / open question), 'close-to-truth' (getting warm on a still-withheld narrative-state " +
+      "truth — the reveal early-warning), or 'thread' (a player hook worth following). GM-ONLY: it is handed the " +
+      "GM-only truth to make the comparison, so its output must never be shown to players. Never writes canon; " +
+      "persists the analysis result with history by default. No notes -> zero spend. Keyless -> empty, offline:true.",
+    inputSchema: {
+      world: worldParam,
+      dataDir: dataDirParam,
+      sessionNumber: z.number().optional().describe("Stamp the saved analysis with this in-world session number."),
+      persist: z.boolean().optional().describe("Persist the result to the analysis history (default true).")
+    }
+  },
+  async ({ world, dataDir, sessionNumber, persist }) => {
+    try {
+      const result = await analyzePlayerNotesOp(
+        resolveDir(dataDir),
+        resolveWorld(world),
+        { sessionNumber: sessionNumber ?? null, persist: persist ?? true },
+        offlineOpts(offlinePlayerNotesClient)
+      );
+      return text({ ...result, offline: isOffline() });
     } catch (err) {
       return errorText(err);
     }

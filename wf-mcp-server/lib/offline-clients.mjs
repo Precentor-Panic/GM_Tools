@@ -187,6 +187,20 @@ export function offlineReskinSuggestClient() {
 }
 
 /**
+ * OFFLINE DETERMINISTIC player-notes-analysis client (see POST
+ * /api/player-notes/analyze). With no key, returns zero flags — an honest
+ * "not analyzed" result rather than a crash; the route/tool stamps
+ * `offline:true` so the GM sees why nothing came back.
+ */
+export function offlinePlayerNotesClient() {
+  return {
+    messages: {
+      create: async () => offlineTextResponse({ flags: [] })
+    }
+  };
+}
+
+/**
  * OFFLINE DETERMINISTIC writeup-import client (see POST /api/writeup-propose,
  * POST /api/scene-planning/scenes|plans/:id/propose-updates -- all three
  * routes ultimately call graph-import/writeup-import.mjs's importWriteup or

@@ -47,3 +47,29 @@ export function foundryOpsPath(dataDir, world) {
 export function foundryResultsPath(dataDir, world) {
   return join(dataDir, "worlds", world, "world-fabric-foundry-results.json");
 }
+
+/**
+ * Path to a world's world-fabric-player-notes.json (Foundry → GM_Tools PULL,
+ * bridge contract §4). Same worlds/<world>/ directory + resolution as the
+ * other bridge files.
+ */
+export function playerNotesPath(dataDir, world) {
+  return join(dataDir, "worlds", world, "world-fabric-player-notes.json");
+}
+
+/**
+ * Read a world's player notes. Unlike loadSnapshot, an ABSENT file is NOT an
+ * error — a world may simply have no player notes yet (Foundry closed, or no
+ * one has written a Session Notes journal). Degrades to an empty envelope so
+ * the analysis pass returns an honest zero-note result instead of throwing.
+ */
+export function loadPlayerNotes(dataDir, world) {
+  const p = playerNotesPath(dataDir, world);
+  if (!existsSync(p)) return { version: null, notes: [] };
+  try {
+    const parsed = JSON.parse(readFileSync(p, "utf8"));
+    return { version: parsed.version ?? null, notes: Array.isArray(parsed.notes) ? parsed.notes : [] };
+  } catch {
+    return { version: null, notes: [] };
+  }
+}

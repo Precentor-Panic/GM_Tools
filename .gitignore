@@ -181,3 +181,8 @@ briefing/
 # Seeded design-canvas output (2MB generated payload; re-seed from the
 # committed .dc.html + canvas.json working files)
 design/session-planner/variants-canvas/run-variants.html
+# Player-notes analysis: session-planner/player-notes-analysis.mjs is one
+# flat file per world (per-world convention, like session-notes/); persists
+# the GM-only analysis RESULTS, never the notes themselves. Spec-time entry.
+player-notes-analysis/*
+!player-notes-analysis/.gitkeep

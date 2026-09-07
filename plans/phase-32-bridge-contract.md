@@ -366,6 +366,56 @@ pre-38.1 index, every consumer must treat a missing `compendia` key identically 
 
 ---
 
+## 4. `world-fabric-player-notes.json` (Foundry → GM_Tools, PULL)
+
+**`PLAYER_NOTES_VERSION = 1`** (a constant `scripts/data/foundry-bridge.mjs` exports, on its OWN version line —
+adding this channel does NOT touch `FOUNDRY_INDEX_VERSION`; the two files version independently).
+
+A separate PULL channel from §1's index, written by the same GM-side, full-replace, fire-and-forget mechanism
+(`exportPlayerNotes()`, piggybacked on the `exportSnapshot` wrapper in `module.mjs` alongside `exportFoundryIndex`).
+Lets the GM's tools read what players wrote so a GM-only LLM pass can flag confusion / close-to-truth / threads
+(`session-planner/analyze-player-notes.mjs`).
+
+Capture is Foundry-native Journal entries. Two deliberate filters, both in the pure `buildPlayerNotes`:
+- **Opt-in privacy**: ONLY journals whose folder is named **`Session Notes`** are exported — a player's private/
+  backstory journal never leaves Foundry.
+- **GM notes excluded**: a note authored by a GM-role user is dropped (a GM note is not a player belief).
+
+Author attribution prefers `_stats.createdBy` ("who believes this") over `lastModifiedBy` (a GM editing a player's
+note flips the latter, not the former). Full untruncated page text (the world-scan text-extraction shape without
+its 280-char cap).
+
+```
+{
+  version: 1,                    // PLAYER_NOTES_VERSION
+  worldId: "aureus",
+  exportedAt: "2026-09-07T...Z",
+  notes: [
+    {
+      noteId: "JournalEntry.abc",   // stable (the journal uuid)
+      journalUuid: "JournalEntry.abc",
+      title: "What I think is going on",
+      text: "full untruncated player text …",
+      authorId: "user7",            // createdBy ?? lastModifiedBy ?? null
+      authorName: "Alice",          // joined via users[]; raw id fallback; null if no author
+      authorRole: 1,                // for the GM-exclusion filter; null if author unknown
+      characterUuid: "Actor.pc7",   // the author's assigned PC, or null
+      ownership: { default: 0, user7: 3 } | null,
+      lastModifiedBy: "user7" | null,
+      createdBy: "user7" | null,
+      updatedAt: "2026-09-05T...Z" | null
+    }
+  ]
+}
+```
+
+Same full-replace semantics as the index. Consumers: `wf-mcp-server/lib/snapshot.mjs`'s `loadPlayerNotes`
+degrades an ABSENT file to `{version:null, notes:[]}` (unlike `loadSnapshot`, absence is NOT an error — a world
+may simply have no player notes, or Foundry may be closed). This channel is GM-only: it carries player-authored
+prose the GM's truth-aware analysis reads, and its analysis output must never reach a table-facing surface.
+
+---
+
 ## 2. `world-fabric-foundry-ops.json` (GM_Tools → Foundry, PUSH)
 
 **`FOUNDRY_OPS_SCHEMA_VERSION = 1`** — tracked here and in module comments (like the existing

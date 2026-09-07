@@ -325,7 +325,8 @@ import {
   offlineScanMentionsClient,
   offlinePrepContentClient,
   offlineWrapSuggestClient,
-  offlineTruthNotesClient
+  offlineTruthNotesClient,
+  offlinePlayerNotesClient
 } from "../wf-mcp-server/lib/offline-clients.mjs";
 
 // Phase 22 (task 22.7) -- Scene Engine routes. Thin wrappers only, same
@@ -362,6 +363,7 @@ import { proposeUpdatesForPlan, proposeUpdatesForScene } from "../session-planne
 // every route in this file: resolveWorld()/resolveDir() with NO
 // client-supplied dataDir override anywhere below.
 import { listWrapCandidates, suggestWrapTransitions, applyWrapTransitions, generateTruthNotes } from "../session-planner/session-wrap.mjs";
+import { analyzePlayerNotesOp, getPlayerNotesAnalysisOp } from "../wf-mcp-server/lib/player-notes-ops.mjs";
 import { getCurrentTruthNotes, getTruthNotesHistory } from "../session-planner/truth-notes.mjs";
 
 // Phase 28 task 28.1 -- per-scene ordered elements + per-scene narration.
@@ -3619,6 +3621,36 @@ async function handleApi(req, res, url, parts) {
   if (method === "GET" && parts.length === 5 && parts[1] === "scene-planning" && parts[2] === "plans" && parts[4] === "truth-notes") {
     const w = resolveWorld(q.get("world"));
     return sendJson(res, 200, { current: getCurrentTruthNotes(w, parts[3]), history: getTruthNotesHistory(w, parts[3]) });
+  }
+
+  // ---------------------------------------------------------------------
+  // Player-notes analysis (GM-ONLY, NEVER TABLE-FACING). Reads the
+  // world-fabric-player-notes.json bridge file + the GM-only narrative-state
+  // truth and flags each player note (confusion / close-to-truth / thread).
+  // The prompt is handed real GM truth, so this and the panel that renders it
+  // are GM surfaces only -- see player-notes-ops.mjs's header. Same
+  // offlineOpts()/`offline:true` keyless-degrade + resolveDir()/resolveWorld()
+  // hardening as every other LLM route here.
+  // ---------------------------------------------------------------------
+
+  // POST /api/player-notes/analyze   { world, sessionNumber? }   -> {flags, dropped, noteCount, saved, offline}
+  if (method === "POST" && parts.length === 3 && parts[1] === "player-notes" && parts[2] === "analyze") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const result = await analyzePlayerNotesOp(
+      dir, w,
+      { sessionNumber: body.sessionNumber ?? null },
+      offlineOpts(offlinePlayerNotesClient)
+    );
+    return sendJson(res, 200, { ...result, offline: isOffline() });
+  }
+
+  // GET /api/player-notes/analysis?world=   -> {current, history}
+  if (method === "GET" && parts.length === 3 && parts[1] === "player-notes" && parts[2] === "analysis") {
+    const dir = resolveDir();
+    const w = resolveWorld(q.get("world"));
+    return sendJson(res, 200, getPlayerNotesAnalysisOp(dir, w));
   }
 
   // ===========================================================================

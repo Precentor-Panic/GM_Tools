@@ -1007,6 +1007,32 @@ function buildSessionWrapPanel(plan) {
   notesHost.className = "wrap-truth-notes";
   details.appendChild(notesHost);
 
+  // --- "What the players wrote" — GM-only analysis of player journal notes ---
+  const paHead = document.createElement("p");
+  paHead.className = "hint";
+  paHead.innerHTML = "<strong>What the players wrote</strong> — reads their Session Notes journals (GM-only) and flags where they're confused, getting close to a hidden truth, or onto a thread worth following.";
+  const paActions = document.createElement("div");
+  paActions.className = "wrap-reveal-actions";
+  const analyzeBtn = document.createElement("button");
+  analyzeBtn.type = "button";
+  analyzeBtn.className = "btn btn--ghost";
+  analyzeBtn.setAttribute("data-testid", "player-notes-analyze-btn");
+  analyzeBtn.textContent = "Analyze player notes";
+  const paStatus = document.createElement("span");
+  paStatus.className = "hint";
+  paStatus.setAttribute("data-testid", "player-notes-status");
+  paActions.append(analyzeBtn, paStatus);
+  const paHost = document.createElement("div");
+  paHost.className = "player-notes-flags";
+  paHost.setAttribute("data-testid", "player-notes-flags");
+  details.append(paHead, paActions, paHost);
+
+  const KIND_META = {
+    "confusion": { label: "Confusion", color: "oklch(0.55 0.12 65)" },
+    "close-to-truth": { label: "Close to the truth", color: "oklch(0.52 0.15 25)" },
+    "thread": { label: "Thread", color: "oklch(0.50 0.10 185)" }
+  };
+
   const STATES = ["hidden", "unrevealed", "hinted", "revealed"];
   let rows = []; // [{entityId, current, select, rationaleEl}]
 
@@ -1081,6 +1107,92 @@ function buildSessionWrapPanel(plan) {
     notesHost.append(head, pre, copyBtn);
   }
 
+  function renderFlags(flags) {
+    paHost.innerHTML = "";
+    if (!flags || !flags.length) return;
+    // group by author
+    const byAuthor = new Map();
+    for (const f of flags) {
+      const key = f.authorId ?? "unknown";
+      if (!byAuthor.has(key)) byAuthor.set(key, []);
+      byAuthor.get(key).push(f);
+    }
+    for (const [authorId, authorFlags] of byAuthor) {
+      const group = document.createElement("div");
+      group.className = "player-notes-author";
+      group.setAttribute("data-testid", "player-notes-author");
+      const who = document.createElement("div");
+      who.className = "hint";
+      who.style.fontWeight = "600";
+      who.textContent = authorId === "unknown" ? "Unattributed" : authorId;
+      group.appendChild(who);
+      for (const f of authorFlags) {
+        const meta = KIND_META[f.kind] || { label: f.kind, color: "oklch(0.5 0 0)" };
+        const row = document.createElement("div");
+        row.className = "player-notes-flag";
+        row.setAttribute("data-testid", "player-notes-flag");
+        row.setAttribute("data-kind", f.kind);
+        row.style.borderLeft = `3px solid ${meta.color}`;
+        row.style.padding = "4px 8px";
+        row.style.margin = "4px 0";
+        const chip = document.createElement("span");
+        chip.textContent = meta.label;
+        chip.style.color = meta.color;
+        chip.style.fontFamily = "'IBM Plex Mono', monospace";
+        chip.style.fontSize = "10px";
+        chip.style.textTransform = "uppercase";
+        chip.style.letterSpacing = "0.08em";
+        const detail = document.createElement("div");
+        detail.textContent = f.detail || "";
+        detail.style.fontSize = "13px";
+        row.append(chip, detail);
+        if (f.entityId) {
+          const link = document.createElement("a");
+          link.href = `#/graph?world=${encodeURIComponent(currentWorld())}&focus=${encodeURIComponent(f.entityId)}`;
+          link.textContent = f.entityId;
+          link.className = "hint";
+          link.style.fontSize = "11px";
+          row.appendChild(link);
+        }
+        group.appendChild(row);
+      }
+      paHost.appendChild(group);
+    }
+  }
+
+  async function loadPlayerAnalysis() {
+    paHost.innerHTML = "";
+    try {
+      const { current } = await plApi(`/api/player-notes/analysis${plWithWorld()}`);
+      if (current) {
+        renderFlags(current.flags);
+        paStatus.textContent = `Last analyzed: ${current.flags.length} flag${current.flags.length === 1 ? "" : "s"} over ${current.noteCount} note${current.noteCount === 1 ? "" : "s"}.`;
+      }
+    } catch { /* no analysis yet */ }
+  }
+
+  analyzeBtn.addEventListener("click", async () => {
+    analyzeBtn.disabled = true;
+    paStatus.textContent = "Reading player notes…";
+    try {
+      const data = await plApi(`/api/player-notes/analyze`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: currentWorld() })
+      });
+      renderFlags(data.flags);
+      const dropped = (data.dropped || []).length;
+      paStatus.textContent = data.offline
+        ? "No API key configured — player notes not analyzed."
+        : data.noteCount === 0
+          ? "No player notes found (players write them in Foundry under the 'Session Notes' folder)."
+          : `${(data.flags || []).length} flag${(data.flags || []).length === 1 ? "" : "s"} over ${data.noteCount} note${data.noteCount === 1 ? "" : "s"}${dropped ? ` (${dropped} dropped)` : ""}.`;
+    } catch (err) {
+      paStatus.textContent = `Analyze failed: ${err.message}`;
+    } finally {
+      analyzeBtn.disabled = false;
+    }
+  });
+
   suggestBtn.addEventListener("click", async () => {
     suggestBtn.disabled = true;
     statusEl.textContent = "Reading this plan's session notes…";
@@ -1149,7 +1261,7 @@ function buildSessionWrapPanel(plan) {
   });
 
   details.addEventListener("toggle", () => {
-    if (details.open) { loadRoster(); loadNotes(); }
+    if (details.open) { loadRoster(); loadNotes(); loadPlayerAnalysis(); }
   }, { once: false });
 
   return details;
