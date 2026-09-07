@@ -32,9 +32,17 @@ propose generic reskins that could belong to any world. Make the
 suggestions genuinely different from each other, not three shades of the
 same idea.
 
+You MAY also include an optional `reflavorNotes` array: one short line per
+ability/attack whose DELIVERY should be described differently to fit the
+reskin (e.g. a Fire Bolt cantrip presented as a thrown alchemical vial; a
+Web spell as a weighted net; regeneration as battlefield adrenaline). This
+is presentation ONLY — never change or restate a number, die, range, save
+DC, or mechanic; you are renaming how it LOOKS, not what it does. Omit the
+array entirely if no ability needs reflavoring.
+
 Respond with ONLY a single JSON object of this exact shape — no prose, no
-markdown code fences:
+markdown code fences (`reflavorNotes` optional):
 
 ```json
-{ "suggestions": [ { "name": "...", "description": "...", "habitatHint": "..." } ] }
+{ "suggestions": [ { "name": "...", "description": "...", "habitatHint": "...", "reflavorNotes": ["...", "..."] } ] }
 ```

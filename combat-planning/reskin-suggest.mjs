@@ -92,7 +92,12 @@ function normalizeSuggestion(raw) {
   const description = String(raw?.description ?? "").trim();
   const habitatHint = String(raw?.habitatHint ?? "").trim();
   if (!name || !description || !habitatHint) return null;
-  return { name, description, habitatHint };
+  // Optional (2026-09-07): per-ability DELIVERY reflavor lines. Absence is
+  // valid; each line reflavors how an ability LOOKS, never its mechanics.
+  const reflavorNotes = Array.isArray(raw?.reflavorNotes)
+    ? raw.reflavorNotes.map((s) => String(s).trim()).filter(Boolean)
+    : [];
+  return { name, description, habitatHint, ...(reflavorNotes.length ? { reflavorNotes } : {}) };
 }
 
 /**

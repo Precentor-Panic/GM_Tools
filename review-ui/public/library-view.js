@@ -652,7 +652,7 @@ function buildBestiary(ctx) {
         style: `border: 1px solid ${selected ? "oklch(0.72 0.055 185)" : "oklch(0.88 0.010 80)"}; border-top: 3px solid ${accent}; border-radius: 4px; background: ${selected ? "oklch(0.975 0.012 185)" : "oklch(0.985 0.005 85)"}; padding: 11px 12px 10px; cursor: pointer;`
       }, [
         el("div", { style: "display: flex; align-items: baseline; gap: 8px;" }, [
-          el("span", { testid: "library-creature-card-name", text: e.rawFields?.name || "Unnamed", style: "flex: 1; min-width: 0; font-family: Spectral, serif; font-size: 16.5px; font-weight: 500; line-height: 1.2;" }),
+          el("span", { testid: "library-creature-card-name", text: e.flavorName || e.rawFields?.name || "Unnamed", style: "flex: 1; min-width: 0; font-family: Spectral, serif; font-size: 16.5px; font-weight: 500; line-height: 1.2;" }),
           el("span", { testid: "library-creature-card-rating", text: `CR ${rating ?? "—"}`, style: "font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.42 0.014 65); flex: none;" })
         ]),
         el("div", { style: "display: flex; align-items: center; gap: 7px; margin-top: 5px;" }, [
@@ -757,9 +757,32 @@ function buildBestiary(ctx) {
 
     const scroll = el("div", { style: "flex: 1; overflow-y: auto; padding: 14px 15px 20px;" });
     scroll.append(
-      el("div", { text: rf.name || "Unnamed", style: "font-family: Spectral, serif; font-size: 23px; font-weight: 500; line-height: 1.15;" }),
+      el("div", { testid: "library-detail-name", text: e.flavorName || rf.name || "Unnamed", style: "font-family: Spectral, serif; font-size: 23px; font-weight: 500; line-height: 1.15;" }),
       el("div", { text: rf.type || "", style: "font-style: italic; font-family: Spectral, serif; font-size: 13px; color: oklch(0.50 0.014 65); margin-top: 3px;" })
     );
+    // GM-only chassis line — what the statblock actually IS. Never shown to
+    // players, never pushed to Foundry (only the stats are). Styled like the
+    // muted-mono GM labels elsewhere in the rail.
+    if (e.chassis) {
+      scroll.append(el("div", {
+        testid: "library-detail-chassis",
+        style: "margin-top: 6px; padding: 4px 8px; border-radius: 3px; background: oklch(0.95 0.012 300); font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.44 0.06 300);"
+      }, [
+        el("span", { text: "GM · chassis: ", style: "opacity: 0.75;" }),
+        el("span", { text: e.chassis }),
+        el("span", { text: "  — players see the flavor name; the stats below are the chassis", style: "opacity: 0.6;" })
+      ]));
+    }
+    // GM-only reflavor notes: per-ability delivery reskin, mechanics unchanged.
+    if ((e.reflavorNotes || []).length) {
+      scroll.append(el("div", {
+        testid: "library-detail-reflavor",
+        style: "margin-top: 8px; padding: 6px 9px; border-radius: 3px; background: oklch(0.96 0.020 300); border-left: 3px solid oklch(0.70 0.09 300);"
+      }, [
+        el("div", { text: "Reflavor — delivery only, mechanics unchanged", style: "font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.50 0.09 300); margin-bottom: 4px;" }),
+        ...e.reflavorNotes.map((n) => el("div", { text: `• ${n}`, style: "font-size: 12px; line-height: 1.45; color: oklch(0.40 0.05 300);" }))
+      ]));
+    }
 
     // rating box + stepper
     const valueSpan = el("span", { testid: "library-rating-stepper-value", text: String(crKey(rating)), style: `font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: oklch(0.42 0.014 65); min-width: 26px; text-align: center;` });

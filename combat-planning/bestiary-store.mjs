@@ -199,8 +199,29 @@ function projectReadFields(entry) {
     // (`{opId, ...}`, see wf-mcp-server/lib/foundry-item-push-ops.mjs's
     // pushBestiaryEntryToFoundry / reconcilePendingBestiaryResults).
     pendingPush: entry.pendingPush ?? null,
+    // Reskin opacity pass (2026-09-07): table-facing flavor name vs. GM-only
+    // chassis + per-ability delivery reflavor. Same read-time-fallback-to-null
+    // convention as the fields above, with ONE deliberate exception:
+    // flavorName defaults to rawFields.name (never null) so every entry always
+    // has a table-usable display name, reskin or not. `chassis` is a GM-only
+    // DISPLAY string ("Veteran (MM)") — the authoritative chassis link stays
+    // reskinOfEntryId; this never crosses into any push/table output.
+    flavorName: entry.flavorName ?? entry.rawFields?.name ?? null,
+    chassis: entry.chassis ?? null,
+    reflavorNotes: entry.reflavorNotes ?? null,
     sourcePill: deriveSourcePill(entry)
   };
+}
+
+/**
+ * Pull the source code out of an add-from-plutonium sourceText stamp
+ * ("Veteran" chassis's "MM p347 via Plutonium" -> "MM"). Returns "" when the
+ * text isn't a Plutonium stamp. Pure; kept here to avoid a circular import
+ * from foundry-item-push-ops.mjs (which imports this module).
+ */
+function chassisSourceCode(sourceText) {
+  const m = /^(\S+)\s+p\d+\s+via\s+plutonium\s*$/i.exec(String(sourceText ?? "").trim());
+  return m ? m[1] : "";
 }
 
 function readEntry(entryId) {
@@ -230,7 +251,7 @@ function writeEntry(entry) {
  * @returns {object}   the created BestiaryEntry
  */
 export function saveBestiaryEntry(
-  { rawFields, derivedScore = null, sourceText = null, sourcePdfName = null, foundryActorRef = null, reskinOfEntryId = null },
+  { rawFields, derivedScore = null, sourceText = null, sourcePdfName = null, foundryActorRef = null, reskinOfEntryId = null, flavorName = null, chassis = null, reflavorNotes = null },
   opts = {}
 ) {
   const makeId = opts.makeId ?? makeBestiaryEntryId;
@@ -257,6 +278,13 @@ export function saveBestiaryEntry(
     // every entry created any other way. Same additive-field reasoning as
     // foundryActorRef immediately above.
     reskinOfEntryId,
+    // Reskin opacity pass (2026-09-07) -- additive optional presentation
+    // metadata; same reasoning as reskinOfEntryId above. Persisted only when
+    // non-null so legacy entries and non-reskin creates stay byte-identical;
+    // projectReadFields supplies the read-time defaults.
+    ...(flavorName != null ? { flavorName } : {}),
+    ...(chassis != null ? { chassis } : {}),
+    ...(reflavorNotes != null ? { reflavorNotes } : {}),
     needsConfirmation: outlier.flagged,
     outlierReasons: outlier.reasons,
     status: "proposed",
@@ -514,8 +542,26 @@ export function createReskinnedBestiaryEntry(sourceEntry, suggestion, opts = {})
   const note = [description, habitatHint ? `Habitat: ${habitatHint}` : null].filter(Boolean).join("\n\n");
 
   const rawFields = { ...(sourceEntry?.rawFields ?? {}), name };
+  // GM-only chassis display string, e.g. "Veteran (MM)". Authoritative chassis
+  // link is reskinOfEntryId; this is presentation only and never pushed.
+  const chassisName = String(sourceEntry?.rawFields?.name ?? "").trim();
+  const code = chassisSourceCode(sourceEntry?.sourceText);
+  const chassis = chassisName ? (code ? `${chassisName} (${code})` : chassisName) : null;
+  // reflavorNotes: optional per-ability DELIVERY reflavor (mechanics unchanged).
+  const reflavorNotes = Array.isArray(suggestion?.reflavorNotes)
+    ? suggestion.reflavorNotes.map((s) => String(s).trim()).filter(Boolean)
+    : null;
   const created = saveBestiaryEntry(
-    { rawFields, sourceText: null, sourcePdfName: null, foundryActorRef: null, reskinOfEntryId: sourceEntry?.id ?? null },
+    {
+      rawFields,
+      sourceText: null,
+      sourcePdfName: null,
+      foundryActorRef: null,
+      reskinOfEntryId: sourceEntry?.id ?? null,
+      flavorName: name,
+      chassis,
+      reflavorNotes: reflavorNotes && reflavorNotes.length ? reflavorNotes : null
+    },
     opts
   );
   if (note) updateBestiaryEntryNote(created.id, note);

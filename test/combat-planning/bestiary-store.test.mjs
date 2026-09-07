@@ -512,6 +512,58 @@ const IMPLAUSIBLE_RAW_FIELDS = {
     assert.equal(reread.sourcePill, "reskin");
   });
 
+  test("reskin opacity: flavorName/chassis/reflavorNotes set on a reskin; mechanics untouched; chassis carries the source code", () => {
+    const source = saveBestiaryEntry(
+      { rawFields: PLAUSIBLE_RAW_FIELDS, sourceText: "MM p341 via Plutonium" },
+      { makeId: () => "bst-reskin-src-3", now: "2026-09-07T00:00:00.000Z" }
+    );
+    const created = createReskinnedBestiaryEntry(
+      source,
+      {
+        name: "Copper Hand Sergeant",
+        description: "A gate captain in copper-trimmed leathers.",
+        habitatHint: "The Copper Gates, at inspection.",
+        reflavorNotes: ["Its 'Fire Bolt' is a thrown alchemical vial — same attack, same damage."]
+      },
+      { makeId: () => "bst-reskin-3", now: "2026-09-07T00:05:00.000Z" }
+    );
+
+    assert.equal(created.flavorName, "Copper Hand Sergeant", "flavorName is the table-facing name");
+    assert.equal(created.rawFields.name, "Copper Hand Sergeant", "rawFields.name still carries the flavor name (defense in depth)");
+    assert.equal(created.chassis, `${PLAUSIBLE_RAW_FIELDS.name} (MM)`, "chassis is the GM-only display string with the source code");
+    assert.deepEqual(created.reflavorNotes, ["Its 'Fire Bolt' is a thrown alchemical vial — same attack, same damage."]);
+    // Russell's hard rule: mechanics deep-equal to the source, only name differs.
+    for (const k of Object.keys(PLAUSIBLE_RAW_FIELDS)) {
+      if (k === "name") continue;
+      assert.deepEqual(created.rawFields[k], PLAUSIBLE_RAW_FIELDS[k], `${k} unchanged by reskin`);
+    }
+
+    const reread = getBestiaryEntry("bst-reskin-3");
+    assert.equal(reread.flavorName, "Copper Hand Sergeant");
+    assert.equal(reread.chassis, `${PLAUSIBLE_RAW_FIELDS.name} (MM)`);
+    assert.deepEqual(reread.reflavorNotes, created.reflavorNotes);
+  });
+
+  test("reskin opacity: reflavorNotes omitted -> null; a legacy entry with no new fields reads flavorName === rawFields.name and null chassis/reflavor", () => {
+    const source = saveBestiaryEntry(
+      { rawFields: PLAUSIBLE_RAW_FIELDS },
+      { makeId: () => "bst-reskin-src-4", now: "2026-09-07T00:00:00.000Z" }
+    );
+    // legacy/non-reskin entry: no flavorName stored -> defaults to rawFields.name
+    assert.equal(getBestiaryEntry("bst-reskin-src-4").flavorName, PLAUSIBLE_RAW_FIELDS.name);
+    assert.equal(getBestiaryEntry("bst-reskin-src-4").chassis, null);
+    assert.equal(getBestiaryEntry("bst-reskin-src-4").reflavorNotes, null);
+
+    const created = createReskinnedBestiaryEntry(
+      source,
+      { name: "Silt Trench Bruiser", description: "d", habitatHint: "h" },
+      { makeId: () => "bst-reskin-4", now: "2026-09-07T00:05:00.000Z" }
+    );
+    assert.equal(created.reflavorNotes, null, "no reflavor lines -> null, not []");
+    // source had no Plutonium stamp -> chassis is the bare chassis name, no (code)
+    assert.equal(created.chassis, PLAUSIBLE_RAW_FIELDS.name);
+  });
+
   test("createReskinnedBestiaryEntry: throws a clear error for an empty/missing suggestion name -- no entry created", () => {
     const source = saveBestiaryEntry(
       { rawFields: PLAUSIBLE_RAW_FIELDS },
