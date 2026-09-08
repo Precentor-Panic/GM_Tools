@@ -195,15 +195,21 @@ import {
   updateBestiaryEntryNote,
   updateBestiaryEntryRating,
   promoteBestiaryEntryToGraph,
-  createReskinnedBestiaryEntry
+  createReskinnedBestiaryEntry,
+  refreshBestiaryEntryFromPlutonium,
+  refreshAllBestiaryEntriesFromPlutonium,
+  compactActionsLine
 } from "../combat-planning/bestiary-store.mjs";
+// E2 (2026-09-08): the full-record mapper behind add-from-plutonium and the
+// refresh routes -- Plutonium rows carry attacks/traits, not just AC/HP/CR.
+import { rawFieldsFromPlutoniumRecord } from "../combat-planning/plutonium-monster-fields.mjs";
 // Phase 37.6b -- "Wear it as something else" (see the module's own doc
 // comment for the full grounding/offline-degrade story).
 import { suggestReskins } from "../combat-planning/reskin-suggest.mjs";
 // Friction Wave 1 W4a -- the read-only Plutonium source LAYER (bundled
 // 5etools bestiary data indexed from <dataDir>/modules/plutonium/, never
 // mixed into the curated bestiary store). See that module's own header.
-import { loadPlutoniumIndex, searchPlutoniumIndex, plutoniumFacets, findPlutoniumCreature } from "../combat-planning/plutonium-source.mjs";
+import { loadPlutoniumIndex, searchPlutoniumIndex, plutoniumFacets, findPlutoniumCreature, getRawPlutoniumEntry } from "../combat-planning/plutonium-source.mjs";
 // "Aureus to the Table" task G5 -- the generalized family core's `items`
 // family, the Reliquary's own read-only "Available via Plutonium" shelf.
 // Same read-only-source-layer rule as W4a above, generic path this time.
@@ -590,7 +596,21 @@ function withBestiarySummary(element) {
   try {
     const entry = getBestiaryEntry(id);
     const rf = entry.rawFields || {};
-    return { ...element, bestiary: { id, name: entry.name ?? rf.name ?? null, ac: rf.ac ?? null, hp: rf.hp ?? null, cr: rf.challengeRating ?? rf.cr ?? null, note: entry.note ?? null } };
+    // `name` prefers the reskin's flavorName (the shelf's own display name;
+    // the old `entry.name` read a key no entry carries). `actionsLine` is
+    // E2's one-line "what it does" (null when the row carries no actions).
+    return {
+      ...element,
+      bestiary: {
+        id,
+        name: entry.flavorName ?? rf.name ?? null,
+        ac: rf.ac ?? null,
+        hp: rf.hp ?? null,
+        cr: rf.challengeRating ?? rf.cr ?? null,
+        note: entry.note ?? null,
+        actionsLine: compactActionsLine(rf)
+      }
+    };
   } catch {
     return element;
   }
@@ -2481,19 +2501,54 @@ async function handleApi(req, res, url, parts) {
         `Bestiary entry "${creature.name}" (${provenance}) already exists on the curated shelf (id "${duplicate.id}") -- not adding a second copy.`
       );
     }
-    const rawFields = {
-      name: creature.name,
-      type: creature.type ? (creature.tags?.length ? `${creature.type} (${creature.tags.join(", ")})` : creature.type) : "Unknown",
-      ...(creature.ac != null ? { ac: creature.ac } : {}),
-      ...(creature.hp != null ? { hp: creature.hp } : {}),
-      ...(creature.cr != null ? { challengeRating: creature.cr } : {}),
-      ...(creature.size?.length ? { size: creature.size.join("/") } : {}),
-      ...(creature.environment?.length ? { environment: creature.environment.join(", ") } : {}),
-      ...(creature.legendary ? { legendary: true } : {})
-    };
+    // E2: the FULL raw record mapped into the ingest vocabulary (attacks /
+    // multiattack / recharge / legendary / capped trait summaries), so the
+    // Library rail and the Run block show what the creature DOES. The
+    // compact index row stays as the fallback when the raw record can't be
+    // mapped (a _copy reprint shell, or a record the index has but the
+    // family loader can't re-find) -- never a failed add.
+    let rawFields = null;
+    try {
+      const raw = getRawPlutoniumEntry(dir, "bestiary", { name: creature.name, source: creature.source });
+      if (raw) rawFields = rawFieldsFromPlutoniumRecord(raw);
+    } catch {
+      rawFields = null;
+    }
+    if (!rawFields) {
+      rawFields = {
+        name: creature.name,
+        type: creature.type ? (creature.tags?.length ? `${creature.type} (${creature.tags.join(", ")})` : creature.type) : "Unknown",
+        ...(creature.ac != null ? { ac: creature.ac } : {}),
+        ...(creature.hp != null ? { hp: creature.hp } : {}),
+        ...(creature.cr != null ? { challengeRating: creature.cr } : {}),
+        ...(creature.size?.length ? { size: creature.size.join("/") } : {}),
+        ...(creature.environment?.length ? { environment: creature.environment.join(", ") } : {}),
+        ...(creature.legendary ? { legendary: true } : {})
+      };
+    }
     let entry = saveBestiaryEntry({ rawFields, sourceText: provenance });
     entry = acceptBestiaryEntry(entry.id);
     entry = updateBestiaryEntryNote(entry.id, provenance);
+    return sendJson(res, 200, { entry });
+  }
+
+  // E2: POST /api/combat-planning/bestiary/refresh-from-plutonium -> the
+  // bulk backfill: every non-discarded row with Plutonium provenance
+  // (directly, or via its reskin chassis) re-reads its record and gains the
+  // action fields. Per-row try/catch inside the lib -- the response reports
+  // {refreshed, skipped, failed[]}, never a thrown error for one bad row.
+  if (method === "POST" && parts.length === 4 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[3] === "refresh-from-plutonium") {
+    const result = refreshAllBestiaryEntriesFromPlutonium(resolveDir());
+    return sendJson(res, 200, result);
+  }
+
+  // E2: POST /api/combat-planning/bestiary/:id/refresh-from-plutonium ->
+  // {entry}. One row; a reskin keeps its own reflavoured ability names
+  // slot-for-slot (mechanics fresh from the book). A missing entry or a row
+  // with no Plutonium provenance is a clean 400 naming the problem (the
+  // shelf's convention keeps 404 for a missing ROUTE).
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "refresh-from-plutonium") {
+    const entry = refreshBestiaryEntryFromPlutonium(resolveDir(), parts[3]);
     return sendJson(res, 200, { entry });
   }
 

@@ -212,5 +212,37 @@ const PARTY = [
     assert.deepEqual(a, b);
   });
 
+  // -------------------------------------------------------------------------
+  // Shelf actions backfill (2026-09-08). Plutonium/reskin shelf rows carry
+  // derivedScore: null (the bestiary store never scores them), so their threat
+  // used to fall through to computeActionEconomyScore over an EMPTY rawFields
+  // and score 0. Now that add-from-plutonium / refresh-from-plutonium populate
+  // attacks/multiattack on those rows, the same fallback yields a real threat.
+  // Behaviour change worth pinning: threat scores for such rows rise from 0.
+  // -------------------------------------------------------------------------
+
+  test("candidate threat fallback: a derivedScore-less row WITH attacks scores > 0 while the same row without attacks scores 0 (Plutonium shelf rows after the actions backfill)", () => {
+    const flat = {
+      entryId: "flat-1",
+      rawFields: { name: "Flat Row", hp: 11, ac: 12 },
+      derivedScore: null
+    };
+    const armed = {
+      entryId: "armed-1",
+      rawFields: {
+        name: "Armed Row",
+        hp: 11,
+        ac: 12,
+        multiattack: { count: 2 },
+        attacks: [{ name: "Jab", toHit: 3, damageDice: "1d6+1", damageType: "piercing" }]
+      },
+      derivedScore: null
+    };
+    const flatScore = scoreCombination({ combination: [{ entryId: "flat-1", count: 1 }], candidatePool: [flat], party: PARTY, knobs: {} }).expectedScore;
+    const armedScore = scoreCombination({ combination: [{ entryId: "armed-1", count: 1 }], candidatePool: [armed], party: PARTY, knobs: {} }).expectedScore;
+    assert.equal(flatScore, 0, "an attack-less derivedScore-less row still contributes no threat");
+    assert.ok(armedScore > 0, `a derivedScore-less row with attacks must score > 0 (got ${armedScore})`);
+  });
+
   console.log(`\n${passed} passed`);
 })();

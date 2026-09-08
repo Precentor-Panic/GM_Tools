@@ -416,6 +416,45 @@ await test("pushBestiaryEntryToFoundry: op shape carries the exact raw record", 
   assert.deepEqual(ops[0].data.entry, GOBLIN);
 });
 
+await test("pushBestiaryEntryToFoundry: a reskin of a Plutonium chassis pushes the chassis record under the reskin's name; ref lands on the reskin row", async () => {
+  const WORLD = "bestiary-push-reskin-world";
+  const chassis = saveBestiaryEntry({ rawFields: { name: "Goblin" }, sourceText: "MM p166 via Plutonium" });
+  const reskin = saveBestiaryEntry({ rawFields: { name: "Cave Goblin" }, reskinOfEntryId: chassis.id, chassis: "Goblin (MM)", sourceText: "reskin of Goblin" });
+  assert.equal(getBestiaryEntry(reskin.id).sourcePill, "reskin");
+
+  // Shape: queued path leaves the op on disk to inspect.
+  const queued = await pushBestiaryEntryToFoundry(dataDir, reskin.id, { world: WORLD }, { pollMs: 5, timeoutMs: 20, makeOpId: () => "op_reskin_shape" });
+  assert.equal(queued.status, "queued");
+  const ops = JSON.parse(readFileSync(foundryOpsPath(dataDir, WORLD), "utf8"));
+  assert.equal(ops[0].kind, "import_via_plutonium");
+  assert.deepEqual(
+    ops[0].data.entry,
+    { ...GOBLIN, name: "Cave Goblin", token: { name: GOBLIN.name, source: GOBLIN.source } },
+    "chassis record verbatim except the name; token art pinned to the chassis so Plutonium doesn't 404 on the reskin name"
+  );
+
+  // Confirmed ok: ref lands on the reskin row, never the chassis.
+  const reskin2 = saveBestiaryEntry({ rawFields: { name: "Bog Goblin" }, reskinOfEntryId: chassis.id, chassis: "Goblin (MM)" });
+  writeFileSync(foundryOpsPath(dataDir, WORLD), "[]", "utf8");
+  const opId = "op_bestiary_reskin";
+  const timer = armFakeWatcher(WORLD, { opId, ok: true, foundryUuid: "Actor.boggoblin1" }, 15);
+  const result = await pushBestiaryEntryToFoundry(dataDir, reskin2.id, { world: WORLD }, { pollMs: 5, timeoutMs: 200, makeOpId: () => opId });
+  clearTimeout(timer);
+  assert.equal(result.ok, true);
+  assert.equal(getBestiaryEntry(reskin2.id).foundryActorRef, "Actor.boggoblin1", "ref written on the RESKIN row (the one a tray references)");
+  assert.equal(getBestiaryEntry(chassis.id).foundryActorRef, null, "chassis row untouched");
+});
+
+await test("pushBestiaryEntryToFoundry: refuses a reskin whose chassis is not Plutonium-sourced", async () => {
+  const WORLD = "bestiary-push-reskin-mine-world";
+  const chassis = saveBestiaryEntry({ rawFields: { name: "Homebrew Ooze" }, sourceText: "hand-authored" });
+  const reskin = saveBestiaryEntry({ rawFields: { name: "Sewer Ooze" }, reskinOfEntryId: chassis.id, chassis: "Homebrew Ooze" });
+  await assert.rejects(
+    () => pushBestiaryEntryToFoundry(dataDir, reskin.id, { world: WORLD }, { pollMs: 5, timeoutMs: 20 }),
+    /no Plutonium provenance.*chassis sourcePill="mine"/
+  );
+});
+
 await test("pushBestiaryEntryToFoundry: refuses a non-Plutonium (hand-authored/SRD) entry", async () => {
   const WORLD = "bestiary-push-non-plutonium-world";
   const entry = saveBestiaryEntry({ rawFields: { name: "Homebrew Ooze" }, sourceText: "hand-authored" });

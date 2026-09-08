@@ -4161,6 +4161,9 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
           if (b.cr != null) parts.push(`CR ${b.cr}`);
           const src = b.name && b.name !== el.name ? ` — ${b.name}` : "";
           if (parts.length || src) host.appendChild(runSpreadEl("span", "rs-bl", `${parts.join(" · ")}${src}`));
+          // E2: what it DOES, one line, after the defences (the AC line stays
+          // the first .rs-bl -- run-spread.e2e pins it).
+          if (b.actionsLine) host.appendChild(runSpreadEl("span", "rs-bl rs-bl--actions", b.actionsLine));
           if (b.note) host.appendChild(runSpreadLabeledLine("Note", b.note));
         } else if (f.statblockRef) {
           host.appendChild(runSpreadEl("span", "rs-bl", String(f.statblockRef)));

@@ -681,21 +681,45 @@ function buildBestiary(ctx) {
     paintStatRail();
   }
 
+  // The trait kinds the Plutonium mapper emits (plutonium-monster-fields.mjs)
+  // and the rail label each gets. Order = stat-block order.
+  const TRAIT_KIND_LABELS = [
+    ["trait", "Traits"],
+    ["action", "Other Actions"],
+    ["bonus", "Bonus Actions"],
+    ["reaction", "Reactions"],
+    ["legendary", "Legendary"],
+    ["spellcasting", "Spellcasting"]
+  ];
+
   function statSections(rf) {
     const sections = [];
+    const traits = Array.isArray(rf.traits) ? rf.traits : [];
+    const byKind = (kind) => traits.filter((t) => (t.kind ?? "trait") === kind);
+    const traitItems = (list) => list.map((t) => ({ name: `${t.name}.`, text: t.summary || "" }));
+    // Traits lead, as on a printed block.
+    if (byKind("trait").length) sections.push({ label: "Traits", items: traitItems(byKind("trait")) });
     const actions = [];
     if (rf.multiattack) {
       const names = rf.multiattack.attackNames?.length ? ` (${rf.multiattack.attackNames.join(", ")})` : "";
       actions.push({ name: "Multiattack.", text: `Makes ${rf.multiattack.count} attacks${names}.` });
     }
     for (const a of rf.attacks || []) {
+      // E2: a mapped attack carries the whole attack line (reach/range,
+      // target, hit) as `summary`; the hand-entered shape still composes.
+      if (a.summary) { actions.push({ name: `${a.name}.`, text: a.summary }); continue; }
       const hit = a.toHitBonus != null ? `+${a.toHitBonus} to hit, ` : "";
       const dmg = a.damageDice ? `${a.damageDice}${a.damageType ? " " + a.damageType : ""} damage.` : "";
       actions.push({ name: `${a.name}.`, text: `${hit}${dmg}`.trim() });
     }
     if (actions.length) sections.push({ label: "Actions", items: actions });
     if (Array.isArray(rf.rechargeAbilities) && rf.rechargeAbilities.length) {
-      sections.push({ label: "Recharge", items: rf.rechargeAbilities.map((r) => ({ name: `${r.name} (Recharge ${r.rechargeOn}).`, text: r.damageDice ? `${r.damageDice} damage.` : "" })) });
+      sections.push({ label: "Recharge", items: rf.rechargeAbilities.map((r) => ({ name: `${r.name} (Recharge ${r.rechargeOn}).`, text: r.summary || (r.damageDice ? `${r.damageDice} damage.` : "") })) });
+    }
+    for (const [kind, label] of TRAIT_KIND_LABELS) {
+      if (kind === "trait") continue;
+      const list = byKind(kind);
+      if (list.length) sections.push({ label, items: traitItems(list) });
     }
     if (rf.legendaryActions) {
       sections.push({ label: "Legendary Actions", items: [{ name: `${rf.legendaryActions.count} legendary actions.`, text: `${rf.legendaryActions.costPerAction ? rf.legendaryActions.costPerAction + " per action. " : ""}Regains spent actions at the start of its turn.` }] });
@@ -752,6 +776,32 @@ function buildBestiary(ctx) {
           await renderLibrarySurface("bestiary");
         }
       }));
+    }
+    // E2: any row with Plutonium provenance (a shelf add, a pushed shelf add,
+    // or a reskin of one) can re-read its record for the action fields. A
+    // reskin keeps its own reflavoured ability names; mechanics come fresh.
+    if (e.reskinOfEntryId || /via plutonium/i.test(e.sourceText ?? "")) {
+      const refreshBtn = el("span", {
+        testid: "library-bestiary-refresh-btn",
+        text: "Refresh abilities",
+        title: "Re-reads the Plutonium record for this creature's attacks, traits and recharge abilities. AC/HP/CR, your note and rating are untouched; a reskin keeps its own ability names.",
+        style: "flex: none; font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.04em; color: oklch(0.44 0.050 300); padding: 2px 8px; border: 1px dashed oklch(0.72 0.045 300); border-radius: 20px; cursor: pointer; white-space: nowrap;"
+      });
+      refreshBtn.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        refreshBtn.textContent = "refreshing…";
+        refreshBtn.style.opacity = "0.6";
+        try {
+          await api(`/api/combat-planning/bestiary/${encodeURIComponent(e.id)}/refresh-from-plutonium`, { method: "POST" });
+          showUndoToast(`"${e.flavorName || rf.name}" abilities refreshed from Plutonium.`, () => {});
+          await renderLibrarySurface("bestiary");
+        } catch (err) {
+          refreshBtn.textContent = "Refresh abilities";
+          refreshBtn.style.opacity = "1";
+          showUndoToast(`Could not refresh: ${err.message}`, () => {});
+        }
+      });
+      headerChildren.push(refreshBtn);
     }
     statRail.appendChild(el("div", { style: "padding: 12px 15px; border-bottom: 1px solid oklch(0.88 0.010 80); display: flex; align-items: center; gap: 9px;" }, headerChildren));
 

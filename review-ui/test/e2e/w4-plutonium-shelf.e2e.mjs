@@ -139,15 +139,16 @@ test("'Add to shelf' lands a REAL accepted curated entry (stats + provenance not
   await page.close();
 });
 
-test("the add button's own copy documents that Foundry import stays a manual Plutonium act", async () => {
+test("the add button's own copy documents that a shelf creature is importable straight into Foundry (G8 copy -- the old 'manual Plutonium act' framing is gone)", async () => {
   const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
   await openBestiaryTab(page);
   const veteranRow = page.locator('[data-testid="plutonium-row"][data-name="Veteran"]');
   await veteranRow.waitFor({ state: "visible", timeout: 15000 });
   const title = await veteranRow.locator('[data-testid="plutonium-row-add-btn"]').getAttribute("title");
-  assert.match(title ?? "", /manual Plutonium act/i);
+  assert.match(title ?? "", /importable straight into Foundry/i);
+  assert.doesNotMatch(title ?? "", /manual Plutonium act/i);
   // And the shelf blurb states the same rule where the shelf starts.
   const shelfText = await page.locator('[data-testid="plutonium-shelf"]').textContent();
-  assert.match(shelfText ?? "", /manual Plutonium act at prep time/i);
+  assert.match(shelfText ?? "", /importable straight from here/i);
   await page.close();
 });

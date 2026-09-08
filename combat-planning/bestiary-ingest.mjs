@@ -71,11 +71,17 @@ export class BestiaryExtractionValidationError extends Error {
 // -- a `score`/`actionEconomyScore`/`threatScore` field the model adds
 // despite instructions is silently dropped here, not merely undocumented.
 
+// `summary` on attacks/recharge abilities and the `traits[]` list are the
+// Plutonium mapper's additions (plutonium-monster-fields.mjs): a capped
+// first-sentence line per ability so the shelf shows what a creature DOES,
+// never whole stat-block text. All optional -- pre-existing entries and
+// the LLM ingest output validate unchanged.
 const RawAttack = z.object({
   name: z.string(),
   toHitBonus: z.number().optional(),
   damageDice: z.string(),
-  damageType: z.string().optional()
+  damageType: z.string().optional(),
+  summary: z.string().optional()
 });
 
 const RawMultiattack = z.object({
@@ -86,12 +92,19 @@ const RawMultiattack = z.object({
 const RawRechargeAbility = z.object({
   name: z.string(),
   rechargeOn: z.string(),
-  damageDice: z.string().optional()
+  damageDice: z.string().optional(),
+  summary: z.string().optional()
 });
 
 const RawLegendaryActions = z.object({
   count: z.number(),
   costPerAction: z.number().optional()
+});
+
+const RawTrait = z.object({
+  name: z.string(),
+  summary: z.string(),
+  kind: z.string().optional()
 });
 
 export const RawBestiaryFields = z.object({
@@ -107,7 +120,8 @@ export const RawBestiaryFields = z.object({
   legendaryActions: RawLegendaryActions.optional(),
   lairEffects: z.boolean().optional(),
   auraEffects: z.array(z.string()).optional(),
-  appliedEffects: z.array(z.string()).optional()
+  appliedEffects: z.array(z.string()).optional(),
+  traits: z.array(RawTrait).optional()
 });
 
 function fillTemplate(vars) {

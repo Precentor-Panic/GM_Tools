@@ -109,6 +109,7 @@ import {
   setBestiaryPendingPush
 } from "../../combat-planning/bestiary-store.mjs";
 import { getRawPlutoniumEntry } from "../../combat-planning/plutonium-source.mjs";
+import { parsePlutoniumProvenance } from "../../combat-planning/plutonium-monster-fields.mjs";
 import { writeFoundryOps, makeOpId } from "./foundry-ops.mjs";
 import { foundryResultsPath } from "./snapshot.mjs";
 
@@ -118,17 +119,12 @@ import { foundryResultsPath } from "./snapshot.mjs";
  * both the bestiary and items routes use the exact same
  * `${source}${page != null ? \` p${page}\` : ""} via Plutonium` template) —
  * the ONE place this module needs to recover `source` from a row that only
- * carries `name` + this one free-text field. 5etools source codes never
- * contain spaces (DMG/PHB/XGE/…), so `\S+` is a safe, exact inverse of the
- * template above.
- * @param {string|null|undefined} sourceText
- * @returns {string|null}
+ * carries `name` + this one free-text field. The implementation lives in
+ * combat-planning/plutonium-monster-fields.mjs (the bestiary store needs it
+ * too, and the store must not import this module -- it would be circular);
+ * re-exported here so existing callers keep their import.
  */
-export function parsePlutoniumProvenance(sourceText) {
-  if (typeof sourceText !== "string") return null;
-  const m = /^(\S+)(?: p\d+)? via Plutonium$/i.exec(sourceText.trim());
-  return m ? m[1] : null;
-}
+export { parsePlutoniumProvenance };
 
 /** PURE. `recharges:false` -> `recovery:[]`; true/absent -> key omitted (see module header). */
 function buildUsesPatch(overrides) {
@@ -438,29 +434,57 @@ export async function pushBestiaryEntryToFoundry(dir, entryId, { world } = {}, o
       `foundryActorRef ("${entry.foundryActorRef}") -- already in Foundry — remove it there first if you want a re-push.`
     );
   }
-  if (entry.sourcePill !== "plutonium") {
+  // Reskin (Phase 37.6b's "wear it as something else"): the stats come from
+  // the CHASSIS entry's raw Plutonium record, pushed under the reskin's own
+  // name -- Plutonium names the imported Actor from `entry.name`, so
+  // overriding that one field is the whole "clean-name" override (Russell,
+  // Aureus prep: reskins used to arrive as "Thug" and need renaming in
+  // Foundry). Everything else in the record stays verbatim; the ref is
+  // written onto the RESKIN row (the one a scene tray actually references).
+  const isReskin = entry.sourcePill === "reskin" && !!entry.reskinOfEntryId;
+  let chassis = entry;
+  if (isReskin) {
+    try {
+      chassis = getBestiaryEntry(entry.reskinOfEntryId);
+    } catch {
+      throw new Error(
+        `pushBestiaryEntryToFoundry: reskin "${entryId}" ("${entry.rawFields?.name ?? "?"}") points at chassis entry ` +
+        `"${entry.reskinOfEntryId}", which no longer exists -- re-create the reskin from a live chassis.`
+      );
+    }
+  }
+  if (chassis.sourcePill !== "plutonium") {
     throw new Error(
       `pushBestiaryEntryToFoundry: bestiary entry "${entryId}" ("${entry.rawFields?.name ?? "?"}") has no Plutonium ` +
-      `provenance (sourcePill="${entry.sourcePill}") -- only creatures added from the "Available via Plutonium" ` +
-      `shelf can be pushed this way.`
+      `provenance (sourcePill="${entry.sourcePill}"${isReskin ? `, chassis sourcePill="${chassis.sourcePill}"` : ""}) -- only ` +
+      `creatures added from the "Available via Plutonium" shelf (or reskins of them) can be pushed this way.`
     );
   }
-  const source = parsePlutoniumProvenance(entry.sourceText);
-  const name = entry.rawFields?.name;
-  const rawEntry = source && name ? getRawPlutoniumEntry(dir, "bestiary", { name, source }) : null;
-  if (!rawEntry) {
+  const source = parsePlutoniumProvenance(chassis.sourceText);
+  const name = chassis.rawFields?.name;
+  const rawChassis = source && name ? getRawPlutoniumEntry(dir, "bestiary", { name, source }) : null;
+  if (!rawChassis) {
     throw new Error(
       `pushBestiaryEntryToFoundry: entry "${entryId}" ("${name ?? "?"}") carries Plutonium provenance ` +
-      `("${entry.sourceText}") but the raw record is no longer available -- is Plutonium still installed with the ` +
+      `("${chassis.sourceText}") but the raw record is no longer available -- is Plutonium still installed with the ` +
       `same bundled data?`
     );
   }
-  if (rawEntry._copy) {
+  if (rawChassis._copy) {
     throw new Error(
       `pushBestiaryEntryToFoundry: "${name}" is a Plutonium "_copy" reprint shell, not a fully copy-resolved stat ` +
       `block -- this bridge doesn't implement 5etools' copy-resolution logic, so this creature can't be pushed.`
     );
   }
+  // Plutonium derives the token/portrait URL from `name`+`source` unless the
+  // record carries an explicit `token: {name, source}` (5etools' own reskin
+  // convention) -- without it, a renamed record 404s on
+  // ".../tokens/MM/<Reskin Name>.webp" and the actor ships with dead art
+  // (live-verified on the first Aureus push). Pin the art to the chassis.
+  const reskinName = isReskin ? (entry.rawFields?.name || entry.flavorName || null) : null;
+  const rawEntry = reskinName
+    ? { ...rawChassis, name: reskinName, token: rawChassis.token ?? { name: rawChassis.name, source: rawChassis.source } }
+    : rawChassis;
 
   const opId = opts.makeOpId ? opts.makeOpId() : makeOpId();
   const outcome = await writeFoundryOps(dir, world, [{ opId, kind: "import_via_plutonium", data: { kind: "creature", entry: rawEntry } }], opts);

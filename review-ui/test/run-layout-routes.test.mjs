@@ -230,7 +230,26 @@ test("elements list attaches a read-only bestiary summary for a linked entry, an
   assert.equal(thugs.bestiary.ac, 11);
   assert.equal(thugs.bestiary.hp, 32);
   assert.equal(thugs.bestiary.cr, "1/2");
+  assert.equal(thugs.bestiary.name, "Test Thug");
+  assert.equal(thugs.bestiary.actionsLine, null, "no attacks/traits -> no actions line");
   assert.equal(list.find((e) => e.name === "Ghost").bestiary, undefined);
+});
+
+test("bestiary summary (2026-09-08): carries a compact actionsLine from the entry's attacks/traits and prefers the reskin's flavorName over the chassis name", async () => {
+  const entry = saveBestiaryEntry({
+    rawFields: {
+      name: "Test Brute", ac: 13, hp: 22, challengeRating: "1/2",
+      multiattack: { count: 2 },
+      attacks: [{ name: "Club", toHitBonus: 4, damageDice: "1d6+2", damageType: "bludgeoning" }],
+      traits: [{ name: "Pack Tactics", summary: "Advantage when an ally is adjacent.", kind: "trait" }]
+    },
+    flavorName: "Dock Bruiser"
+  });
+  await postJson(elementsPath(), { world: WORLD, name: "Bruisers", fields: { bestiaryEntryId: entry.id }, run: { column: "side", role: "block" } });
+  const list = (await getJson(`${elementsPath()}?world=${WORLD}`)).body.elements;
+  const b = list.find((e) => e.name === "Bruisers").bestiary;
+  assert.equal(b.name, "Dock Bruiser");
+  assert.equal(b.actionsLine, "Multiattack ×2 · Club +4 (1d6+2 bludgeoning) · Pack Tactics");
 });
 
 test("stagecraft image route streams the asset's file from under WF_DATA_DIR and refuses to escape it", async () => {

@@ -88,6 +88,12 @@ import { diceAverage } from "./dice.mjs";
 // scene-elements.mjs's promoteElement already established (all three import
 // addNodeOp from here) -- no second manual-entity-creation mechanism.
 import { addNodeOp } from "../wf-mcp-server/lib/manual-edit-ops.mjs";
+// Shelf abilities (E2, 2026-09-08): the Plutonium record -> rawFields mapper
+// and the provenance parser live in plutonium-monster-fields.mjs (pure), so
+// the refresh path below can re-read a chassis without importing from
+// foundry-item-push-ops.mjs (which imports THIS module -- circular).
+import { parsePlutoniumProvenance, rawFieldsFromPlutoniumRecord } from "./plutonium-monster-fields.mjs";
+import { getRawPlutoniumEntry } from "./plutonium-source.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "bestiary");
@@ -216,12 +222,12 @@ function projectReadFields(entry) {
 /**
  * Pull the source code out of an add-from-plutonium sourceText stamp
  * ("Veteran" chassis's "MM p347 via Plutonium" -> "MM"). Returns "" when the
- * text isn't a Plutonium stamp. Pure; kept here to avoid a circular import
- * from foundry-item-push-ops.mjs (which imports this module).
+ * text isn't a Plutonium stamp. Delegates to the shared parser (E2: a
+ * pageless "MM via Plutonium" stamp now yields "MM" too, matching what the
+ * push path already accepted).
  */
 function chassisSourceCode(sourceText) {
-  const m = /^(\S+)\s+p\d+\s+via\s+plutonium\s*$/i.exec(String(sourceText ?? "").trim());
-  return m ? m[1] : "";
+  return parsePlutoniumProvenance(sourceText) ?? "";
 }
 
 function readEntry(entryId) {
@@ -388,12 +394,186 @@ export function updateBestiaryEntryNote(entryId, note) {
 }
 
 /**
+ * Status-INDEPENDENT rename of a RESKIN row's table-facing name (the same
+ * convention as updateBestiaryEntryNote -- an ongoing table-use edit). A
+ * reskin's `rawFields.name` mirrors its `flavorName` (createReskinnedBestiaryEntry
+ * writes both), so both move together; the chassis link and every mechanic
+ * stay. Refuses non-reskin rows: a chassis/hand row's `rawFields.name` IS its
+ * identity (Plutonium provenance resolves by it), not a flavour label.
+ * @returns {object}   the updated BestiaryEntry (projection included)
+ */
+export function renameBestiaryEntryFlavor(entryId, flavorName) {
+  const name = String(flavorName ?? "").trim();
+  if (!name) throw new Error("renameBestiaryEntryFlavor requires a non-empty flavorName.");
+  const entry = readEntry(entryId);
+  if (!entry.reskinOfEntryId) {
+    throw new Error(`Refusing to rename bestiary entry "${entryId}": only a reskin row carries a flavour name (this row's name is its identity).`);
+  }
+  return projectReadFields(writeEntry({ ...entry, flavorName: name, rawFields: { ...(entry.rawFields ?? {}), name } }));
+}
+
+/**
  * §5's status-INDEPENDENT patch, same convention as updateBestiaryEntryNote.
  * @returns {object}   the updated BestiaryEntry (projection included)
  */
 export function updateBestiaryEntryRating(entryId, rating) {
   const entry = readEntry(entryId);
   return projectReadFields(writeEntry({ ...entry, rating: rating ?? null }));
+}
+
+// ---------------------------------------------------------------------------
+// Shelf abilities (E2, 2026-09-08). Plutonium-added rows used to carry only
+// name/type/ac/hp/cr (the compact index row), so the Library rail and the
+// Run block showed "no special abilities" for every one of them and the
+// encounter heuristic scored them 0. These setters carry the ingest
+// vocabulary's ACTION fields (attacks/multiattack/recharge/legendary) plus
+// the mapper's `traits[]` onto an existing row, status-independently (an
+// ongoing table-use edit, same convention as updateBestiaryEntryNote), and
+// never touch name/ac/hp/cr.
+// ---------------------------------------------------------------------------
+
+export const BESTIARY_ACTION_FIELD_KEYS = Object.freeze(["attacks", "multiattack", "rechargeAbilities", "legendaryActions", "traits"]);
+
+/**
+ * Status-INDEPENDENT merge of the action-field keys onto an entry's
+ * rawFields. Only BESTIARY_ACTION_FIELD_KEYS are honoured (anything else in
+ * `actionFields` is ignored, so name/ac/hp/cr can never change through this
+ * path); a key set to `null` is removed. Re-runs checkBestiaryOutliers
+ * because the attack numbers feed it.
+ * @returns {object}   the updated BestiaryEntry (projection included)
+ */
+export function mergeBestiaryEntryActionFields(entryId, actionFields) {
+  const entry = readEntry(entryId);
+  const rawFields = { ...(entry.rawFields ?? {}) };
+  for (const key of BESTIARY_ACTION_FIELD_KEYS) {
+    if (!actionFields || !(key in actionFields)) continue;
+    if (actionFields[key] == null) delete rawFields[key];
+    else rawFields[key] = actionFields[key];
+  }
+  const outlier = checkBestiaryOutliers(rawFields);
+  return projectReadFields(writeEntry({ ...entry, rawFields, needsConfirmation: outlier.flagged, outlierReasons: outlier.reasons }));
+}
+
+/**
+ * The Plutonium identity pair behind an entry: the entry itself when it
+ * carries a Plutonium provenance stamp, its chassis row when it is a reskin.
+ * Null when neither has Plutonium provenance (hand-authored, SRD, Foundry
+ * pull) -- such rows have nothing to refresh from.
+ * @returns {{name:string, source:string, chassisEntryId:string}|null}
+ */
+export function resolvePlutoniumChassis(entry) {
+  if (!entry) return null;
+  let chassis = entry;
+  if (entry.reskinOfEntryId) {
+    try { chassis = readEntry(entry.reskinOfEntryId); } catch { return null; }
+  }
+  const source = parsePlutoniumProvenance(chassis.sourceText);
+  const name = chassis.rawFields?.name;
+  return source && name ? { name, source, chassisEntryId: chassis.id } : null;
+}
+
+/** Position-merge: fresh mechanics, the reskin's own name/summary where it already has one at that slot. */
+function keepReskinText(freshList, existingList) {
+  if (!Array.isArray(freshList)) return freshList;
+  const existing = Array.isArray(existingList) ? existingList : [];
+  return freshList.map((f, i) => {
+    const e = existing[i];
+    if (!e || typeof e !== "object") return f;
+    return {
+      ...f,
+      ...(typeof e.name === "string" && e.name ? { name: e.name } : {}),
+      ...(typeof e.summary === "string" && e.summary ? { summary: e.summary } : {})
+    };
+  });
+}
+
+/**
+ * Re-read the entry's Plutonium record (its chassis's, for a reskin), map it
+ * through rawFieldsFromPlutoniumRecord and merge the action fields onto the
+ * row. A reskin keeps its OWN ability names/summaries slot-for-slot (the
+ * "keep the effects, reskin only the text" rule -- mechanics come fresh
+ * from the book, the reflavoured text survives a refresh); a chassis row
+ * takes the book text verbatim. Throws (clear Error) when the entry has no
+ * Plutonium provenance, the record is gone, or it is a _copy shell.
+ * @param {string} dir       WF data dir (Plutonium lives under it)
+ * @returns {object}   the updated BestiaryEntry (projection included)
+ */
+export function refreshBestiaryEntryFromPlutonium(dir, entryId) {
+  const entry = readEntry(entryId);
+  const chassis = resolvePlutoniumChassis(entry);
+  if (!chassis) {
+    throw new Error(
+      `Bestiary entry "${entryId}" ("${entry.rawFields?.name ?? "?"}") has no Plutonium provenance to refresh from ` +
+      `(only rows added from the "Available via Plutonium" shelf, or reskins of them, can be refreshed).`
+    );
+  }
+  const raw = getRawPlutoniumEntry(dir, "bestiary", { name: chassis.name, source: chassis.source });
+  if (!raw) {
+    throw new Error(
+      `Bestiary entry "${entryId}": the Plutonium record for "${chassis.name}" (${chassis.source}) is not ` +
+      `available (the index skips _copy reprint shells) -- is Plutonium still installed with the same bundled data?`
+    );
+  }
+  const fresh = rawFieldsFromPlutoniumRecord(raw);
+  const isReskin = !!entry.reskinOfEntryId;
+  const actionFields = {};
+  for (const key of BESTIARY_ACTION_FIELD_KEYS) {
+    const value = fresh[key] ?? null;
+    actionFields[key] = isReskin && Array.isArray(value) ? keepReskinText(value, entry.rawFields?.[key]) : value;
+  }
+  return mergeBestiaryEntryActionFields(entryId, actionFields);
+}
+
+/**
+ * Bulk backfill: refresh every non-discarded entry that has Plutonium
+ * provenance (directly or via its chassis). Per-entry try/catch -- one bad
+ * record never aborts the sweep.
+ * @returns {{refreshed:string[], skipped:string[], failed:{entryId:string, name:string|null, error:string}[]}}
+ */
+export function refreshAllBestiaryEntriesFromPlutonium(dir) {
+  const result = { refreshed: [], skipped: [], failed: [] };
+  for (const entry of listBestiaryEntries()) {
+    if (entry.status === "discarded") { result.skipped.push(entry.id); continue; }
+    if (!resolvePlutoniumChassis(entry)) { result.skipped.push(entry.id); continue; }
+    try {
+      refreshBestiaryEntryFromPlutonium(dir, entry.id);
+      result.refreshed.push(entry.id);
+    } catch (err) {
+      result.failed.push({ entryId: entry.id, name: entry.rawFields?.name ?? null, error: String(err?.message ?? err) });
+    }
+  }
+  return result;
+}
+
+const ACTIONS_LINE_MAX_TRAIT_NAMES = 6;
+
+/**
+ * PURE, no I/O. One compact line of what a stat block DOES, for the Run
+ * block and the elements list: "Multiattack ×2 · Mace +4 (1d6+2 bludgeoning)
+ * · Heavy Crossbow +2 (1d10 piercing) · Pack Tactics". Null when the
+ * rawFields carry no actions at all (the caller decides how to say so).
+ * @returns {string|null}
+ */
+export function compactActionsLine(rawFields) {
+  const rf = rawFields || {};
+  const parts = [];
+  if (rf.multiattack?.count) parts.push(`Multiattack ×${rf.multiattack.count}`);
+  for (const a of Array.isArray(rf.attacks) ? rf.attacks : []) {
+    if (!a?.name) continue;
+    const hit = typeof a.toHitBonus === "number" ? ` ${a.toHitBonus >= 0 ? "+" : ""}${a.toHitBonus}` : "";
+    const dmg = a.damageDice ? ` (${a.damageDice}${a.damageType ? ` ${a.damageType}` : ""})` : "";
+    parts.push(`${a.name}${hit}${dmg}`);
+  }
+  for (const r of Array.isArray(rf.rechargeAbilities) ? rf.rechargeAbilities : []) {
+    if (!r?.name) continue;
+    parts.push(`${r.name} (Recharge ${r.rechargeOn ?? "6"}${r.damageDice ? `, ${r.damageDice}` : ""})`);
+  }
+  if (rf.legendaryActions?.count) parts.push(`Legendary ×${rf.legendaryActions.count}`);
+  const traitNames = (Array.isArray(rf.traits) ? rf.traits : []).map((t) => t?.name).filter(Boolean);
+  const shown = traitNames.slice(0, ACTIONS_LINE_MAX_TRAIT_NAMES);
+  parts.push(...shown);
+  if (traitNames.length > shown.length) parts.push(`+${traitNames.length - shown.length} more`);
+  return parts.length ? parts.join(" · ") : null;
 }
 
 /**
