@@ -197,6 +197,9 @@ const IMPLAUSIBLE_RAW_FIELDS = {
     discardBestiaryEntry,
     retireBestiaryEntry,
     unretireBestiaryEntry,
+    setBestiaryTokenImg,
+    setBestiaryTokenImgCandidate,
+    acceptBestiaryTokenImgCandidate,
     updateBestiaryEntryRawFields,
     compactStatFlavorLine,
     promoteBestiaryEntryToGraph,
@@ -293,6 +296,30 @@ const IMPLAUSIBLE_RAW_FIELDS = {
     assert.throws(() => discardBestiaryEntry(fresh.id), /retired/i, "a retired row is not discardable either");
     assert.equal(unretireBestiaryEntry(fresh.id).status, "accepted");
     assert.throws(() => unretireBestiaryEntry("bst-2"), /not retired/i);
+  });
+
+  test("WS-F tokenImg / tokenImgCandidate: read as null on an old record, status-independent setters, path normalisation, accept flips candidate -> face", () => {
+    const fresh = saveBestiaryEntry({ rawFields: { name: "Faced One" } }, { makeId: () => "bst-face" });
+    assert.equal(getBestiaryEntry(fresh.id).tokenImg, null);
+    assert.equal(getBestiaryEntry(fresh.id).tokenImgCandidate, null);
+    assert.ok(!("tokenImg" in JSON.parse(readFileSync(join(process.env.GM_TOOLS_BESTIARY_DIR, "bst-face.json"), "utf8"))), "never persisted until set");
+
+    // proposed row: still settable (a face is table metadata, not a stat edit)
+    assert.equal(setBestiaryTokenImg(fresh.id, "  gm-tools\\tokens\\w\\faced-one.webp ").tokenImg, "gm-tools/tokens/w/faced-one.webp");
+    assert.throws(() => setBestiaryTokenImg(fresh.id, "/abs/path.webp"), /relative to the Foundry data dir/);
+    assert.throws(() => setBestiaryTokenImg(fresh.id, "https://x/y.webp"), /relative to the Foundry data dir/);
+    assert.throws(() => setBestiaryTokenImg(fresh.id, "../escape.webp"), /climb out/);
+    assert.throws(() => setBestiaryTokenImg(fresh.id, 42), /string path/);
+    assert.equal(getBestiaryEntry(fresh.id).tokenImg, "gm-tools/tokens/w/faced-one.webp", "a refused value leaves the old one");
+    assert.equal(setBestiaryTokenImg(fresh.id, "   ").tokenImg, null, "blank clears");
+
+    assert.throws(() => acceptBestiaryTokenImgCandidate(fresh.id), /no token-art candidate/);
+    setBestiaryTokenImgCandidate(fresh.id, "gm-tools/tokens/w/faced-one.candidate.webp");
+    const accepted = acceptBestiaryTokenImgCandidate(fresh.id, "gm-tools/tokens/w/faced-one.webp");
+    assert.equal(accepted.tokenImg, "gm-tools/tokens/w/faced-one.webp");
+    assert.equal(accepted.tokenImgCandidate, null);
+    // status untouched throughout
+    assert.equal(accepted.status, "proposed");
   });
 
   test("no write in this file leaked into the repo's real default bestiary/ directory", () => {

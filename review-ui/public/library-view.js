@@ -469,6 +469,146 @@ function buildHandAddForm({ fields, onSubmit, toggleLabel = "or write one by han
 // ===========================================================================
 // BESTIARY
 // ===========================================================================
+/**
+ * WS-F -- the "Token face" section of the bestiary stat rail: current
+ * face (thumbnail + editable path), a generated candidate with
+ * Accept/Reject, "Generate from looks" and "Push face to Foundry".
+ * Paths are Foundry-Data-relative and never guessed by the app: the GM
+ * types one, or accepts a generated one under gm-tools/tokens/<world>/.
+ */
+function buildTokenFaceSection(e) {
+  const wrap = el("div", { testid: "library-token-face", "data-entry-id": e.id, style: "margin-top: 16px; border-top: 1px solid oklch(0.88 0.010 80); padding-top: 12px;" });
+  const mono = "font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 20px; cursor: pointer; white-space: nowrap;";
+  const chip = (testid, text, title, tone) => el("span", {
+    testid, text, title,
+    style: mono + (tone === "warm"
+      ? " color: oklch(0.44 0.060 60); border: 1px dashed oklch(0.72 0.060 60);"
+      : " color: oklch(0.44 0.014 65); border: 1px dashed oklch(0.72 0.012 70);")
+  });
+  const world = currentWorld();
+  const bust = () => `&t=${Date.now()}`;
+  const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
+
+  const paint = () => {
+    wrap.replaceChildren();
+    wrap.appendChild(el("div", { style: "display: flex; align-items: center; gap: 8px; margin-bottom: 7px;" }, [
+      el("div", { text: "Token face", style: "font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.53 0.012 70);" }),
+      el("div", { text: "path under the Foundry data dir — pushed only when you say so", style: "font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.64 0.012 70);" })
+    ]));
+
+    // Current face: thumbnail + path input.
+    const row = el("div", { style: "display: flex; align-items: center; gap: 10px;" });
+    const thumbStyle = "width: 56px; height: 56px; flex: none; border-radius: 6px; border: 1px solid oklch(0.88 0.010 80); background: oklch(0.965 0.006 85); object-fit: cover;";
+    if (e.tokenImg) {
+      const img = el("img", { testid: "library-token-face-img", alt: "", src: `/api/combat-planning/bestiary/${encodeURIComponent(e.id)}/token-image?which=current${bust()}`, style: thumbStyle });
+      img.addEventListener("error", () => { img.replaceWith(el("div", { testid: "library-token-face-missing", text: "file missing", title: `Not found under the Foundry data dir: ${e.tokenImg}`, style: thumbStyle + " display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.55 0.10 30); text-align: center;" })); });
+      row.appendChild(img);
+    } else {
+      row.appendChild(el("div", { testid: "library-token-face-none", text: "no face", style: thumbStyle + " display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: oklch(0.64 0.012 70);" }));
+    }
+    const input = el("input", {
+      testid: "library-token-face-path",
+      type: "text",
+      value: e.tokenImg || "",
+      placeholder: "e.g. gm-tools/tokens/<world>/<name>.webp",
+      spellcheck: "false",
+      style: "flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid oklch(0.88 0.010 80); border-radius: 4px; background: oklch(0.975 0.006 85); font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.40 0.014 65);"
+    });
+    const savePath = async () => {
+      const v = input.value.trim();
+      if ((v || null) === (e.tokenImg || null)) return;
+      try {
+        const r = await post(`/api/combat-planning/bestiary/${encodeURIComponent(e.id)}/token-img`, { tokenImg: v || null });
+        e.tokenImg = r.entry.tokenImg;
+        paint();
+      } catch (err) {
+        showUndoToast(`Could not save the face path: ${err.message}`, () => {});
+        input.value = e.tokenImg || "";
+      }
+    };
+    input.addEventListener("blur", savePath);
+    input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); input.blur(); } });
+    row.appendChild(input);
+    wrap.appendChild(row);
+
+    // Candidate: shown only while one is waiting.
+    if (e.tokenImgCandidate) {
+      const cand = el("div", { testid: "library-token-face-candidate", style: "margin-top: 10px; display: flex; align-items: center; gap: 10px; padding: 8px; border: 1px dashed oklch(0.72 0.060 60); border-radius: 6px; background: oklch(0.975 0.012 80);" }, [
+        el("img", { alt: "", src: `/api/combat-planning/bestiary/${encodeURIComponent(e.id)}/token-image?which=candidate${bust()}`, style: "width: 96px; height: 96px; flex: none; border-radius: 6px; object-fit: cover; border: 1px solid oklch(0.88 0.010 80);" }),
+        el("div", { style: "display: flex; flex-direction: column; gap: 6px; min-width: 0;" }, [
+          el("div", { text: "Generated candidate — not in play until you accept it.", style: "font-size: 11.5px; color: oklch(0.44 0.014 65);" }),
+          el("div", { style: "display: flex; gap: 6px;" }, [
+            (() => {
+              const b = chip("library-token-face-accept", "Accept", "Moves the file to gm-tools/tokens/<world>/ and makes it this creature's face.", "warm");
+              b.addEventListener("click", async (ev) => {
+                ev.stopPropagation();
+                try {
+                  const r = await post(`/api/combat-planning/bestiary/${encodeURIComponent(e.id)}/token-art/accept`);
+                  e.tokenImg = r.entry.tokenImg; e.tokenImgCandidate = r.entry.tokenImgCandidate;
+                  paint();
+                } catch (err) { showUndoToast(`Could not accept: ${err.message}`, () => {}); }
+              });
+              return b;
+            })(),
+            (() => {
+              const b = chip("library-token-face-reject", "Reject", "Deletes the generated file. Generate again for another try.");
+              b.addEventListener("click", async (ev) => {
+                ev.stopPropagation();
+                try {
+                  const r = await post(`/api/combat-planning/bestiary/${encodeURIComponent(e.id)}/token-art/reject`);
+                  e.tokenImgCandidate = r.entry.tokenImgCandidate;
+                  paint();
+                } catch (err) { showUndoToast(`Could not reject: ${err.message}`, () => {}); }
+              });
+              return b;
+            })()
+          ])
+        ])
+      ]);
+      wrap.appendChild(cand);
+    }
+
+    // Actions.
+    const actions = el("div", { style: "margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap;" });
+    const gen = chip("library-token-face-generate", e.tokenImgCandidate ? "Generate again" : "Generate from looks",
+      world ? "One image call from this creature's looks line on a scene element in the current world. You review the result here before it goes anywhere." : "Pick a world first -- the looks line lives on a scene element.", "warm");
+    if (!world) gen.style.opacity = "0.5";
+    gen.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      if (!world) return;
+      gen.textContent = "generating…"; gen.style.opacity = "0.6";
+      try {
+        const r = await post(`/api/combat-planning/bestiary/${encodeURIComponent(e.id)}/token-art/generate`, { world });
+        e.tokenImgCandidate = r.entry.tokenImgCandidate;
+        paint();
+      } catch (err) {
+        showUndoToast(`Could not generate: ${err.message}`, () => {});
+        paint();
+      }
+    });
+    actions.appendChild(gen);
+    if (e.tokenImg && e.foundryActorRef) {
+      const push = chip("library-token-face-push", "Push face to Foundry", "Sets this face as the actor's portrait and prototype-token image in Foundry. Tokens already on a scene keep theirs; re-stage the scene to redraw them.");
+      push.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        if (!world) { showUndoToast("Pick a world first.", () => {}); return; }
+        push.textContent = "pushing…"; push.style.opacity = "0.6";
+        try {
+          const r = await post(`/api/foundry/push-bestiary-token-art`, { world, entryId: e.id });
+          if (r.status === "queued") showUndoToast(`Face queued for Foundry (${r.note}).`, () => {});
+          else if (r.ok) showUndoToast(`Face pushed to ${r.foundryUuid}.`, () => {});
+          else showUndoToast(`Foundry refused the face: ${r.error}`, () => {});
+        } catch (err) { showUndoToast(`Could not push: ${err.message}`, () => {}); }
+        paint();
+      });
+      actions.appendChild(push);
+    }
+    wrap.appendChild(actions);
+  };
+  paint();
+  return wrap;
+}
+
 function buildBestiary(ctx) {
   const { world, data, subbar, bodyRow } = ctx;
   const st = {
@@ -924,6 +1064,13 @@ function buildBestiary(ctx) {
       block.appendChild(items);
       scroll.appendChild(block);
     }
+
+    // WS-F (table round 2026-09-09): token face. `tokenImg` is the ACCEPTED
+    // face (a Foundry-Data-relative path the GM typed or accepted);
+    // `tokenImgCandidate` is a generated one waiting for a verdict. The
+    // section re-paints itself in place (paintTokenFace) rather than
+    // reloading the whole surface, same as the note/rating precedents.
+    scroll.appendChild(buildTokenFaceSection(e));
 
     // GM note
     const noteWrap = el("div", { style: "margin-top: 16px; border-top: 1px solid oklch(0.88 0.010 80); padding-top: 12px;" }, [

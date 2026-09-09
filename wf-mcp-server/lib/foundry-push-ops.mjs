@@ -371,7 +371,10 @@ function resolveAssetSrc(dataDir, world, asset, skipped) {
  * `{actorUuid}` placements (positions assigned by the caller, after the
  * full eligible list is known -- clusterTokenPositions needs the total
  * count up front).
- * @returns {{actorUuid:string}[]}
+ * WS-F (table round 2026-09-09): a bestiary row's ACCEPTED `tokenImg`
+ * rides along as `img` -- the bridge's buildTokenData honours it over the
+ * prototype texture. A candidate (tokenImgCandidate) never does.
+ * @returns {{actorUuid:string, img?:string}[]}
  */
 function eligibleTokenActors(world, roster, skipped) {
   const actors = [];
@@ -398,7 +401,9 @@ function eligibleTokenActors(world, roster, skipped) {
         });
         continue;
       }
-      for (let i = 0; i < row.n; i++) actors.push({ actorUuid: record.foundryActorRef });
+      const placement = { actorUuid: record.foundryActorRef };
+      if (typeof record.tokenImg === "string" && record.tokenImg) placement.img = record.tokenImg;
+      for (let i = 0; i < row.n; i++) actors.push({ ...placement });
     }
   };
   collect(roster.filter((r) => r.kind === "creature"), (id) => getBestiaryEntry(id), "bestiary creature");
@@ -486,7 +491,8 @@ export function composeSceneOps(dataDir, world, scene, opts = {}) {
       data.tokens = actors.map((actor, i) => ({
         actorUuid: actor.actorUuid,
         x: positions[i].x,
-        y: positions[i].y
+        y: positions[i].y,
+        ...(actor.img ? { img: actor.img } : {})
       }));
     }
     if (splashAsset && data.foreground) {

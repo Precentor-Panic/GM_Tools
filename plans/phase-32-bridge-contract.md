@@ -712,7 +712,8 @@ Refuses non-Item uuids and empty/non-whitelisted patches per-op.
 `actor.update(patch)` where the patch is a **whitelist** — `img` and `prototypeToken.texture.src` only. Sets
 a named NPC's face on the actor so every token drawn from it afterward (a GM sidebar drag included) carries
 it. Never touches `system.*` — mechanics go through `import_via_plutonium`. Refuses non-Actor uuids and
-empty/non-whitelisted patches per-op.
+empty/non-whitelisted patches per-op. Producer: `pushBestiaryTokenArtToFoundry` (`wf-mcp-server/lib/foundry-item-push-ops.mjs`,
+review-ui `POST /api/foundry/push-bestiary-token-art`) — one op per row, from the ACCEPTED `tokenImg` only (WS-F).
 
 ### v5 amendments to existing kinds (table round 2026-09-09)
 

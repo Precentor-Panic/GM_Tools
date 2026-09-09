@@ -196,6 +196,7 @@ import {
   unretireBestiaryEntry,
   updateBestiaryEntryNote,
   updateBestiaryEntryRating,
+  setBestiaryTokenImg,
   promoteBestiaryEntryToGraph,
   createReskinnedBestiaryEntry,
   refreshBestiaryEntryFromPlutonium,
@@ -278,7 +279,9 @@ import { importCompendiumSceneOnAccept, reconcilePendingCompendiumImports } from
 // Bestiary actor PUSH routes. Sibling module to foundry-push-ops.mjs (scene
 // push) -- see foundry-item-push-ops.mjs's own header for the fidelity
 // boundary (import_via_plutonium vs. create_item) and the lostech two-op flow.
-import { pushItemToFoundry, pushBestiaryEntryToFoundry } from "../wf-mcp-server/lib/foundry-item-push-ops.mjs";
+import { pushItemToFoundry, pushBestiaryEntryToFoundry, pushBestiaryTokenArtToFoundry } from "../wf-mcp-server/lib/foundry-item-push-ops.mjs";
+// WS-F (table round 2026-09-09): token faces -- generate from the looks line, accept/reject, preview.
+import { generateTokenArt, acceptTokenArt, rejectTokenArt, resolveUnderDataDir, tokenImgMime } from "../combat-planning/token-art.mjs";
 
 // Phase 34 task 34.1 -- Connection-Menu backend glue: connection-state
 // derivation + sync-now (foundry-connection.mjs composes readFoundryIndex
@@ -2985,6 +2988,19 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, result);
   }
 
+  // POST /api/foundry/push-bestiary-token-art   { world, entryId }
+  // -> {status:'applied', entryId, opId, ok, foundryUuid?, tokenImg?, error?} | {status:'queued', ...}
+  // WS-F: one update_actor op putting the row's ACCEPTED tokenImg on the
+  // actor (img + prototypeToken.texture.src). Explicit, never automatic.
+  if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "push-bestiary-token-art") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    if (!body.entryId) throw new Error("POST /api/foundry/push-bestiary-token-art requires entryId.");
+    const result = await pushBestiaryTokenArtToFoundry(dir, body.entryId, { world: w });
+    return sendJson(res, 200, result);
+  }
+
   // POST /api/combat-planning/items/:itemId/push-overrides   { world, overrides|null }   -> {item}
   // The "lostech" local-override editor's persisted state (item-store.mjs's
   // PushOverridesSchema) -- `overrides: null` clears it. Validated by
@@ -4118,6 +4134,61 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const entry = updateBestiaryEntryRating(parts[3], body.rating);
     return sendJson(res, 200, { entry });
+  }
+
+  // -----------------------------------------------------------------------
+  // WS-F (table round 2026-09-09) -- token faces. The bestiary is library-
+  // wide, so `world` is only needed where a FILE is involved (it names the
+  // gm-tools/tokens/<world>/ dir and the scene elements the looks line
+  // comes from); the path field itself is world-free.
+  // -----------------------------------------------------------------------
+
+  // POST /api/combat-planning/bestiary/:id/token-img   {tokenImg|null}   -> {entry}
+  // The hand-typed path (Foundry-Data-relative). The store refuses absolute
+  // paths, URLs and "..".
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "token-img") {
+    const body = await readBody(req);
+    const entry = setBestiaryTokenImg(parts[3], body.tokenImg ?? null);
+    return sendJson(res, 200, { entry });
+  }
+
+  // POST /api/combat-planning/bestiary/:id/token-art/generate   {world, looks?}
+  //   -> {entry, candidate, prompt, looksSource, squared, model}
+  // One Gemini image call; the result is a CANDIDATE only.
+  if (method === "POST" && parts.length === 6 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "token-art" && parts[5] === "generate") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const result = await generateTokenArt({ dataDir: resolveDir(), world: w, entryId: parts[3], looks: body.looks });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/combat-planning/bestiary/:id/token-art/accept   {}   -> {entry}
+  // POST /api/combat-planning/bestiary/:id/token-art/reject   {}   -> {entry}
+  if (method === "POST" && parts.length === 6 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "token-art" && (parts[5] === "accept" || parts[5] === "reject")) {
+    await readBody(req);
+    const fn = parts[5] === "accept" ? acceptTokenArt : rejectTokenArt;
+    const entry = fn({ dataDir: resolveDir(), entryId: parts[3] });
+    return sendJson(res, 200, { entry });
+  }
+
+  // GET /api/combat-planning/bestiary/:id/token-image?which=current|candidate
+  // Serves the face for the Library preview. Same discipline as the
+  // stagecraft image route: never a client path, only the entry's own
+  // recorded one, resolved under the data dir (400 on escape, 404 missing).
+  if (method === "GET" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "token-image") {
+    const entry = getBestiaryEntry(parts[3]);
+    const which = q.get("which") === "candidate" ? "tokenImgCandidate" : "tokenImg";
+    const rel = entry[which];
+    if (!rel) return sendJson(res, 404, { error: `This entry has no ${which === "tokenImg" ? "token face" : "token-art candidate"}.` });
+    if (!tokenImgMime(rel)) return sendJson(res, 400, { error: `Not an image path: ${rel}` });
+    let filePath;
+    try {
+      filePath = resolveUnderDataDir(resolveDir(), rel);
+    } catch (err) {
+      return sendJson(res, 400, { error: err.message });
+    }
+    if (!existsSync(filePath)) return sendJson(res, 404, { error: `Token image not found: ${rel}` });
+    return serveStatic(res, filePath);
   }
 
   // -----------------------------------------------------------------------

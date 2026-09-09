@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -241,7 +241,7 @@ test("SECURITY: a client-supplied dataDir is never honored by POST /api/combat-p
 
 // -------------------------------------------------------- encounter-suggest: Phase 18 addendum (themeText/attendingMemberIds/manualCombination)
 
-const { saveBestiaryEntry, acceptBestiaryEntry } = await import("../../combat-planning/bestiary-store.mjs");
+const { saveBestiaryEntry, acceptBestiaryEntry, setBestiaryTokenImgCandidate, getBestiaryEntry } = await import("../../combat-planning/bestiary-store.mjs");
 const { savePartyMember } = await import("../../combat-planning/party-roster-store.mjs");
 
 function makeRawFields(name, overrides = {}) {
@@ -447,6 +447,61 @@ test("POST /api/combat-planning/bestiary/:id/retire flips accepted -> retired, /
   const unknown = await postJson("/api/combat-planning/bestiary/no-such-entry/unretire", {});
   assert.notEqual(unknown.status, 404, "route registered -- a missing ENTRY is a later failure mode than a missing ROUTE");
   assert.equal(unknown.status, 400);
+});
+
+// -------------------------------------------------------- bestiary token face (table round 2026-09-09, WS-F)
+
+test("POST /api/combat-planning/bestiary/:id/token-img sets/clears the face path with the store's validation (absolute, URL, '..' -> 400); GET .../token-image serves it from under the data dir only", async () => {
+  const fresh = saveBestiaryEntry({ rawFields: makeRawFields("Faced Test Goblin") });
+  const set = await postJson(`/api/combat-planning/bestiary/${fresh.id}/token-img`, { tokenImg: "gm-tools/tokens/w/faced.webp" });
+  assert.equal(set.status, 200, JSON.stringify(set.body));
+  assert.equal(set.body.entry.tokenImg, "gm-tools/tokens/w/faced.webp");
+  for (const bad of ["/abs/face.webp", "https://x/face.webp", "../face.webp"]) {
+    const r = await postJson(`/api/combat-planning/bestiary/${fresh.id}/token-img`, { tokenImg: bad });
+    assert.equal(r.status, 400, `${bad}: ${JSON.stringify(r.body)}`);
+  }
+  // preview: 404 while the file is missing, 200 image/webp once it exists
+  const missing = await fetch(`${base}/api/combat-planning/bestiary/${fresh.id}/token-image?which=current`);
+  assert.equal(missing.status, 404);
+  mkdirSync(join(dataDir, "gm-tools/tokens/w"), { recursive: true });
+  writeFileSync(join(dataDir, "gm-tools/tokens/w/faced.webp"), "RIFF....WEBP");
+  const served = await fetch(`${base}/api/combat-planning/bestiary/${fresh.id}/token-image?which=current`);
+  assert.equal(served.status, 200);
+  assert.match(served.headers.get("content-type"), /image\/webp/);
+  // candidate preview reads the OTHER slot; a non-image path is refused
+  const noCand = await fetch(`${base}/api/combat-planning/bestiary/${fresh.id}/token-image?which=candidate`);
+  assert.equal(noCand.status, 404);
+  setBestiaryTokenImgCandidate(fresh.id, "gm-tools/tokens/w/faced.candidate.txt");
+  const notImage = await fetch(`${base}/api/combat-planning/bestiary/${fresh.id}/token-image?which=candidate`);
+  assert.equal(notImage.status, 400);
+  // clear
+  const cleared = await postJson(`/api/combat-planning/bestiary/${fresh.id}/token-img`, { tokenImg: null });
+  assert.equal(cleared.body.entry.tokenImg, null);
+});
+
+test("POST .../token-art/accept moves the candidate file to the convention path and flips tokenImg; /reject deletes it; /generate without a looks line is a 400 (no Gemini call)", async () => {
+  const fresh = saveBestiaryEntry({ rawFields: makeRawFields("Candidate Test Goblin") });
+  const noCand = await postJson(`/api/combat-planning/bestiary/${fresh.id}/token-art/accept`, {});
+  assert.equal(noCand.status, 400);
+  mkdirSync(join(dataDir, `gm-tools/tokens/${WORLD}`), { recursive: true });
+  writeFileSync(join(dataDir, `gm-tools/tokens/${WORLD}/candidate-test-goblin.candidate.webp`), "CANDIDATE");
+  setBestiaryTokenImgCandidate(fresh.id, `gm-tools/tokens/${WORLD}/candidate-test-goblin.candidate.webp`);
+  const accepted = await postJson(`/api/combat-planning/bestiary/${fresh.id}/token-art/accept`, {});
+  assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+  assert.equal(accepted.body.entry.tokenImg, `gm-tools/tokens/${WORLD}/candidate-test-goblin.webp`);
+  assert.equal(accepted.body.entry.tokenImgCandidate, null);
+
+  writeFileSync(join(dataDir, `gm-tools/tokens/${WORLD}/candidate-test-goblin.candidate.webp`), "SECOND");
+  setBestiaryTokenImgCandidate(fresh.id, `gm-tools/tokens/${WORLD}/candidate-test-goblin.candidate.webp`);
+  const rejected = await postJson(`/api/combat-planning/bestiary/${fresh.id}/token-art/reject`, {});
+  assert.equal(rejected.status, 200);
+  assert.equal(rejected.body.entry.tokenImgCandidate, null);
+  assert.equal(getBestiaryEntry(fresh.id).tokenImg, `gm-tools/tokens/${WORLD}/candidate-test-goblin.webp`, "reject keeps the accepted face");
+
+  // generate: no scene element carries a looks line for this entry -> 400 before any network call
+  const gen = await postJson(`/api/combat-planning/bestiary/${fresh.id}/token-art/generate`, { world: WORLD });
+  assert.equal(gen.status, 400, JSON.stringify(gen.body));
+  assert.match(gen.body.error, /No "looks" line found/);
 });
 
 void __dirname;

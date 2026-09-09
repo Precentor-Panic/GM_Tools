@@ -217,6 +217,14 @@ function projectReadFields(entry) {
     flavorName: entry.flavorName ?? entry.rawFields?.name ?? null,
     chassis: entry.chassis ?? null,
     reflavorNotes: entry.reflavorNotes ?? null,
+    // Table round 2026-09-09 WS-F: token art. `tokenImg` is the ACCEPTED
+    // face -- a Foundry-Data-relative path the GM typed or accepted
+    // ("gm-tools/tokens/aureus/ledger-man.webp"); the app never guesses
+    // one. `tokenImgCandidate` is a generated file awaiting the GM's
+    // accept/reject -- never pushed, never shown anywhere but the Library.
+    // Same read-time-fallback-to-null convention as the fields above.
+    tokenImg: entry.tokenImg ?? null,
+    tokenImgCandidate: entry.tokenImgCandidate ?? null,
     sourcePill: deriveSourcePill(entry)
   };
 }
@@ -811,6 +819,59 @@ export function setBestiaryFoundryActorRef(entryId, refOrNull) {
 export function setBestiaryPendingPush(entryId, pending) {
   const entry = readEntry(entryId);
   return projectReadFields(writeEntry({ ...entry, pendingPush: pending ?? null }));
+}
+
+/**
+ * WS-F (table round 2026-09-09) -- sets or clears (`null`) the entry's
+ * accepted token face. Status-independent, same reasoning as
+ * setBestiaryFoundryActorRef: a face is table-use metadata, not a
+ * stat-block edit. The path is stored VERBATIM (trimmed) -- it must be
+ * relative to the Foundry data dir and must not climb out of it; both
+ * checks are cheap and stop a typo from becoming a dead texture in Foundry.
+ * @returns {object}   the updated BestiaryEntry (projection included)
+ */
+export function setBestiaryTokenImg(entryId, pathOrNull) {
+  const entry = readEntry(entryId);
+  const value = normalizeTokenImgPath(pathOrNull);
+  return projectReadFields(writeEntry({ ...entry, tokenImg: value }));
+}
+
+/**
+ * WS-F -- records (or clears) a GENERATED face the GM has not accepted
+ * yet. Kept separate from tokenImg so the candidate can never leak into a
+ * push: composeSceneOps / the update_actor push read tokenImg only.
+ * @returns {object}   the updated BestiaryEntry (projection included)
+ */
+export function setBestiaryTokenImgCandidate(entryId, pathOrNull) {
+  const entry = readEntry(entryId);
+  const value = normalizeTokenImgPath(pathOrNull);
+  return projectReadFields(writeEntry({ ...entry, tokenImgCandidate: value }));
+}
+
+/**
+ * WS-F -- the GM accepted the candidate: it becomes tokenImg and the
+ * candidate slot clears. The FILE move (candidate -> convention path) is
+ * the caller's job (stagecraft/token-art.mjs); this only flips the record.
+ * @param {string} entryId
+ * @param {string} [finalPath]   where the caller moved the file; defaults to the candidate path itself
+ */
+export function acceptBestiaryTokenImgCandidate(entryId, finalPath) {
+  const entry = readEntry(entryId);
+  if (!entry.tokenImgCandidate) throw new Error(`Bestiary entry "${entryId}" has no token-art candidate to accept.`);
+  const value = normalizeTokenImgPath(finalPath ?? entry.tokenImgCandidate);
+  return projectReadFields(writeEntry({ ...entry, tokenImg: value, tokenImgCandidate: null }));
+}
+
+function normalizeTokenImgPath(pathOrNull) {
+  if (pathOrNull == null || pathOrNull === "") return null;
+  if (typeof pathOrNull !== "string") throw new Error("tokenImg must be a string path (relative to the Foundry data dir) or null.");
+  const value = pathOrNull.trim().replace(/\\/g, "/");
+  if (value === "") return null;
+  if (value.startsWith("/") || /^[a-z]+:\/\//i.test(value)) {
+    throw new Error(`tokenImg must be relative to the Foundry data dir, not absolute or a URL: "${value}"`);
+  }
+  if (value.split("/").includes("..")) throw new Error(`tokenImg must not climb out of the Foundry data dir: "${value}"`);
+  return value;
 }
 
 export { ConcurrentWriteError };

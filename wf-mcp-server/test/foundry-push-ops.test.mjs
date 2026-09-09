@@ -48,7 +48,7 @@ const { foundryOpsPath, foundryResultsPath } = await import("../lib/snapshot.mjs
 const { createScene, getScene, updateScene, markScenePushed } = await import("../../session-planner/scenes.mjs");
 const { addToSceneTray } = await import("../../session-planner/scene-tray.mjs");
 const { saveStagecraftAsset, acceptStagecraftAsset, stagecraftRoot } = await import("../../session-planner/stagecraft-store.mjs");
-const { saveBestiaryEntry, acceptBestiaryEntry, retireBestiaryEntry } = await import("../../combat-planning/bestiary-store.mjs");
+const { saveBestiaryEntry, acceptBestiaryEntry, retireBestiaryEntry, setBestiaryTokenImg, setBestiaryTokenImgCandidate } = await import("../../combat-planning/bestiary-store.mjs");
 const { savePartyMember } = await import("../../combat-planning/party-roster-store.mjs");
 
 const sampleOp = JSON.parse(readFileSync(join(FIXTURES_DIR, "foundry-ops.create-scene.sample.json"), "utf8"))[0];
@@ -437,6 +437,32 @@ await test("composeSceneOps: a RETIRED roster row (accepted, linked, then retire
   const { tokenOps, skipped } = composeSceneOps(dataDir, WORLD, getScene(WORLD, scene.id));
   assert.deepEqual(tokenOps, []);
   assert.ok(skipped.some((s) => /is retired/.test(s.reason) && s.reason.includes("Retired Ogrekin")), `expected a retired skip reason -- got ${JSON.stringify(skipped)}`);
+});
+
+await test("WS-F composeSceneOps: an ACCEPTED tokenImg rides on every create-path token as `img`; a candidate alone never does", () => {
+  // Table round 2026-09-09 (WS-F): the bridge's buildTokenData honours
+  // tokens[].img over the prototype texture -- so the create path carries
+  // the face with no module change. A generated-but-unreviewed candidate is
+  // invisible to the push.
+  const WORLD = "compose-token-img-world";
+  const scene = createScene(WORLD, {}, { makeId: () => "compose-scene-token-img" });
+  const faced = acceptBestiaryEntry(saveBestiaryEntry({ rawFields: { name: "Faced Cultist" }, foundryActorRef: "Actor.faced" }).id);
+  setBestiaryTokenImg(faced.id, "gm-tools/tokens/w/faced-cultist.webp");
+  const candidateOnly = acceptBestiaryEntry(saveBestiaryEntry({ rawFields: { name: "Pending Cultist" }, foundryActorRef: "Actor.pending" }).id);
+  setBestiaryTokenImgCandidate(candidateOnly.id, "gm-tools/tokens/w/pending-cultist.candidate.webp");
+  addToSceneTray(WORLD, scene.id, { id: faced.id, kind: "creature" });
+  addToSceneTray(WORLD, scene.id, { id: faced.id, kind: "creature" }); // n=2
+  addToSceneTray(WORLD, scene.id, { id: candidateOnly.id, kind: "creature" });
+
+  const { sceneOp } = composeSceneOps(dataDir, WORLD, getScene(WORLD, scene.id));
+  assert.equal(sceneOp.kind, "create_scene");
+  const tokens = sceneOp.data.tokens;
+  assert.equal(tokens.length, 3);
+  const facedTokens = tokens.filter((t) => t.actorUuid === "Actor.faced");
+  assert.equal(facedTokens.length, 2);
+  for (const t of facedTokens) assert.equal(t.img, "gm-tools/tokens/w/faced-cultist.webp");
+  const pending = tokens.find((t) => t.actorUuid === "Actor.pending");
+  assert.ok(pending && !("img" in pending), `candidate must not leak into the op -- got ${JSON.stringify(pending)}`);
 });
 
 await test("composeSceneOps: an asset with NEITHER foundryRef.imagePath NOR a local file is skipped with 'no image source available'", () => {

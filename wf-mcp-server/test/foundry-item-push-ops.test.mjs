@@ -32,13 +32,13 @@ process.env.GM_TOOLS_BESTIARY_DIR = join(scratchDir, "bestiary");
 const dataDir = join(scratchDir, "foundrydata");
 
 const {
-  pushItemToFoundry, pushBestiaryEntryToFoundry,
+  pushItemToFoundry, pushBestiaryEntryToFoundry, pushBestiaryTokenArtToFoundry,
   reconcilePendingItemResults, reconcilePendingBestiaryResults,
   parsePlutoniumProvenance, buildLostechUpdatePatch, composeHandAuthoredCreateItemData
 } = await import("../lib/foundry-item-push-ops.mjs");
 const { foundryOpsPath, foundryResultsPath } = await import("../lib/snapshot.mjs");
 const { saveItem, getItem, setItemPushOverrides } = await import("../../combat-planning/item-store.mjs");
-const { saveBestiaryEntry, getBestiaryEntry } = await import("../../combat-planning/bestiary-store.mjs");
+const { saveBestiaryEntry, getBestiaryEntry, setBestiaryFoundryActorRef, setBestiaryTokenImg, setBestiaryTokenImgCandidate } = await import("../../combat-planning/bestiary-store.mjs");
 
 function seedFile(path, contents) {
   mkdirSync(dirname(path), { recursive: true });
@@ -505,6 +505,38 @@ await test("pushBestiaryEntryToFoundry: ok:false leaves foundryActorRef null; qu
   const after = getBestiaryEntry(queuedEntry.id);
   assert.equal(after.foundryActorRef, "Actor.goblin-late");
   assert.equal(after.pendingPush, null);
+});
+
+await test("WS-F pushBestiaryTokenArtToFoundry: one update_actor op with img + prototypeToken.texture.src from the ACCEPTED face; refuses without an actor ref, without a face, or with only a candidate", async () => {
+  const WORLD = "token-art-push-world";
+  const entry = saveBestiaryEntry({ rawFields: { name: "The Ledger-Man" }, sourceText: "hand" });
+  await assert.rejects(() => pushBestiaryTokenArtToFoundry(dataDir, entry.id, { world: WORLD }), /no linked Foundry actor/);
+  setBestiaryFoundryActorRef(entry.id, "Actor.ledger");
+  await assert.rejects(() => pushBestiaryTokenArtToFoundry(dataDir, entry.id, { world: WORLD }), /no accepted token face/);
+  setBestiaryTokenImgCandidate(entry.id, "gm-tools/tokens/w/the-ledger-man.candidate.webp");
+  await assert.rejects(() => pushBestiaryTokenArtToFoundry(dataDir, entry.id, { world: WORLD }), /candidate is waiting for review/);
+  await assert.rejects(() => pushBestiaryTokenArtToFoundry(dataDir, entry.id, {}), /world.*required/);
+
+  setBestiaryTokenImg(entry.id, "gm-tools/tokens/w/the-ledger-man.webp");
+  let captured = null;
+  const timer = setTimeout(() => {
+    captured = JSON.parse(readFileSync(foundryOpsPath(dataDir, WORLD), "utf8"));
+    seedFile(foundryResultsPath(dataDir, WORLD), [{ opId: "op_face", ok: true, foundryUuid: "Actor.ledger" }]);
+    writeFileSync(foundryOpsPath(dataDir, WORLD), "[]", "utf8");
+  }, 15);
+  const result = await pushBestiaryTokenArtToFoundry(dataDir, entry.id, { world: WORLD }, { pollMs: 5, timeoutMs: 300, makeOpId: () => "op_face" });
+  clearTimeout(timer);
+  assert.equal(result.ok, true);
+  assert.equal(result.foundryUuid, "Actor.ledger");
+  assert.equal(result.tokenImg, "gm-tools/tokens/w/the-ledger-man.webp");
+  assert.equal(captured.length, 1);
+  assert.deepEqual(captured[0], {
+    opId: "op_face",
+    kind: "update_actor",
+    data: { actorUuid: "Actor.ledger", patch: { img: "gm-tools/tokens/w/the-ledger-man.webp", "prototypeToken.texture.src": "gm-tools/tokens/w/the-ledger-man.webp" } }
+  });
+  // The candidate is untouched by a push -- it is the GM's to accept or reject.
+  assert.equal(getBestiaryEntry(entry.id).tokenImgCandidate, "gm-tools/tokens/w/the-ledger-man.candidate.webp");
 });
 
 console.log(`\n${passed} test(s) passed.`);

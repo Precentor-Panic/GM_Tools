@@ -500,3 +500,48 @@ export async function pushBestiaryEntryToFoundry(dir, entryId, { world } = {}, o
   const updated = setBestiaryFoundryActorRef(entryId, result.foundryUuid);
   return { status: "applied", entryId, opId, ok: true, foundryUuid: result.foundryUuid, entry: updated };
 }
+
+/**
+ * WS-F (table round 2026-09-09) -- puts a bestiary row's ACCEPTED token
+ * face onto its Foundry actor: one `update_actor` op (bridge contract v5,
+ * A3) patching BOTH `img` (the portrait) and `prototypeToken.texture.src`
+ * (the token), so every token drawn from that actor afterwards -- a GM
+ * sidebar drag included -- carries the face. Scenes already pushed keep
+ * their existing tokens; re-stage the scene to redraw them.
+ *
+ * Deliberately a SEPARATE, explicit action rather than a side effect of
+ * pushBestiaryEntryToFoundry: the actor uuid only exists after the
+ * import result lands, and Russell's rule is that generated art is never
+ * auto-pushed. Requires an accepted face (tokenImg) and a linked actor;
+ * a candidate alone is refused.
+ *
+ * @param {string} dir       Foundry data dir
+ * @param {string} entryId
+ * @param {{world:string}} p
+ * @returns {Promise<
+ *   {status:'queued', entryId:string, opId:string, note:string} |
+ *   {status:'applied', entryId:string, opId:string, ok:true, foundryUuid:string, tokenImg:string} |
+ *   {status:'applied', entryId:string, opId:string, ok:false, error:string}
+ * >}
+ */
+export async function pushBestiaryTokenArtToFoundry(dir, entryId, { world } = {}, opts = {}) {
+  if (!world) throw new Error("pushBestiaryTokenArtToFoundry: `world` is required (needed to resolve the Foundry transport dir).");
+  const entry = getBestiaryEntry(entryId);
+  const name = entry.rawFields?.name ?? "?";
+  if (!entry.foundryActorRef) {
+    throw new Error(`pushBestiaryTokenArtToFoundry: "${name}" (${entryId}) has no linked Foundry actor -- push the creature first.`);
+  }
+  if (!entry.tokenImg) {
+    throw new Error(
+      `pushBestiaryTokenArtToFoundry: "${name}" (${entryId}) has no accepted token face` +
+      `${entry.tokenImgCandidate ? " (a generated candidate is waiting for review in the Library)" : ""} -- set or accept one first.`
+    );
+  }
+  const opId = opts.makeOpId ? opts.makeOpId() : makeOpId();
+  const patch = { img: entry.tokenImg, "prototypeToken.texture.src": entry.tokenImg };
+  const outcome = await writeFoundryOps(dir, world, [{ opId, kind: "update_actor", data: { actorUuid: entry.foundryActorRef, patch } }], opts);
+  if (outcome.status === "queued") return { status: "queued", entryId, opId, note: outcome.note };
+  const result = outcome.results.find((r) => r.opId === opId);
+  if (!result?.ok) return { status: "applied", entryId, opId, ok: false, error: result?.error ?? "no result for this op" };
+  return { status: "applied", entryId, opId, ok: true, foundryUuid: result.foundryUuid, tokenImg: entry.tokenImg };
+}

@@ -37,8 +37,10 @@ process.env.WF_DEFAULT_WORLD = WORLD;
 const { snapshotFilePath } = await import("../../../wf-mcp-server/lib/snapshot.mjs");
 const { bootstrapSnapshot } = await import("../../../graph-import/headless-apply.mjs");
 const { createReviewServer } = await import("../../server.mjs");
-const { saveBestiaryEntry, acceptBestiaryEntry, getBestiaryEntry, listBestiaryEntries } =
+const { saveBestiaryEntry, acceptBestiaryEntry, getBestiaryEntry, listBestiaryEntries, setBestiaryTokenImgCandidate } =
   await import("../../../combat-planning/bestiary-store.mjs");
+import { mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
 bootstrapSnapshot(snapshotFilePath(dataDir, WORLD), { worldId: WORLD });
 
@@ -307,6 +309,59 @@ test("Bestiary stat rail: Retire dims the card, marks it 'retired', disables dra
   await page.waitForFunction((sel) => document.querySelector(sel)?.getAttribute("data-status") === "accepted", cardSel, { timeout: 10000 });
   assert.equal(await page.locator(cardSel).getAttribute("draggable"), "true");
   assert.equal(getBestiaryEntry(entry.id).status, "accepted");
+
+  await page.close();
+});
+
+// Table round 2026-09-09 (WS-F): the Token face section -- a typed path
+// saves on Enter/blur, a generated candidate shows with Accept/Reject, and
+// accepting moves the file and sets the face. Generation itself (a Gemini
+// call) is unit-tested with an injected fetch; here the candidate is seeded.
+test("Bestiary stat rail: Token face -- typed path saves to the store; a seeded candidate shows Accept/Reject; Accept moves the file and paints the thumbnail", async () => {
+  const entry = saveBestiaryEntry({ rawFields: goblinRawFields({ name: "UI Face Goblin" }) }, { makeId: () => "bst-p376b-ui-face" });
+  acceptBestiaryEntry(entry.id);
+
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+  await page.goto(`${base}/#library`);
+  await page.locator('[data-testid="library-bestiary-root"]').waitFor({ state: "visible", timeout: 15000 });
+  await page.locator(`[data-testid="library-creature-card"][data-entry-id="${entry.id}"]`).click();
+
+  const face = page.locator(`[data-testid="library-token-face"][data-entry-id="${entry.id}"]`);
+  await face.waitFor({ state: "visible", timeout: 10000 });
+  await face.locator('[data-testid="library-token-face-none"]').waitFor({ state: "visible", timeout: 5000 });
+  assert.equal(await face.locator('[data-testid="library-token-face-candidate"]').count(), 0);
+  assert.equal(await face.locator('[data-testid="library-token-face-push"]').count(), 0, "no push chip without a face");
+
+  // Typed path saves on Enter.
+  const input = face.locator('[data-testid="library-token-face-path"]');
+  await input.fill("gm-tools/tokens/hand/ui-face-goblin.webp");
+  await input.press("Enter");
+  await page.waitForFunction((id) => !!document.querySelector(`[data-testid="library-token-face"][data-entry-id="${id}"] [data-testid="library-token-face-missing"], [data-testid="library-token-face"][data-entry-id="${id}"] [data-testid="library-token-face-img"]`), entry.id, { timeout: 10000 });
+  assert.equal(getBestiaryEntry(entry.id).tokenImg, "gm-tools/tokens/hand/ui-face-goblin.webp");
+  // File is not on disk -> the thumbnail reports it missing rather than lying.
+  await face.locator('[data-testid="library-token-face-missing"]').waitFor({ state: "visible", timeout: 5000 });
+
+  // Seed a candidate on disk + in the store, reload the rail.
+  const candRel = `gm-tools/tokens/${WORLD}/ui-face-goblin.candidate.webp`;
+  mkdirSync(join(dataDir, `gm-tools/tokens/${WORLD}`), { recursive: true });
+  writeFileSync(join(dataDir, candRel), "RIFF....WEBP");
+  setBestiaryTokenImgCandidate(entry.id, candRel);
+  await page.reload();
+  await page.locator('[data-testid="library-bestiary-root"]').waitFor({ state: "visible", timeout: 15000 });
+  await page.locator(`[data-testid="library-creature-card"][data-entry-id="${entry.id}"]`).click();
+  const face2 = page.locator(`[data-testid="library-token-face"][data-entry-id="${entry.id}"]`);
+  await face2.locator('[data-testid="library-token-face-candidate"]').waitFor({ state: "visible", timeout: 10000 });
+  assert.equal(await face2.locator('[data-testid="library-token-face-generate"]').textContent(), "Generate again");
+
+  await face2.locator('[data-testid="library-token-face-accept"]').click();
+  await page.waitForFunction((id) => !document.querySelector(`[data-testid="library-token-face"][data-entry-id="${id}"] [data-testid="library-token-face-candidate"]`), entry.id, { timeout: 10000 });
+  const after = getBestiaryEntry(entry.id);
+  assert.equal(after.tokenImg, `gm-tools/tokens/${WORLD}/ui-face-goblin.webp`);
+  assert.equal(after.tokenImgCandidate, null);
+  assert.ok(existsSync(join(dataDir, after.tokenImg)), "file moved to the convention path");
+  assert.ok(!existsSync(join(dataDir, candRel)));
+  assert.equal(await face2.locator('[data-testid="library-token-face-path"]').inputValue(), after.tokenImg);
 
   await page.close();
 });
