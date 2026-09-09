@@ -951,7 +951,7 @@ async function renderPlanDetail(container, planId) {
     }
   });
 
-  root.appendChild(buildSessionWrapPanel(plan));
+  root.appendChild(buildSessionWrapPanel(plan, { fetchScenes: fetchItems }));
 }
 
 // ---------------------------------------------------------------------------
@@ -968,18 +968,66 @@ async function renderPlanDetail(container, planId) {
 // Scene-level "Wrap this scene" (graph proposals + element promotion) stays
 // its own panel — this one is about what the TABLE now knows.
 // ---------------------------------------------------------------------------
-function buildSessionWrapPanel(plan) {
+function buildSessionWrapPanel(plan, { fetchScenes } = {}) {
   const details = document.createElement("details");
   details.className = "session-wrap-panel";
   details.setAttribute("data-testid", "session-wrap-panel");
   const summary = document.createElement("summary");
-  summary.textContent = "Session wrap-up — reveals & player notes";
+  summary.textContent = "Wrap the session";
   details.appendChild(summary);
 
   const hint = document.createElement("p");
   hint.className = "hint";
   hint.textContent = "What did the table learn this session? Suggestions come from this plan's scene notes; nothing changes until you Apply. Reveals feed the knowledge gate and any reveal-seeded Run tabs.";
   details.appendChild(hint);
+
+  // WS-D (table round 2026-09-09): the notes the wrap will read, counted up
+  // front so the GM knows there IS something to wrap -- the same pending
+  // notes assembleWriteupTextForPlan reads (pending, in this plan's scenes),
+  // grouped by scene, each count a link to that scene's Prep notes strip.
+  const notesCount = document.createElement("p");
+  notesCount.className = "hint wrap-notes-count";
+  notesCount.setAttribute("data-testid", "wrap-notes-count");
+  notesCount.textContent = "Counting session notes…";
+  details.appendChild(notesCount);
+  async function loadNotesCount() {
+    try {
+      const { notes } = await plApi(`/api/session-planner/notes${plWithWorld()}`);
+      const perScene = new Map();
+      for (const n of notes) {
+        if (!n.sceneId || !plan.sceneIds.includes(n.sceneId)) continue;
+        perScene.set(n.sceneId, (perScene.get(n.sceneId) ?? 0) + 1);
+      }
+      const total = [...perScene.values()].reduce((a, b) => a + b, 0);
+      notesCount.innerHTML = "";
+      if (!total) {
+        notesCount.textContent = "No session notes yet — jot them with Add Event on a scene (Prep or Run).";
+        return;
+      }
+      const lead = document.createElement("span");
+      lead.textContent = `${total} note${total === 1 ? "" : "s"} across ${perScene.size} scene${perScene.size === 1 ? "" : "s"}: `;
+      notesCount.appendChild(lead);
+      let scenes = [];
+      try { scenes = fetchScenes ? await fetchScenes() : []; } catch { scenes = []; }
+      const nameOf = new Map(scenes.map((s) => [s.id, s.__displayName || s.name || s.id]));
+      let first = true;
+      for (const sceneId of plan.sceneIds) {
+        const k = perScene.get(sceneId);
+        if (!k) continue;
+        if (!first) notesCount.appendChild(document.createTextNode(" · "));
+        first = false;
+        const a = document.createElement("a");
+        a.href = `#session-planner/${encodeURIComponent(sceneId)}`;
+        a.setAttribute("data-testid", "wrap-notes-scene-link");
+        a.setAttribute("data-scene-id", sceneId);
+        a.textContent = `${nameOf.get(sceneId) ?? sceneId} (${k})`;
+        notesCount.appendChild(a);
+      }
+    } catch (err) {
+      notesCount.textContent = `Could not count session notes: ${err.message}`;
+    }
+  }
+  loadNotesCount();
 
   const rosterHost = document.createElement("div");
   rosterHost.className = "wrap-reveal-roster";

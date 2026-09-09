@@ -102,9 +102,43 @@ export function captureNote(world, { text, anchorEntityId = null, sceneId = null
   return note;
 }
 
-/** @returns {object[]}   every SessionNote for `world` with consumed:false, in capture order. [] if none. */
-export function listPendingNotes(world) {
-  return readNotes(world).filter((n) => !n.consumed);
+/**
+ * @param {string} world
+ * @param {{sceneId?: string|null}} [filter]   sceneId narrows to one scene's notes (table round 2026-09-09:
+ *   the Run/Prep "Notes — this scene" strip). Absent = every pending note, the wrap suggester's grain.
+ * @returns {object[]}   every SessionNote for `world` with consumed:false, in capture order. [] if none.
+ */
+export function listPendingNotes(world, { sceneId } = {}) {
+  const pending = readNotes(world).filter((n) => !n.consumed);
+  return sceneId ? pending.filter((n) => n.sceneId === sceneId) : pending;
+}
+
+// Table round 2026-09-09 (WS-D): the Add Event textarea autosaves on input,
+// and every autosave used to CREATE a note -- one thought typed slowly
+// landed as four near-duplicate notes, and nothing read them back. Edit +
+// delete close that: the UI creates once, then edits the same note in place;
+// the strip's ✕ deletes a slip. Both refuse a consumed note -- once a wrap /
+// intake batch has read a note it is that batch's provenance, not a draft.
+
+/** @returns {object}   the updated note. Throws on unknown id or a consumed note. */
+export function updateNoteText(world, noteId, text) {
+  const notes = readNotes(world);
+  const note = notes.find((n) => n.id === noteId);
+  if (!note) throw new Error(`Session note not found: ${noteId}`);
+  if (note.consumed) throw new Error(`Session note ${noteId} was already consumed by ${note.consumedByBatchId ?? "a batch"}; it can no longer be edited.`);
+  note.text = text;
+  writeNotes(world, notes);
+  return note;
+}
+
+/** @returns {object}   the deleted note. Throws on unknown id or a consumed note. */
+export function deleteNote(world, noteId) {
+  const notes = readNotes(world);
+  const note = notes.find((n) => n.id === noteId);
+  if (!note) throw new Error(`Session note not found: ${noteId}`);
+  if (note.consumed) throw new Error(`Session note ${noteId} was already consumed by ${note.consumedByBatchId ?? "a batch"}; it can no longer be deleted.`);
+  writeNotes(world, notes.filter((n) => n.id !== noteId));
+  return note;
 }
 
 // --- applyAnchorHint ---------------------------------------------------------

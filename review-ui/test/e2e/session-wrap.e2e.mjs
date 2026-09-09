@@ -58,6 +58,12 @@ test("roster → keyless suggest → manual override → apply (real sidecar wri
   const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "sw-inn", name: "Evening at the Ewer" });
   const { plan } = await api(`/api/scene-planning/plans`, { world: WORLD, name: "Session Three" });
   await api(`/api/scene-planning/plans/${plan.id}/scenes`, { world: WORLD, sceneId: scene.id });
+  // WS-D (2026-09-09): two table notes on the plan's scene, one on a scene
+  // outside the plan -- the wrap panel counts only the former.
+  await api(`/api/session-planner/notes`, { world: WORLD, text: "Vane bought the round.", sceneId: scene.id });
+  await api(`/api/session-planner/notes`, { world: WORLD, text: "Someone asked about the Source.", sceneId: scene.id });
+  const other = await createSceneViaRoute(base, WORLD, { locationEntityId: "sw-inn", name: "Elsewhere" });
+  await api(`/api/session-planner/notes`, { world: WORLD, text: "not this plan", sceneId: other.id });
 
   const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
   await primeWorldSelection(page, base, WORLD);
@@ -65,7 +71,16 @@ test("roster → keyless suggest → manual override → apply (real sidecar wri
   await page.locator('[data-testid="plan-detail"]').waitFor({ state: "visible", timeout: 15000 });
 
   const panel = page.locator('[data-testid="session-wrap-panel"]');
+  assert.equal(await panel.locator("summary").textContent(), "Wrap the session");
   await panel.locator("summary").click();
+  const count = panel.locator('[data-testid="wrap-notes-count"]');
+  await page.waitForFunction(() => /\d+ notes? across/.test(document.querySelector('[data-testid="wrap-notes-count"]')?.textContent ?? ""), undefined, { timeout: 10000 });
+  assert.match(await count.textContent(), /^2 notes across 1 scene: /);
+  const link = count.locator('[data-testid="wrap-notes-scene-link"]');
+  assert.equal(await link.count(), 1);
+  assert.equal(await link.getAttribute("data-scene-id"), scene.id);
+  assert.match(await link.textContent(), /\(2\)$/);
+  assert.equal(await link.getAttribute("href"), `#session-planner/${scene.id}`);
   const row = panel.locator('[data-testid="wrap-reveal-row"][data-entity-id="sw-vane"]');
   await row.waitFor({ state: "visible", timeout: 10000 });
   assert.match(await row.textContent(), /Corvin Vane/);

@@ -175,7 +175,7 @@ import { createScene, forkScene, getScene, listScenesForWorld, listScenesByRecen
 // scene-lookup.mjs's own header comment explains why).
 import { scenesForEntity, removeEntityFromAllScenes } from "../session-planner/scene-lookup.mjs";
 import { buildSessionBrief } from "../session-planner/brief.mjs";
-import { captureNote, runBatchIntake } from "../session-planner/session-notes.mjs";
+import { captureNote, runBatchIntake, listPendingNotes, updateNoteText, deleteNote } from "../session-planner/session-notes.mjs";
 
 // Phase 18 -- Encounter Guidance engine (task 18.7). Thin wrappers only,
 // same convention as every other route in this file: resolveWorld()/
@@ -477,6 +477,7 @@ function statusForError(err) {
   if (err.name === "NoNarratableBatchError") return 404; // task 14.7: no accepted mutation exists yet for this entity
   if (err.name === "FoundryOpsInFlightError") return 409; // Aureus table wave B1 (G2): a prior ops batch from ANY source hasn't cleared yet -- retryable, not a bad request
   if (/already exists/i.test(err.message ?? "")) return 409; // task 14.2: creating a world id that's already taken
+  if (/already consumed/i.test(err.message ?? "")) return 409; // WS-D 2026-09-09: editing/deleting a note a wrap batch already read -- a conflict, not a bad request
   if (/no (batch|region|entity|world|snapshot) found/i.test(err.message ?? "")) return 404;
   if (/not found/i.test(err.message ?? "")) return 404;
   // Phase 18 task 18.7: an LLM-touching route (bestiary/party-roster ingest,
@@ -2342,6 +2343,29 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world);
     const note = captureNote(w, { text: body.text, anchorEntityId: body.anchorEntityId, sceneId: body.sceneId });
     return sendJson(res, 200, { note });
+  }
+
+  // Table round 2026-09-09 (WS-D): notes were write-only -- captured from
+  // Add Event, read by nothing but the wrap suggester. These three close the
+  // loop for the "Notes — this scene" strip in Run and Prep.
+  // GET /api/session-planner/notes?world=&sceneId=   -> {notes}   pending only, capture order; sceneId narrows to one scene
+  if (method === "GET" && parts.length === 3 && parts[1] === "session-planner" && parts[2] === "notes") {
+    const w = resolveWorld(q.get("world"));
+    const sceneId = (q.get("sceneId") ?? "").trim() || null;
+    return sendJson(res, 200, { notes: listPendingNotes(w, { sceneId }) });
+  }
+  // POST /api/session-planner/notes/:noteId  { world, text }   -> {note}   edit in place (the autosave's second-and-later saves)
+  if (method === "POST" && parts.length === 4 && parts[1] === "session-planner" && parts[2] === "notes" && parts[3] !== "intake") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    if (typeof body.text !== "string") return sendJson(res, 400, { error: "text (string) is required" });
+    return sendJson(res, 200, { note: updateNoteText(w, parts[3], body.text) });
+  }
+  // DELETE /api/session-planner/notes/:noteId?world=   -> {note}
+  if (method === "DELETE" && parts.length === 4 && parts[1] === "session-planner" && parts[2] === "notes") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world ?? q.get("world"));
+    return sendJson(res, 200, { note: deleteNote(w, parts[3]) });
   }
 
   // POST /api/session-planner/notes/intake  { world, noteIds }

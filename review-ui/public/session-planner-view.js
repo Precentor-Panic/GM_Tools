@@ -501,7 +501,15 @@ export function cancelActiveAssist() {
 // preserves the construction view's existing add-event-btn/
 // add-encounter-btn testids unchanged).
 // ---------------------------------------------------------------------------
-function mountAddEventControl(scene, testid = "add-event-btn") {
+// Table round 2026-09-09 (WS-D, feedback 1+2): the control now (a) mounts in
+// Run's head band too (`run-add-event-btn`) -- the notes are taken AT the
+// table, not in Prep; (b) creates ONE note and then edits it in place on every
+// later autosave (each autosave used to POST a fresh note: one thought typed
+// slowly landed as four near-duplicates); Enter finishes the note and starts
+// a new one; (c) reports saves to an optional `onSaved` so the "Notes — this
+// scene" strip (buildSceneNotesStrip) re-reads. Autosave-on-input itself is
+// unchanged -- the phase 25/27 contract.
+function mountAddEventControl(scene, testid = "add-event-btn", { onSaved } = {}) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "btn scene-action-btn";
@@ -517,36 +525,125 @@ function mountAddEventControl(scene, testid = "add-event-btn") {
   const textarea = document.createElement("textarea");
   textarea.className = "scene-event-textarea";
   textarea.setAttribute("data-testid", "scene-event-textarea");
-  textarea.placeholder = "Jot an event note — autosaves as you type…";
+  textarea.placeholder = "Jot what just happened — autosaves as you type. Enter starts the next note.";
   panel.appendChild(textarea);
 
   const status = document.createElement("div");
   status.className = "hint";
   panel.appendChild(status);
 
-  const debounce = createFlushableDebounce((value) => {
+  // One note per "thought": the first save creates, later saves edit that
+  // same note; saves are chained so two in flight can't both create.
+  let noteId = null;
+  let chain = Promise.resolve();
+  const persist = (value) => {
     if (!value || !value.trim()) return;
     status.textContent = "Saving…";
-    spApi("/api/session-planner/notes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ world: currentWorld(), text: value, anchorEntityId: scene.locationEntityId ?? undefined, sceneId: scene.id })
-    }).then(() => {
-      status.textContent = "Saved.";
-    }).catch((err) => {
-      status.textContent = `Error saving: ${err.message}`;
+    chain = chain.then(() => {
+      const body = { world: currentWorld(), text: value };
+      const req = noteId
+        ? spApi(`/api/session-planner/notes/${encodeURIComponent(noteId)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+        : spApi("/api/session-planner/notes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, anchorEntityId: scene.locationEntityId ?? undefined, sceneId: scene.id }) });
+      return req.then(({ note }) => {
+        noteId = note?.id ?? noteId;
+        status.textContent = "Saved.";
+        if (onSaved) onSaved();
+      }).catch((err) => {
+        status.textContent = `Error saving: ${err.message}`;
+      });
     });
-  }, { debounceMs: 500 });
+    return chain;
+  };
+  const debounce = createFlushableDebounce(persist, { debounceMs: 500 });
 
   textarea.addEventListener("input", () => debounce.onInput(textarea.value));
   textarea.addEventListener("blur", () => debounce.onBlur(textarea.value));
+  textarea.addEventListener("keydown", (evt) => {
+    if (evt.key !== "Enter" || evt.shiftKey) return;
+    evt.preventDefault();
+    debounce.onBlur(textarea.value); // flush the current note now
+    chain = chain.then(() => { noteId = null; textarea.value = ""; status.textContent = ""; });
+  });
   openNotePanels.set(`__scene_event__${scene.id}`, { panelEl: panel, debounce });
 
   btn.addEventListener("click", () => {
     panel.style.display = panel.style.display === "none" ? "block" : "none";
+    if (panel.style.display === "block") textarea.focus();
   });
 
-  return { btn, panel };
+  return { btn, panel, textarea };
+}
+
+// "Notes — this scene" (WS-D 2026-09-09): the read-back the Add Event notes
+// never had. Lists the scene's PENDING notes (GET /api/session-planner/notes
+// ?sceneId=), newest last, each with its time and a ✕ that deletes a slip;
+// hidden entirely when the scene has none. `refresh()` re-reads and only
+// touches the DOM when the list actually changed, so the Run poll can call
+// it every tick (a note typed on a phone shows on the laptop) without
+// flicker. Consumed notes (a wrap batch already read them) never show -- they
+// are that batch's provenance now, not the table's running list.
+function buildSceneNotesStrip(sceneId, { testid = "scene-notes-strip" } = {}) {
+  const el = document.createElement("div");
+  el.className = "scene-notes-strip";
+  el.setAttribute("data-testid", testid);
+  el.setAttribute("data-scene-id", sceneId);
+  el.hidden = true;
+  let lastKey = null;
+  const fmtTime = (iso) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  };
+  const render = (notes) => {
+    el.innerHTML = "";
+    el.hidden = notes.length === 0;
+    if (!notes.length) return;
+    const h = document.createElement("div");
+    h.className = "scene-notes-strip-h";
+    h.textContent = `Notes — this scene (${notes.length})`;
+    el.appendChild(h);
+    for (const n of notes) {
+      const row = document.createElement("div");
+      row.className = "scene-note-row";
+      row.setAttribute("data-testid", "scene-note-row");
+      row.setAttribute("data-note-id", n.id);
+      const t = document.createElement("span");
+      t.className = "scene-note-time";
+      t.textContent = fmtTime(n.timestamp);
+      const text = document.createElement("span");
+      text.className = "scene-note-text";
+      text.textContent = n.text;
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "scene-note-delete";
+      x.setAttribute("data-testid", "scene-note-delete");
+      x.title = "Delete this note";
+      x.textContent = "✕";
+      x.addEventListener("click", async () => {
+        try {
+          await spApi(`/api/session-planner/notes/${encodeURIComponent(n.id)}${spWithWorld()}`, { method: "DELETE" });
+          lastKey = null;
+          await refresh();
+        } catch (err) {
+          x.title = `Could not delete: ${err.message}`;
+        }
+      });
+      row.append(t, text, x);
+      el.appendChild(row);
+    }
+  };
+  const refresh = async () => {
+    let notes = [];
+    try {
+      ({ notes } = await spApi(`/api/session-planner/notes${spWithWorld({ sceneId })}`));
+    } catch {
+      return; // transient -- keep what's shown
+    }
+    const key = JSON.stringify(notes.map((n) => [n.id, n.text]));
+    if (key === lastKey) return;
+    lastKey = key;
+    render(notes || []);
+  };
+  return { el, refresh };
 }
 
 /**
@@ -4115,13 +4212,24 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
   // table moment (activating from Run while actually running the scene),
   // hence its own distinct testid.
   if (scene.foundrySceneRef) head.appendChild(buildActivateFoundryRow(scene, "run-activate-foundry-btn", "run-in-foundry-pill"));
+  // WS-D (2026-09-09): notes are taken AT the table -- the same Add Event
+  // control as Prep, in the head band; its panel drops in under the band and
+  // the scene's notes strip closes the side column (filled async below, and
+  // re-read on every run poll tick via spread._refreshNotes).
+  const runNotes = buildSceneNotesStrip(scene.id, { testid: "run-notes-strip" });
+  const runEvent = mountAddEventControl(scene, "run-add-event-btn", { onSaved: () => runNotes.refresh() });
+  runEvent.btn.className = "btn scene-action-btn rs-note-btn";
+  head.appendChild(runEvent.btn);
   spread.appendChild(head);
+  runEvent.panel.classList.add("rs-note-panel");
+  spread.appendChild(runEvent.panel);
 
   const grid = runSpreadEl("div", "rs-grid");
   const main = runSpreadEl("div", "rs-main");
   const side = runSpreadEl("div", "rs-side");
   grid.append(main, side);
   spread.appendChild(grid);
+  spread._refreshNotes = runNotes.refresh;
 
   // Scene-level narration opens the main column as the sensory line.
   const narrText = narration?.text ? String(narration.text).trim() : "";
@@ -4567,6 +4675,8 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
 
   if (!side.childNodes.length) side.appendChild(runSpreadEl("div", "rs-empty", "Nothing on the side yet — stat blocks, cards, GM boxes and sketches live here."));
   if (!main.childNodes.length) main.appendChild(runSpreadEl("div", "rs-empty", "Nothing to read yet — add read-aloud text or elements in Prep."));
+  side.appendChild(runNotes.el);
+  runNotes.refresh();
   return spread;
 }
 
@@ -5193,6 +5303,12 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
       if (runVersion !== null && version !== runVersion) {
         await rebuildRunSpread();
         flashSpreadUpdated();
+      } else {
+        // Notes aren't in the fingerprint (they're the table's own jottings,
+        // not scene data) -- re-read the strip each tick so a note typed on
+        // another device shows here. No-op DOM-wise when nothing changed.
+        const refreshNotes = runHost.querySelector('[data-testid="scene-run-spread"]')?._refreshNotes;
+        if (refreshNotes) await refreshNotes();
       }
       runVersion = version;
     } catch {
@@ -5215,6 +5331,10 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   // The ONE three-way switch (variants round): prep|board share
   // data-mode="prep" (board is a structural re-render of the list, exactly
   // as the old applyLayout did); run flips data-mode + the poll.
+  // WS-D (2026-09-09): the Prep "Notes — this scene" strip is built here so
+  // applyView can refresh it on the way back from Run (notes jotted at the
+  // table land in the Run strip; Prep's copy would otherwise lag until nav).
+  const prepNotes = buildSceneNotesStrip(scene.id);
   const applyView = (view) => {
     const wasBoard = sceneView === "board";
     const wasRun = sceneView === "run";
@@ -5233,6 +5353,7 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
       startRunPoll();
     } else if (wasRun) {
       stopRunPoll();
+      prepNotes.refresh();
     }
   };
   if (sceneView === "run") { rebuildRunSpread(); startRunPoll(); } // navigated here already in Run
@@ -5251,10 +5372,11 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
 
   const extrasBar = document.createElement("div");
   extrasBar.className = "scene-extras-bar";
-  const eventCtl = mountAddEventControl(scene);
+  const eventCtl = mountAddEventControl(scene, "add-event-btn", { onSaved: () => prepNotes.refresh() });
   const encounterCtl = mountAddEncounterControl(scene);
   extrasBar.append(eventCtl.btn, encounterCtl.btn);
-  extrasSection.append(extrasBar, eventCtl.panel, encounterCtl.panel);
+  extrasSection.append(extrasBar, eventCtl.panel, prepNotes.el, encounterCtl.panel);
+  prepNotes.refresh();
 
   const savedEncounters = await fetchSavedEncounters(scene.id);
   if (stale()) return;
