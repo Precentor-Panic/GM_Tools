@@ -1802,10 +1802,37 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
    centre pane instead of Prep's 780px reading column (Russell, 2026-08-26:
    "the 2 column layout takes up an incredibly small area in the middle"). */
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"],
-:is(#view-session-planner, #app-shell) .scene-page[data-rail="open"],
 :is(#view-session-planner, #app-shell) .scene-page:has(.scene-elements-list[data-layout="board"]) {
   max-width: none; padding-left: 28px; padding-right: 28px;
 }
+/* WS-G (2026-09-09, feedback 7 "box resizing between the views"): the head
+   band and the read-aloud keep Prep's 720px reading measure, centred, when
+   the page goes wide -- so Prep <-> Layout moves NOTHING above the lanes
+   (the probe measured the band stretching 272px at 1280 / 912px at 1920 and
+   the read-aloud reflowing). The rail case caps the page at column + rail
+   instead of going full-width: the rows keep their exact width (no reflow)
+   and the column slides left as a unit to make room for the rail. */
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-place-header,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-read-aloud-section,
+:is(#view-session-planner, #app-shell) .scene-page:has(.scene-elements-list[data-layout="board"]) .scene-place-header,
+:is(#view-session-planner, #app-shell) .scene-page:has(.scene-elements-list[data-layout="board"]) .scene-read-aloud-section {
+  max-width: 720px; margin-left: auto; margin-right: auto;
+}
+/* The sub-bar bleeds 30px past the column on both sides (its own -30px
+   margins), so its measure is 780 -- the Prep | Layout | Run control stays
+   under the pointer that just clicked it. */
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-top-bar,
+:is(#view-session-planner, #app-shell) .scene-page:has(.scene-elements-list[data-layout="board"]) .scene-top-bar {
+  max-width: 780px; margin-left: auto; margin-right: auto;
+}
+:is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] {
+  max-width: calc(780px + 220px + 16px);
+}
+:is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-place-header,
+:is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-read-aloud-section {
+  max-width: 720px;
+}
+:is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-top-bar { max-width: 780px; }
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-run-spread { font-size: 16px; }
 
 /* The sub-bar: prev/next (left) + Wrap button (right), with the middle left
@@ -1846,6 +1873,17 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   font-family: var(--sp-font-ui); font-size: 12.5px; padding: 5px 12px;
 }
 :is(#view-session-planner, #app-shell) .scene-wrap-toggle-btn:hover { background: var(--sp-badge-promote-bg); }
+/* WS-G: the ▤ lanes toggle shares the Wrap button's metrics, and both pin
+   line-height -- the ▤ glyph's fallback font raised the bare .btn's line box
+   ~3px, so hiding the toggle (Layout / Run) shifted the whole page up. */
+:is(#view-session-planner, #app-shell) .scene-rail-toggle-btn {
+  flex-shrink: 0; border: 1px solid var(--sp-border-control); background: transparent;
+  color: var(--sp-ink-muted); border-radius: var(--sp-radius-lg);
+  font-family: var(--sp-font-ui); font-size: 12.5px; padding: 5px 12px;
+}
+:is(#view-session-planner, #app-shell) .scene-rail-toggle-btn:hover { color: var(--sp-accent-teal); }
+:is(#view-session-planner, #app-shell) .scene-rail-toggle-btn,
+:is(#view-session-planner, #app-shell) .scene-wrap-toggle-btn { line-height: 1.2; height: 26px; box-sizing: border-box; }
 
 /* Place name — the page title (Spectral 34px). */
 :is(#view-session-planner, #app-shell) .scene-place-header { margin-bottom: 20px; }
@@ -1875,10 +1913,16 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 /* The swapped-in edit textarea (click-to-edit): inherits the typeset font of
    the value it replaced, and paints the design's focus halo. */
 :is(#view-session-planner, #app-shell) .scene-edit-textarea {
-  width: 100%; box-sizing: border-box; font: inherit; color: inherit;
+  /* WS-G (2026-09-09): the edit chrome is an OVERLAY, not flow. Border +
+     padding (5px / 7px) are pulled back out with negative margins so the
+     textarea occupies exactly the resting text's box -- the same rule the
+     hover halo already follows (box-shadow, no flow). The probe measured
+     every row below the clicked field dropping 13-16px on click and
+     snapping back on blur; with this it is 0. */
+  display: block; width: calc(100% + 14px); box-sizing: border-box; font: inherit; color: inherit;
   background: var(--sp-surface-input); border: 1px solid var(--sp-accent-teal);
   border-radius: var(--sp-radius-md); box-shadow: 0 0 0 3px var(--sp-focus-halo);
-  padding: 4px 6px; resize: none; overflow: hidden; min-height: 1.6em;
+  padding: 4px 6px; margin: -5px -7px; resize: none; overflow: hidden; min-height: 0;
 }
 /* Editing keeps the resting text's shape: an inline host span collapses to
    zero width once emptied, starving the 100%-width textarea (the
@@ -2136,6 +2180,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 /* Sub-bar right cluster: the two segmented controls + the Wrap button. */
 :is(#view-session-planner, #app-shell) .scene-subbar-controls {
   display: flex; align-items: center; gap: 10px; flex-shrink: 0; flex-wrap: wrap;
+  min-height: 26px; /* WS-G: the buttons' height, so hiding them (Run) never shifts the page */
 }
 :is(#view-session-planner, #app-shell) .sp-segmented {
   display: inline-flex; align-items: stretch;
@@ -2154,6 +2199,12 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 :is(#view-session-planner, #app-shell) .sp-segmented-btn--active {
   background: var(--sp-accent-teal-selected); color: var(--sp-ink-heading); font-weight: 600;
 }
+/* WS-G: reserve the bold width so the active label never nudges its
+   siblings (measured a 1px control-width change per view switch). */
+:is(#view-session-planner, #app-shell) .sp-segmented-btn::after {
+  content: attr(data-label); display: block; height: 0; overflow: hidden;
+  visibility: hidden; font-weight: 600;
+}
 
 /* Cards layout removed 2026-08-31 (persona round): Run mode is the real
    formatted view; Page | Layout remain. */
@@ -2168,7 +2219,6 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .npc-creature-btn,
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .from-graph-btn,
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .add-element-btn,
-:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-wrap-toggle-btn,
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-assist-propose-link,
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-assist-draft-link,
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .draft-read-aloud-wrap,
@@ -2583,7 +2633,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   display: flex; gap: 16px; align-items: flex-start;
 }
 :is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-prep-with-rail > .scene-elements-list {
-  flex: 1; min-width: 0;
+  flex: 0 1 720px; min-width: 0; /* WS-G: Prep's exact measure -- rows never reflow when the rail opens */
 }
 :is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-layout-rail {
   display: block; width: 220px; flex: none; position: sticky; top: 8px;
@@ -2622,9 +2672,13 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 }
 :is(#view-session-planner, #app-shell) .scene-element-glyph[draggable="true"] { cursor: grab; }
 /* The rail is a Prep-only affordance: hidden in Run with the edit chrome,
-   pointless in the board view, gone at mobile widths (the board covers it). */
+   pointless in the board view, gone at mobile widths (the board covers it).
+   WS-G: hidden by VISIBILITY, keeping its slot -- the Wrap button in Run
+   likewise -- so the Prep | Layout | Run control to their left never slides
+   out from under the pointer that just clicked it (measured 92px + 78px). */
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-rail-toggle-btn,
-:is(#view-session-planner, #app-shell) .scene-page:has(.scene-elements-list[data-layout="board"]) .scene-rail-toggle-btn { display: none; }
+:is(#view-session-planner, #app-shell) .scene-page:has(.scene-elements-list[data-layout="board"]) .scene-rail-toggle-btn,
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-wrap-toggle-btn { visibility: hidden; pointer-events: none; }
 @media (max-width: 760px) {
   :is(#view-session-planner, #app-shell) .scene-rail-toggle-btn { display: none; }
   :is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-prep-with-rail { display: contents; }
@@ -3277,7 +3331,10 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 /* Phase 30 task 30.3: the scene surface scrolls as a whole; its sub-bar sticks
    to the top. The shelf/runsheet padding is dropped (the scene page owns its
    own 30px gutter + centering). */
-#app-shell .planner-scene-surface { padding: 0; overflow-y: auto; }
+#app-shell .planner-scene-surface { padding: 0; overflow-y: auto; scrollbar-gutter: stable; }
+/* ^ WS-G: the gutter is reserved whether or not the surface scrolls, so a
+   short Run spread after a long Prep page (or back) never shifts the centred
+   column by half a classic scrollbar. */
 #app-shell .planner-scene-view { min-height: 100%; }
 #app-shell .scene-top-bar { position: sticky; top: 0; z-index: 3; }
 

@@ -1002,7 +1002,9 @@ export function makeClickToEditField({ tag = "div", className = "", testid, data
 
     function autoGrow() {
       ta.style.height = "auto";
-      ta.style.height = `${ta.scrollHeight}px`;
+      // scrollHeight excludes the border; box-sizing is border-box, so add
+      // it back or the last line sits 2px clipped (WS-G).
+      ta.style.height = `${ta.scrollHeight + (ta.offsetHeight - ta.clientHeight)}px`;
     }
     ta.addEventListener("input", () => { autoGrow(); debounce.onInput(trimTrailingWhitespace(ta.value)); });
     ta.addEventListener("keydown", (e) => {
@@ -3773,6 +3775,7 @@ function buildSegmentedControl(sceneId, options) {
     btn.setAttribute("data-testid", opt.testid);
     btn.setAttribute("data-scene-id", sceneId);
     btn.textContent = opt.label;
+    btn.setAttribute("data-label", opt.label); // WS-G: bold-width reservation (CSS ::after)
     btn.setAttribute("aria-pressed", opt.active ? "true" : "false");
     if (opt.active) btn.classList.add("sp-segmented-btn--active");
     buttons[opt.key] = btn;
