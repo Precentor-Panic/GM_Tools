@@ -192,6 +192,8 @@ import {
   listBestiaryEntries,
   acceptBestiaryEntry,
   discardBestiaryEntry,
+  retireBestiaryEntry,
+  unretireBestiaryEntry,
   updateBestiaryEntryNote,
   updateBestiaryEntryRating,
   promoteBestiaryEntryToGraph,
@@ -2455,6 +2457,18 @@ async function handleApi(req, res, url, parts) {
   // POST /api/combat-planning/bestiary/:id/discard
   if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "discard") {
     const entry = discardBestiaryEntry(parts[3]);
+    return sendJson(res, 200, { entry });
+  }
+
+  // POST /api/combat-planning/bestiary/:id/retire | /unretire -- table round
+  // 2026-09-09 (WS-H): accepted <-> retired. Retired rows stay on the shelf
+  // for history but leave the tray / from-Library picker / token push.
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "retire") {
+    const entry = retireBestiaryEntry(parts[3]);
+    return sendJson(res, 200, { entry });
+  }
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "unretire") {
+    const entry = unretireBestiaryEntry(parts[3]);
     return sendJson(res, 200, { entry });
   }
 

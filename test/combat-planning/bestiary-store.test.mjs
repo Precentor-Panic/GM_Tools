@@ -195,6 +195,8 @@ const IMPLAUSIBLE_RAW_FIELDS = {
     updateBestiaryEntryScore,
     acceptBestiaryEntry,
     discardBestiaryEntry,
+    retireBestiaryEntry,
+    unretireBestiaryEntry,
     updateBestiaryEntryRawFields,
     compactStatFlavorLine,
     promoteBestiaryEntryToGraph,
@@ -276,6 +278,21 @@ const IMPLAUSIBLE_RAW_FIELDS = {
   test("discardBestiaryEntry: a still-'proposed' entry discards cleanly", () => {
     const updated = discardBestiaryEntry("bst-2");
     assert.equal(updated.status, "discarded");
+  });
+
+  // Table round 2026-09-09 (WS-H): retired = was accepted, kept for history,
+  // never pushed or dropped again. Reversible; never reachable from proposed.
+  test("retireBestiaryEntry: accepted -> retired, keeps foundryActorRef, and unretire restores accepted", () => {
+    const fresh = saveBestiaryEntry({ rawFields: { name: "Old Guard" }, foundryActorRef: "Actor.oldguard" }, { makeId: () => "bst-retire" });
+    assert.throws(() => retireBestiaryEntry(fresh.id), /only an 'accepted' entry/i, "a proposed row is discarded, not retired");
+    acceptBestiaryEntry(fresh.id);
+    const retired = retireBestiaryEntry(fresh.id);
+    assert.equal(retired.status, "retired");
+    assert.equal(retired.foundryActorRef, "Actor.oldguard", "history keeps the Foundry link");
+    assert.equal(retireBestiaryEntry(fresh.id).status, "retired", "idempotent");
+    assert.throws(() => discardBestiaryEntry(fresh.id), /retired/i, "a retired row is not discardable either");
+    assert.equal(unretireBestiaryEntry(fresh.id).status, "accepted");
+    assert.throws(() => unretireBestiaryEntry("bst-2"), /not retired/i);
   });
 
   test("no write in this file leaked into the repo's real default bestiary/ directory", () => {

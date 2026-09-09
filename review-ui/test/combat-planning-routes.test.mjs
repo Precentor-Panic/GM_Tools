@@ -427,4 +427,26 @@ test("encounter-suggest: 20.5 REGRESSION -- non-empty themeText for a world with
   assert.ok(Array.isArray(body.suggestion.combination) && body.suggestion.combination.length > 0);
 });
 
+// -------------------------------------------------------- bestiary retire / unretire (table round 2026-09-09, WS-H)
+
+test("POST /api/combat-planning/bestiary/:id/retire flips accepted -> retired, /unretire flips it back; a proposed entry refuses with 400", async () => {
+  const fresh = acceptBestiaryEntry(saveBestiaryEntry({ rawFields: makeRawFields("Retirable Test Goblin") }).id);
+  const retired = await postJson(`/api/combat-planning/bestiary/${fresh.id}/retire`, {});
+  assert.equal(retired.status, 200, JSON.stringify(retired.body));
+  assert.equal(retired.body.entry.status, "retired");
+  const listed = await getJson("/api/combat-planning/bestiary");
+  assert.equal(listed.body.entries.find((e) => e.id === fresh.id)?.status, "retired", "the list surfaces the new status for the Library");
+  const restored = await postJson(`/api/combat-planning/bestiary/${fresh.id}/unretire`, {});
+  assert.equal(restored.status, 200);
+  assert.equal(restored.body.entry.status, "accepted");
+
+  const proposed = saveBestiaryEntry({ rawFields: makeRawFields("Never-Accepted Test Goblin") });
+  const refused = await postJson(`/api/combat-planning/bestiary/${proposed.id}/retire`, {});
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /only an 'accepted' entry/i);
+  const unknown = await postJson("/api/combat-planning/bestiary/no-such-entry/unretire", {});
+  assert.notEqual(unknown.status, 404, "route registered -- a missing ENTRY is a later failure mode than a missing ROUTE");
+  assert.equal(unknown.status, 400);
+});
+
 void __dirname;

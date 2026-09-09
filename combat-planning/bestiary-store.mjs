@@ -35,8 +35,10 @@
  *
  * Lighter review than the graph's mutation-review batch machinery (design
  * record §1a: "more like prep-content-ops.mjs's accept/discard pattern"): a
- * BestiaryEntry's status is 'proposed' | 'accepted' | 'discarded' -- no
- * batchId, no diff, no sync-to-Foundry reachability at all.
+ * BestiaryEntry's status is 'proposed' | 'accepted' | 'discarded' |
+ * 'retired' (table round 2026-09-09: was accepted, kept for history, never
+ * pushed or dropped on a scene again) -- no batchId, no diff, no
+ * sync-to-Foundry reachability at all.
  *
  * Phase 35 task 35.1, §5 of review-ui/test/e2e/phase35-fixture.mjs (THE
  * WRITTEN CONTRACT): gains two additive, optional/nullable persisted fields
@@ -373,13 +375,45 @@ export function acceptBestiaryEntry(entryId) {
  */
 export function discardBestiaryEntry(entryId) {
   const entry = readEntry(entryId);
-  if (entry.status === "accepted") {
+  if (entry.status === "accepted" || entry.status === "retired") {
     throw new Error(
-      `Refusing to discard bestiary entry "${entryId}" (status "accepted") -- only a not-yet-accepted 'proposed' ` +
+      `Refusing to discard bestiary entry "${entryId}" (status "${entry.status}") -- only a not-yet-accepted 'proposed' ` +
       `entry can be discarded outright.`
     );
   }
   return writeEntry({ ...entry, status: "discarded" });
+}
+
+/**
+ * Table round 2026-09-09 (WS-H): status 'accepted' -> 'retired'. Retired is
+ * "was accepted, keep for history, never push again": the row stays on the
+ * shelf (dimmed, with its Foundry ref intact so the pull's name-matching
+ * still recognises it) but the tray, the from-Library picker and
+ * eligibleTokenActors all exclude it. Renaming a row "(retired)" used to be
+ * the only way to say this, and that kept it droppable. Reversible via
+ * unretireBestiaryEntry.
+ * @returns {object} the updated BestiaryEntry.
+ */
+export function retireBestiaryEntry(entryId) {
+  const entry = readEntry(entryId);
+  if (entry.status === "retired") return entry;
+  if (entry.status !== "accepted") {
+    throw new Error(
+      `Refusing to retire bestiary entry "${entryId}" (status "${entry.status}") -- only an 'accepted' entry can be ` +
+      `retired; discard a 'proposed' one instead.`
+    );
+  }
+  return writeEntry({ ...entry, status: "retired" });
+}
+
+/** status: 'retired' -> 'accepted'. @returns {object} the updated BestiaryEntry. */
+export function unretireBestiaryEntry(entryId) {
+  const entry = readEntry(entryId);
+  if (entry.status === "accepted") return entry;
+  if (entry.status !== "retired") {
+    throw new Error(`Refusing to un-retire bestiary entry "${entryId}" (status "${entry.status}") -- it is not retired.`);
+  }
+  return writeEntry({ ...entry, status: "accepted" });
 }
 
 /**
@@ -533,7 +567,7 @@ export function refreshBestiaryEntryFromPlutonium(dir, entryId) {
 export function refreshAllBestiaryEntriesFromPlutonium(dir) {
   const result = { refreshed: [], skipped: [], failed: [] };
   for (const entry of listBestiaryEntries()) {
-    if (entry.status === "discarded") { result.skipped.push(entry.id); continue; }
+    if (entry.status === "discarded" || entry.status === "retired") { result.skipped.push(entry.id); continue; }
     if (!resolvePlutoniumChassis(entry)) { result.skipped.push(entry.id); continue; }
     try {
       refreshBestiaryEntryFromPlutonium(dir, entry.id);

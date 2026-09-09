@@ -352,6 +352,13 @@ function eligibleTokenActors(world, roster, skipped) {
         skipped.push({ reason: `${label} "${row.id}" not found -- skipped (n=${row.n})` });
         continue;
       }
+      if (record.status === "retired") {
+        // Table round 2026-09-09 (WS-H): a retired row keeps its Foundry ref
+        // for history, but never goes to the table again.
+        const name = record.rawFields?.name ?? record.name ?? "unnamed";
+        skipped.push({ reason: `${label} "${row.id}" (${name}) is retired -- skipped (n=${row.n}); un-retire it in the Library to push it again` });
+        continue;
+      }
       if (record.status !== "accepted" || !record.foundryActorRef) {
         const name = record.rawFields?.name ?? record.name ?? "unnamed";
         skipped.push({

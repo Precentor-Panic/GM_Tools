@@ -2411,10 +2411,10 @@ server.registerTool(
       "READ. Mirrors GET /api/combat-planning/bestiary -- combat-planning/bestiary-store.mjs's listBestiaryEntries(). " +
       "DELIBERATELY NO `world` PARAMETER: the bestiary is a library-wide shelf, not world-scoped (bestiary-store.mjs's " +
       "own storage decision) -- do not pass one, it wouldn't be honored. Client-side filters (not a store-level " +
-      "feature): `status` ('proposed'|'accepted'|'discarded') and `source` (the entry's own derived sourcePill, " +
-      "e.g. 'mine'|'foundry'|'reskin').",
+      "feature): `status` ('proposed'|'accepted'|'discarded'|'retired' -- retired = was accepted, kept for history, " +
+      "never pushed or dropped again) and `source` (the entry's own derived sourcePill, e.g. 'mine'|'foundry'|'reskin').",
     inputSchema: {
-      status: z.enum(["proposed", "accepted", "discarded"]).optional(),
+      status: z.enum(["proposed", "accepted", "discarded", "retired"]).optional(),
       source: z.string().optional().describe("Filters on the entry's own deriveSourcePill value, e.g. 'mine', 'foundry', 'reskin'.")
     }
   },

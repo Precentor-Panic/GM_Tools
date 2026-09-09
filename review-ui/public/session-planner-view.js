@@ -3603,8 +3603,11 @@ function buildFromLibraryPicker(scene, refreshElements, close) {
         spApi(`/api/session-planner/stagecraft${spWithWorld()}`)
       ]);
       const notDiscarded = (r) => r.status !== "discarded";
+      // WS-H (2026-09-09): a retired creature stays on the Library shelf
+      // for history but is never offered to a scene again.
+      const droppable = (r) => notDiscarded(r) && r.status !== "retired";
       candidates = [
-        ...(bestiaryRes.entries || []).filter(notDiscarded).map((e) => ({
+        ...(bestiaryRes.entries || []).filter(droppable).map((e) => ({
           kind: "creature", id: e.id, name: e.rawFields?.name || "Unnamed",
           hint: e.rawFields?.challengeRating != null ? `CR ${e.rawFields.challengeRating}` : ""
         })),

@@ -269,6 +269,48 @@ test("Bestiary stat rail: clicking the promote affordance swaps it to a quiet 'i
   await page.close();
 });
 
+// Table round 2026-09-09 (WS-H): retiring a creature is a real status flip,
+// not a name suffix -- the card dims, stops being draggable, and Restore
+// brings it back. The store/push-side exclusions are unit-tested elsewhere.
+test("Bestiary stat rail: Retire dims the card, marks it 'retired', disables drag, persists across reload; Restore reverses it", async () => {
+  const entry = saveBestiaryEntry({ rawFields: goblinRawFields({ name: "UI Retire Goblin" }) }, { makeId: () => "bst-p376b-ui-retire" });
+  acceptBestiaryEntry(entry.id);
+
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+  await page.goto(`${base}/#library`);
+  await page.locator('[data-testid="library-bestiary-root"]').waitFor({ state: "visible", timeout: 15000 });
+
+  const cardSel = `[data-testid="library-creature-card"][data-entry-id="${entry.id}"]`;
+  const card = page.locator(cardSel);
+  await card.waitFor({ state: "visible", timeout: 10000 });
+  assert.equal(await card.getAttribute("draggable"), "true");
+  assert.equal(await card.getAttribute("data-status"), "accepted");
+  await card.click();
+
+  const statRail = page.locator('[data-testid="library-stat-rail"]');
+  await statRail.waitFor({ state: "visible", timeout: 10000 });
+  await statRail.locator('[data-testid="library-bestiary-retire-btn"]').click();
+
+  await page.waitForFunction((sel) => document.querySelector(sel)?.getAttribute("data-status") === "retired", cardSel, { timeout: 10000 });
+  assert.equal(await card.getAttribute("draggable"), "false");
+  await card.locator('[data-testid="library-creature-card-retired"]').waitFor({ state: "visible", timeout: 5000 });
+  assert.equal(getBestiaryEntry(entry.id).status, "retired", "a real store write, not client-only");
+
+  // Persisted: reload shows it still retired, with Restore on the rail.
+  await page.reload();
+  await page.locator('[data-testid="library-bestiary-root"]').waitFor({ state: "visible", timeout: 15000 });
+  await page.locator(cardSel).waitFor({ state: "visible", timeout: 10000 });
+  assert.equal(await page.locator(cardSel).getAttribute("data-status"), "retired");
+  await page.locator(cardSel).click();
+  await page.locator('[data-testid="library-bestiary-unretire-btn"]').click();
+  await page.waitForFunction((sel) => document.querySelector(sel)?.getAttribute("data-status") === "accepted", cardSel, { timeout: 10000 });
+  assert.equal(await page.locator(cardSel).getAttribute("draggable"), "true");
+  assert.equal(getBestiaryEntry(entry.id).status, "accepted");
+
+  await page.close();
+});
+
 test("Bestiary stat rail: 'Wear it as something else' renders suggestion cards, and accepting one creates a new catalogue entry with the 'Reskinned' pill", async () => {
   const entry = saveBestiaryEntry({ rawFields: goblinRawFields({ name: "UI Reskin Goblin" }) }, { makeId: () => "bst-p376b-ui-reskin" });
   acceptBestiaryEntry(entry.id);

@@ -644,12 +644,16 @@ function buildBestiary(ctx) {
       const selected = e.id === st.selId;
       const accent = selected ? TEAL : "oklch(0.88 0.010 80)";
       const rating = ratingOf(e);
+      // WS-H (2026-09-09): a retired row is history -- shown dimmed, never
+      // a drag source (the tray/picker/token push all exclude it too).
+      const retired = e.status === "retired";
       const card = el("div", {
         testid: "library-creature-card",
         "data-entry-id": e.id,
-        draggable: "true",
-        title: "Drag onto a scene at lower left to add it to that encounter",
-        style: `border: 1px solid ${selected ? "oklch(0.72 0.055 185)" : "oklch(0.88 0.010 80)"}; border-top: 3px solid ${accent}; border-radius: 4px; background: ${selected ? "oklch(0.975 0.012 185)" : "oklch(0.985 0.005 85)"}; padding: 11px 12px 10px; cursor: pointer;`
+        "data-status": e.status,
+        draggable: retired ? "false" : "true",
+        title: retired ? "Retired — kept for history; restore it from the stat block to use it again" : "Drag onto a scene at lower left to add it to that encounter",
+        style: `border: 1px solid ${selected ? "oklch(0.72 0.055 185)" : "oklch(0.88 0.010 80)"}; border-top: 3px solid ${accent}; border-radius: 4px; background: ${selected ? "oklch(0.975 0.012 185)" : "oklch(0.985 0.005 85)"}; padding: 11px 12px 10px; cursor: pointer;${retired ? " opacity: 0.55;" : ""}`
       }, [
         el("div", { style: "display: flex; align-items: baseline; gap: 8px;" }, [
           el("span", { testid: "library-creature-card-name", text: e.flavorName || e.rawFields?.name || "Unnamed", style: "flex: 1; min-width: 0; font-family: Spectral, serif; font-size: 16.5px; font-weight: 500; line-height: 1.2;" }),
@@ -657,6 +661,7 @@ function buildBestiary(ctx) {
         ]),
         el("div", { style: "display: flex; align-items: center; gap: 7px; margin-top: 5px;" }, [
           sourcePill(e.sourcePill, "library-creature-card-source"),
+          retired ? el("span", { testid: "library-creature-card-retired", text: "retired", style: "font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.50 0.012 70); padding: 1px 6px; border: 1px solid oklch(0.80 0.010 80); border-radius: 20px;" }) : null,
           el("span", { text: e.rawFields?.type || "", style: "font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.60 0.012 70);" })
         ]),
         el("div", { text: `AC ${e.rawFields?.ac ?? "—"} · HP ${e.rawFields?.hp ?? "—"}`, style: "font-size: 12px; color: oklch(0.48 0.014 65); line-height: 1.45; margin-top: 8px;" }),
@@ -667,6 +672,7 @@ function buildBestiary(ctx) {
       ]);
       card.addEventListener("click", () => selectEntry(e.id));
       card.addEventListener("dragstart", (ev) => {
+        if (retired) { ev.preventDefault(); return; }
         if (ev.dataTransfer) { ev.dataTransfer.effectAllowed = "copy"; ev.dataTransfer.setData("text/plain", e.id); }
         setTrayDragPayload({ kind: "creature", id: e.id });
       });
@@ -802,6 +808,35 @@ function buildBestiary(ctx) {
         }
       });
       headerChildren.push(refreshBtn);
+    }
+    // WS-H (2026-09-09): Retire (accepted -> retired: keep for history, never
+    // push or drop it again) / Restore (retired -> accepted). Only an
+    // accepted row can retire; a proposed one is discarded from its ingest
+    // review instead.
+    if (e.status === "accepted" || e.status === "retired") {
+      const retiredNow = e.status === "retired";
+      const retireBtn = el("span", {
+        testid: retiredNow ? "library-bestiary-unretire-btn" : "library-bestiary-retire-btn",
+        text: retiredNow ? "Restore" : "Retire",
+        title: retiredNow
+          ? "Puts this creature back in play: droppable on scenes and pushable to Foundry again."
+          : "Keeps this creature on the shelf for history but takes it out of play: no longer offered to scenes, never pushed to Foundry again. Reversible.",
+        style: "flex: none; font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.04em; color: oklch(0.44 0.014 65); padding: 2px 8px; border: 1px dashed oklch(0.72 0.012 70); border-radius: 20px; cursor: pointer; white-space: nowrap;"
+      });
+      retireBtn.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        try {
+          await api(`/api/combat-planning/bestiary/${encodeURIComponent(e.id)}/${retiredNow ? "unretire" : "retire"}`, { method: "POST" });
+          showUndoToast(retiredNow ? `"${e.flavorName || rf.name}" is back in play.` : `"${e.flavorName || rf.name}" retired — kept for history, out of play.`, async () => {
+            await api(`/api/combat-planning/bestiary/${encodeURIComponent(e.id)}/${retiredNow ? "retire" : "unretire"}`, { method: "POST" });
+            await renderLibrarySurface("bestiary");
+          });
+          await renderLibrarySurface("bestiary");
+        } catch (err) {
+          showUndoToast(`Could not ${retiredNow ? "restore" : "retire"}: ${err.message}`, () => {});
+        }
+      });
+      headerChildren.push(retireBtn);
     }
     statRail.appendChild(el("div", { style: "padding: 12px 15px; border-bottom: 1px solid oklch(0.88 0.010 80); display: flex; align-items: center; gap: 9px;" }, headerChildren));
 

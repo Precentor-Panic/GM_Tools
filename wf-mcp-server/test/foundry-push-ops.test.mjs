@@ -48,7 +48,7 @@ const { foundryOpsPath, foundryResultsPath } = await import("../lib/snapshot.mjs
 const { createScene, getScene, updateScene, markScenePushed } = await import("../../session-planner/scenes.mjs");
 const { addToSceneTray } = await import("../../session-planner/scene-tray.mjs");
 const { saveStagecraftAsset, acceptStagecraftAsset, stagecraftRoot } = await import("../../session-planner/stagecraft-store.mjs");
-const { saveBestiaryEntry, acceptBestiaryEntry } = await import("../../combat-planning/bestiary-store.mjs");
+const { saveBestiaryEntry, acceptBestiaryEntry, retireBestiaryEntry } = await import("../../combat-planning/bestiary-store.mjs");
 const { savePartyMember } = await import("../../combat-planning/party-roster-store.mjs");
 
 const sampleOp = JSON.parse(readFileSync(join(FIXTURES_DIR, "foundry-ops.create-scene.sample.json"), "utf8"))[0];
@@ -380,6 +380,19 @@ await test("composeSceneOps: an ineligible roster row (not accepted / no foundry
   const { tokenOps, skipped } = composeSceneOps(dataDir, WORLD, getScene(WORLD, scene.id));
   assert.deepEqual(tokenOps, []);
   assert.ok(skipped.some((s) => s.reason.includes("not eligible for token push")), `expected an eligibility skip reason -- got ${JSON.stringify(skipped)}`);
+});
+
+await test("composeSceneOps: a RETIRED roster row (accepted, linked, then retired) is skipped with a 'retired' reason -- its Foundry ref never reaches a token op", () => {
+  // Table round 2026-09-09 (WS-H): renaming a row "(retired)" used to leave
+  // it droppable and pushable; a real status must take it out of play.
+  const WORLD = "compose-retired-world";
+  const scene = createScene(WORLD, {}, { makeId: () => "compose-scene-retired" });
+  const retired = retireBestiaryEntry(acceptBestiaryEntry(saveBestiaryEntry({ rawFields: { name: "Retired Ogrekin" }, foundryActorRef: "Actor.retiredOgrekin" }).id).id);
+  addToSceneTray(WORLD, scene.id, { id: retired.id, kind: "creature" });
+
+  const { tokenOps, skipped } = composeSceneOps(dataDir, WORLD, getScene(WORLD, scene.id));
+  assert.deepEqual(tokenOps, []);
+  assert.ok(skipped.some((s) => /is retired/.test(s.reason) && s.reason.includes("Retired Ogrekin")), `expected a retired skip reason -- got ${JSON.stringify(skipped)}`);
 });
 
 await test("composeSceneOps: an asset with NEITHER foundryRef.imagePath NOR a local file is skipped with 'no image source available'", () => {
