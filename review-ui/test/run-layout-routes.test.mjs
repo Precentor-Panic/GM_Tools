@@ -287,7 +287,7 @@ test("run-layout/seed creates placeholder elements per role for the scene's kind
   assert.equal(first.body.kind, "combat", "kind from the name prefix");
   assert.ok(first.body.skipped.includes("read"));
   const roles = first.body.seeded.map((e) => e.run.role);
-  assert.deepEqual([...new Set(roles)], ["dressing", "block", "sketch", "beat", "gm", "exits"]);
+  assert.deepEqual([...new Set(roles)], ["now", "dressing", "block", "sketch", "beat", "gm", "exits"]);
   assert.ok(first.body.seeded.every((e) => e.run.placeholder === true));
   const exits = first.body.seeded.find((e) => e.run.role === "exits");
   assert.match(exits.fields.gives, /^ONWARD \(plot\)/);

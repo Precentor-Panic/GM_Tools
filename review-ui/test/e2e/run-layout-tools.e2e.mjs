@@ -222,7 +222,7 @@ test("seed run skeleton (route/MCP only — the Prep ghost retired 2026-09-02): 
   assert.equal(await page.locator('[data-testid="scene-seed-skeleton-link"]').count(), 0, "the Prep ghost is retired");
   await page.locator('.scene-element-row[data-placeholder="true"]').first().waitFor({ timeout: 10000 });
   const rows = page.locator('.scene-element-row[data-placeholder="true"]');
-  assert.equal(await rows.count(), 8, "narrative: read + 3 dressing + 2 beats + gm + exits");
+  assert.equal(await rows.count(), 9, "narrative (skeleton v2): read + now + 3 dressing + 2 beats + gm + exits");
   const stored = await els(scene.id);
   assert.ok(stored.every((e) => e.run?.placeholder === true));
 

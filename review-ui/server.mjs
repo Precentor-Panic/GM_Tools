@@ -599,6 +599,14 @@ function withBestiarySummary(element) {
     // `name` prefers the reskin's flavorName (the shelf's own display name;
     // the old `entry.name` read a key no entry carries). `actionsLine` is
     // E2's one-line "what it does" (null when the row carries no actions).
+    // v5 (table round): the person card renders the compact stat block
+    // INLINE, so the structured action fields ride along verbatim, plus the
+    // optional PHB-line keys (speed/abilities/skills/senses/languages) when a
+    // row carries them — absent keys are simply absent, never invented.
+    const optional = {};
+    for (const k of ["size", "type", "speed", "abilities", "skills", "senses", "languages", "attacks", "multiattack", "rechargeAbilities", "legendaryActions", "traits"]) {
+      if (rf[k] != null) optional[k] = rf[k];
+    }
     return {
       ...element,
       bestiary: {
@@ -608,7 +616,8 @@ function withBestiarySummary(element) {
         hp: rf.hp ?? null,
         cr: rf.challengeRating ?? rf.cr ?? null,
         note: entry.note ?? null,
-        actionsLine: compactActionsLine(rf)
+        actionsLine: compactActionsLine(rf),
+        ...optional
       }
     };
   } catch {

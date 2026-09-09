@@ -3954,6 +3954,81 @@ function runSpreadFieldLines(fields, keys) {
   return out;
 }
 
+// v5 person card: the compact stat block INLINE, PHB/MM abbreviated shape —
+// one defences line (AC · HP · CR · size/type), then speed / the six scores /
+// skills / senses when the shelf row carries them, then Multiattack, each
+// attack as "Name +hit (dice type)", recharge abilities, and the traits with
+// their one-sentence summaries. Reads `el.bestiary` (withBestiarySummary,
+// server.mjs) first, else the element's own `stat`; a bare statblockRef
+// with no numbers says so instead of looking prepped (the block role's own
+// honesty rule).
+function runSpreadCompactStat(el, host) {
+  const b = el.bestiary;
+  const st = el.stat;
+  const f = el.fields || {};
+  const hasStat = st && (String(st.raw ?? "").trim() || st.ac != null || st.hp != null);
+  if (!b && !hasStat) {
+    if (f.statblockRef) host.appendChild(runSpreadEl("div", "rs-empty", `${f.statblockRef} — no stats entered (link a bestiary row or add + STAT BLOCK in Prep).`));
+    return;
+  }
+  const wrap = runSpreadEl("div", "rs-statc");
+  wrap.setAttribute("data-testid", "rs-statc");
+  const fmtSigned = (n) => (typeof n === "number" ? `${n >= 0 ? "+" : ""}${n}` : String(n));
+  if (b) {
+    const parts = [];
+    if (b.ac != null) parts.push(`AC ${b.ac}`);
+    if (b.hp != null) parts.push(`HP ${b.hp}`);
+    if (b.cr != null) parts.push(`CR ${b.cr}`);
+    const kind = [b.size, b.type].filter(Boolean).join(" ");
+    if (kind) parts.push(kind);
+    const src = b.name && b.name !== el.name ? ` — ${b.name}` : "";
+    if (parts.length || src) wrap.appendChild(runSpreadEl("span", "rs-bl", `${parts.join(" · ")}${src}`));
+    const line2 = [];
+    if (b.speed) line2.push(`Speed ${typeof b.speed === "object" ? Object.entries(b.speed).map(([k, v]) => `${k === "walk" ? "" : `${k} `}${v}`).join(", ") : b.speed}`);
+    if (b.abilities && typeof b.abilities === "object") {
+      const order = ["str", "dex", "con", "int", "wis", "cha"];
+      const scores = order.filter((k) => b.abilities[k] != null).map((k) => `${k.toUpperCase()} ${b.abilities[k]}`);
+      if (scores.length) line2.push(scores.join(" "));
+    }
+    if (line2.length) wrap.appendChild(runSpreadEl("span", "rs-bl rs-bl--actions", line2.join(" · ")));
+    const line3 = [];
+    if (b.skills && typeof b.skills === "object") line3.push(`Skills ${Object.entries(b.skills).map(([k, v]) => `${k} ${fmtSigned(v)}`).join(", ")}`);
+    else if (typeof b.skills === "string") line3.push(`Skills ${b.skills}`);
+    if (b.senses) line3.push(`Senses ${typeof b.senses === "string" ? b.senses : Object.entries(b.senses).map(([k, v]) => `${k} ${v}`).join(", ")}`);
+    if (b.languages) line3.push(`Languages ${Array.isArray(b.languages) ? b.languages.join(", ") : b.languages}`);
+    if (line3.length) wrap.appendChild(runSpreadEl("span", "rs-bl rs-bl--actions", line3.join(" · ")));
+    const actions = [];
+    if (b.multiattack?.count) actions.push(`Multiattack ×${b.multiattack.count}${Array.isArray(b.multiattack.attackNames) && b.multiattack.attackNames.length ? ` (${b.multiattack.attackNames.join(", ")})` : ""}`);
+    for (const a of Array.isArray(b.attacks) ? b.attacks : []) {
+      if (!a?.name) continue;
+      const hit = typeof a.toHitBonus === "number" ? ` ${fmtSigned(a.toHitBonus)}` : "";
+      const dmg = a.damageDice ? ` (${a.damageDice}${a.damageType ? ` ${a.damageType}` : ""})` : "";
+      actions.push(`${a.name}${hit}${dmg}`);
+    }
+    for (const r of Array.isArray(b.rechargeAbilities) ? b.rechargeAbilities : []) {
+      if (!r?.name) continue;
+      actions.push(`${r.name} (Recharge ${r.rechargeOn ?? "6"}${r.damageDice ? `, ${r.damageDice}` : ""})`);
+    }
+    if (b.legendaryActions?.count) actions.push(`Legendary ×${b.legendaryActions.count}`);
+    if (actions.length) wrap.appendChild(runSpreadEl("span", "rs-bl rs-statc-actions", actions.join(" · ")));
+    for (const t of Array.isArray(b.traits) ? b.traits : []) {
+      if (!t?.name) continue;
+      const line = runSpreadEl("div", "rs-statc-trait");
+      line.appendChild(runSpreadEl("b", null, `${t.name}.`));
+      if (t.summary) line.appendChild(document.createTextNode(` ${t.summary}`));
+      wrap.appendChild(line);
+    }
+    if (b.note) wrap.appendChild(runSpreadLabeledLine("Note", b.note));
+  } else {
+    const parts = [];
+    if (st.ac != null) parts.push(`AC ${st.ac}`);
+    if (st.hp != null) parts.push(`HP ${st.hp}`);
+    if (parts.length) wrap.appendChild(runSpreadEl("span", "rs-bl", parts.join(" · ")));
+  }
+  if (st?.raw && String(st.raw).trim()) wrap.appendChild(runSpreadEl("pre", "rs-stat", String(st.raw)));
+  host.appendChild(wrap);
+}
+
 // Inline SVG for a `sketch` element. Trusted local content (the GM's own
 // prep), so this is a guard against accidents, not an adversary: must parse
 // as SVG with an <svg> root; <script>/<foreignObject>, on* handlers and
@@ -4137,6 +4212,38 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
           if (f[k]) host.appendChild(runSpreadLabeledLine(runFieldLabel("read", k, SCENE_FIELD_LABELS[k]), f[k], { secret: k === "secret" }));
         }
         break;
+      case "now":
+        // v5 "What's happening": the motion in the scene right now, then
+        // what changes because of it (the renamed Residue line).
+        if (f.trigger) host.appendChild(runSpreadEl("div", "rs-when", f.trigger));
+        if (f.looks) host.appendChild(runSpreadEl("p", "rs-now", f.looks));
+        if (f.gives) host.appendChild(runSpreadLabeledLine(runFieldLabel("now", "gives", SCENE_FIELD_LABELS.gives), f.gives));
+        for (const c of runSpreadChecks(f)) host.appendChild(c);
+        for (const line of runSpreadFieldLines(f, ["means", "wants", "function", "secret"])) host.appendChild(line);
+        break;
+      case "person":
+        // v5: ONE card, nothing split (Russell: "why have the info split?").
+        // The 3-line at-a-glance first (race/build/tell · Mannerism · Voice),
+        // the roleplay fields, the DCs, the secret, THEN the compact stat
+        // block inline — same data the side block reads, in the PHB/MM
+        // abbreviated shape, right where the description is.
+        if (f.trigger) host.appendChild(runSpreadEl("div", "rs-when", f.trigger));
+        if (f.looks) host.appendChild(runSpreadEl("p", "rs-looks", f.looks));
+        for (const line of runSpreadFieldLines(f, ["wants", "means", "gives", "function"])) host.appendChild(line);
+        for (const c of runSpreadChecks(f)) host.appendChild(c);
+        if (f.secret) host.appendChild(runSpreadLabeledLine(SCENE_FIELD_LABELS.secret, f.secret, { secret: true }));
+        runSpreadCompactStat(el, host);
+        break;
+      case "object":
+        // v5: an interactive thing — how it's found, what it looks like,
+        // the checks, what really happens, what the party walks away with.
+        if (f.trigger) host.appendChild(runSpreadLabeledLine(runFieldLabel("object", "trigger", SCENE_FIELD_LABELS.trigger), f.trigger));
+        if (f.looks) host.appendChild(runSpreadEl("p", "rs-p", f.looks));
+        for (const c of runSpreadChecks(f)) host.appendChild(c);
+        if (f.secret) host.appendChild(runSpreadLabeledLine(SCENE_FIELD_LABELS.secret, f.secret, { secret: true }));
+        if (f.gives) host.appendChild(runSpreadLabeledLine(runFieldLabel("object", "gives", SCENE_FIELD_LABELS.gives), f.gives));
+        for (const line of runSpreadFieldLines(f, ["means", "wants", "function"])) host.appendChild(line);
+        break;
       case "card":
         if (f.gives) host.appendChild(runSpreadEl("p", "rs-phrase", f.gives));
         if (f.looks) host.appendChild(runSpreadLabeledLine(runFieldLabel("card", "looks"), f.looks));
@@ -4200,6 +4307,34 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
     host.appendChild(withDraftPill(runSpreadEl("div", "rs-h", roleTitle(el, run, "Read aloud")), el));
     appendRoleContent(el, run, host);
   };
+
+  // v5 MAIN cards. `now` is a heading + prose like the read (it is spoken);
+  // person/object are bordered cards so the eye finds "the people here" on
+  // the way down the left column.
+  const buildNow = (el, run, host) => {
+    const h = runSpreadEl("div", "rs-h", ROLE_LABELS.now);
+    h.setAttribute("data-testid", "rs-now");
+    host.appendChild(withDraftPill(h, el));
+    appendRoleContent(el, { ...run, role: "now" }, host);
+  };
+
+  const buildNamedCard = (el, run, host, role, extraClass) => {
+    const card = runSpreadEl("div", `rs-block ${extraClass}`);
+    card.setAttribute("data-testid", `rs-${role}`);
+    const entityType = el.kind === "graph" && el.graphEntityId ? nodeMap?.get(el.graphEntityId)?.type : null;
+    if (entityType) card.style.setProperty("--element-type-color", colorForType(entityType));
+    const bh = runSpreadEl("div", "rs-bhead");
+    bh.appendChild(runSpreadEl("span", "rs-bname", el.name || ROLE_LABELS[role]));
+    if (el.kind === "graph") bh.appendChild(runSpreadEl("span", "rs-pill", entityType || "graph"));
+    const count = el.stat && typeof el.stat.count === "number" ? el.stat.count : null;
+    if (count && count > 1) bh.appendChild(runSpreadEl("span", "rs-mult", `×${count}`));
+    withDraftPill(bh, el);
+    card.appendChild(bh);
+    appendRoleContent(el, { ...run, role }, card);
+    host.appendChild(card);
+  };
+  const buildPerson = (el, run, host) => buildNamedCard(el, run, host, "person", "rs-person");
+  const buildObject = (el, run, host) => buildNamedCard(el, run, host, "object", "rs-object");
 
   const buildBeat = (el, run, host) => {
     if (host === main) {
@@ -4411,6 +4546,9 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
     const { el, run } = unit;
     switch (run.role) {
       case "read": host === main ? buildRead(el, run, host) : buildGm(el, run, host); break;
+      case "now": host === main ? buildNow(el, run, host) : buildGm(el, run, host); break;
+      case "person": buildPerson(el, run, host); break;
+      case "object": buildObject(el, run, host); break;
       case "dressing": buildDressing(el, run, host); break;
       case "beat": buildBeat(el, run, host); break;
       case "exits": buildExits(el); break;
@@ -4726,6 +4864,16 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     // "not yet live" satisfies both the quiet-line intent and the actual test).
     const ago = scene.lastPushedAt ? formatRelativeAgo(scene.lastPushedAt) : null;
     stageStatusLine.textContent = ago ? `in Foundry · updated ${ago}` : "in Foundry · not yet live";
+    // Table round 2026-09-09 (feedback 3): the pushed scene NAME sits in the
+    // players' Foundry navigation bar, and a generated subtitle ("— X dies")
+    // leaked an outcome before the scene ran. Rather than guess at what is
+    // a spoiler, show the GM the exact name the players will see. Same
+    // resolution order as the server's resolveSceneName.
+    const playersSee = document.createElement("span");
+    playersSee.className = "scene-stage-players-see";
+    playersSee.setAttribute("data-testid", "scene-stage-players-see");
+    playersSee.textContent = ` · players see “${scene.name || place?.name || scene.objectiveNote || "Ad-hoc scene"}”`;
+    stageStatusLine.appendChild(playersSee);
     stageRow.appendChild(stageStatusLine);
   };
 

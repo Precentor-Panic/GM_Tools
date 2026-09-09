@@ -11,9 +11,17 @@
  * It lives under public/ only so the browser's relative import and Node's
  * resolve the same path. Keep it that way — no imports.
  *
+ * THE PRINCIPLE (table round, 2026-09-09): the left (main) column is what
+ * comes out of the GM's mouth, top to bottom, in the order it comes out —
+ * read aloud, what's happening, the people and objects to deliver, then
+ * colour, then where it leads. The right (side) column is what the GM
+ * reaches for only if something happens — map, cards, GM notes, baked
+ * enemies, sketches. A person the GM has to describe is NEVER a side card.
+ *
  * The data model (explicit, stored on the element as `element.run`):
  *   { column: 'main'|'side'|'off',
- *     role:   'read'|'dressing'|'beat'|'exits'|'block'|'card'|'gm'|'sketch',
+ *     role:   'read'|'now'|'person'|'object'|'dressing'|'beat'|'exits'|
+ *             'block'|'card'|'gm'|'sketch',
  *     variant?: string,        // free string, e.g. "Present", "Night"
  *     placeholder?: boolean,   // seeded by a skeleton, not filled yet
  *     group?: string }         // EXPLICIT-ONLY composite-card tag: elements
@@ -26,10 +34,19 @@
  * Roles → what the renderer reads (documented in
  * design/session-planner/README.md §E):
  *   read     looks = read-aloud prose; trigger = when; means/secret = GM asides
+ *   now      "What's happening": looks = what is in motion right now (present
+ *            tense); gives = what changes because of it no matter how the
+ *            scene resolves (the old "Residue" line, renamed — never dropped)
+ *   person   ONE card, nothing split: looks = the 3-line at-a-glance
+ *            (race/build/tell · Mannerism · Voice), wants/means/checks/secret,
+ *            then the compact stat block INLINE (bestiaryEntryId / stat)
+ *   object   an interactive thing: trigger = how it's found, checks, secret,
+ *            gives = what the party walks away with
  *   dressing name + looks (+gives)              → one bullet in the Dressing list
  *   beat     name as header; trigger/gives/means/wants/checks/secret
  *   exits    gives/means/secret/looks lines → "LABEL: text → 'Target scene'"
- *   block    stat block card: bestiaryEntryId / statblockRef / stat, means = tactics
+ *   block    stat block card for UNNAMED baked enemies (no description to
+ *            deliver): bestiaryEntryId / statblockRef / stat, means = tactics
  *   card     payload card: gives = phrase, looks = effect, means = alternate use, secret = failure
  *   gm       GM box: looks/gives/means (trigger = when)
  *   sketch   looks = inline SVG markup, means = caption
@@ -55,21 +72,40 @@
 // member marked revealTab whose bound graph entity is 'revealed' becomes
 // the SEEDED active tab — mid-session gap coverage for an NPC/thread whose
 // card flips state when the table learns the truth. Local picks still win.
-export const RUN_LAYOUT_VERSION = 4;
+// v5 (table round, 2026-09-09 — "I still found your generated scenes hard
+// to run"): three new MAIN roles, `now` (What's happening — the renamed
+// Residue), `person` (one undivided card: description + inline compact
+// stat block) and `object`; the old "a person with checks/secret reads
+// best as a side card" inference rule is GONE (it put the element the GM
+// had to deliver top-right, where it was missed); planRunSpread orders
+// MAIN read → now → person/object → dressing → rest → exits and SIDE
+// cards → GM notes → blocks → sketches. v4 records parse unchanged.
+export const RUN_LAYOUT_VERSION = 5;
 
 export const RUN_COLUMNS = ["main", "side", "off"];
-export const RUN_ROLES = ["read", "dressing", "beat", "exits", "block", "card", "gm", "sketch"];
+export const RUN_ROLES = ["read", "now", "person", "object", "dressing", "beat", "exits", "block", "card", "gm", "sketch"];
 
 /** Where a role naturally lives when the caller only names the role. */
 export const ROLE_DEFAULT_COLUMN = {
-  read: "main", dressing: "main", beat: "main", exits: "main",
+  read: "main", now: "main", person: "main", object: "main", dressing: "main", beat: "main", exits: "main",
   block: "side", card: "side", gm: "side", sketch: "side"
 };
 
 export const ROLE_LABELS = {
-  read: "Read aloud", dressing: "Dressing", beat: "Beat", exits: "Exits",
+  read: "Read aloud", now: "What's happening", person: "Person", object: "Object",
+  dressing: "Dressing", beat: "Beat", exits: "Exits",
   block: "Stat block", card: "Card", gm: "GM box", sketch: "Sketch"
 };
+
+/**
+ * MAIN column slot per role (v5): lower renders higher; unlisted = 5; ties
+ * keep element order. The OPENING read is hoisted separately (rank 0 in
+ * effect); later reads are unlisted on purpose — a conditional read-aloud
+ * ("X burns in place") is delivered at the moment the GM placed it.
+ */
+export const MAIN_ROLE_RANK = { now: 1, person: 2, object: 3, dressing: 4, exits: 9 };
+/** SIDE column slot per role (v5): cards (optional events) → GM notes → blocks → sketches; unlisted = 2. */
+export const SIDE_ROLE_RANK = { card: 0, gm: 1, read: 1, block: 3, sketch: 4 };
 
 // Role-aware field labels (Phase 4, persona round): the ONE mapping between
 // the stored field key and the word the GM sees, shared by Prep's field
@@ -80,6 +116,8 @@ export const ROLE_LABELS = {
 // field's presentation; every surface follows.
 export const RUN_FIELD_LABELS = {
   read: { means: "GM" },
+  now: { looks: "Happening", gives: "Changes" },
+  object: { trigger: "Found by", gives: "Yields" },
   card: { gives: "Phrase", looks: "Effect", means: "Alternate", secret: "Failure" }
 };
 
@@ -104,19 +142,23 @@ export function titleAfterDash(name, fallback = "") {
 export function inferRunLayout(element) {
   const name = String(element?.name || "").trim();
   const fields = element?.fields || {};
+  const hasStats = !!(element?.stat || fields.bestiaryEntryId || fields.statblockRef);
   let role;
   if (/^(→|->)/.test(name) || /^exits?\b/i.test(name) || /where this leads/i.test(name)) role = "exits";
   else if (/^read[ -]?aloud/i.test(name)) role = "read";
+  else if (/^what.?s happening|^now\b|^residue\b/i.test(name)) role = "now";
   else if (/^backdrop/i.test(name)) role = "gm";
   else if (/^sketch\b/i.test(name) || /^\s*<svg[\s>]/i.test(String(fields.looks || ""))) role = "sketch";
-  else if (element?.stat || fields.bestiaryEntryId || fields.statblockRef || /^enemies\b/i.test(name)) role = "block";
+  else if (/\(object\)|^object\b/i.test(name)) role = "object";
+  // A graph-linked element that carries stats or a `wants` is a someone the
+  // GM has to deliver — a person card in MAIN, never a side block (v5; the
+  // old "side when it has checks/secret" rule is what buried the courier).
+  else if (element?.kind === "graph" && (hasStats || fields.wants)) role = "person";
+  else if (hasStats || /^enemies\b/i.test(name)) role = "block";
   else if (element?.kind === "graph") role = "beat";
   else role = "dressing";
 
   const out = { column: ROLE_DEFAULT_COLUMN[role], role };
-  // A KEY (graph) person/object reads best as a side block when it has
-  // checks or a secret — that's the brief's "interaction card" shape.
-  if (role === "beat" && (Array.isArray(fields.checks) && fields.checks.length || fields.secret)) out.column = "side";
   if (role === "read" || role === "gm") {
     const variant = titleAfterDash(name, "");
     if (variant) out.variant = variant;
@@ -200,13 +242,18 @@ export function elementIsEmpty(element) {
  *     (renderer keys off tabs.length >= 2).
  *   - LOOSE variant-gated elements (no group, not in the gm-fold) keep the
  *     old behavior: dropped from the plan entirely.
- *   - MAIN order: the lowest-order ungrouped visible `read` opens the
- *     column, then the ONE Dressing card (ALL ungrouped visible main
- *     dressing, regardless of interleaving), then everything else in
- *     element order.
- *   - SIDE: ungrouped `gm` boxes fold into one card only at >=2 counting
- *     gated ones (they become tabs), positioned where the first one sat.
- *     Blocks, cards, and sketches always stay individual.
+ *   - MAIN order (v5, MAIN_ROLE_RANK): the lowest-order ungrouped visible
+ *     `read` opens the column, then every `now`, then the person cards,
+ *     then the object cards (element order within a slot; a group ranks
+ *     by its lead's role), then
+ *     the ONE Dressing card (ALL ungrouped visible main dressing,
+ *     regardless of interleaving), then everything else in element order.
+ *     Exits render last (the renderer's footer).
+ *   - SIDE order (v5, SIDE_ROLE_RANK): cards → GM notes → blocks →
+ *     sketches, element order within a slot; unlisted roles sit between
+ *     GM notes and blocks. Ungrouped `gm` boxes fold into one card only
+ *     at >=2 counting gated ones (they become tabs). Blocks, cards, and
+ *     sketches always stay individual.
  *   - CONSERVATION: every group/gm-fold member appears in the output
  *     exactly once (hidden ones included, flagged); loose gated elements
  *     are the only drops.
@@ -295,8 +342,16 @@ export function planRunSpread(placed, opts = {}) {
     return { kind: "group", key: entry.key, group: g.group, lead: visible[0] ?? g.members[0], members: g.members, tabs, activeTab };
   };
   const columnOf = (entry) => (entry.type === "single" ? entry.column : groups.get(entry.key).column);
+  // A group ranks by its lead's role — the first member in element order
+  // (the visible lead is resolved later, but the slot is a composition
+  // decision, not a tab decision).
+  const roleOf = (entry) => (entry.type === "single" ? entry.item.run.role : groups.get(entry.key).members[0]?.run?.role);
+  // Stable sort by rank (Array#sort is stable; element order survives ties).
+  const bySlot = (entries, ranks, fallback) =>
+    entries.map((e, i) => ({ e, i, r: ranks[roleOf(e)] ?? fallback })).sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.e);
 
-  // MAIN: opening read first, then the one Dressing card, then the rest.
+  // MAIN (v5): opening read → now → person/object → the one Dressing card
+  // → the rest → exits (the renderer's footer). The delivery order.
   const main = [];
   const mainSeq = seq.filter((e) => columnOf(e) === "main");
   const dressingMembers = [];
@@ -308,13 +363,21 @@ export function planRunSpread(placed, opts = {}) {
     mainRest.push(e);
   }
   if (opener) main.push(toUnit(opener));
-  if (dressingMembers.length) main.push({ kind: "dressing", members: dressingMembers });
-  for (const e of mainRest) main.push(toUnit(e));
+  const dressingRank = MAIN_ROLE_RANK.dressing;
+  let dressingPlaced = !dressingMembers.length;
+  for (const e of bySlot(mainRest, MAIN_ROLE_RANK, 5)) {
+    if (!dressingPlaced && (MAIN_ROLE_RANK[roleOf(e)] ?? 5) > dressingRank) {
+      main.push({ kind: "dressing", members: dressingMembers });
+      dressingPlaced = true;
+    }
+    main.push(toUnit(e));
+  }
+  if (!dressingPlaced) main.push({ kind: "dressing", members: dressingMembers });
 
-  // SIDE: fold ungrouped gm boxes at >=2 (gated ones count — they tab), in
-  // place of the first one.
+  // SIDE (v5): cards → GM notes → blocks → sketches. Ungrouped gm boxes fold
+  // at >=2 (gated ones count — they tab), in place of the first one.
   const side = [];
-  const sideSeq = seq.filter((e) => columnOf(e) === "side");
+  const sideSeq = bySlot(seq.filter((e) => columnOf(e) === "side"), SIDE_ROLE_RANK, 2);
   const gmMembers = sideSeq
     .filter((e) => e.type === "single" && e.item.run.role === "gm")
     .map((e) => e.item);

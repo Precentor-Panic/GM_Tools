@@ -199,7 +199,8 @@ await test("wf_seed_run_skeleton seeds placeholders for the missing roles and is
   const { scene } = await call("wf_create_scene", { world: WORLD, name: "Transit — The ford" });
   const first = await call("wf_seed_run_skeleton", { world: WORLD, sceneId: scene.id });
   assert.equal(first.kind, "transit");
-  assert.deepEqual(first.seeded.map((e) => e.run.role), ["read", "beat", "beat", "exits"]);
+  // skeleton v2 (2026-09-09): a "What's happening" (now) placeholder sits after the opener in every kind
+  assert.deepEqual(first.seeded.map((e) => e.run.role), ["read", "now", "beat", "beat", "exits"]);
   const again = await call("wf_seed_run_skeleton", { world: WORLD, sceneId: scene.id });
   assert.equal(again.seeded.length, 0);
   const asCombat = await call("wf_seed_run_skeleton", { world: WORLD, sceneId: scene.id, kind: "combat" });

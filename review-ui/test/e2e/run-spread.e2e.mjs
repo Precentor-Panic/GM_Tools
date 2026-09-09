@@ -18,6 +18,9 @@ import { createSceneElementViaRoute, updateSceneViaRoute } from "./phase29-fixtu
 const { scratchDir, dataDir } = setupPhase30Env("gm-tools-e2e-run-spread-");
 const WORLD = "e2e-run-spread-world";
 process.env.WF_DEFAULT_WORLD = WORLD;
+// v5 reading-order test below links a person card to a shelf row.
+process.env.GM_TOOLS_BESTIARY_DIR = `${scratchDir}/bestiary`;
+const { saveBestiaryEntry, acceptBestiaryEntry } = await import("../../../combat-planning/bestiary-store.mjs");
 
 const { snapshotFilePath } = await import("../../../wf-mcp-server/lib/snapshot.mjs");
 const { bootstrapSnapshot, applyHeadless } = await import("../../../graph-import/headless-apply.mjs");
@@ -231,5 +234,86 @@ test("a sketch element renders its SVG (sanitised) with its caption; an empty pl
   // The empty placeholder read-aloud leaves no heading behind; the dressing list still shows.
   assert.equal(await spread.locator(".rs-main .rs-h").count(), 1, "only the Dressing heading");
   assert.equal(await spread.locator(".rs-main .rs-h").textContent(), "Dressing");
+  await page.close();
+});
+
+// v5 reading order (table round, 2026-09-09 — "I still found your generated
+// scenes hard to run"): the LEFT column is what the GM says, in the order
+// it is said — read → what's happening → the people/objects to deliver →
+// dressing → the rest → exits. A person is ONE card: the 3-line looks, the
+// roleplay fields, the DCs, the secret, then the compact stat block INLINE.
+// The right column holds only what the GM reaches for: cards → GM notes →
+// blocks → sketches.
+test("v5: the left column reads top-down in delivery order and a person card carries its compact stat block inline", async () => {
+  const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "rs-square", name: "Delivery order scene" });
+  const shelf = saveBestiaryEntry({
+    rawFields: {
+      name: "Master Thief", type: "humanoid (any race)", size: "M", ac: 16, hp: 83, challengeRating: "5",
+      attacks: [{ name: "Shortsword", toHitBonus: 7, damageDice: "1d6+4", damageType: "piercing" }],
+      multiattack: { count: 3, attackNames: ["Shortsword"] },
+      traits: [{ name: "Cunning Action", summary: "Dash, Disengage or Hide as a bonus action.", kind: "trait" }]
+    },
+    flavorName: "Halden the courier"
+  });
+  acceptBestiaryEntry(shelf.id);
+  // Deliberately scrambled Prep order — the plan, not the order, decides.
+  await makeEl(scene.id, { name: "Exits", fields: { gives: "ONWARD (plot): follow him → 'The Yard'" }, run: { column: "main", role: "exits" } });
+  await makeEl(scene.id, { name: "A dog", fields: { looks: "Asleep." }, run: { column: "main", role: "dressing" } });
+  await makeEl(scene.id, { name: "The Watch", fields: { gives: "Questions." }, run: { column: "main", role: "beat" } });
+  await makeEl(scene.id, { name: "The bundle (object)", fields: { trigger: "Under the courier's arm.", checks: [{ skill: "Sleight of Hand", dc: 14, purpose: "lift it" }], secret: "It is a decoy.", gives: "A wax-sealed decoy." }, run: { column: "main", role: "object" } });
+  await makeEl(scene.id, {
+    name: "Halden the courier",
+    fields: { looks: "Human, wiry, forties, a bitten thumbnail\nMannerism: counts the exits\nVoice: quick, clipped, never finishes a sentence", wants: "To be paid and gone.", checks: [{ skill: "Insight", dc: 13, purpose: "he is lying" }], secret: "He works for the House.", bestiaryEntryId: shelf.id },
+    run: { column: "main", role: "person" }
+  });
+  await makeEl(scene.id, { name: "What's happening", fields: { looks: "A courier shoulders through the crowd with a bundle.", gives: "The square knows a courier came." }, run: { column: "main", role: "now" } });
+  await makeEl(scene.id, { name: "Read Aloud — Opening", fields: { looks: "Rain on cobbles." }, run: { column: "main", role: "read" } });
+  await makeEl(scene.id, { name: "Sketch", fields: { looks: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="4" height="4"/></svg>' }, run: { column: "side", role: "sketch" } });
+  await makeEl(scene.id, { name: "ENEMIES (baked)", fields: { statblockRef: "Guard (MM)" }, stat: { count: 2 }, run: { column: "side", role: "block" } });
+  await makeEl(scene.id, { name: "IF THEY DERAIL", fields: { looks: "The Watch arrives." }, run: { column: "side", role: "gm" } });
+  await makeEl(scene.id, { name: "The token", fields: { gives: "\"A phrase.\"" }, run: { column: "side", role: "card" } });
+
+  const { page, spread } = await openRun(scene.id);
+  const main = spread.locator(".rs-main");
+  const side = spread.locator(".rs-side");
+
+  // LEFT column DOM order, as the eye reads it.
+  const mainOrder = await main.evaluate((col) => {
+    const out = [];
+    for (const n of col.children) {
+      if (n.classList.contains("rs-read")) out.push("read");
+      else if (n.dataset.testid === "rs-now") out.push("now");
+      else if (n.dataset.testid === "rs-person") out.push("person");
+      else if (n.dataset.testid === "rs-object") out.push("object");
+      else if (n.dataset.testid === "rs-dressing-card") out.push("dressing");
+      else if (n.classList.contains("rs-h") && n.textContent === "The Watch") out.push("beat");
+      else if (n.classList.contains("rs-exits")) out.push("exits");
+    }
+    return out;
+  });
+  assert.deepEqual(mainOrder, ["read", "now", "person", "object", "dressing", "beat", "exits"]);
+
+  // The person card: looks first, then wants, the DC, the secret, THEN the stat block — all in one card.
+  const person = main.locator('[data-testid="rs-person"]');
+  assert.equal(await person.count(), 1);
+  const personOrder = await person.evaluate((card) => [...card.children].map((n) => n.className.split(" ")[0]));
+  assert.deepEqual(personOrder.filter((c) => ["rs-looks", "rs-line", "rs-check", "rs-statc"].includes(c)), ["rs-looks", "rs-line", "rs-check", "rs-line", "rs-statc"]);
+  assert.match(await person.locator(".rs-looks").textContent(), /^Human, wiry/);
+  const statc = person.locator('[data-testid="rs-statc"]');
+  assert.match(await statc.locator(".rs-bl").first().textContent(), /AC 16 · HP 83 · CR 5 · M humanoid/);
+  assert.match(await statc.textContent(), /Multiattack ×3 \(Shortsword\) · Shortsword \+7 \(1d6\+4 piercing\)/);
+  assert.match(await statc.locator(".rs-statc-trait").textContent(), /Cunning Action\. Dash, Disengage/);
+  assert.equal(await side.locator('[data-testid="rs-person"]').count(), 0, "a person is never a side card");
+
+  // The object card: found-by, the DC, the secret, the yield.
+  const obj = main.locator('[data-testid="rs-object"]');
+  assert.match(await obj.textContent(), /Found by/);
+  assert.match(await obj.textContent(), /Sleight of Hand DC 14/);
+
+  // RIGHT column order: card → GM notes → block → sketch.
+  const sideOrder = await side.evaluate((col) => [...col.children].map((n) => n.className.split(" ").slice(0, 2).join(" ")));
+  const filtered = sideOrder.filter((c) => /rs-block rs-card|rs-box$|^rs-box |rs-block$|rs-sketch/.test(c) && !/objective/.test(c));
+  assert.deepEqual(filtered, ["rs-block rs-card", "rs-box", "rs-block", "rs-sketch"]);
+  if (process.env.RS_SHOT) await page.screenshot({ path: process.env.RS_SHOT, fullPage: true });
   await page.close();
 });

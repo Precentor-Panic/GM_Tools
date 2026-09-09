@@ -2163,7 +2163,9 @@ server.registerTool(
     title: "Place an element in the Run spread (column · role · variant)",
     description:
       "MUTATION -- direct write, no review gate. Writes the element's EXPLICIT `run` layout (session-planner/run-layout.mjs): " +
-      "column main|side|off; role read|dressing|beat|exits|block|card|gm|sketch; optional free-string `variant` (gated by the scene's " +
+      "column main|side|off; role read|now|person|object|dressing|beat|exits|block|card|gm|sketch (MAIN reads top-down in " +
+      "delivery order: opener, now, people, objects, dressing, beats, exits -- a person the GM must describe is never a side " +
+      "card; SIDE is reach-for-if-needed: card, gm, block, sketch); optional free-string `variant` (gated by the scene's " +
       "activeVariants); optional free-string `group` -- elements sharing a group render as ONE composite Run card (lead = " +
       "lowest-order member; use it to keep a payload/thread card and its outcome read-alouds together instead of as near-duplicate " +
       "sibling cards). Pass `clear:true` to drop the explicit layout and fall back to inference (a re-set without `group` clears " +

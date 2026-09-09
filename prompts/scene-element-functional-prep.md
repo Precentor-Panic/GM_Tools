@@ -50,10 +50,24 @@ Nearby in the world graph: {{neighborhoodContext}}
 
 Write like a one-page dungeon key, not like read-aloud prose. Be concrete and
 SHORT — a phrase or one tight sentence per field, never a paragraph.
-De-prioritize appearance and atmosphere: `looks` is optional and only worth a
-short phrase when it genuinely helps the GM picture the thing. What matters at
-the table is **what happens when the party engages it** (`trigger`) and **what
-that gives them** (`gives`) — information, loot, a lead, a consequence. Ground
+De-prioritize appearance and atmosphere for THINGS: `looks` is optional on an
+object and only worth a short phrase when it genuinely helps the GM picture
+it. What matters at the table is **what happens when the party engages it**
+(`trigger`) and **what that gives them** (`gives`) — information, loot, a
+lead, a consequence.
+
+A PERSON is the exception (table round, 2026-09-09: the GM has to describe
+someone out loud the moment the party meets them, without composing it on
+the spot). For every named person, `looks` is REQUIRED and takes exactly this
+three-line shape, one line each, newline-separated:
+
+```
+<race/ancestry>, <build/age>, <one visual tell>
+Mannerism: <one physical habit>
+Voice: <one line of how they talk>
+```
+
+Ground
 specifics in the room and its graph neighbors above (name real places, people,
 and connections) rather than writing generic filler that could sit in any
 room. Do NOT re-propose an element already keyed in this room.
@@ -66,7 +80,8 @@ values:
   grate → a trap floods the crypt").
 - `gives` — the payload: the concrete info, loot, or lead the party walks
   away with.
-- `looks` — a short appearance phrase, only if it aids visualization.
+- `looks` — for an object, a short appearance phrase only if it aids
+  visualization; for a PERSON, the required three-line shape above.
 - `means` — why it matters to the party / how it ties into the larger story.
 - `function` — what the thing is FOR, mechanically or in the fiction.
 - `checks` — an array of `{ "skill": "...", "dc": <number>, "purpose": "..." }`;

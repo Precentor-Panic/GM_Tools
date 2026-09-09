@@ -19,7 +19,8 @@ import { createElement, listElementsForScene } from "./scene-elements.mjs";
 import { getScene } from "./scenes.mjs";
 import { effectiveRun } from "./run-layout.mjs";
 
-export const RUN_SKELETON_VERSION = 1;
+// v2 (run-layout v5): a "What's happening" (`now`) placeholder follows the read.
+export const RUN_SKELETON_VERSION = 2;
 
 const EXIT_TEMPLATE = "ONWARD (plot): what pulls them forward → 'Target scene'";
 const EXIT_TEMPLATE_2 = "ONWARD (explore): what rewards curiosity → 'Target scene'";
@@ -27,6 +28,7 @@ const EXIT_TEMPLATE_3 = "LINGER: what happens if they stay → 'Target scene'";
 
 const ROWS = {
   read:     { name: "Read aloud", column: "main", role: "read", fields: {} },
+  now:      { name: "What's happening", column: "main", role: "now", fields: {} },
   dressing: [
     { name: "Dressing — 1", column: "main", role: "dressing", fields: {} },
     { name: "Dressing — 2", column: "main", role: "dressing", fields: {} },
@@ -43,9 +45,9 @@ const ROWS = {
 };
 
 export const SKELETON_TEMPLATES = {
-  narrative: ["read", "dressing", "beat", "gm", "exits"],
-  combat:    ["read", "dressing", "block", "sketch", "beat", "gm", "exits"],
-  transit:   ["read", "beat", "exits"]
+  narrative: ["read", "now", "dressing", "beat", "gm", "exits"],
+  combat:    ["read", "now", "dressing", "block", "sketch", "beat", "gm", "exits"],
+  transit:   ["read", "now", "beat", "exits"]
 };
 
 /** Resolve the template kind for a scene: explicit `kind` > name prefix > narrative. */

@@ -15,7 +15,7 @@ import { test } from "node:test";
  *     render plain; grouped elements never join an auto-fold pool.
  *   - CONSERVATION: every input element appears in the output exactly once.
  */
-const { planRunSpread, runFieldLabel, RUN_LAYOUT_VERSION } = await import("../public/run-layout.mjs");
+const { planRunSpread, runFieldLabel, inferRunLayout, RUN_LAYOUT_VERSION, RUN_ROLES, ROLE_DEFAULT_COLUMN, ROLE_LABELS } = await import("../public/run-layout.mjs");
 
 let nextId = 0;
 function item(role, opts = {}) {
@@ -41,8 +41,70 @@ function flattenPlan(plan) {
   return ids;
 }
 
-test("RUN_LAYOUT_VERSION is 4 (the revealTab-seed shape)", () => {
-  assert.equal(RUN_LAYOUT_VERSION, 4);
+test("RUN_LAYOUT_VERSION is 5 (the table-round reading-order shape)", () => {
+  assert.equal(RUN_LAYOUT_VERSION, 5);
+});
+
+// ---- v5 (table round, 2026-09-09): the delivery order. Left column = what
+// comes out of the GM's mouth, in the order it comes out; right column =
+// what the GM reaches for only if something happens.
+
+test("v5 vocabulary: now/person/object are MAIN roles with table-facing labels; Residue is renamed, not dropped", () => {
+  for (const r of ["now", "person", "object"]) {
+    assert.ok(RUN_ROLES.includes(r), r);
+    assert.equal(ROLE_DEFAULT_COLUMN[r], "main", r);
+  }
+  assert.equal(ROLE_LABELS.now, "What's happening");
+  assert.equal(runFieldLabel("now", "gives", "Gives"), "Changes");
+  assert.equal(inferRunLayout({ name: "Residue", fields: { gives: "The crowd remembers." } }).role, "now");
+  assert.equal(inferRunLayout({ name: "What's happening", fields: {} }).role, "now");
+});
+
+test("v5 inference: a graph person with checks/secret lands in MAIN as a person card — never the side (the courier-bundle miss)", () => {
+  const courier = { kind: "graph", graphEntityId: "e1", name: "Halden the courier", fields: { wants: "to be paid", checks: [{ skill: "Insight", dc: 13 }], secret: "the bundle is a decoy" } };
+  assert.deepEqual(inferRunLayout(courier), { column: "main", role: "person" });
+  const statted = { kind: "graph", graphEntityId: "e2", name: "Marek", fields: { bestiaryEntryId: "bst_1", secret: "x" } };
+  assert.equal(inferRunLayout(statted).role, "person");
+  assert.equal(inferRunLayout(statted).column, "main");
+  const baked = { kind: "text", name: "ENEMIES (baked)", fields: { bestiaryEntryId: "bst_2" } };
+  assert.deepEqual(inferRunLayout(baked), { column: "side", role: "block" });
+  assert.equal(inferRunLayout({ name: "The charm (object)", fields: { trigger: "on the table" } }).role, "object");
+});
+
+test("v5 MAIN order: read → now → people → objects → the one dressing fold → the rest → exits", () => {
+  const exits = item("exits");
+  const d1 = item("dressing");
+  const beat = item("beat");
+  const obj = item("object");
+  const person = item("person");
+  const d2 = item("dressing");
+  const now = item("now");
+  const read = item("read");
+  const plan = planRunSpread([exits, d1, beat, obj, person, d2, now, read]);
+  const shape = plan.main.map((u) => (u.kind === "element" ? u.run.role : u.kind));
+  assert.deepEqual(shape, ["read", "now", "person", "object", "dressing", "beat", "exits"]);
+  assert.deepEqual(plan.main.find((u) => u.kind === "dressing").members.map((m) => m.el.id), [d1.el.id, d2.el.id]);
+  assert.deepEqual(flattenPlan(plan).sort(), [exits, d1, beat, obj, person, d2, now, read].map((i) => i.el.id).sort(), "conservation");
+});
+
+test("v5 MAIN: a group ranks by its lead's role — a person group sits in the person slot", () => {
+  const beat = item("beat");
+  const lead = item("person", { group: "P" });
+  const state = item("read", { group: "P", variant: "Calm" });
+  const state2 = item("read", { group: "P", variant: "Angry" });
+  const plan = planRunSpread([beat, lead, state, state2]);
+  assert.deepEqual(plan.main.map((u) => u.kind), ["group", "element"]);
+  assert.equal(plan.main[0].lead.el.id, lead.el.id);
+});
+
+test("v5 SIDE order: cards → GM notes → blocks → sketches, element order within a slot", () => {
+  const sketch = item("sketch");
+  const block1 = item("block");
+  const gm = item("gm");
+  const card = item("card");
+  const block2 = item("block");
+  const plan = planRunSpread([sketch, block1, gm, card, block2]);
+  assert.deepEqual(plan.side.map((u) => u.el.id), [card.el.id, gm.el.id, block1.el.id, block2.el.id, sketch.el.id]);
 });
 
 test("runFieldLabel: the ONE role-aware label mapping Prep and Run both consume", () => {
@@ -208,14 +270,15 @@ test("a single-tab unit shows its one state with no tab choice pressure (tabs.le
   assert.ok(g.members.every((m) => !m.hidden));
 });
 
-test("side gm boxes fold into one card only at >=2, positioned where the first sat; a lone gm box stays plain", () => {
+test("side gm boxes fold into one card only at >=2 (v5: GM notes rank above blocks and sketches); a lone gm box stays plain", () => {
   const block = item("block");
   const gm1 = item("gm");
   const sketch = item("sketch");
   const gm2 = item("gm");
   const plan = planRunSpread([block, gm1, sketch, gm2]);
-  assert.deepEqual(plan.side.map((u) => u.kind), ["element", "gm-fold", "element"]);
-  assert.deepEqual(plan.side[1].members.map((m) => m.el.id), [gm1.el.id, gm2.el.id]);
+  assert.deepEqual(plan.side.map((u) => u.kind), ["gm-fold", "element", "element"]);
+  assert.deepEqual(plan.side[0].members.map((m) => m.el.id), [gm1.el.id, gm2.el.id]);
+  assert.equal(plan.side[1].el.id, block.el.id);
   assert.equal(plan.side[2].el.id, sketch.el.id);
 
   const planLone = planRunSpread([block, gm1, sketch]);
