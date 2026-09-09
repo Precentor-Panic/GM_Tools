@@ -141,7 +141,9 @@ function sceneMetaString(scene) {
 
 function upsertBestiary(actor, mapped, opts) {
   const matches = listBestiaryEntries().filter((e) => e.foundryActorRef === actor.uuid);
-  const acceptedMatch = matches.find((e) => e.status === "accepted");
+  // WS-H (2026-09-09): a RETIRED row is still the human decision about this
+  // actor -- re-proposing it would resurrect exactly what was retired.
+  const acceptedMatch = matches.find((e) => e.status === "accepted" || e.status === "retired");
   if (acceptedMatch) return { record: acceptedMatch, action: "already-linked" };
 
   const proposedMatch = matches.find((e) => e.status === "proposed");

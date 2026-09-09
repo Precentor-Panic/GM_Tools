@@ -41,7 +41,7 @@ const dataDir = join(scratchDir, "foundrydata");
 
 const { pullFoundryActorsToStores } = await import("../lib/foundry-pull-ops.mjs");
 const { foundryIndexPath } = await import("../lib/snapshot.mjs");
-const { listBestiaryEntries, acceptBestiaryEntry } = await import("../../combat-planning/bestiary-store.mjs");
+const { listBestiaryEntries, acceptBestiaryEntry, retireBestiaryEntry } = await import("../../combat-planning/bestiary-store.mjs");
 const { listPartyMembers, acceptPartyMember } = await import("../../combat-planning/party-roster-store.mjs");
 const { listItems, acceptItem } = await import("../../combat-planning/item-store.mjs");
 const { listStagecraftAssets, markStagecraftAssetImported, acceptStagecraftAsset } = await import("../../session-planner/stagecraft-store.mjs");
@@ -386,6 +386,17 @@ test("pullFoundryActorsToStores: an ACCEPTED compendium browse row is left untou
   const tavernAfter = listStagecraftAssets(V3_WORLD, "map").find((a) => a.id === tavernBefore.id);
   assert.equal(tavernAfter.status, "accepted");
   assert.deepEqual(tavernAfter.foundryRef, { sceneUuid: "Scene.gildedCaskImported" }, "the accepted/imported row's foundryRef survives the re-pull untouched");
+});
+
+test("pullFoundryActorsToStores: a RETIRED bestiary row (WS-H) counts as already-linked -- a re-pull never re-proposes its actor", () => {
+  const retiredWorld = "pull-ops-retired-world";
+  writeIndexFixture(retiredWorld, "foundry-index.sample.json");
+  const first = pullFoundryActorsToStores(dataDir, retiredWorld);
+  const monster = first.bestiaryProposed[0];
+  retireBestiaryEntry(acceptBestiaryEntry(monster.id).id);
+  const again = pullFoundryActorsToStores(dataDir, retiredWorld);
+  assert.ok(again.alreadyLinked.bestiary.includes(monster.foundryActorRef), "reported under alreadyLinked");
+  assert.equal(listBestiaryEntries().filter((e) => e.foundryActorRef === monster.foundryActorRef).length, 1, "no second row for the retired actor");
 });
 
 // -------------------------------------------------------- playlists[] -> kind:'music' rows (table round 2026-09-09, WS-E)
