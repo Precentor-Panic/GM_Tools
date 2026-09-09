@@ -2744,6 +2744,12 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   color: oklch(0.38 0.060 145); border-color: oklch(0.72 0.070 145);
   background: oklch(0.955 0.020 145);
 }
+/* WS-E (2026-09-09): the music chip shares the map chip's shape; a linked
+   track picks up an amber accent so map-vs-music reads apart at a glance. */
+:is(#view-session-planner, #app-shell) .scene-music-chip[data-has-music="true"] {
+  color: oklch(0.40 0.075 75); border-color: oklch(0.74 0.090 75);
+  background: oklch(0.96 0.025 80);
+}
 :is(#view-session-planner, #app-shell) .scene-map-link-btn {
   border: none; background: transparent; padding: 0; cursor: pointer;
   font: inherit; font-size: 12px; color: var(--sp-accent, oklch(0.50 0.075 185));

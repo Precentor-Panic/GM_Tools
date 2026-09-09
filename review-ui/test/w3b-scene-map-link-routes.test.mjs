@@ -96,6 +96,35 @@ test("scene patch: a NON-map asset (splash) -> 400 kind guard, nothing written",
   assert.equal(getScene(WORLD, scene.id).mapAssetId, null);
 });
 
+// Table round 2026-09-09 (WS-E): the music link, one guard stricter.
+test("scene patch: musicAssetId links a pulled kind:'music' asset (foundryRef.playlistUuid), null clears; a local music row with no playlist ref -> 400; a map asset -> 400 kind guard; unknown -> 400", async () => {
+  const track = saveStagecraftAsset(WORLD, { kind: "music", name: "Casbah market", source: "foundry", foundryRef: { playlistUuid: "Playlist.amb", playlistName: "Ambience", trackName: "Casbah market" }, status: "proposed" }, { makeId: () => "sc-music-1" });
+  const local = saveStagecraftAsset(WORLD, { kind: "music", name: "Hand-added drone" }, { makeId: () => "sc-music-local" });
+  const map = saveStagecraftAsset(WORLD, { kind: "map", name: "Not music" }, { makeId: () => "sc-map-notmusic" });
+  const scene = createScene(WORLD, {}, { makeId: () => "scene-music-1" });
+
+  const link = await postJson(`/api/session-planner/scenes/${scene.id}`, { world: WORLD, musicAssetId: track.id });
+  assert.equal(link.status, 200, JSON.stringify(link.body));
+  assert.equal(link.body.scene.musicAssetId, "sc-music-1");
+  assert.equal((await getJson(`/api/session-planner/scenes/${scene.id}?world=${WORLD}`)).body.scene.musicAssetId, "sc-music-1");
+  const unrelated = await postJson(`/api/session-planner/scenes/${scene.id}`, { world: WORLD, objectiveNote: "Updated" });
+  assert.equal(unrelated.body.scene.musicAssetId, "sc-music-1");
+
+  const noRef = await postJson(`/api/session-planner/scenes/${scene.id}`, { world: WORLD, musicAssetId: local.id });
+  assert.equal(noRef.status, 400);
+  assert.match(noRef.body.error, /no Foundry playlist reference/);
+  const wrongKind = await postJson(`/api/session-planner/scenes/${scene.id}`, { world: WORLD, musicAssetId: map.id });
+  assert.equal(wrongKind.status, 400);
+  assert.match(wrongKind.body.error, /must reference a kind:"music" stagecraft asset/);
+  const unknown = await postJson(`/api/session-planner/scenes/${scene.id}`, { world: WORLD, musicAssetId: "sc-nope" });
+  assert.equal(unknown.status, 400);
+  assert.equal(getScene(WORLD, scene.id).musicAssetId, "sc-music-1", "none of the refused patches half-wrote");
+
+  const clear = await postJson(`/api/session-planner/scenes/${scene.id}`, { world: WORLD, musicAssetId: null });
+  assert.equal(clear.status, 200);
+  assert.equal(getScene(WORLD, scene.id).musicAssetId, null);
+});
+
 test("scene list + scene-planning list both carry mapAssetId (the scene-card chips' data), null for a linkless scene", async () => {
   const mapAsset = saveStagecraftAsset(WORLD, { kind: "map", name: "Docks" }, { makeId: () => "sc-map-list" });
   const linked = createScene(WORLD, { mapAssetId: mapAsset.id }, { makeId: () => "scene-map-4" });

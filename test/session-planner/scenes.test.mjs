@@ -547,6 +547,29 @@ const WORLD = "session-planner-scenes-test-world";
     assert.equal(cleared.mapAssetId, null);
   });
 
+  // Table round 2026-09-09 (WS-E): musicAssetId mirrors mapAssetId exactly.
+  test("WS-E musicAssetId: defaults null on create; explicit value round-trips; updateScene sets/leaves/clears; forkScene inherits unless overridden; a pre-WS-E record reads as no-music", () => {
+    const bare = createScene(WORLD, {}, { makeId: () => "scene-wse-1" });
+    assert.equal(bare.musicAssetId, null);
+    const withMusic = createScene(WORLD, { musicAssetId: "sc-music-1" }, { makeId: () => "scene-wse-2" });
+    assert.equal(withMusic.musicAssetId, "sc-music-1");
+    assert.equal(updateScene(WORLD, "scene-wse-1", { musicAssetId: "sc-music-2" }).musicAssetId, "sc-music-2");
+    assert.equal(getScene(WORLD, "scene-wse-1").musicAssetId, "sc-music-2", "persisted");
+    assert.equal(updateScene(WORLD, "scene-wse-1", { objectiveNote: "unrelated" }).musicAssetId, "sc-music-2");
+    assert.equal(updateScene(WORLD, "scene-wse-1", { musicAssetId: null }).musicAssetId, null);
+
+    const fork = forkScene(WORLD, "scene-wse-2", {}, { makeId: () => "scene-wse-fork" });
+    assert.equal(fork.musicAssetId, "sc-music-1", "inherited like the map");
+    assert.equal(forkScene(WORLD, "scene-wse-2", { musicAssetId: null }, { makeId: () => "scene-wse-fork2" }).musicAssetId, null);
+
+    const filePath = join(sessionScenesRoot(), `${WORLD}.json`);
+    const rows = JSON.parse(readFileSync(filePath, "utf8"));
+    for (const r of rows) if (r.id === "scene-wse-2") delete r.musicAssetId;
+    writeFileSync(filePath, JSON.stringify(rows, null, 2), "utf8");
+    assert.equal(getScene(WORLD, "scene-wse-2").musicAssetId ?? null, null);
+    assert.equal(updateScene(WORLD, "scene-wse-2", { musicAssetId: "sc-music-9" }).musicAssetId, "sc-music-9");
+  });
+
   test("W3b forkScene: INHERITS mapAssetId like locationEntityId (same place, same map) unless overridden -- unlike foundrySceneRef/stagedForFoundry", () => {
     const parent = createScene(WORLD, { locationEntityId: "bridge-1", mapAssetId: "sc-map-bridge" }, { makeId: () => "scene-w3b-parent" });
     markScenePushed(WORLD, parent.id, { foundrySceneRef: "Scene.pushed", lastPushedAt: "2026-08-14T00:00:00.000Z" });

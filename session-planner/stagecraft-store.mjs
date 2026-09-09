@@ -19,11 +19,14 @@
  * deliberate authorship act; only the Foundry pull's `map` refs ever pass
  * status:'proposed' explicitly).
  *
- * Music rows are HAND-ADDED ONLY this phase (locked decision — playlists
- * enter the foundry-index in a later wave) — nothing in this store enforces
- * that (it's a caller-side convention, same as every other status-gate
- * convention in this project); it's simply never exercised by the pull path
- * this phase.
+ * Music rows were HAND-ADDED ONLY until the table round of 2026-09-09
+ * (WS-E, "one music track per scene"): the Foundry pull now lands every
+ * playlist TRACK as a `kind:'music'` row, `source:'foundry'`, status
+ * 'proposed', `foundryRef: { playlistUuid, playlistName, trackName, trackId? }`,
+ * deduped on (playlistUuid, trackName). Hand-added local music rows stay
+ * as they are (no foundryRef -> a scene cannot link them; still listable).
+ * Nothing in this store enforces any of that (caller-side convention, same
+ * as every other status-gate convention in this project).
  *
  * ADDITIVE CHANGE (Phase 36 task 36.2, §4): `localFilePath: string|null`
  * (default `null`) joins the StagecraftAsset shape — a hand-added

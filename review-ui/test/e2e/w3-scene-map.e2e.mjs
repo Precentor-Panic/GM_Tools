@@ -35,10 +35,11 @@ const { snapshotFilePath, foundryOpsPath, foundryResultsPath } = await import(".
 const { bootstrapSnapshot } = await import("../../../graph-import/headless-apply.mjs");
 const { createReviewServer } = await import("../../server.mjs");
 const { getScene } = await import("../../../session-planner/scenes.mjs");
+const { saveStagecraftAsset } = await import("../../../session-planner/stagecraft-store.mjs");
 
 bootstrapSnapshot(snapshotFilePath(dataDir, WORLD), { worldId: WORLD });
 
-let server, base, browser, scene, mapAsset;
+let server, base, browser, scene, mapAsset, track;
 
 const MAP_SRC = "worlds/e2e-w3/maps/lowway-alleys.webp";
 
@@ -57,6 +58,10 @@ before(async () => {
   assert.equal(res.status, 200, "fixture setup: hand-add must succeed");
   ({ asset: mapAsset } = await res.json());
   assert.equal(mapAsset.src, MAP_SRC);
+  // WS-E (2026-09-09): one pulled playlist track (the shape the Foundry pull
+  // lands) and one hand-added local music row that must NOT be linkable.
+  track = saveStagecraftAsset(WORLD, { kind: "music", name: "Casbah market", source: "foundry", foundryRef: { playlistUuid: "Playlist.amb", playlistName: "Ambience", trackName: "Casbah market", trackId: "sndCasbah" }, status: "proposed" }, { makeId: () => "sc-e2e-track" });
+  saveStagecraftAsset(WORLD, { kind: "music", name: "Hand-added drone" }, { makeId: () => "sc-e2e-local-music" });
 
   scene = await createSceneViaRoute(base, WORLD, { objectiveNote: "Chase through the alleys." });
 });
@@ -108,6 +113,31 @@ test("scene page: 'link a map…' opens the picker (asset listed with name + src
   await page.close();
 });
 
+test("WS-E scene page: the music chip starts as '♪ No music'; the picker lists only pulled playlist tracks (grouped by playlist, the local row absent); choosing one persists musicAssetId and flips the chip", async () => {
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+  await page.goto(`${base}/#planner/scene/${scene.id}`);
+  const chip = page.locator('[data-testid="scene-music-chip"]');
+  await chip.waitFor({ state: "visible", timeout: 15000 });
+  assert.equal(await chip.getAttribute("data-has-music"), "false");
+  assert.match((await chip.textContent()) ?? "", /No music/);
+
+  await page.locator('[data-testid="scene-music-link-btn"]').click();
+  const picker = page.locator('[data-testid="scene-music-picker"]');
+  await picker.waitFor({ state: "visible", timeout: 15000 });
+  assert.equal(await picker.locator('option[value="sc-e2e-local-music"]').count(), 0, "a hand-added local row has no playlist to point a scene at");
+  assert.equal(await picker.locator('optgroup[label="Ambience"] option[value="sc-e2e-track"]').count(), 1, "grouped under its playlist");
+
+  await picker.selectOption(track.id);
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="scene-music-chip"]')?.getAttribute("data-has-music") === "true",
+    { timeout: 15000 }
+  );
+  assert.match((await chip.textContent()) ?? "", /Casbah market/);
+  assert.equal(getScene(WORLD, scene.id).musicAssetId, track.id, "persisted for real");
+  await page.close();
+});
+
 test("scene cards at a glance: the Library's scene tray shows the map glyph chip for the linked scene", async () => {
   const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
   await primeWorldSelection(page, base, WORLD);
@@ -152,5 +182,7 @@ test("push-scene with NO mapSrc: the composed create_scene op carries the DEFAUL
   assert.equal(body.ok, true);
   assert.ok(capturedOp, "the ops-channel write must have been captured");
   assert.deepEqual(capturedOp.data.background, { src: MAP_SRC }, "the push defaulted its mapSrc from the linked asset's src");
+  assert.equal(capturedOp.data.playlist, "Playlist.amb", "WS-E: the linked track's playlist rides on the create op");
+  assert.equal(capturedOp.data.playlistSound, "sndCasbah");
   assert.equal(getScene(WORLD, scene.id).foundrySceneRef, "Scene.w3e2e");
 });

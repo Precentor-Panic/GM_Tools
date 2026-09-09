@@ -358,6 +358,50 @@ await test("composeSceneOps: UPDATE path (foundrySceneRef already set) -- scene 
   assert.equal(journalOp, null);
 });
 
+// Table round 2026-09-09 (WS-E): one music track per scene.
+await test("composeSceneOps: a linked music asset emits playlist (uuid) + playlistSound (track id, else name) on BOTH the create and the update path", () => {
+  const WORLD = "compose-music-world";
+  const byId = acceptStagecraftAsset(WORLD, saveStagecraftAsset(WORLD, { kind: "music", name: "Casbah market", source: "foundry", foundryRef: { playlistUuid: "Playlist.amb", playlistName: "Ambience", trackName: "Casbah market", trackId: "sndCasbah" }, status: "proposed" }).id);
+  const byName = acceptStagecraftAsset(WORLD, saveStagecraftAsset(WORLD, { kind: "music", name: "Teahouse", source: "foundry", foundryRef: { playlistUuid: "Playlist.amb", playlistName: "Ambience", trackName: "Teahouse" }, status: "proposed" }).id);
+
+  const fresh = createScene(WORLD, { objectiveNote: "Souk at noon", musicAssetId: byId.id }, { makeId: () => "compose-music-create" });
+  const created = composeSceneOps(dataDir, WORLD, getScene(WORLD, fresh.id));
+  assert.equal(created.sceneOp.kind, "create_scene");
+  assert.equal(created.sceneOp.data.playlist, "Playlist.amb");
+  assert.equal(created.sceneOp.data.playlistSound, "sndCasbah", "the track id wins when the pull carried one");
+  assert.deepEqual(created.skipped, []);
+
+  const live = createScene(WORLD, { objectiveNote: "Teahouse at dusk", musicAssetId: byName.id }, { makeId: () => "compose-music-update" });
+  updateScene(WORLD, live.id, { foundrySceneRef: "Scene.teahouseLive" });
+  const updated = composeSceneOps(dataDir, WORLD, getScene(WORLD, live.id));
+  assert.equal(updated.sceneOp.kind, "update_scene");
+  assert.deepEqual(updated.sceneOp.data, { sceneUuid: "Scene.teahouseLive", patch: { name: "Teahouse at dusk", playlist: "Playlist.amb", playlistSound: "Teahouse" } },
+    "a scene already in Foundry gains its music through the patch -- no re-create; the name is the fallback address");
+});
+
+await test("composeSceneOps: an unlinked scene never emits playlist keys (Foundry's own music stays untouched); a music link with no playlist ref, a discarded one, and a dangling id are each skipped with a reason and no playlist keys", () => {
+  const WORLD = "compose-music-skip-world";
+  const plain = createScene(WORLD, { objectiveNote: "Silent" }, { makeId: () => "compose-music-silent" });
+  const silent = composeSceneOps(dataDir, WORLD, getScene(WORLD, plain.id));
+  assert.equal("playlist" in silent.sceneOp.data, false);
+  assert.equal("playlistSound" in silent.sceneOp.data, false);
+
+  const local = saveStagecraftAsset(WORLD, { kind: "music", name: "Hand-added drone", source: "local" });
+  const noRef = createScene(WORLD, { objectiveNote: "Local", musicAssetId: local.id }, { makeId: () => "compose-music-local" });
+  const r1 = composeSceneOps(dataDir, WORLD, getScene(WORLD, noRef.id));
+  assert.equal("playlist" in r1.sceneOp.data, false);
+  assert.ok(r1.skipped.some((x) => x.id === local.id && /no Foundry playlist reference/.test(x.reason)), JSON.stringify(r1.skipped));
+
+  const dangling = createScene(WORLD, { objectiveNote: "Gone", musicAssetId: "sca_nope" }, { makeId: () => "compose-music-dangling" });
+  const r2 = composeSceneOps(dataDir, WORLD, getScene(WORLD, dangling.id));
+  assert.ok(r2.skipped.some((x) => x.id === "sca_nope" && /not found/.test(x.reason)), JSON.stringify(r2.skipped));
+
+  const map = saveStagecraftAsset(WORLD, { kind: "map", name: "Not music", source: "local" });
+  const wrongKind = createScene(WORLD, { objectiveNote: "Wrong", musicAssetId: map.id }, { makeId: () => "compose-music-wrongkind" });
+  const r3 = composeSceneOps(dataDir, WORLD, getScene(WORLD, wrongKind.id));
+  assert.ok(r3.skipped.some((x) => x.id === map.id && /wrong kind or discarded/.test(x.reason)), JSON.stringify(r3.skipped));
+});
+
 await test("composeSceneOps: a SECOND accepted map asset is skipped with 'only one map per scene push, first-pass'", () => {
   const WORLD = "compose-multimap-world";
   const scene = createScene(WORLD, {}, { makeId: () => "compose-scene-multimap" });

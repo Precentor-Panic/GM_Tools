@@ -126,6 +126,37 @@ function resolveSceneName(dir, world, scene) {
 }
 
 /**
+ * sceneMusicData -- table round 2026-09-09 (WS-E): one music track per
+ * scene. The linked music asset's foundryRef names the playlist (uuid) and
+ * the track (id when the index carried one, else the name -- the bridge's
+ * resolveSceneMusic accepts either). Returns the `{playlist, playlistSound}`
+ * keys to merge into a create_scene/update_scene data object -- BOTH paths,
+ * so a scene already in Foundry gains music without being re-created -- or
+ * `{}` when nothing usable is linked (a scene with no link leaves the
+ * Foundry scene's music untouched: never clears what the GM set by hand in
+ * Foundry). Problems land in `skipped` with a reason.
+ */
+function sceneMusicData(world, scene, skipped) {
+  if (!scene.musicAssetId) return {};
+  let music = null;
+  try {
+    music = getStagecraftAsset(world, scene.musicAssetId);
+  } catch {
+    skipped.push({ kind: "asset", id: scene.musicAssetId, reason: "linked music asset not found" });
+    return {};
+  }
+  if (music?.kind !== "music" || music.status === "discarded") {
+    skipped.push({ kind: "asset", id: scene.musicAssetId, reason: "linked music asset is not a usable track (wrong kind or discarded)" });
+    return {};
+  }
+  if (!music.foundryRef?.playlistUuid) {
+    skipped.push({ kind: "asset", id: scene.musicAssetId, reason: "linked music asset has no Foundry playlist reference -- pull playlists from Foundry and link one of those tracks" });
+    return {};
+  }
+  return { playlist: music.foundryRef.playlistUuid, playlistSound: music.foundryRef.trackId ?? music.foundryRef.trackName ?? null };
+}
+
+/**
  * @param {string} dir
  * @param {string} world
  * @param {string} sceneId
@@ -183,7 +214,8 @@ export async function pushSceneToFoundry(dir, world, sceneId, { mapSrc, name, wi
       name: name ?? resolveSceneName(dir, world, scene),
       background: { src: resolvedMapSrc },
       ...(width !== undefined ? { width } : dims ? { width: dims.width } : {}),
-      ...(height !== undefined ? { height } : dims ? { height: dims.height } : {})
+      ...(height !== undefined ? { height } : dims ? { height: dims.height } : {}),
+      ...sceneMusicData(world, scene, []) // WS-E: this bare path has no skip channel; an unusable link is simply omitted
     }
   };
 
@@ -425,6 +457,7 @@ export function composeSceneOps(dataDir, world, scene, opts = {}) {
     const src = resolveAssetSrc(dataDir, world, splashAsset, skipped);
     if (src) data.foreground = { src };
   }
+  Object.assign(data, sceneMusicData(world, scene, skipped)); // WS-E
 
   const sceneOpId = nextOpId();
   const sceneOp = isCreatePath

@@ -2263,8 +2263,24 @@ async function handleApi(req, res, url, parts) {
         );
       }
     }
+    // Table round 2026-09-09 (WS-E): the music link gets the same guard,
+    // one kind stricter -- a track that never came from Foundry has no
+    // playlist to point a scene at.
+    if (body.musicAssetId !== undefined && body.musicAssetId !== null) {
+      const asset = getStagecraftAsset(w, body.musicAssetId);
+      if (asset.kind !== "music") {
+        throw new Error(
+          `Scene musicAssetId "${body.musicAssetId}" must reference a kind:"music" stagecraft asset (found kind "${asset.kind}").`
+        );
+      }
+      if (!asset.foundryRef?.playlistUuid) {
+        throw new Error(
+          `Scene musicAssetId "${body.musicAssetId}" names a music asset with no Foundry playlist reference -- pull playlists from Foundry and link one of those tracks.`
+        );
+      }
+    }
     const scene = updateScene(w, parts[3], {
-      name: body.name, objectiveNote: body.objectiveNote, objectiveInRun: body.objectiveInRun, mapAssetId: body.mapAssetId,
+      name: body.name, objectiveNote: body.objectiveNote, objectiveInRun: body.objectiveInRun, mapAssetId: body.mapAssetId, musicAssetId: body.musicAssetId,
       // Run layout keys (2026-08-26); the store validates shape.
       kind: body.kind, whereNote: body.whereNote, tags: body.tags, activeVariants: body.activeVariants
     });

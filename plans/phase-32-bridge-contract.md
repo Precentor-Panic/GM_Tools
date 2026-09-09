@@ -276,6 +276,9 @@ Track = { name: string, path?: string }   // path is OPTIONAL — a track's own 
                                             // a resolved file path this phase — plans/phase-35-tasks.md's own
                                             // "music rows are hand-added only this phase" decision means
                                             // nothing downstream requires `path` to be present yet).
+                                            // (Superseded 2026-09-09, WS-E: the GM_Tools pull now lands one
+                                            // Stagecraft music row per track, and a scene's musicAssetId
+                                            // pushes `playlist` = this id + `playlistSound` = track id|name.)
 ```
 
 Same "always a full replace" semantics as the rest of the index (§1's own top-level rule) — every export

@@ -77,6 +77,12 @@
  * reasoning as every additive field above: a pre-W3b scene simply has no
  * `mapAssetId` key, read identically to an explicit null (no map linked) --
  * every kilmarn scene keeps loading unchanged.
+ *
+ * ADDITIVE CHANGE (table round 2026-09-09, WS-E -- "one music track per
+ * scene"): `musicAssetId` (string|null, default null) beside `mapAssetId`,
+ * the id of ONE stagecraft `kind:'music'` asset (a pulled playlist track).
+ * Same conventions exactly: patch vocabulary, route validates kind, fork
+ * inherits, read by composeSceneOps to emit `playlist`/`playlistSound`.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -133,7 +139,7 @@ export function makeSceneId() {
  * @param {string} [opts.now]
  * @returns {object}   the created Scene
  */
-export function createScene(world, { locationEntityId = null, objectiveNote = null, name = null, mapAssetId = null, kind = null, whereNote = null, tags = [], activeVariants = [] } = {}, opts = {}) {
+export function createScene(world, { locationEntityId = null, objectiveNote = null, name = null, mapAssetId = null, musicAssetId = null, kind = null, whereNote = null, tags = [], activeVariants = [] } = {}, opts = {}) {
   validateSceneName(name); // QA W2 fix (Group B #12)
   const makeId = opts.makeId ?? makeSceneId;
   const now = opts.now ?? new Date().toISOString();
@@ -146,6 +152,7 @@ export function createScene(world, { locationEntityId = null, objectiveNote = nu
     name: name ?? null,
     // Friction Wave 1 W3b -- see this module's own header note.
     mapAssetId: mapAssetId ?? null,
+    musicAssetId: musicAssetId ?? null,
     foundrySceneRef: null,
     // Phase 36 task 36.2, §1 -- see this module's own header note.
     stagedForFoundry: false,
@@ -180,7 +187,7 @@ export function createScene(world, { locationEntityId = null, objectiveNote = nu
  * @param {string} [opts.now]
  * @returns {object}   the created (forked) Scene
  */
-export function forkScene(world, parentSceneId, { locationEntityId, objectiveNote, name = null, mapAssetId } = {}, opts = {}) {
+export function forkScene(world, parentSceneId, { locationEntityId, objectiveNote, name = null, mapAssetId, musicAssetId } = {}, opts = {}) {
   const parent = getScene(world, parentSceneId);
   const makeId = opts.makeId ?? makeSceneId;
   const now = opts.now ?? new Date().toISOString();
@@ -195,6 +202,7 @@ export function forkScene(world, parentSceneId, { locationEntityId, objectiveNot
     // see this module's own header note. `?? null` also normalizes a parent
     // persisted before this field existed.
     mapAssetId: mapAssetId !== undefined ? mapAssetId : (parent.mapAssetId ?? null),
+    musicAssetId: musicAssetId !== undefined ? musicAssetId : (parent.musicAssetId ?? null),
     // Deliberately NOT inherited from the parent by default (unlike
     // location/objective) -- a bespoke name identifies ONE specific scene
     // instance; silently copying it onto a fork would produce two
@@ -287,7 +295,7 @@ export function renameScene(world, sceneId, name, opts = {}) {
  *
  * @param {string} world
  * @param {string} sceneId
- * @param {{name?:string|null, objectiveNote?:string|null, foundrySceneRef?:string|null, locationEntityId?:string|null, stagedForFoundry?:boolean, mapAssetId?:string|null}} patch
+ * @param {{name?:string|null, objectiveNote?:string|null, foundrySceneRef?:string|null, locationEntityId?:string|null, stagedForFoundry?:boolean, mapAssetId?:string|null, musicAssetId?:string|null}} patch
  * @param {object} [opts]
  * @param {string} [opts.now]   injectable ISO timestamp, for deterministic tests
  * @returns {object}   the updated Scene
@@ -308,7 +316,7 @@ export function renameScene(world, sceneId, name, opts = {}) {
  */
 const SCENE_KINDS = new Set(["narrative", "combat", "transit"]);
 
-export function updateScene(world, sceneId, { name, objectiveNote, objectiveInRun, foundrySceneRef, locationEntityId, stagedForFoundry, mapAssetId, kind, whereNote, tags, activeVariants } = {}, opts = {}) {
+export function updateScene(world, sceneId, { name, objectiveNote, objectiveInRun, foundrySceneRef, locationEntityId, stagedForFoundry, mapAssetId, musicAssetId, kind, whereNote, tags, activeVariants } = {}, opts = {}) {
   if (name !== undefined) validateSceneName(name); // QA W2 fix (Group B #12)
   const scenes = readScenes(world);
   const scene = scenes.find((s) => s.id === sceneId);
@@ -332,6 +340,7 @@ export function updateScene(world, sceneId, { name, objectiveNote, objectiveInRu
   // semantics as every other key; the ROUTE validates the asset (exists +
   // kind:'map'), this store stays cross-store-pure (header note).
   if (mapAssetId !== undefined) scene.mapAssetId = mapAssetId;
+  if (musicAssetId !== undefined) scene.musicAssetId = musicAssetId; // WS-E, same semantics
   // Run layout keys (2026-08-26) -- same undefined-means-untouched semantics.
   if (kind !== undefined) {
     if (kind !== null && !SCENE_KINDS.has(kind)) throw new Error(`Scene kind must be one of narrative|combat|transit|null (got "${kind}").`);

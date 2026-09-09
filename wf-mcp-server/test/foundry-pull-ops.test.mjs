@@ -44,7 +44,7 @@ const { foundryIndexPath } = await import("../lib/snapshot.mjs");
 const { listBestiaryEntries, acceptBestiaryEntry } = await import("../../combat-planning/bestiary-store.mjs");
 const { listPartyMembers, acceptPartyMember } = await import("../../combat-planning/party-roster-store.mjs");
 const { listItems, acceptItem } = await import("../../combat-planning/item-store.mjs");
-const { listStagecraftAssets, markStagecraftAssetImported } = await import("../../session-planner/stagecraft-store.mjs");
+const { listStagecraftAssets, markStagecraftAssetImported, acceptStagecraftAsset } = await import("../../session-planner/stagecraft-store.mjs");
 const { listTokens } = await import("../../session-planner/token-store.mjs");
 
 function writeIndexFixture(world, fixtureName) {
@@ -386,6 +386,53 @@ test("pullFoundryActorsToStores: an ACCEPTED compendium browse row is left untou
   const tavernAfter = listStagecraftAssets(V3_WORLD, "map").find((a) => a.id === tavernBefore.id);
   assert.equal(tavernAfter.status, "accepted");
   assert.deepEqual(tavernAfter.foundryRef, { sceneUuid: "Scene.gildedCaskImported" }, "the accepted/imported row's foundryRef survives the re-pull untouched");
+});
+
+// -------------------------------------------------------- playlists[] -> kind:'music' rows (table round 2026-09-09, WS-E)
+
+const MUSIC_WORLD = "pull-ops-music-world";
+const musicIndex = {
+  exportedAt: "2026-09-09T20:00:00.000Z",
+  actors: [], users: [], scenes: [], tokens: [], worldItems: [], compendia: [],
+  playlists: [
+    {
+      id: "Playlist.ambienceA",
+      name: "Ambience",
+      tracks: [
+        { name: "Casbah market", id: "sndCasbah", path: "audio/amb-casbah.ogg" },
+        { name: "Teahouse", path: "audio/amb-teahouse.ogg" },
+        { name: "" }
+      ]
+    },
+    { id: "Playlist.emptyB", name: "Empty", tracks: [] },
+    { name: "No uuid", tracks: [{ name: "orphan" }] }
+  ]
+};
+mkdirSync(dirname(foundryIndexPath(dataDir, MUSIC_WORLD)), { recursive: true });
+writeFileSync(foundryIndexPath(dataDir, MUSIC_WORLD), JSON.stringify(musicIndex), "utf8");
+
+test("pullFoundryActorsToStores: playlists[] land as ONE kind:'music' row per named track -- source:'foundry', status:'proposed', foundryRef {playlistUuid, playlistName, trackName, trackId?, path?}; empty playlists, unnamed tracks, and uuid-less playlists contribute nothing", () => {
+  const result = pullFoundryActorsToStores(dataDir, MUSIC_WORLD);
+  const music = result.stagecraftProposed.filter((a) => a.kind === "music");
+  assert.equal(music.length, 2, `two named tracks -> two rows, got ${JSON.stringify(music.map((m) => m.name))}`);
+  const casbah = music.find((m) => m.name === "Casbah market");
+  assert.equal(casbah.source, "foundry");
+  assert.equal(casbah.status, "proposed");
+  assert.equal(casbah.meta, "Ambience");
+  assert.deepEqual(casbah.foundryRef, { playlistUuid: "Playlist.ambienceA", playlistName: "Ambience", trackName: "Casbah market", trackId: "sndCasbah", path: "audio/amb-casbah.ogg" });
+  const teahouse = music.find((m) => m.name === "Teahouse");
+  assert.equal(teahouse.foundryRef.trackId, undefined, "a pre-v5 index carries no track id -- the key is simply absent");
+  assert.equal(listStagecraftAssets(MUSIC_WORLD, "music").length, 2, "landed in the real store");
+});
+
+test("pullFoundryActorsToStores: re-pulling playlists upserts on (playlistUuid, trackName) -- no duplicates; an ACCEPTED track is left untouched and not re-proposed", () => {
+  const casbah = listStagecraftAssets(MUSIC_WORLD, "music").find((m) => m.name === "Casbah market");
+  acceptStagecraftAsset(MUSIC_WORLD, casbah.id);
+  const result = pullFoundryActorsToStores(dataDir, MUSIC_WORLD);
+  const music = result.stagecraftProposed.filter((a) => a.kind === "music");
+  assert.deepEqual(music.map((m) => m.name), ["Teahouse"], "only the still-proposed track is reported");
+  assert.equal(listStagecraftAssets(MUSIC_WORLD, "music").length, 2, "still two rows");
+  assert.equal(listStagecraftAssets(MUSIC_WORLD, "music").find((m) => m.id === casbah.id).status, "accepted");
 });
 
 console.log(`\n${passed} passed`);

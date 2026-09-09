@@ -4001,6 +4001,116 @@ function buildSceneMapRow(scene, mapAssets, onSaved) {
   return row;
 }
 
+// ---------------------------------------------------------------------------
+// Table round 2026-09-09 (WS-E) -- the scene<->music link row, the map row's
+// twin (same classes, so it shares the CSS; its own testids). One track per
+// scene, Russell's call. The picker lists the kind:'music' assets that came
+// from a Foundry playlist pull (foundryRef.playlistUuid; not discarded --
+// the same not-discarded bar the map link and the push composer use, since
+// the Stagecraft shelf has no accept step) -- a hand-added local music row
+// has no playlist a Foundry scene could point at -- grouped by playlist.
+// Saves through the ordinary scene patch route
+// (musicAssetId); the push then sets the Foundry scene's playlist + track on
+// create AND update.
+// ---------------------------------------------------------------------------
+function buildSceneMusicRow(scene, musicAssets, onSaved) {
+  const linkable = musicAssets.filter((a) => a.status !== "discarded" && a.foundryRef?.playlistUuid);
+  const row = document.createElement("div");
+  row.className = "scene-map-row scene-music-row";
+  row.setAttribute("data-testid", "scene-music-row");
+  row.setAttribute("data-scene-id", scene.id);
+
+  const chip = document.createElement("span");
+  chip.className = "scene-map-chip scene-music-chip";
+  chip.setAttribute("data-testid", "scene-music-chip");
+  chip.setAttribute("data-scene-id", scene.id);
+
+  const linkBtn = document.createElement("button");
+  linkBtn.type = "button";
+  linkBtn.className = "scene-map-link-btn";
+  linkBtn.setAttribute("data-testid", "scene-music-link-btn");
+  linkBtn.setAttribute("data-scene-id", scene.id);
+
+  const pickerHost = document.createElement("span");
+
+  const paintChip = () => {
+    const linked = scene.musicAssetId ? musicAssets.find((a) => a.id === scene.musicAssetId) : null;
+    chip.setAttribute("data-music-asset-id", scene.musicAssetId ?? "");
+    chip.setAttribute("data-has-music", scene.musicAssetId ? "true" : "false");
+    if (scene.musicAssetId) {
+      chip.textContent = `♪ ${linked ? linked.name : "(music asset missing)"}`;
+      chip.title = linked?.foundryRef?.playlistName ? `Playlist: ${linked.foundryRef.playlistName}` : "This track's playlist is not recorded";
+    } else {
+      chip.textContent = "♪ No music";
+      chip.title = "Link one Foundry playlist track so this scene's push sets its music";
+    }
+    linkBtn.textContent = scene.musicAssetId ? "change" : "pick a track…";
+  };
+
+  let pickerOpen = false;
+  const closePicker = () => { pickerOpen = false; pickerHost.innerHTML = ""; };
+  linkBtn.addEventListener("click", () => {
+    if (pickerOpen) { closePicker(); return; }
+    pickerOpen = true;
+    pickerHost.innerHTML = "";
+    if (!linkable.length) {
+      const hint = document.createElement("span");
+      hint.className = "scene-map-picker-empty";
+      hint.setAttribute("data-testid", "scene-music-picker-empty");
+      hint.textContent = "No playlist tracks yet — pull from Foundry on the Library's Stagecraft shelf.";
+      pickerHost.appendChild(hint);
+      return;
+    }
+    const select = document.createElement("select");
+    select.className = "scene-map-picker";
+    select.setAttribute("data-testid", "scene-music-picker");
+    select.setAttribute("data-scene-id", scene.id);
+    const noneOpt = document.createElement("option");
+    noneOpt.value = "";
+    noneOpt.textContent = "(no music)";
+    select.appendChild(noneOpt);
+    const byPlaylist = new Map();
+    for (const a of linkable) {
+      const key = a.foundryRef.playlistName || a.foundryRef.playlistUuid;
+      if (!byPlaylist.has(key)) byPlaylist.set(key, []);
+      byPlaylist.get(key).push(a);
+    }
+    for (const [playlistName, tracks] of byPlaylist) {
+      const group = document.createElement("optgroup");
+      group.label = playlistName;
+      for (const a of tracks) {
+        const opt = document.createElement("option");
+        opt.value = a.id;
+        opt.textContent = a.name;
+        group.appendChild(opt);
+      }
+      select.appendChild(group);
+    }
+    select.value = scene.musicAssetId ?? "";
+    select.addEventListener("change", async () => {
+      const chosen = select.value || null;
+      select.disabled = true;
+      try {
+        const { scene: updated } = await spApi(`/api/session-planner/scenes/${encodeURIComponent(scene.id)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ world: currentWorld(), musicAssetId: chosen })
+        });
+        scene.musicAssetId = updated.musicAssetId ?? null;
+        if (onSaved) onSaved();
+      } catch { /* keep the old link on a failed write */ }
+      closePicker();
+      paintChip();
+    });
+    pickerHost.appendChild(select);
+    select.focus();
+  });
+
+  paintChip();
+  row.append(chip, linkBtn, pickerHost);
+  return row;
+}
+
 
 // ---------------------------------------------------------------------------
 // Run spread (2026-08-25/26): Run mode renders the scene as a module-style
@@ -4743,6 +4853,7 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   // map assets regardless of whether the tray roster carries any (linking a
   // map is exactly what a scene with an empty tray wants to do first).
   const mapAssets = (await spApi(`/api/session-planner/stagecraft${spWithWorld({ kind: "map" })}`).catch(() => ({ assets: [] }))).assets ?? [];
+  const musicAssets = (await spApi(`/api/session-planner/stagecraft${spWithWorld({ kind: "music" })}`).catch(() => ({ assets: [] }))).assets ?? []; // WS-E
   const assetRoster = trayRoster.filter((r) => r.kind === "asset");
   const stageDressingLookups = { items: new Map(), stagecraft: new Map() };
   if (assetRoster.length) {
@@ -5116,6 +5227,7 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   chipRow.className = "scene-band-chiprow";
   chipRow.appendChild(stageRow);
   chipRow.appendChild(buildSceneMapRow(scene, mapAssets, restartStagePollIfStaged));
+  chipRow.appendChild(buildSceneMusicRow(scene, musicAssets, restartStagePollIfStaged)); // WS-E: one track per scene
   // Aureus table wave B1 (G3): once a scene has ever been pushed
   // (foundrySceneRef set), show a quiet "in Foundry" pill plus an Activate
   // affordance right here in Prep -- the SAME shared row builder backs the

@@ -258,6 +258,41 @@ function upsertStagecraftMap(world, scene, opts) {
   return { record: asset, action: "created" };
 }
 
+/**
+ * upsertStagecraftMusic -- table round 2026-09-09 (WS-E). One `kind:'music'`
+ * row per playlist TRACK, keyed on (playlistUuid, trackName); the same
+ * three-way accepted/proposed/create branch as upsertStagecraftMap. The
+ * track `id` (bridge v5) rides along when the index carries it -- the push
+ * prefers it, the name is the fallback.
+ */
+function upsertStagecraftMusic(world, playlist, track, opts) {
+  const matches = listStagecraftAssets(world, "music").filter(
+    (a) => a.foundryRef?.playlistUuid === playlist.id && a.foundryRef?.trackName === track.name
+  );
+  const acceptedMatch = matches.find((a) => a.status === "accepted");
+  if (acceptedMatch) return { record: acceptedMatch, action: "already-linked" };
+
+  const playlistName = typeof playlist.name === "string" && playlist.name ? playlist.name : "Unnamed Playlist";
+  const foundryRef = { playlistUuid: playlist.id, playlistName, trackName: track.name };
+  if (track.id != null) foundryRef.trackId = track.id;
+  if (typeof track.path === "string" && track.path) foundryRef.path = track.path;
+  const mapped = {
+    name: track.name,
+    source: "foundry",
+    meta: playlistName,
+    foundryRef
+  };
+
+  const proposedMatch = matches.find((a) => a.status === "proposed");
+  if (proposedMatch) {
+    const asset = updateStagecraftAssetFields(world, proposedMatch.id, mapped);
+    return { record: asset, action: "updated" };
+  }
+
+  const asset = saveStagecraftAsset(world, { kind: "music", ...mapped, status: "proposed" }, opts);
+  return { record: asset, action: "created" };
+}
+
 /** True only when a scene has a genuinely usable background to reference -- README §H: "a null background has nothing findable." */
 function hasUsableBackground(scene) {
   return typeof scene?.background?.src === "string" && scene.background.src.length > 0;
@@ -347,7 +382,7 @@ function distinctSceneUuidsWithTokens(index) {
  *   bestiaryProposed: object[],               // bestiary entries now status:'proposed' (created OR updated this run)
  *   partyProposed: object[],                  // party members now status:'proposed' (created OR updated this run)
  *   itemsProposed: object[],                  // ItemRecords now status:'proposed' (PC actors' items[] only, created OR updated this run)
- *   stagecraftProposed: object[],              // StagecraftAssets (kind:"map") now status:'proposed' (created OR updated this run)
+ *   stagecraftProposed: object[],              // StagecraftAssets (kind:"map", and kind:"music" per playlist track since WS-E) now status:'proposed' (created OR updated this run)
  *   tokensSynced: {sceneUuid:string, count:number}[],   // one entry per distinct sceneUuid touched, count = TokenRecords on file for that scene AFTER the replace
  *   alreadyLinked: {bestiary: string[], party: string[], items: string[]},  // foundryActorRefs/foundryItemRefs skipped because already 'accepted'
  *   skippedActors: {uuid: string, reason: string}[]         // actors that couldn't be classified/mapped (defense-in-depth; the mappers themselves never throw)
@@ -440,6 +475,22 @@ export function pullFoundryActorsToStores(dataDir, world, opts = {}) {
     } catch {
       // Defense-in-depth only, same reasoning as the actor loop's own catch --
       // a genuinely malformed scene record must never abort the whole pull.
+    }
+  }
+
+  // Table round 2026-09-09 (WS-E) -- playlists[] -> one Stagecraft `music`
+  // row per track. A playlist with no tracks (or no uuid) contributes
+  // nothing; a track with no name has nothing to dedup on and is skipped.
+  for (const playlist of Array.isArray(index.playlists) ? index.playlists : []) {
+    if (!playlist || typeof playlist !== "object" || typeof playlist.id !== "string" || !playlist.id) continue;
+    for (const track of Array.isArray(playlist.tracks) ? playlist.tracks : []) {
+      if (!track || typeof track !== "object" || typeof track.name !== "string" || !track.name) continue;
+      try {
+        const { record, action } = upsertStagecraftMusic(world, playlist, track, opts);
+        if (action !== "already-linked") stagecraftProposed.push(record);
+      } catch {
+        // Defense-in-depth only, same reasoning as the scenes[] loop's own catch.
+      }
     }
   }
 

@@ -146,7 +146,7 @@ import { sceneTrayDropOp } from "./lib/planner-ops.mjs";
 import { listBestiaryEntries, getBestiaryEntry, saveBestiaryEntry, acceptBestiaryEntry, updateBestiaryEntryNote } from "../combat-planning/bestiary-store.mjs";
 import { listPartyMembers, savePartyMember } from "../combat-planning/party-roster-store.mjs";
 import { listItems, saveItem } from "../combat-planning/item-store.mjs";
-import { listStagecraftAssets, saveStagecraftAsset } from "../session-planner/stagecraft-store.mjs";
+import { listStagecraftAssets, saveStagecraftAsset, getStagecraftAsset } from "../session-planner/stagecraft-store.mjs";
 
 // G10 -- Rules Oracle (workstream B4): library-wide, no `world`, same
 // resolveDir()-only convention every other Foundry-data reader in this
@@ -1969,18 +1969,31 @@ server.registerTool(
       "Run-layout keys: `kind` (narrative|combat|transit|null) drives the seed skeleton + a 'combat' pill; `whereNote` is the Run spread's " +
       "where-line; `tags` render as pills; `activeVariants` gates which variant-tagged elements Run mode shows (empty = show all) -- " +
       "prefer wf_set_scene_active_variants for that one during live play. `objectiveInRun: false` keeps the objective GM-only " +
-      "(the Run spread drops its Objective box; absent/true = shown).",
+      "(the Run spread drops its Objective box; absent/true = shown). `mapAssetId` links ONE stagecraft kind:'map' asset " +
+      "(the push defaults the background from it); `musicAssetId` links ONE kind:'music' asset that came from a Foundry playlist " +
+      "pull (the push sets the Foundry scene's playlist + track) -- null clears either. Same validation as the HTTP route.",
     inputSchema: {
       world: requiredWorldParam, sceneId: z.string(), name: z.string().optional(), objectiveNote: z.string().optional(),
       objectiveInRun: z.boolean().nullable().optional(),
       kind: z.enum(["narrative", "combat", "transit"]).nullable().optional(), whereNote: z.string().nullable().optional(),
-      tags: z.array(z.string()).optional(), activeVariants: z.array(z.string()).optional()
+      tags: z.array(z.string()).optional(), activeVariants: z.array(z.string()).optional(),
+      mapAssetId: z.string().nullable().optional(), musicAssetId: z.string().nullable().optional()
     }
   },
-  async ({ world, sceneId, name, objectiveNote, objectiveInRun, kind, whereNote, tags, activeVariants }) => {
+  async ({ world, sceneId, name, objectiveNote, objectiveInRun, kind, whereNote, tags, activeVariants, mapAssetId, musicAssetId }) => {
     try {
       const w = resolveWorld(world);
-      return text({ scene: updateScene(w, sceneId, { name, objectiveNote, objectiveInRun, kind, whereNote, tags, activeVariants }) });
+      // Same cross-store guards as the HTTP patch route (the store stays pure).
+      if (mapAssetId != null) {
+        const asset = getStagecraftAsset(w, mapAssetId);
+        if (asset.kind !== "map") throw new Error(`Scene mapAssetId "${mapAssetId}" must reference a kind:"map" stagecraft asset (found kind "${asset.kind}").`);
+      }
+      if (musicAssetId != null) {
+        const asset = getStagecraftAsset(w, musicAssetId);
+        if (asset.kind !== "music") throw new Error(`Scene musicAssetId "${musicAssetId}" must reference a kind:"music" stagecraft asset (found kind "${asset.kind}").`);
+        if (!asset.foundryRef?.playlistUuid) throw new Error(`Scene musicAssetId "${musicAssetId}" names a music asset with no Foundry playlist reference -- pull playlists from Foundry and link one of those tracks.`);
+      }
+      return text({ scene: updateScene(w, sceneId, { name, objectiveNote, objectiveInRun, kind, whereNote, tags, activeVariants, mapAssetId, musicAssetId }) });
     } catch (err) {
       return errorText(err);
     }
