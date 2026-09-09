@@ -698,6 +698,33 @@ mechanics in Foundry where they matter.
 lostech flow composes `import_via_plutonium` (full fidelity) then `update_item` (charges down, recovery off).
 Refuses non-Item uuids and empty/non-whitelisted patches per-op.
 
+### `kind: "update_actor"` — (v5, table round 2026-09-09, NEW — the token-art patch)
+
+```json
+{ "opId": "...", "kind": "update_actor",
+  "data": { "actorUuid": "Actor.abc", "patch": { "img": "gm-tools/tokens/aureus/ledger-man.webp",
+            "prototypeToken.texture.src": "gm-tools/tokens/aureus/ledger-man.webp" } } }
+```
+
+`actor.update(patch)` where the patch is a **whitelist** — `img` and `prototypeToken.texture.src` only. Sets
+a named NPC's face on the actor so every token drawn from it afterward (a GM sidebar drag included) carries
+it. Never touches `system.*` — mechanics go through `import_via_plutonium`. Refuses non-Actor uuids and
+empty/non-whitelisted patches per-op.
+
+### v5 amendments to existing kinds (table round 2026-09-09)
+
+- **`create_scene` / `update_scene` gain `playlist` and `playlistSound`** (both optional, both accepted on
+  the create data and on the update patch). `playlist` is the `"Playlist.<id>"` uuid the index exports;
+  `playlistSound` is a TRACK NAME (or a sound id — either resolves). The module resolves both to the bare ids
+  Scene wants at apply time; an unresolvable playlist or track is a per-op error, never a silent skip.
+  `playlist: null` clears both. Foundry starts a scene's playlist natively when the scene is activated.
+- **`create_scene.tokens[]` / `create_token` derive the token from the actor's PROTOTYPE token**
+  (`actor.getTokenDocument()`), no longer a hand-composed `{name,x,y,actorId,texture}`. Consequence: pushed
+  tokens now inherit disposition, vision, bars, size and displayName from the actor. Before v5 every pushed
+  token landed with TokenDocument's schema defaults — `disposition: -1` (HOSTILE), no vision. An explicit
+  `img` on the token op still overrides the prototype texture.
+- **Index §1.5 tracks gain an optional `id`** (omitted when absent).
+
 ### Reserved kinds — still NOT implemented (no phase has claimed these yet)
 
 | `kind` | Indicative `data` shape | Notes |
@@ -771,6 +798,11 @@ oversight** — 32.1/32.2/32.3 should not "fix" it into consistency.
 
 ## Changelog
 
+- **v5** (table round 2026-09-09) — additive-only, **no `*_VERSION` constant bumped**:
+  - NEW op kind `update_actor` (whitelisted `img` / `prototypeToken.texture.src` — token art).
+  - `create_scene`/`update_scene` carry `playlist`/`playlistSound` (resolved live in the module).
+  - Token creation derives from the actor's prototype token (fixes every pushed token landing HOSTILE and
+    blind). Index tracks gain optional `id`.
 - **v4** (Aureus table wave FW-1, 2026-09-03; foundry_worldFabric `0ae12da`) — additive-only, **no
   `*_VERSION` constant bumped** (new op kinds soft-fail per-op on an old module — the established compat
   story):
