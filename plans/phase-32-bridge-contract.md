@@ -501,6 +501,13 @@ not. It previously composed an unconditional `create_scene`, so a second push of
 DUPLICATED the Foundry scene and repointed the ref at the bare copy (hit for real on `aureus`: 11 duplicates).
 Same create-vs-update rule `composeSceneOps` has always applied.
 
+**The weekly swap (2026-09-09).** `syncFoundryToPlans` (`POST /api/foundry/sync-to-plans`) is a third producer
+onto the same channel: it emits `delete_scene` for every scene GM_Tools owns that is NOT in the named plans, then
+runs the ordinary flush for the ones that are. It can only reach a Foundry scene whose uuid sits on one of that
+world's GM_Tools scene records, so hand-built scenes and the default scene are outside its reach entirely.
+`delete_scene` refuses the ACTIVE scene unless the op carries `force:true` — added with this workstream, since a
+routine weekly swap is exactly when an accidental active-scene delete would land on live players.
+
 **Background write semantics — v14 SHOWSTOPPER, load-bearing for BOTH create and update (v2, Phase 36).**
 Proven live (`plans/wf-test-setup.md:124`): on Foundry v14, `Scene#background` is a DEPRECATED getter — setting
 `scene.background.src` (or passing `background:{src}` into `Scene.create(...)`'s creation data) is **silently

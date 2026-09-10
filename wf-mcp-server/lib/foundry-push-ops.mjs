@@ -46,6 +46,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { basename, join } from "node:path";
 import { getScene, updateScene, listScenesByRecency, markScenePushed, setScenePendingPush } from "../../session-planner/scenes.mjs";
 import { getSceneTray } from "../../session-planner/scene-tray.mjs";
+import { getPlan } from "../../session-planner/plans.mjs";
 import { getStagecraftAsset } from "../../session-planner/stagecraft-store.mjs";
 import { getBestiaryEntry } from "../../combat-planning/bestiary-store.mjs";
 import { getPartyMember } from "../../combat-planning/party-roster-store.mjs";
@@ -841,4 +842,123 @@ export async function removeStaleFoundryScenes(dir, world, targets, opts = {}) {
     }
   }
   return { status: "applied", removed, failed, skipped };
+}
+
+// ===========================================================================
+// The weekly Foundry swap (2026-09-09, Russell): "remove all of the scenes
+// per week and just load the scenes for week 2. We can keep the scenes in
+// GM_Tools but only persist one set of scenes in Foundry to reduce the
+// amount of 'stuff' that people are having to load when they open it."
+// ===========================================================================
+
+/**
+ * Makes Foundry hold EXACTLY the scenes of the named plans, and nothing else
+ * GM_Tools owns: pushes what belongs and deletes what doesn't.
+ *
+ * No plan is special (Russell's ruling): the caller names every plan whose
+ * scenes should be live, floaters/transits included, on every call. Nothing
+ * persists implicitly, so what you pick is precisely what the world holds.
+ *
+ * THE OWNERSHIP RULE, which is the whole safety story: this only ever
+ * deletes a Foundry scene whose uuid appears as `foundrySceneRef` on one of
+ * THIS world's GM_Tools scene records. A scene you built by hand in Foundry,
+ * the default world scene, another world's scenes -- none of them are
+ * reachable from here, because GM_Tools has no record claiming them. It can
+ * only take back what it put there.
+ *
+ * The active scene is guarded module-side (`delete_scene` refuses it without
+ * `force`), so a swap can never yank the canvas out from under a live table.
+ *
+ * Dry-run by default: without `confirm:true` it reports the exact remove/push
+ * sets and writes nothing -- the "say what you'll do before you do it" step
+ * this project's other destructive route (`remove-stale`) also requires.
+ *
+ * @param {string} dataDir
+ * @param {string} world
+ * @param {string[]} planIds        every plan whose scenes should be live in Foundry
+ * @param {object} [opts]
+ * @param {boolean} [opts.confirm]  false/absent -> dry run, nothing written
+ * @param {boolean} [opts.force]    forwarded to delete_scene: allow deleting the ACTIVE scene
+ * @returns {Promise<object>}       {status:'dry-run'|'applied'|'queued'|'no-op', remove, push, removed, failed, flushed, ...}
+ */
+export async function syncFoundryToPlans(dataDir, world, planIds, opts = {}) {
+  const ids = Array.isArray(planIds) ? planIds.filter((p) => typeof p === "string" && p) : [];
+  if (!ids.length) {
+    throw new Error(
+      "syncFoundryToPlans: name at least one plan whose scenes should be live in Foundry. " +
+        "Syncing to NO plans would remove every GM_Tools scene from the world -- if that is genuinely what you want, " +
+        "pass the plan you want kept, or use remove-stale."
+    );
+  }
+
+  // Keep set: every scene in the named plans. getPlan throws a clear
+  // "No plan found" for a bad id -- surfaced as-is, never silently skipped,
+  // since a typo'd plan id would otherwise DELETE that plan's scenes.
+  const keep = new Set();
+  const plans = [];
+  for (const planId of ids) {
+    const plan = getPlan(world, planId);
+    plans.push({ id: plan.id, name: plan.name, sceneCount: plan.sceneIds.length });
+    for (const sceneId of plan.sceneIds) keep.add(sceneId);
+  }
+
+  const all = listScenesByRecency(world);
+  // Remove: ours (has a ref), not in the keep set.
+  const remove = all
+    .filter((s) => s.foundrySceneRef && !keep.has(s.id))
+    .map((s) => ({ sceneId: s.id, name: s.name, foundrySceneRef: s.foundrySceneRef }));
+  // Push: in the keep set and either absent from Foundry or dirty.
+  const push = all
+    .filter((s) => keep.has(s.id) && (s.foundrySceneRef == null || isSceneDirty(s)))
+    .map((s) => ({ sceneId: s.id, name: s.name, action: s.foundrySceneRef == null ? "create" : "update" }));
+  // Named by a plan but never staged -- reported, never silently ignored.
+  const notStaged = all
+    .filter((s) => keep.has(s.id) && s.stagedForFoundry !== true && s.foundrySceneRef == null)
+    .map((s) => ({ sceneId: s.id, name: s.name, reason: "not staged for Foundry -- stage it to include it in the swap" }));
+
+  if (opts.confirm !== true) {
+    return { status: "dry-run", plans, remove, push, notStaged, note: "Nothing was written. Re-send with confirm:true to apply." };
+  }
+
+  // Deletes first: the point of the swap is a lighter world, and doing them
+  // first means a mid-way failure leaves LESS in Foundry, never more.
+  const removed = [];
+  const failed = [];
+  if (remove.length) {
+    const ops = remove.map((r) => ({
+      opId: opts.makeOpId ? opts.makeOpId() : makeOpId(),
+      kind: "delete_scene",
+      data: { sceneUuid: r.foundrySceneRef, ...(opts.force === true ? { force: true } : {}) }
+    }));
+    const outcome = await writeFoundryOps(dataDir, world, ops, opts);
+    if (outcome.status === "queued") {
+      return { status: "queued", note: outcome.note, plans, remove, push, notStaged };
+    }
+    for (const [i, r] of remove.entries()) {
+      const result = outcome.results.find((x) => x.opId === ops[i].opId);
+      if (result?.ok) {
+        markScenePushed(world, r.sceneId, { foundrySceneRef: null, lastPushedAt: null });
+        removed.push(r);
+      } else {
+        failed.push({ ...r, error: result?.error ?? "no result for this op" });
+      }
+    }
+  }
+
+  // Then push what belongs, through the normal composer -- create carries
+  // map/music/tokens, update patches in place. Cleared refs above make a
+  // removed-then-re-added scene take the create path naturally.
+  const flush = push.length ? await flushDirtyStagedScenes(dataDir, world, opts) : { flushed: 0, results: [], skipped: [] };
+
+  return {
+    status: "applied",
+    plans,
+    removed,
+    failed,
+    flushed: flush.flushed,
+    pushResults: flush.results,
+    skipped: flush.skipped,
+    notStaged,
+    ...(flush.queued ? { pushQueued: true, pushNote: flush.note } : {})
+  };
 }

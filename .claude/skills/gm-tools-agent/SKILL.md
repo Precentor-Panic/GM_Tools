@@ -246,6 +246,20 @@ destructive/external precedent, HTTP-only like push-scene above:**
   "N accepted mutations not yet applied" banner (same op as
   `wf_sync_to_foundry`).
 
+**The weekly Foundry swap (2026-09-09) — destructive, HTTP-only, no MCP mirror:**
+- `POST /api/foundry/sync-to-plans` `{world, planIds:[...], confirm?, force?}` —
+  makes Foundry hold EXACTLY the named plans' scenes and nothing else GM_Tools
+  owns, so the players' world stays one session light. **Dry-run without
+  `confirm:true`** (returns the precise `remove`/`push`/`notStaged` sets and
+  writes nothing) — call it that way FIRST and show the GM the preview; this
+  route deletes live Foundry scenes. No plan is implicitly kept (Russell's
+  ruling): name every plan that should be live, floaters included, every time.
+  It can only ever delete a Foundry scene whose uuid is on one of that world's
+  GM_Tools scene records — hand-built Foundry scenes and the default scene are
+  unreachable from here. `force` forwards to `delete_scene`, which otherwise
+  refuses to delete the ACTIVE scene. Only use when the GM explicitly asks for
+  a swap, same precedent as `push-scene`/`remove-stale`.
+
 **Foundry connection:** `GET /api/foundry/connection?world=`,
 `POST /api/foundry/sync-now` `{world}` — connection state + the pull-style
 sync (proposals, review-gated), for when the user asks "is Foundry live?".

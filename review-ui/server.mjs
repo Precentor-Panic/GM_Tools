@@ -268,7 +268,8 @@ import {
   removeSceneFromFoundry,
   handleFoundrySceneOnDelete,
   listStaleFoundryScenes,
-  removeStaleFoundryScenes
+  removeStaleFoundryScenes,
+  syncFoundryToPlans
 } from "../wf-mcp-server/lib/foundry-push-ops.mjs";
 // Phase 38 task 38.2, §4 -- import-on-accept (a compendiumRef Stagecraft
 // browse row's accept composes `import_compendium_scene` through the SAME
@@ -2949,6 +2950,22 @@ async function handleApi(req, res, url, parts) {
       throw new Error("POST /api/foundry/remove-stale requires a non-empty `targets` array.");
     }
     const result = await removeStaleFoundryScenes(dir, w, body.targets);
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/foundry/sync-to-plans   { world, planIds:[...], confirm?, force? }
+  // The weekly Foundry swap (2026-09-09): make Foundry hold EXACTLY the named
+  // plans' scenes and nothing else GM_Tools owns, so the players' world stays
+  // one session light. Dry-run WITHOUT confirm:true (returns the exact
+  // remove/push sets, writes nothing) -- unlike remove-stale above, which
+  // rejects a missing confirm, this one answers with the preview, because
+  // seeing the plan is the point of the first call. `force` forwards to
+  // delete_scene, which otherwise refuses to delete the ACTIVE scene.
+  if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "sync-to-plans") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const result = await syncFoundryToPlans(dir, w, body.planIds, { confirm: body.confirm === true, force: body.force === true });
     return sendJson(res, 200, result);
   }
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,10 +42,12 @@ const localFilesDir = join(scratchDir, "local-files"); // a hand-added 'local' a
 const {
   pushSceneToFoundry, composeSceneOps, flushDirtyStagedScenes, isSceneDirty,
   clusterTokenPositions, DEFAULT_CANVAS, DEFAULT_GRID_SIZE,
-  DEFAULT_FLUSH_POLL_MS, DEFAULT_FLUSH_TIMEOUT_MS
+  DEFAULT_FLUSH_POLL_MS, DEFAULT_FLUSH_TIMEOUT_MS,
+  syncFoundryToPlans
 } = await import("../lib/foundry-push-ops.mjs");
 const { foundryOpsPath, foundryResultsPath } = await import("../lib/snapshot.mjs");
 const { createScene, getScene, updateScene, markScenePushed } = await import("../../session-planner/scenes.mjs");
+const { createPlan, addSceneToPlan } = await import("../../session-planner/plans.mjs");
 const { addToSceneTray } = await import("../../session-planner/scene-tray.mjs");
 const { saveStagecraftAsset, acceptStagecraftAsset, stagecraftRoot } = await import("../../session-planner/stagecraft-store.mjs");
 const { saveBestiaryEntry, acceptBestiaryEntry, retireBestiaryEntry, setBestiaryTokenImg, setBestiaryTokenImgCandidate } = await import("../../combat-planning/bestiary-store.mjs");
@@ -757,6 +759,103 @@ await test("composeSceneOps: create-path roster tokens are INLINE in create_scen
     { actorUuid: "Actor.inlineOgrekin", ...expected[1] }
   ]);
   assert.deepEqual(tokenOps, [], "standalone create_token ops must not be composed on the create path");
+});
+
+
+// ===========================================================================
+// The weekly Foundry swap (2026-09-09, Russell): Foundry holds exactly the
+// named plans' scenes, so the players' world stays one session light.
+// ===========================================================================
+
+/** A staged scene already live in Foundry. */
+function livingScene(world, name, ref) {
+  const scene = createScene(world, { name });
+  updateScene(world, scene.id, { stagedForFoundry: true });
+  markScenePushed(world, scene.id, { foundrySceneRef: ref, lastPushedAt: "2099-01-01T00:00:00.000Z" });
+  return scene;
+}
+
+await test("syncFoundryToPlans: dry run reports the exact remove/push sets and writes NOTHING", async () => {
+  const WORLD = "swap-dry-run-world";
+  const keep = livingScene(WORLD, "This week", "Scene.keepMe");
+  const drop = livingScene(WORLD, "Last week", "Scene.dropMe");
+  const plan = createPlan(WORLD, { name: "Week 2" });
+  addSceneToPlan(WORLD, plan.id, keep.id);
+
+  const result = await syncFoundryToPlans(dataDir, WORLD, [plan.id], { pollMs: 5, timeoutMs: 20 });
+
+  assert.equal(result.status, "dry-run");
+  assert.deepEqual(result.remove.map((r) => r.foundrySceneRef), ["Scene.dropMe"]);
+  assert.equal(result.push.length, 0, "a clean kept scene needs no push");
+  assert.equal(getScene(WORLD, drop.id).foundrySceneRef, "Scene.dropMe", "a dry run must not clear a ref");
+  assert.equal(existsSync(foundryOpsPath(dataDir, WORLD)), false, "a dry run must not write ops");
+});
+
+await test("syncFoundryToPlans: OWNERSHIP -- a Foundry scene GM_Tools never pushed is unreachable", async () => {
+  const WORLD = "swap-ownership-world";
+  const keep = livingScene(WORLD, "Ours, kept", "Scene.ours");
+  // A scene record with NO ref stands in for everything GM_Tools doesn't own:
+  // hand-built Foundry scenes, the default world scene, other worlds.
+  createScene(WORLD, { name: "Never pushed" });
+  const plan = createPlan(WORLD, { name: "Week 2" });
+  addSceneToPlan(WORLD, plan.id, keep.id);
+
+  const result = await syncFoundryToPlans(dataDir, WORLD, [plan.id], { pollMs: 5, timeoutMs: 20 });
+  assert.equal(result.remove.length, 0, "only a scene GM_Tools has a ref for can ever be removed");
+});
+
+await test("syncFoundryToPlans: refuses an empty plan list rather than emptying the world", async () => {
+  const WORLD = "swap-empty-plans-world";
+  livingScene(WORLD, "Would be deleted", "Scene.x");
+  await assert.rejects(() => syncFoundryToPlans(dataDir, WORLD, [], { confirm: true }), /at least one plan/);
+});
+
+await test("syncFoundryToPlans: a typo'd plan id throws instead of deleting that plan's scenes", async () => {
+  const WORLD = "swap-bad-plan-world";
+  livingScene(WORLD, "Innocent", "Scene.innocent");
+  await assert.rejects(
+    () => syncFoundryToPlans(dataDir, WORLD, ["plan_does_not_exist"], { confirm: true }),
+    /No plan found/
+  );
+});
+
+await test("syncFoundryToPlans: confirmed -- deletes the out-of-plan scene, clears its ref, keeps the in-plan one", async () => {
+  const WORLD = "swap-applied-world";
+  const keep = livingScene(WORLD, "This week", "Scene.keepMe");
+  const drop = livingScene(WORLD, "Last week", "Scene.dropMe");
+  const plan = createPlan(WORLD, { name: "Week 2" });
+  addSceneToPlan(WORLD, plan.id, keep.id);
+
+  const opId = "op_swap_delete";
+  armFakeWatcher(WORLD, { opId, ok: true, foundryUuid: "Scene.dropMe" });
+
+  const result = await syncFoundryToPlans(dataDir, WORLD, [plan.id], {
+    confirm: true, pollMs: 10, timeoutMs: 500, makeOpId: () => opId
+  });
+
+  assert.equal(result.status, "applied");
+  assert.deepEqual(result.removed.map((r) => r.name), ["Last week"]);
+  assert.equal(result.failed.length, 0);
+  assert.equal(getScene(WORLD, drop.id).foundrySceneRef, null, "a removed scene's ref is cleared -- GM_Tools keeps the scene, Foundry doesn't");
+  assert.equal(getScene(WORLD, keep.id).foundrySceneRef, "Scene.keepMe", "the kept scene is untouched");
+});
+
+await test("syncFoundryToPlans: the delete op forwards force only when asked (the active-scene guard lives module-side)", async () => {
+  const WORLD = "swap-force-world";
+  const keep = livingScene(WORLD, "Kept", "Scene.kept");
+  livingScene(WORLD, "Dropped", "Scene.dropped");
+  const plan = createPlan(WORLD, { name: "Week 2" });
+  addSceneToPlan(WORLD, plan.id, keep.id);
+
+  await syncFoundryToPlans(dataDir, WORLD, [plan.id], { confirm: true, pollMs: 5, timeoutMs: 20, makeOpId: () => "op_noforce" });
+  let [op] = JSON.parse(readFileSync(foundryOpsPath(dataDir, WORLD), "utf8"));
+  assert.equal(op.kind, "delete_scene");
+  assert.equal(op.data.force, undefined, "no force by default -- the module refuses the active scene");
+
+  writeFileSync(foundryOpsPath(dataDir, WORLD), "[]", "utf8"); // clear the in-flight guard
+  await syncFoundryToPlans(dataDir, WORLD, [plan.id], { confirm: true, force: true, pollMs: 5, timeoutMs: 20, makeOpId: () => "op_force" });
+  [op] = JSON.parse(readFileSync(foundryOpsPath(dataDir, WORLD), "utf8"));
+  assert.equal(op.data.force, true);
 });
 
 console.log(`\n${passed} passed`);
