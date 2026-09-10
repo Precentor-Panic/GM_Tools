@@ -207,17 +207,25 @@ export async function pushSceneToFoundry(dir, world, sceneId, { mapSrc, name, wi
   // portrait/landscape map (Russell, 2026-08-16). Explicit width/height wins.
   const dims = width === undefined && height === undefined ? dimsForSrc(dir, resolvedMapSrc) : null;
   const opId = opts.makeOpId ? opts.makeOpId() : makeOpId();
-  const op = {
-    opId,
-    kind: "create_scene",
-    data: {
-      name: name ?? resolveSceneName(dir, world, scene),
-      background: { src: resolvedMapSrc },
-      ...(width !== undefined ? { width } : dims ? { width: dims.width } : {}),
-      ...(height !== undefined ? { height } : dims ? { height: dims.height } : {}),
-      ...sceneMusicData(world, scene, []) // WS-E: this bare path has no skip channel; an unusable link is simply omitted
-    }
+  const data = {
+    name: name ?? resolveSceneName(dir, world, scene),
+    background: { src: resolvedMapSrc },
+    ...(width !== undefined ? { width } : dims ? { width: dims.width } : {}),
+    ...(height !== undefined ? { height } : dims ? { height: dims.height } : {}),
+    ...sceneMusicData(world, scene, []) // WS-E: this bare path has no skip channel; an unusable link is simply omitted
   };
+  // A scene that ALREADY has a Foundry counterpart must be updated in place,
+  // never re-created. This path composed an unconditional `create_scene`
+  // until 2026-09-09, so a second push of an already-pushed scene silently
+  // made a DUPLICATE Foundry scene and repointed foundrySceneRef at the
+  // copy -- and because the create payload carries no tokens/walls/lights,
+  // the copy was a bare map that looked like the original had been gutted.
+  // (Hit for real on the live `aureus` world: 11 duplicate scenes.) Same
+  // create-vs-update rule composeSceneOps has always applied.
+  const isCreatePath = scene.foundrySceneRef == null;
+  const op = isCreatePath
+    ? { opId, kind: "create_scene", data }
+    : { opId, kind: "update_scene", data: { sceneUuid: scene.foundrySceneRef, patch: data } };
 
   const outcome = await writeFoundryOps(dir, world, [op], opts);
 
@@ -240,8 +248,12 @@ export async function pushSceneToFoundry(dir, world, sceneId, { mapSrc, name, wi
     return { status: "applied", sceneId, opId, ok: false, error: result.error ?? "Foundry reported ok:false with no error message." };
   }
 
-  const updated = updateScene(world, sceneId, { foundrySceneRef: result.foundryUuid ?? null });
-  return { status: "applied", sceneId, opId, ok: true, foundryUuid: result.foundryUuid, scene: updated };
+  // The update path's own result is an identity round-trip (the module
+  // returns the same uuid it was given), so keep the existing ref rather
+  // than letting a missing/renamed uuid null it out.
+  const foundryUuid = result.foundryUuid ?? (isCreatePath ? null : scene.foundrySceneRef);
+  const updated = updateScene(world, sceneId, { foundrySceneRef: foundryUuid });
+  return { status: "applied", sceneId, opId, ok: true, foundryUuid, scene: updated };
 }
 
 // ===========================================================================

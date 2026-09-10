@@ -484,6 +484,23 @@ On success, the Foundry watcher creates a `Scene` document (`getDocumentClass("S
 per the design record's own note — NOT `globalThis.Scene.create`, `cockpit-app.mjs:835`'s older habit) and
 reports back `foundryUuid` in the matching result (§3).
 
+**Playability defaults (v5.1, 2026-09-09) — module-side, every producer gets them.**
+`buildSceneCreateData` (exported from `foundry-bridge.mjs`, pure and unit-tested) sets three fields the wire
+shape above does not require: `tokenVision:false`, `environment.globalLight.enabled:true`, `navigation:false`.
+Without them a pushed scene lands with Foundry's own defaults — vision ON, global light OFF — and since this
+bridge pushes **no wall and no light documents**, every PC without darkvision sees literally nothing (verified
+live on `aureus`: `canvas.visibility.testVisibility` false one square from a darkvision-0 token). The map ART
+already carries its time of day, so engine darkness would only double-dim it. **Each default is overridable** —
+an op that states `tokenVision`/`navigation`/`environment.globalLight.enabled` explicitly wins, so a deliberate
+darkness scene is still expressible. `update_scene` does NOT apply them: an existing scene's lighting is the
+GM's, not the bridge's.
+
+**Create vs update, producer-side (2026-09-09).** `pushSceneToFoundry` (`POST /api/foundry/push-scene`)
+composes `update_scene` when the scene already carries a `foundrySceneRef`, and `create_scene` only when it does
+not. It previously composed an unconditional `create_scene`, so a second push of an already-pushed scene silently
+DUPLICATED the Foundry scene and repointed the ref at the bare copy (hit for real on `aureus`: 11 duplicates).
+Same create-vs-update rule `composeSceneOps` has always applied.
+
 **Background write semantics — v14 SHOWSTOPPER, load-bearing for BOTH create and update (v2, Phase 36).**
 Proven live (`plans/wf-test-setup.md:124`): on Foundry v14, `Scene#background` is a DEPRECATED getter — setting
 `scene.background.src` (or passing `background:{src}` into `Scene.create(...)`'s creation data) is **silently

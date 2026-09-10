@@ -161,6 +161,55 @@ await test("pushSceneToFoundry: ok:true applied result writes foundryUuid onto t
   assert.equal(reread.foundrySceneRef, "Scene.abc123");
 });
 
+// 2026-09-09 regression: this path composed an unconditional `create_scene`,
+// so a second push of an already-pushed scene DUPLICATED it in Foundry and
+// repointed foundrySceneRef at the bare copy. Hit for real on the live
+// `aureus` world (11 duplicate scenes). A scene with a ref must UPDATE.
+await test("pushSceneToFoundry: a scene that already has a foundrySceneRef composes update_scene against it -- never a second create_scene", async () => {
+  const WORLD = "push-existing-ref-world";
+  const scene = createScene(WORLD, { objectiveNote: "Already in Foundry" });
+  markScenePushed(WORLD, scene.id, { foundrySceneRef: "Scene.alreadyThere", lastPushedAt: null });
+
+  const opId = "op_push_existing_ref";
+  await pushSceneToFoundry(
+    dataDir,
+    WORLD,
+    scene.id,
+    { mapSrc: "scenes/again.webp", name: "Second push", width: 1200, height: 900 },
+    { pollMs: 5, timeoutMs: 20, makeOpId: () => opId }
+  );
+
+  const [op] = JSON.parse(readFileSync(foundryOpsPath(dataDir, WORLD), "utf8"));
+  assert.equal(op.kind, "update_scene", "an already-pushed scene must be updated, not re-created");
+  assert.equal(op.data.sceneUuid, "Scene.alreadyThere", "the update must target the existing Foundry scene");
+  assert.deepEqual(op.data.patch, {
+    name: "Second push",
+    background: { src: "scenes/again.webp" },
+    width: 1200,
+    height: 900
+  }, "the same payload the create path would have carried, nested under `patch`");
+  assert.equal(op.data.name, undefined, "update_scene carries its payload in `patch`, never at the top level");
+});
+
+await test("pushSceneToFoundry: an applied update keeps the existing ref (the module's identity round-trip), and never nulls it", async () => {
+  const WORLD = "push-existing-ref-applied-world";
+  const scene = createScene(WORLD, { objectiveNote: "Update me" });
+  markScenePushed(WORLD, scene.id, { foundrySceneRef: "Scene.keepMe", lastPushedAt: null });
+
+  const opId = "op_push_existing_ref_applied";
+  // The module answers an update with the SAME uuid it was given.
+  armFakeWatcher(WORLD, { opId, ok: true, foundryUuid: "Scene.keepMe" });
+
+  const result = await pushSceneToFoundry(
+    dataDir, WORLD, scene.id, { mapSrc: "scenes/update.webp" },
+    { pollMs: 10, timeoutMs: 500, makeOpId: () => opId }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.foundryUuid, "Scene.keepMe");
+  assert.equal(getScene(WORLD, scene.id).foundrySceneRef, "Scene.keepMe", "the ref must survive an update push unchanged");
+});
+
 await test("pushSceneToFoundry: ok:false applied result leaves foundrySceneRef null, surfaces the error", async () => {
   const WORLD = "push-applied-fail-world";
   const scene = createScene(WORLD, { objectiveNote: "Doomed push" });
