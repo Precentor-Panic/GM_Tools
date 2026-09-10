@@ -90,7 +90,8 @@ const BUILD = { skills: ["Survival"], backstoryHooks: ["Estranged from a ranger 
     listPartyMembers,
     acceptPartyMember,
     discardPartyMember,
-    updatePartyMemberFields
+    updatePartyMemberFields,
+    relabelPartyMember
   } = await import("../../combat-planning/party-roster-store.mjs");
 
   test("directory isolation: partyRosterRoot() honors GM_TOOLS_PARTY_ROSTER_DIR, never the repo's real default", () => {
@@ -248,6 +249,49 @@ const BUILD = { skills: ["Survival"], backstoryHooks: ["Estranged from a ranger 
   test("updatePartyMemberConditions: an explicit empty string clears conditions back to 'none'", () => {
     const cleared = updatePartyMemberConditions(WORLD, "pm-p35-legacy", "");
     assert.equal(cleared.conditions, "");
+  });
+
+  // A Foundry pull names a party row after whatever the actor was called, so
+  // rosters drift into player handles standing in for characters, and a row
+  // can end up pointing at an actor since deleted in Foundry (a dead ref
+  // silently places no token on a pushed scene). Neither was fixable through
+  // any existing route -- updatePartyMemberFields is the RE-INGEST path and
+  // rightly refuses an accepted row.
+  test("relabelPartyMember: renames an ACCEPTED member -- the GM's own edit is not the re-ingest guard's business", () => {
+    savePartyMember(WORLD, { name: "Adam", combatRelevant: {}, buildRelevant: {}, foundryActorRef: "Actor.velthar" }, { makeId: () => "pm-relabel-1" });
+    assert.throws(
+      () => updatePartyMemberFields(WORLD, "pm-relabel-1", { name: "Velthar Starblind" }),
+      /Refusing to overwrite/,
+      "sanity: the re-ingest path still refuses an accepted row"
+    );
+
+    const renamed = relabelPartyMember(WORLD, "pm-relabel-1", { name: "Velthar Starblind" });
+    assert.equal(renamed.name, "Velthar Starblind");
+    assert.equal(renamed.status, "accepted", "status untouched by a rename");
+    assert.equal(renamed.foundryActorRef, "Actor.velthar", "an unmentioned key is left alone");
+    assert.equal(getPartyMember(WORLD, "pm-relabel-1").name, "Velthar Starblind");
+  });
+
+  test("relabelPartyMember: re-points a member at a different Foundry actor (a ref whose actor was deleted)", () => {
+    savePartyMember(WORLD, { name: "Foxy", combatRelevant: {}, buildRelevant: {}, foundryActorRef: "Actor.deletedLongAgo" }, { makeId: () => "pm-relabel-2" });
+    const fixed = relabelPartyMember(WORLD, "pm-relabel-2", { name: "Dio", foundryActorRef: "Actor.dioSheet" });
+    assert.equal(fixed.name, "Dio");
+    assert.equal(fixed.foundryActorRef, "Actor.dioSheet");
+    assert.equal(getPartyMember(WORLD, "pm-relabel-2").foundryActorRef, "Actor.dioSheet");
+  });
+
+  test("relabelPartyMember: an empty patch and a blank name are both refused", () => {
+    savePartyMember(WORLD, { name: "Keep me", combatRelevant: {}, buildRelevant: {} }, { makeId: () => "pm-relabel-3" });
+    assert.throws(() => relabelPartyMember(WORLD, "pm-relabel-3", {}), /empty patch/);
+    assert.throws(() => relabelPartyMember(WORLD, "pm-relabel-3", { name: "   " }), /non-empty string/);
+    assert.equal(getPartyMember(WORLD, "pm-relabel-3").name, "Keep me");
+  });
+
+  test("relabelPartyMember: an explicit null ref clears the link without touching the name", () => {
+    savePartyMember(WORLD, { name: "Unlinked soon", combatRelevant: {}, buildRelevant: {}, foundryActorRef: "Actor.x" }, { makeId: () => "pm-relabel-4" });
+    const cleared = relabelPartyMember(WORLD, "pm-relabel-4", { foundryActorRef: null });
+    assert.equal(cleared.foundryActorRef, null);
+    assert.equal(cleared.name, "Unlinked soon");
   });
 
   console.log(`\n${passed} passed`);

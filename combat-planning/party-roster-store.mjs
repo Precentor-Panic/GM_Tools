@@ -262,4 +262,44 @@ export function updatePartyMemberConditions(world, memberId, conditions) {
   return projectMemberReadFields(updated);
 }
 
+/**
+ * The GM's own roster edit: rename a member, and/or re-point it at a
+ * different Foundry actor. STATUS-INDEPENDENT, same convention as
+ * updatePartyMemberPassive/Conditions above -- an ongoing table-use edit,
+ * not a re-ingest. `updatePartyMemberFields` deliberately refuses an
+ * accepted member because THAT path is the pull ingest overwriting a human
+ * decision; this one IS the human decision, so it does not gate on status.
+ *
+ * Why it exists (2026-09-09): a Foundry pull names party rows after whatever
+ * the actor happened to be called, so a roster drifts into player handles
+ * ("Adam", "Vercinix") standing in for characters, and a row can end up
+ * pointing at an actor the GM later deleted in Foundry -- a dead
+ * foundryActorRef silently places no token on a pushed scene. Neither was
+ * fixable through any existing route.
+ *
+ * @param {string} world
+ * @param {string} memberId
+ * @param {{name?:string, foundryActorRef?:string|null}} patch   omitted keys are left untouched
+ * @returns {object}   the updated PartyMember
+ */
+export function relabelPartyMember(world, memberId, { name, foundryActorRef } = {}) {
+  if (name === undefined && foundryActorRef === undefined) {
+    throw new Error("relabelPartyMember: give a `name`, a `foundryActorRef`, or both -- an empty patch is a no-op the caller should not have made.");
+  }
+  if (name !== undefined && (typeof name !== "string" || !name.trim())) {
+    throw new Error("relabelPartyMember: `name` must be a non-empty string.");
+  }
+  const members = readMembers(world);
+  const idx = findMemberIndex(world, memberId, members);
+  const updated = {
+    ...members[idx],
+    ...(name !== undefined ? { name: name.trim() } : {}),
+    ...(foundryActorRef !== undefined ? { foundryActorRef } : {})
+  };
+  const next = [...members];
+  next[idx] = updated;
+  writeMembers(world, next);
+  return updated;
+}
+
 export { ConcurrentWriteError };
