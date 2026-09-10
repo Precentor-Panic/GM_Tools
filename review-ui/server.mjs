@@ -4169,13 +4169,15 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { entry });
   }
 
-  // POST /api/combat-planning/bestiary/:id/token-art/generate   {world, looks?}
+  // POST /api/combat-planning/bestiary/:id/token-art/generate   {world, looks?, avoid?}
   //   -> {entry, candidate, prompt, looksSource, squared, model}
-  // One Gemini image call; the result is a CANDIDATE only.
+  // One Gemini image call; the result is a CANDIDATE only. `avoid` is the
+  // re-roll's memory -- what the previous attempt got wrong, appended to the
+  // prompt so a second try is a different request and not the same dice.
   if (method === "POST" && parts.length === 6 && parts[1] === "combat-planning" && parts[2] === "bestiary" && parts[4] === "token-art" && parts[5] === "generate") {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
-    const result = await generateTokenArt({ dataDir: resolveDir(), world: w, entryId: parts[3], looks: body.looks });
+    const result = await generateTokenArt({ dataDir: resolveDir(), world: w, entryId: parts[3], looks: body.looks, avoid: body.avoid });
     return sendJson(res, 200, result);
   }
 

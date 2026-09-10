@@ -94,17 +94,37 @@ export function findLooksForEntry(world, entryId) {
  * description (WS-C shape: `race, build/age, tell` / `Mannerism:` /
  * `Voice:`); mannerism and voice lines are dropped -- they are not
  * paintable and pull the model toward scenes instead of a face.
+ *
+ * The two hardened clauses come from a real batch (2026-09-09, eleven
+ * generations for Aureus). The model ignored the original one-line "no
+ * frame, no border, no text" in three of them -- twice painting a picture
+ * frame with garbled lettering inside it -- and twice rendered a
+ * hand-written prop as a modern device: a character described with "a slate
+ * and a chalk stub" came back holding what reads as a tablet computer. Both
+ * failures are generic (any world, any creature), so both fixes live here
+ * rather than in any campaign's own wording.
+ *
+ * `avoid` is the re-roll's memory. A plain re-roll re-sends an identical
+ * prompt and simply re-rolls the dice, which is why a stuck failure mode
+ * (that slate) repeats; a caller that knows what was wrong appends it here
+ * so the next attempt is actually a different request.
  */
-export function buildTokenArtPrompt({ name, looks }) {
+export function buildTokenArtPrompt({ name, looks, avoid } = {}) {
   const physical = String(looks ?? "")
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l && !/^(mannerism|voice)\s*:/i.test(l))
     .join(". ");
+  const avoidNote = String(avoid ?? "").trim();
   return (
     `Square character portrait for a tabletop RPG token: head and shoulders, facing the viewer, centred, ` +
-    `plain dark neutral background, no frame, no border, no text, no watermark. Fantasy illustration, painterly. ` +
-    `Subject: ${name}. ${physical}`
+    `plain dark neutral background. Fantasy illustration, painterly. ` +
+    `The artwork must fill the whole square edge to edge: no frame, no border, no matte, no inset panel, ` +
+    `and no lettering of any kind -- no text, caption, signature or watermark. ` +
+    `Pre-industrial setting: every object held or worn is hand-made from wood, stone, leather, cloth, horn or ` +
+    `hammered metal, and nothing may read as machined, printed, plastic or electronic. ` +
+    `Subject: ${name}. ${physical}` +
+    (avoidNote ? ` Avoid: ${avoidNote}` : "")
   ).trim();
 }
 
@@ -138,12 +158,13 @@ const MIME_EXT = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"
  * @param {string} p.world       where to look for the `looks` line and where the file lives
  * @param {string} p.entryId
  * @param {string} [p.looks]     explicit description; default: findLooksForEntry
+ * @param {string} [p.avoid]     what a previous attempt got wrong, appended as an "Avoid:" clause -- the re-roll's memory
  * @param {string} [p.apiKey]    default GEMINI_API_KEY / GOOGLE_API_KEY
  * @param {string} [p.model]     default WF_IMAGE_MODEL / gemini-2.5-flash-image
  * @param {object} [opts]        { fetchImpl, postprocess, size }
  * @returns {Promise<{entry:object, candidate:string, prompt:string, looksSource:object|null, squared:boolean, model:string}>}
  */
-export async function generateTokenArt({ dataDir, world, entryId, looks, apiKey, model } = {}, opts = {}) {
+export async function generateTokenArt({ dataDir, world, entryId, looks, avoid, apiKey, model } = {}, opts = {}) {
   if (!dataDir) throw new Error("generateTokenArt: dataDir is required.");
   if (!world) throw new Error("generateTokenArt: world is required.");
   const entry = getBestiaryEntry(entryId);
@@ -165,7 +186,7 @@ export async function generateTokenArt({ dataDir, world, entryId, looks, apiKey,
   const key = apiKey ?? process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
   if (!key) throw new Error("No GEMINI_API_KEY (or GOOGLE_API_KEY) in the environment -- token art cannot be generated.");
   const modelId = model ?? process.env.WF_IMAGE_MODEL ?? DEFAULT_TOKEN_ART_MODEL;
-  const prompt = buildTokenArtPrompt({ name, looks: text });
+  const prompt = buildTokenArtPrompt({ name, looks: text, avoid });
 
   const fetchImpl = opts.fetchImpl ?? fetch;
   const resp = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`, {

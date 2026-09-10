@@ -63,7 +63,27 @@ await test("buildTokenArtPrompt: keeps the physical line, drops Mannerism/Voice,
   assert.match(p, /Subject: Tariq\. Human, forties, wiry; burn scar down the left jaw$/);
   assert.ok(!/Mannerism|Voice|taps the table/.test(p));
   assert.match(p, /Square character portrait/);
-  assert.match(p, /no text, no watermark/);
+  assert.match(p, /no lettering of any kind/);
+});
+
+// Both clauses come from real failures in the 2026-09-09 batch: the model
+// painted a picture frame with garbled lettering inside it, and rendered "a
+// slate and a chalk stub" as what reads as a tablet computer.
+await test("buildTokenArtPrompt: refuses frames and anachronisms explicitly -- the two failure modes a live batch actually produced", () => {
+  const p = buildTokenArtPrompt({ name: "Jafar", looks: "Thin and neat; a slate and a chalk stub" });
+  assert.match(p, /fill the whole square edge to edge/i);
+  assert.match(p, /no frame, no border, no matte, no inset panel/i);
+  assert.match(p, /Pre-industrial setting/i);
+  assert.match(p, /nothing may read as machined, printed, plastic or electronic/i);
+});
+
+await test("buildTokenArtPrompt: `avoid` appends the re-roll's memory, and is absent when not given", () => {
+  const withAvoid = buildTokenArtPrompt({ name: "Jafar", looks: "Thin and neat", avoid: "the slate reading as a tablet computer" });
+  assert.match(withAvoid, /Avoid: the slate reading as a tablet computer$/);
+
+  const without = buildTokenArtPrompt({ name: "Jafar", looks: "Thin and neat" });
+  assert.ok(!/Avoid:/.test(without), "no empty Avoid clause when the caller gives none");
+  assert.ok(!/Avoid:/.test(buildTokenArtPrompt({ name: "J", looks: "x", avoid: "   " })), "a blank avoid is not an Avoid clause");
 });
 
 await test("findLooksForEntry: the first non-empty looks on a scene element pointing at the entry, across the world's scenes", () => {
