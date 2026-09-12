@@ -96,7 +96,8 @@ const PARTY = [
 ];
 
 (async () => {
-  const { suggestEncounter, scoreCombination } = await import("../../combat-planning/encounter-heuristic.mjs");
+  const { suggestEncounter, scoreCombination, hasFocusFireTrait } = await import("../../combat-planning/encounter-heuristic.mjs");
+  const { computeActionEconomyScore } = await import("../../combat-planning/action-economy.mjs");
 
   test("no dependency on mutation-engine/llm-call.mjs -- confirmed by reading the module's own source, matching scenes.mjs's no-Foundry-import test convention", () => {
     const src = readFileSync(new URL("../../combat-planning/encounter-heuristic.mjs", import.meta.url), "utf8");
@@ -242,6 +243,98 @@ const PARTY = [
     const armedScore = scoreCombination({ combination: [{ entryId: "armed-1", count: 1 }], candidatePool: [armed], party: PARTY, knobs: {} }).expectedScore;
     assert.equal(flatScore, 0, "an attack-less derivedScore-less row still contributes no threat");
     assert.ok(armedScore > 0, `a derivedScore-less row with attacks must score > 0 (got ${armedScore})`);
+  });
+
+  // -------------------------------------------------------------------------
+  // WS-4 §0.7 defect fix (a): hasFocusFireTrait derived from
+  // rawFields.traits[] names (Pack Tactics and its published kin), not a
+  // rawFields.hasFocusFireTrait field that no bestiary entry has ever had.
+  // -------------------------------------------------------------------------
+
+  test("hasFocusFireTrait: true for Pack Tactics (case/whitespace-insensitive), false when absent or unrecognized", () => {
+    assert.equal(hasFocusFireTrait({ traits: [{ name: "  Pack Tactics  " }] }), true);
+    assert.equal(hasFocusFireTrait({ traits: [{ name: "pack tactics" }] }), true);
+    assert.equal(hasFocusFireTrait({ traits: [{ name: "Keen Smell" }] }), false);
+    assert.equal(hasFocusFireTrait({ traits: [] }), false);
+    assert.equal(hasFocusFireTrait({}), false);
+    assert.equal(hasFocusFireTrait(undefined), false);
+    // The dead field the old (buggy) code read must have zero effect now.
+    assert.equal(hasFocusFireTrait({ hasFocusFireTrait: true, traits: [] }), false);
+  });
+
+  test("pack coefficient actually applies inside scoreCombination when a candidate's traits[] carries Pack Tactics -- N copies score MORE than N independent copies", () => {
+    const withoutTrait = {
+      entryId: "jackal-plain",
+      rawFields: { name: "Plain Jackal", hp: 8, ac: 12, attacks: [{ name: "Bite", damageDice: "1d6+1" }] }
+    };
+    const withTrait = {
+      entryId: "jackal-pack",
+      rawFields: {
+        name: "Pack Jackal", hp: 8, ac: 12,
+        attacks: [{ name: "Bite", damageDice: "1d6+1" }],
+        traits: [{ name: "Pack Tactics", summary: "Advantage when an ally is adjacent." }]
+      }
+    };
+    const scoreWith = (candidate) =>
+      scoreCombination({
+        combination: [{ entryId: candidate.entryId, count: 4 }],
+        candidatePool: [candidate],
+        party: PARTY,
+        knobs: {}
+      }).expectedScore;
+    assert.ok(
+      scoreWith(withTrait) > scoreWith(withoutTrait),
+      "4 copies of a Pack-Tactics creature must score higher than 4 copies of an otherwise-identical one without it"
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // WS-4 §0.7 defect fix (c): CR->XP fallback via plutonium-source.mjs's
+  // crToNumber when `attacks` is empty, so a Foundry-pulled attackless entry
+  // (26/82 real bestiary rows, e.g. Adult Red Dragon) becomes selectable
+  // instead of permanently scoring/filtering to 0.
+  // -------------------------------------------------------------------------
+
+  test("CR fallback: an attackless entry with a numeric challengeRating scores > 0 and is selectable by scoreCombination/suggestEncounter", () => {
+    const attacklessDragon = {
+      entryId: "attackless-dragon",
+      rawFields: { name: "Statless Dragon", hp: 256, ac: 19, challengeRating: "17", attacks: [] },
+      derivedScore: null
+    };
+    const result = scoreCombination({
+      combination: [{ entryId: "attackless-dragon", count: 1 }],
+      candidatePool: [attacklessDragon],
+      party: PARTY,
+      knobs: {}
+    });
+    assert.ok(result.expectedScore > 0, `an attackless CR-17 entry must score > 0 (got ${result.expectedScore})`);
+
+    // suggestEncounter's own greedy fill only ever includes candidates whose
+    // perUnitThreat is > 0 -- proving this entry is genuinely SELECTABLE, not
+    // just nonzero in isolation.
+    const suggested = suggestEncounter({
+      targetDifficulty: 10,
+      candidatePool: [attacklessDragon],
+      party: PARTY,
+      knobs: {}
+    });
+    assert.deepEqual(suggested.combination, [{ entryId: "attackless-dragon", count: 1 }]);
+  });
+
+  test("CR fallback: a higher CR scores higher, and an attackless entry with NO challengeRating still scores exactly 0 (no fabricated default)", () => {
+    const lowCr = { entryId: "low-cr", rawFields: { name: "Weak Thing", hp: 5, ac: 10, challengeRating: "1", attacks: [] } };
+    const highCr = { entryId: "high-cr", rawFields: { name: "Scary Thing", hp: 200, ac: 18, challengeRating: "15", attacks: [] } };
+    const noCr = { entryId: "no-cr", rawFields: { name: "Unknown Thing", hp: 5, ac: 10, attacks: [] } };
+
+    const scoreOf = (c) => scoreCombination({ combination: [{ entryId: c.entryId, count: 1 }], candidatePool: [c], party: PARTY, knobs: {} }).expectedScore;
+    assert.ok(scoreOf(highCr) > scoreOf(lowCr), "a higher CR must score higher via the fallback");
+    assert.equal(scoreOf(noCr), 0, "no challengeRating and no attacks -- no fabricated score, stays exactly 0");
+  });
+
+  test("CR fallback: an entry WITH real attacks ignores the CR proxy entirely -- an attack-derived score always wins, however small", () => {
+    const result = computeActionEconomyScore({ challengeRating: "20", attacks: [{ name: "Nip", damageDice: "1d4" }] });
+    assert.equal(result.breakdown.crFallbackApplied, false, "a non-empty attacks list must never trigger the CR fallback");
+    assert.equal(result.score, result.breakdown.baseAttacksPerRound, "score is attack-derived only, CR-17-proxy-sized fallback never added on top");
   });
 
   console.log(`\n${passed} passed`);

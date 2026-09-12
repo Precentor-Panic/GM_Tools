@@ -47,6 +47,32 @@ import { computeSnowballDelta } from "./snowball-delta.mjs";
 import { applyPackCoefficient } from "./pack-coefficient.mjs";
 import { diceAverage } from "./dice.mjs";
 
+// WS-4 §0.7 defect fix (a): no bestiary entry has ever carried a literal
+// `rawFields.hasFocusFireTrait` boolean field -- bestiary-ingest.mjs/
+// plutonium-monster-fields.mjs only ever populate `rawFields.traits[]`
+// ({name, summary}), the same shelf-abilities vocabulary
+// BESTIARY_ACTION_FIELD_KEYS names. `computeCombinationExpectedScore`'s old
+// `Boolean(entry.rawFields?.hasFocusFireTrait)` read was therefore always
+// false and applyPackCoefficient's pack-math branch was dead code in
+// practice. Matched case-insensitively against a name list of Pack Tactics
+// and its published kin -- every 5e SRD/MM trait that grants the same
+// "acts worse alone, better as a mob" shared-target bonus this coefficient
+// exists to approximate; an unrecognized trait name is simply not a match,
+// never a guessed default.
+const FOCUS_FIRE_TRAIT_NAMES = new Set([
+  "pack tactics",
+  "wolf pack tactics",
+  "mob tactics",
+  "swarm tactics",
+  "coordinated assault"
+]);
+
+/** @param {object} rawFields @returns {boolean} */
+export function hasFocusFireTrait(rawFields) {
+  const traits = Array.isArray(rawFields?.traits) ? rawFields.traits : [];
+  return traits.some((t) => typeof t?.name === "string" && FOCUS_FIRE_TRAIT_NAMES.has(t.name.trim().toLowerCase()));
+}
+
 const DEFAULT_KNOBS = {
   minionRules: false,
   legendaryActions: true,
@@ -141,8 +167,7 @@ function computeCombinationExpectedScore(combination, candidateByEntryId, knobs)
   const total = combination.reduce((sum, { entryId, count }) => {
     const entry = candidateByEntryId.get(entryId);
     const perUnit = candidateThreat(entry, knobs);
-    const hasFocusFireTrait = Boolean(entry.rawFields?.hasFocusFireTrait);
-    return sum + applyPackCoefficient(perUnit, count, hasFocusFireTrait);
+    return sum + applyPackCoefficient(perUnit, count, hasFocusFireTrait(entry.rawFields));
   }, 0);
 
   return total * tacticsMultiplier * scalingMultiplier;

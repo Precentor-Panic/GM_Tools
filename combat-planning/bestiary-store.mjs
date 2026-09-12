@@ -96,6 +96,9 @@ import { addNodeOp } from "../wf-mcp-server/lib/manual-edit-ops.mjs";
 // foundry-item-push-ops.mjs (which imports THIS module -- circular).
 import { parsePlutoniumProvenance, rawFieldsFromPlutoniumRecord } from "./plutonium-monster-fields.mjs";
 import { getRawPlutoniumEntry } from "./plutonium-source.mjs";
+// WS-4 §0.7 defect fix (b): acceptBestiaryEntry is where derivedScore
+// finally gets computed -- see its own comment below for why.
+import { computeActionEconomyScore } from "./action-economy.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = join(__dirname, "..", "bestiary");
@@ -369,10 +372,30 @@ export function updateBestiaryEntryScore(entryId, derivedScore) {
   return writeEntry({ ...entry, derivedScore });
 }
 
-/** status: 'proposed' -> 'accepted'. @returns {object} the updated BestiaryEntry. */
+/**
+ * status: 'proposed' -> 'accepted'.
+ *
+ * WS-4 §0.7 defect fix (b): every `saveBestiaryEntry` call site in this
+ * codebase passes `derivedScore: null` (grep confirms it) and
+ * `updateBestiaryEntryScore` (this module's own "show your work" attach
+ * point, see its header comment) was never called from anywhere -- so
+ * `derivedScore` was permanently null and encounter-heuristic.mjs's
+ * `candidateThreat` always fell back to a live, uncached recompute. Accept
+ * is the right moment to fill it: it's the point a stat block goes from "a
+ * draft the DM hasn't confirmed" to "trustworthy enough to score" (the same
+ * moment `checkBestiaryOutliers` already gates on at ingestion). Only fills
+ * a still-null `derivedScore` -- a caller that already attached a richer
+ * score (action-economy PLUS effect-impact, say, once that's wired) via
+ * `updateBestiaryEntryScore` before accept keeps it untouched, never
+ * silently overwritten by this cruder action-economy-only figure.
+ * @returns {object} the updated BestiaryEntry.
+ */
 export function acceptBestiaryEntry(entryId) {
   const entry = readEntry(entryId);
-  return writeEntry({ ...entry, status: "accepted" });
+  const accepted = writeEntry({ ...entry, status: "accepted" });
+  if (accepted.derivedScore != null) return accepted;
+  const { score, breakdown } = computeActionEconomyScore(accepted.rawFields ?? {});
+  return updateBestiaryEntryScore(entryId, { actionEconomyScore: score, breakdown });
 }
 
 /**

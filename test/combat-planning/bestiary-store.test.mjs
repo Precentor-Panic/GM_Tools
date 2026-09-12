@@ -322,6 +322,37 @@ const IMPLAUSIBLE_RAW_FIELDS = {
     assert.equal(accepted.status, "proposed");
   });
 
+  // -------------------------------------------------------------------------
+  // WS-4 §0.7 defect fix (b): derivedScore was NEVER written by any real
+  // caller (every saveBestiaryEntry call site passes null, and
+  // updateBestiaryEntryScore was called from nowhere in production code) --
+  // acceptBestiaryEntry now computes and attaches one via
+  // action-economy.mjs's computeActionEconomyScore, using
+  // updateBestiaryEntryScore itself rather than a second write path.
+  // -------------------------------------------------------------------------
+
+  test("acceptBestiaryEntry: computes and attaches a real derivedScore (never left null) using action-economy.mjs's scorer", () => {
+    const entry = saveBestiaryEntry(
+      { rawFields: { name: "Score Wolf", hp: 11, ac: 13, attacks: [{ name: "Bite", damageDice: "2d4+2" }] } },
+      { makeId: () => "bst-score-1" }
+    );
+    assert.equal(entry.derivedScore, null, "still null before accept");
+    const accepted = acceptBestiaryEntry(entry.id);
+    assert.notEqual(accepted.derivedScore, null);
+    assert.ok(accepted.derivedScore.actionEconomyScore > 0);
+    assert.equal(accepted.derivedScore.breakdown.baseAttacksPerRound, accepted.derivedScore.actionEconomyScore);
+    // getBestiaryEntry re-reads the same persisted value, not a stale cache.
+    assert.deepEqual(getBestiaryEntry(entry.id).derivedScore, accepted.derivedScore);
+  });
+
+  test("acceptBestiaryEntry: never clobbers a derivedScore a caller already attached via updateBestiaryEntryScore before accept", () => {
+    const entry = saveBestiaryEntry({ rawFields: { name: "Pre-Scored", hp: 10, ac: 10 } }, { makeId: () => "bst-score-2" });
+    const preScored = updateBestiaryEntryScore(entry.id, { actionEconomyScore: 999, aggregatedImpactScore: 42 });
+    assert.deepEqual(preScored.derivedScore, { actionEconomyScore: 999, aggregatedImpactScore: 42 });
+    const accepted = acceptBestiaryEntry(entry.id);
+    assert.deepEqual(accepted.derivedScore, { actionEconomyScore: 999, aggregatedImpactScore: 42 }, "an already-attached score must survive accept untouched");
+  });
+
   test("no write in this file leaked into the repo's real default bestiary/ directory", () => {
     const after = existsSync(REPO_DEFAULT_ROOT) ? new Set(readdirSync(REPO_DEFAULT_ROOT)) : new Set();
     const added = [...after].filter((f) => !before.has(f));
