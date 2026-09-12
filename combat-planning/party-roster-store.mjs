@@ -139,7 +139,18 @@ export function savePartyMember(
  */
 function projectMemberReadFields(member) {
   if (!member) return member;
-  return { ...member, passive: member.passive ?? null, conditions: member.conditions ?? "" };
+  return {
+    ...member,
+    passive: member.passive ?? null,
+    conditions: member.conditions ?? "",
+    // (2026-09-11) objectives + its Foundry journal ref, same read-time
+    // projection this store has always used for versioning -- a row written
+    // before these existed reads them as empty/null and is never rewritten
+    // on disk just because it was read.
+    objectives: Array.isArray(member.objectives) ? member.objectives : [],
+    foundryObjectivesRef: member.foundryObjectivesRef ?? null,
+    objectivesPendingPush: member.objectivesPendingPush ?? null
+  };
 }
 
 /** @returns {object}   the PartyMember (§5's passive/conditions projection included). Throws a clear Error if not found. */
@@ -300,6 +311,108 @@ export function relabelPartyMember(world, memberId, { name, foundryActorRef } = 
   next[idx] = updated;
   writeMembers(world, next);
   return updated;
+}
+
+/** Generate an objective id. Injectable (opts.makeId) for deterministic tests. */
+export function makeObjectiveId() {
+  return `obj_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/**
+ * Patch one member in place through the read-time projection, so every
+ * objectives writer below shares one concurrency-safe read/modify/write.
+ * STATUS-INDEPENDENT, like updatePartyMemberPassive/Conditions above: a GM
+ * typing an objective for an accepted PC IS the human decision, not a
+ * re-ingest overwriting one.
+ */
+function patchMember(world, memberId, fn) {
+  const members = readMembers(world);
+  const idx = findMemberIndex(world, memberId, members);
+  const current = projectMemberReadFields(members[idx]);
+  const updated = fn(current);
+  const next = [...members];
+  next[idx] = updated;
+  writeMembers(world, next);
+  return projectMemberReadFields(updated);
+}
+
+/**
+ * The GM's objective lines for one PC — the card's list, in card order.
+ *
+ * Deliberately NO reward or satisfied-when field: both are GM-side by ruling,
+ * and storing them beside the card text is how they end up printed on it.
+ *
+ * @returns {object}   the updated PartyMember
+ */
+export function addPartyMemberObjective(world, memberId, text, opts = {}) {
+  const value = typeof text === "string" ? text.trim() : "";
+  if (!value) throw new Error("addPartyMemberObjective: `text` must be a non-empty string.");
+  const now = opts.now ?? new Date().toISOString();
+  const id = opts.makeId ? opts.makeId() : makeObjectiveId();
+  return patchMember(world, memberId, (m) => ({
+    ...m,
+    objectives: [...m.objectives, { id, text: value, status: "open", createdAt: now, updatedAt: now, closedAt: null }]
+  }));
+}
+
+/** Patch one objective's text and/or status. `closed` stamps closedAt; reopening clears it. */
+export function updatePartyMemberObjective(world, memberId, objectiveId, { text, status } = {}, opts = {}) {
+  if (text === undefined && status === undefined) {
+    throw new Error("updatePartyMemberObjective: give `text`, `status`, or both.");
+  }
+  if (status !== undefined && status !== "open" && status !== "closed") {
+    throw new Error(`updatePartyMemberObjective: status must be "open" or "closed", got ${JSON.stringify(status)}.`);
+  }
+  if (text !== undefined && (typeof text !== "string" || !text.trim())) {
+    throw new Error("updatePartyMemberObjective: `text` must be a non-empty string.");
+  }
+  const now = opts.now ?? new Date().toISOString();
+  return patchMember(world, memberId, (m) => {
+    const idx = m.objectives.findIndex((o) => o.id === objectiveId);
+    if (idx === -1) throw new Error(`No objective found: memberId="${memberId}" objectiveId="${objectiveId}"`);
+    const o = m.objectives[idx];
+    const next = { ...o, updatedAt: now };
+    if (text !== undefined) next.text = text.trim();
+    if (status !== undefined) {
+      next.status = status;
+      next.closedAt = status === "closed" ? now : null;
+    }
+    const objectives = [...m.objectives];
+    objectives[idx] = next;
+    return { ...m, objectives };
+  });
+}
+
+/** Hard delete — a line the GM typed into their own roster row needs no audit trail. */
+export function removePartyMemberObjective(world, memberId, objectiveId) {
+  return patchMember(world, memberId, (m) => {
+    if (!m.objectives.some((o) => o.id === objectiveId)) {
+      throw new Error(`No objective found: memberId="${memberId}" objectiveId="${objectiveId}"`);
+    }
+    return { ...m, objectives: m.objectives.filter((o) => o.id !== objectiveId) };
+  });
+}
+
+/** Reorder — the rendered <ol> order is table-facing. The id set must match exactly. */
+export function reorderPartyMemberObjectives(world, memberId, objectiveIds) {
+  const wanted = Array.isArray(objectiveIds) ? objectiveIds : [];
+  return patchMember(world, memberId, (m) => {
+    const have = m.objectives.map((o) => o.id);
+    if (wanted.length !== have.length || !have.every((id) => wanted.includes(id))) {
+      throw new Error("reorderPartyMemberObjectives: `objectiveIds` must list every existing objective exactly once.");
+    }
+    return { ...m, objectives: wanted.map((id) => m.objectives.find((o) => o.id === id)) };
+  });
+}
+
+/** The pushed journal this member's objectives live in. Written ONLY on a confirmed ok:true. */
+export function setPartyMemberObjectivesRef(world, memberId, ref) {
+  return patchMember(world, memberId, (m) => ({ ...m, foundryObjectivesRef: ref ?? null }));
+}
+
+/** The queued-push ledger entry, mirroring setItemPendingPush. */
+export function setPartyMemberObjectivesPendingPush(world, memberId, pending) {
+  return patchMember(world, memberId, (m) => ({ ...m, objectivesPendingPush: pending ?? null }));
 }
 
 export { ConcurrentWriteError };

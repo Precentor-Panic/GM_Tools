@@ -91,7 +91,12 @@ const BUILD = { skills: ["Survival"], backstoryHooks: ["Estranged from a ranger 
     acceptPartyMember,
     discardPartyMember,
     updatePartyMemberFields,
-    relabelPartyMember
+    relabelPartyMember,
+    addPartyMemberObjective,
+    updatePartyMemberObjective,
+    removePartyMemberObjective,
+    reorderPartyMemberObjectives,
+    setPartyMemberObjectivesRef
   } = await import("../../combat-planning/party-roster-store.mjs");
 
   test("directory isolation: partyRosterRoot() honors GM_TOOLS_PARTY_ROSTER_DIR, never the repo's real default", () => {
@@ -292,6 +297,65 @@ const BUILD = { skills: ["Survival"], backstoryHooks: ["Estranged from a ranger 
     const cleared = relabelPartyMember(WORLD, "pm-relabel-4", { foundryActorRef: null });
     assert.equal(cleared.foundryActorRef, null);
     assert.equal(cleared.name, "Unlinked soon");
+  });
+
+  // Objectives — the GM's card lines. Status-independent, like passive/
+  // conditions: a GM typing an objective for an accepted PC IS the human
+  // decision, not a re-ingest overwriting one.
+  test("objectives: a row written before the field existed reads back [] and is not rewritten", () => {
+    savePartyMember(WORLD, { name: "Legacy", combatRelevant: {}, buildRelevant: {} }, { makeId: () => "pm-obj-legacy" });
+    const m = getPartyMember(WORLD, "pm-obj-legacy");
+    assert.deepEqual(m.objectives, []);
+    assert.equal(m.foundryObjectivesRef, null);
+    assert.equal(m.objectivesPendingPush, null);
+  });
+
+  test("addPartyMemberObjective: appends to an ACCEPTED member (status-independent)", () => {
+    savePartyMember(WORLD, { name: "Flint", combatRelevant: {}, buildRelevant: {} }, { makeId: () => "pm-obj-1" });
+    assert.equal(getPartyMember(WORLD, "pm-obj-1").status, "accepted", "sanity");
+
+    const m = addPartyMemberObjective(WORLD, "pm-obj-1", "  Take the stage, or leave it.  ",
+      { makeId: () => "obj-a", now: "2026-09-11T00:00:00.000Z" });
+    assert.equal(m.objectives.length, 1);
+    assert.deepEqual(m.objectives[0], {
+      id: "obj-a", text: "Take the stage, or leave it.", status: "open",
+      createdAt: "2026-09-11T00:00:00.000Z", updatedAt: "2026-09-11T00:00:00.000Z", closedAt: null
+    });
+    assert.equal(m.status, "accepted", "status untouched by an objective edit");
+    assert.throws(() => addPartyMemberObjective(WORLD, "pm-obj-1", "   "), /non-empty string/);
+  });
+
+  test("updatePartyMemberObjective: closing stamps closedAt, reopening clears it", () => {
+    addPartyMemberObjective(WORLD, "pm-obj-1", "Get paid.", { makeId: () => "obj-b", now: "2026-09-11T00:00:00.000Z" });
+    const closed = updatePartyMemberObjective(WORLD, "pm-obj-1", "obj-b", { status: "closed" }, { now: "2026-09-12T00:00:00.000Z" });
+    const b = closed.objectives.find((o) => o.id === "obj-b");
+    assert.equal(b.status, "closed");
+    assert.equal(b.closedAt, "2026-09-12T00:00:00.000Z");
+
+    const reopened = updatePartyMemberObjective(WORLD, "pm-obj-1", "obj-b", { status: "open" }, { now: "2026-09-13T00:00:00.000Z" });
+    assert.equal(reopened.objectives.find((o) => o.id === "obj-b").closedAt, null);
+
+    assert.throws(() => updatePartyMemberObjective(WORLD, "pm-obj-1", "nope", { status: "open" }), /No objective found/);
+    assert.throws(() => updatePartyMemberObjective(WORLD, "pm-obj-1", "obj-b", { status: "done" }), /"open" or "closed"/);
+    assert.throws(() => updatePartyMemberObjective(WORLD, "pm-obj-1", "obj-b", {}), /give `text`, `status`, or both/);
+  });
+
+  test("reorderPartyMemberObjectives: reorders, and refuses a mismatched id set", () => {
+    const reordered = reorderPartyMemberObjectives(WORLD, "pm-obj-1", ["obj-b", "obj-a"]);
+    assert.deepEqual(reordered.objectives.map((o) => o.id), ["obj-b", "obj-a"]);
+    assert.throws(() => reorderPartyMemberObjectives(WORLD, "pm-obj-1", ["obj-a"]), /every existing objective exactly once/);
+    assert.throws(() => reorderPartyMemberObjectives(WORLD, "pm-obj-1", ["obj-a", "obj-zzz"]), /every existing objective exactly once/);
+  });
+
+  test("removePartyMemberObjective / setPartyMemberObjectivesRef round-trip", () => {
+    const gone = removePartyMemberObjective(WORLD, "pm-obj-1", "obj-a");
+    assert.deepEqual(gone.objectives.map((o) => o.id), ["obj-b"]);
+    assert.throws(() => removePartyMemberObjective(WORLD, "pm-obj-1", "obj-a"), /No objective found/);
+
+    const ref = { journalUuid: "JournalEntry.abc", pageId: "p2", lastPushedAt: "2026-09-11T00:00:00.000Z" };
+    assert.deepEqual(setPartyMemberObjectivesRef(WORLD, "pm-obj-1", ref).foundryObjectivesRef, ref);
+    assert.equal(getPartyMember(WORLD, "pm-obj-1").foundryObjectivesRef.journalUuid, "JournalEntry.abc");
+    assert.equal(setPartyMemberObjectivesRef(WORLD, "pm-obj-1", null).foundryObjectivesRef, null);
   });
 
   console.log(`\n${passed} passed`);

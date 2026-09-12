@@ -501,6 +501,61 @@ not. It previously composed an unconditional `create_scene`, so a second push of
 DUPLICATED the Foundry scene and repointed the ref at the bare copy (hit for real on `aureus`: 11 duplicates).
 Same create-vs-update rule `composeSceneOps` has always applied.
 
+---
+
+### `kind: "create_journal"` / `kind: "update_journal"` — journal writes (v6, 2026-09-11)
+
+```
+create_journal.data: {
+  name: string,                       // required
+  folder?: string,                    // Folder id OR name — resolved explicitly, unknown -> per-op error
+  ownership?: { "default"?: number, "<userId>": number },   // Foundry's own shape, levels -1..3
+  bridgeKind?: string,                // stamped into flags, e.g. "objectives"
+  pages: [PageSpec]                   // required, non-empty
+}
+
+update_journal.data: {
+  journalUuid: string,                              // required
+  patch?: { name?, folder?, ownership? },           // WHITELIST, like update_actor
+  pages?: [PageSpec & { pageId?: string, create?: boolean }]
+}
+
+PageSpec = { name, type?: "text"|"image", html?, src?, title?, sort?, ownership? }
+```
+
+Both return the **JournalEntry** uuid (`update_journal` is an identity round-trip, like `update_scene`).
+
+**THE INVARIANT. There is deliberately no way to say "remove this page" or "replace the page set."**
+`update_journal` MERGES the pages it names: a page it does not name is touched by neither the updates nor
+the creates. Players own their journal entries and write prose in them, so safety comes from what the wire
+shape cannot express rather than from a creator remembering to be careful. A future phase that genuinely
+needs deletion gets its own explicitly-named destructive kind with a `force` flag, the way `delete_scene`
+did — it must never become a quiet semantic of an update.
+
+**Page addressing is `pageId` first, exact `name` second.** Name matching has to exist regardless, because
+`create_journal` returns only the JournalEntry uuid, so a producer never learns a page id at create time
+without widening the results shape (§3). **Two pages of the same name is a per-op error, never a guess** —
+guessing is precisely how the wrong page gets overwritten.
+
+**Ownership is Foundry's own map, verbatim**: bare user ids plus the literal `"default"` key, levels
+`-1..3` (INHERIT/NONE/LIMITED/OBSERVER/OWNER). No name→id sugar: the index already exports `users[].id`,
+and a name lookup inside the module would hand one player's journal to another with no error. Pages carry
+their own `ownership`, defaulting to INHERIT — which is how a GM-written page can be OBSERVER to the
+player while the page below it inherits OWNER and stays theirs.
+
+**Provenance is mandatory.** Every journal these ops write is stamped `flags["world-fabric"].bridgeManaged`,
+and `buildPlayerNotes` (§4) drops any journal carrying it. Without that, a pushed journal owned GM+player is
+exactly the shape `soleNonGmOwnerId` reads, and would round-trip into GM_Tools as a belief the player
+authored. The flag is authoritative rather than the folder, because a GM can drag a journal between folders
+but the flag travels with the document. `create_journal` additionally REFUSES to file into `Session Notes`.
+
+Producer: `pushPartyObjectivesToFoundry` / `adoptPartyObjectivesJournal`
+(`wf-mcp-server/lib/foundry-journal-push-ops.mjs`, routes `POST /api/foundry/push-party-objectives` and
+`/adopt-party-objectives`). The objectives push names exactly ONE page and never mentions the player's.
+**Adopt exists because all six live `Objectives` journals share a name and GM_Tools held no uuid for any of
+them** — a push with no ref would have created a seventh the player could not tell from their own, so the
+producer refuses to create when the index already shows one owned by that player.
+
 **The weekly swap (2026-09-09).** `syncFoundryToPlans` (`POST /api/foundry/sync-to-plans`) is a third producer
 onto the same channel: it emits `delete_scene` for every scene GM_Tools owns that is NOT in the named plans, then
 runs the ordinary flush for the ones that are. It can only reach a Foundry scene whose uuid sits on one of that

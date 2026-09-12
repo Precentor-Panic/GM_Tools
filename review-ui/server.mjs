@@ -264,6 +264,17 @@ import { pushSceneToFoundry, flushDirtyStagedScenes } from "../wf-mcp-server/lib
 // foundry-push-ops.mjs's own "Aureus table wave B1 (G1)" header comment for
 // the full safety-invariant story.
 import {
+  pushPartyObjectivesToFoundry,
+  adoptPartyObjectivesJournal,
+  reconcilePendingObjectivesResults
+} from "../wf-mcp-server/lib/foundry-journal-push-ops.mjs";
+import {
+  addPartyMemberObjective,
+  updatePartyMemberObjective,
+  removePartyMemberObjective,
+  reorderPartyMemberObjectives
+} from "../combat-planning/party-roster-store.mjs";
+import {
   activateSceneInFoundry,
   removeSceneFromFoundry,
   handleFoundrySceneOnDelete,
@@ -4169,6 +4180,43 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, { entry });
   }
 
+  // ── (v6) journal write — the objectives card ────────────────────────────
+  // Same direct-GM, review-free, HTTP-only-no-MCP-mirror convention as
+  // push-item/push-bestiary-token-art above.
+
+  // POST /api/foundry/push-party-objectives   { world, memberId, tonight? }
+  if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "push-party-objectives") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    if (!body.memberId) throw new Error("POST /api/foundry/push-party-objectives requires memberId.");
+    const result = await pushPartyObjectivesToFoundry(dir, w, body.memberId, { tonight: body.tonight });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/foundry/adopt-party-objectives   { world, memberId, journalUuid }
+  // Points a member at a journal that ALREADY exists. Emits no op -- this is
+  // what stops a first push creating a second "Objectives" journal.
+  if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "adopt-party-objectives") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    if (!body.memberId) throw new Error("POST /api/foundry/adopt-party-objectives requires memberId.");
+    if (!body.journalUuid) throw new Error("POST /api/foundry/adopt-party-objectives requires journalUuid.");
+    return sendJson(res, 200, adoptPartyObjectivesJournal(dir, w, body.memberId, body.journalUuid));
+  }
+
+  // GET /api/foundry/journals?world=   -> {journals} from the exported index (the adopt picker's source)
+  if (method === "GET" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "journals") {
+    const dir = resolveDir();
+    const w = resolveWorld(q.get("world"));
+    let journals = [];
+    try {
+      journals = JSON.parse(readFileSync(join(dir, "worlds", w, "world-fabric-foundry-index.json"), "utf8")).journals ?? [];
+    } catch { journals = []; }
+    return sendJson(res, 200, { journals });
+  }
+
   // POST /api/combat-planning/bestiary/:id/token-art/generate   {world, looks?, avoid?}
   //   -> {entry, candidate, prompt, looksSource, squared, model}
   // One Gemini image call; the result is a CANDIDATE only. `avoid` is the
@@ -4272,6 +4320,39 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world);
     const member = updatePartyMemberPassive(w, parts[3], body.passive);
     return sendJson(res, 200, { member });
+  }
+
+  // POST /api/combat-planning/party-roster/:id/objectives   {world, text}   -> {member}
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "party-roster" && parts[4] === "objectives") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    if (typeof body.text !== "string" || !body.text.trim()) {
+      throw new Error("POST /api/combat-planning/party-roster/:id/objectives requires a non-empty text.");
+    }
+    return sendJson(res, 200, { member: addPartyMemberObjective(w, parts[3], body.text) });
+  }
+
+  // POST /api/combat-planning/party-roster/:id/objectives-reorder   {world, objectiveIds}   -> {member}
+  if (method === "POST" && parts.length === 5 && parts[1] === "combat-planning" && parts[2] === "party-roster" && parts[4] === "objectives-reorder") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    if (!Array.isArray(body.objectiveIds)) {
+      throw new Error("POST /api/combat-planning/party-roster/:id/objectives-reorder requires objectiveIds.");
+    }
+    return sendJson(res, 200, { member: reorderPartyMemberObjectives(w, parts[3], body.objectiveIds) });
+  }
+
+  // POST   /api/combat-planning/party-roster/:id/objectives/:objId   {world, text?, status?}   -> {member}
+  // DELETE /api/combat-planning/party-roster/:id/objectives/:objId   {world}                   -> {member}
+  if (parts.length === 6 && parts[1] === "combat-planning" && parts[2] === "party-roster" && parts[4] === "objectives") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world ?? q.get("world"));
+    if (method === "DELETE") {
+      return sendJson(res, 200, { member: removePartyMemberObjective(w, parts[3], parts[5]) });
+    }
+    if (method === "POST") {
+      return sendJson(res, 200, { member: updatePartyMemberObjective(w, parts[3], parts[5], { text: body.text, status: body.status }) });
+    }
   }
 
   // POST /api/combat-planning/party-roster/:id/conditions   {world, conditions}   -> {member}
