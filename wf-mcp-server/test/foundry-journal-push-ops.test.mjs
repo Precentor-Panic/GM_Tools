@@ -133,14 +133,22 @@ await test("buildObjectivesJournalOp: a create makes three pages, and only the p
   assert.equal(op.data.bridgeKind, "objectives");
 });
 
-await test("findObjectivesJournal: matches on name plus this player's OWNER grant", () => {
+await test("findObjectivesJournal: matched by OWNERSHIP and the page, never the entry's title", () => {
+  // The live entries are titled "<Character> — Objectives", so a matcher keyed
+  // on the entry name would find nothing at all.
+  const objectivesPage = [{ id: "p1", name: "Objectives" }];
   const journals = [
-    { uuid: "JournalEntry.a", name: "Objectives", ownership: { default: 0, aaaaaaaaaaaaaaaa: 3 } },
-    { uuid: "JournalEntry.b", name: "Objectives", ownership: { default: 0, [PLAYER]: 3 } },
-    { uuid: "JournalEntry.c", name: "Notes", ownership: { default: 0, [PLAYER]: 3 } }
+    { uuid: "JournalEntry.a", name: "Han Jenry — Objectives", ownership: { default: 0, aaaaaaaaaaaaaaaa: 3 }, pages: objectivesPage },
+    { uuid: "JournalEntry.b", name: "Flint CinderLeaf — Objectives", ownership: { default: 0, [PLAYER]: 3 }, pages: objectivesPage },
+    { uuid: "JournalEntry.c", name: "Torok backstory", ownership: { default: 0, [PLAYER]: 3 }, pages: [{ id: "p9", name: "Backstory" }] }
   ];
   assert.equal(findObjectivesJournal({ journals }, PLAYER).uuid, "JournalEntry.b");
-  assert.equal(findObjectivesJournal({ journals }, "zzzzzzzzzzzzzzzz"), null);
+  assert.equal(findObjectivesJournal({ journals }, "zzzzzzzzzzzzzzzz"), null, "a player with no card");
+
+  // A player's own extra pages do not stop it matching.
+  const withExtras = [{ uuid: "JournalEntry.d", name: "Vercinix — Objectives", ownership: { default: 0, [PLAYER]: 3 },
+    pages: [{ id: "p1", name: "Objectives" }, { id: "p2", name: "Valard's Ledger" }] }];
+  assert.equal(findObjectivesJournal({ journals: withExtras }, PLAYER).uuid, "JournalEntry.d");
 });
 
 // ── push ────────────────────────────────────────────────────────────────────
@@ -149,7 +157,7 @@ await test("push: THE DUPLICATE TRAP -- refuses to create when the player alread
   const WORLD = "journal-dupe-world";
   const id = seedMember(WORLD, "pm-dupe");
   addPartyMemberObjective(WORLD, id, "Take the stage.");
-  seedIndex(WORLD, [{ uuid: "JournalEntry.theirs", name: "Objectives", ownership: { default: 0, [PLAYER]: 3 }, pages: [] }]);
+  seedIndex(WORLD, [{ uuid: "JournalEntry.theirs", name: "Flint CinderLeaf — Objectives", ownership: { default: 0, [PLAYER]: 3 }, pages: [{ id: "pg2", name: "Objectives" }] }]);
 
   await assert.rejects(
     () => pushPartyObjectivesToFoundry(dataDir, WORLD, id, { pollMs: 5, timeoutMs: 20 }),

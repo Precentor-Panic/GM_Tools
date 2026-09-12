@@ -14,13 +14,17 @@
  * `resolveJournalPageUpdates` in the module), so this producer names exactly
  * ONE page — `Objectives` — and never mentions the player's page at all.
  *
- * THE DUPLICATE-JOURNAL TRAP, and why `adopt` exists. All six entries are
- * named identically and GM_Tools has never held a uuid for any of them. A
- * push with no ref would compose a CREATE, producing a seventh journal the
- * player cannot tell from their own while the real one silently stops being
- * updated. So: `pushPartyObjectivesToFoundry` REFUSES to create when the
- * index already shows an `Objectives` journal owned by this member's player,
+ * THE DUPLICATE-JOURNAL TRAP, and why `adopt` exists. GM_Tools has never held
+ * a uuid for any of the six live cards, so a push with no ref would compose a
+ * CREATE — producing a second journal the player cannot tell from their own
+ * while the real one silently stops being updated. So:
+ * `pushPartyObjectivesToFoundry` REFUSES to create when the index already
+ * shows a journal this member's player OWNS that holds an `Objectives` page,
  * and points the caller at `adoptPartyObjectivesJournal` instead.
+ *
+ * Identification is by OWNERSHIP AND PAGE, never by the entry's title: the
+ * live entries are titled "<Character> — Objectives" and a GM may retitle one
+ * at any time.
  *
  * REFS ARE WRITTEN ONLY ON A CONFIRMED ok:true — same rule as every sibling
  * producer; a queued or failed push leaves the row exactly as it was.
@@ -100,11 +104,19 @@ export function composeObjectivesOwnership(member, index) {
   return { ownership, playerUserId: claimants[0].id, playerName: claimants[0].name ?? null };
 }
 
-/** PURE. The index's `Objectives` journal for one player, or null. */
+/**
+ * PURE. This player's objectives journal in the index, or null.
+ *
+ * Matched by OWNERSHIP plus a page named `Objectives` — never by the entry's
+ * name. The live entries are titled "<Character> — Objectives" and a GM is
+ * free to retitle one; what identifies a player's card is that they own it
+ * and it holds the page this producer writes.
+ */
 export function findObjectivesJournal(index, playerUserId) {
   const journals = Array.isArray(index?.journals) ? index.journals : [];
   return journals.find((j) =>
-    j?.name === OBJECTIVES_PAGE && j?.ownership && j.ownership[playerUserId] === OWNER) ?? null;
+    j?.ownership?.[playerUserId] === OWNER &&
+    (j.pages ?? []).some((p) => p?.name === OBJECTIVES_PAGE)) ?? null;
 }
 
 /**
@@ -134,7 +146,8 @@ export function buildObjectivesJournalOp(member, { index, tonight } = {}) {
   return {
     kind: "create_journal",
     data: {
-      name: OBJECTIVES_PAGE,
+      // Matches the convention already in the world: "<Character> — Objectives".
+      name: `${member.name} — ${OBJECTIVES_PAGE}`,
       bridgeKind: "objectives",
       ownership,
       pages: [
