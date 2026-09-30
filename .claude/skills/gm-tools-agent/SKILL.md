@@ -118,6 +118,15 @@ shape) and produces a normal review batch. If rubber-duck mode is on
 to the user and call `wf_select_framing` with their pick (or a blend), don't
 pick for them.
 
+**Post-session ingest discipline (2026-09-29, from a real loss):** a merge
+writeup that mixes existing and new entities can propose UPDATES whose
+description REPLACES the existing text with only the new facts. Before any
+session-record ingest: (1) map the record onto existing entities and present
+proposed EDITS as `existing text + new facts`; (2) present NEW nodes as a
+separate list with a duplicate check; (3) submit creates first, sync, then
+edits; (4) after the edits batch lands, diff old→new for every description
+and `patch-data` any that dropped existing text BEFORE asking for accept.
+
 Two Friction-Wave-1 behaviors to know:
 - **Truncation fail-fast (W2c):** a writeup too entity-dense for the token
   budget now fails immediately on the FIRST attempt with a
