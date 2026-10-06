@@ -118,6 +118,20 @@ export const RawBestiaryFields = z.object({
   multiattack: RawMultiattack.optional(),
   rechargeAbilities: z.array(RawRechargeAbility).optional(),
   legendaryActions: RawLegendaryActions.optional(),
+  // Optional PHB-line keys. withBestiarySummary passes these through to the
+  // Run spread's inline stat block; declared here so a row carrying them
+  // validates explicitly instead of surviving by accident.
+  size: z.string().optional(),
+  environment: z.string().optional(),
+  legendary: z.boolean().optional(),
+  speed: z.union([z.string(), z.record(z.union([z.string(), z.number()]))]).optional(),
+  abilities: z.object({
+    str: z.number(), dex: z.number(), con: z.number(),
+    int: z.number(), wis: z.number(), cha: z.number()
+  }).optional(),
+  skills: z.union([z.string(), z.record(z.union([z.string(), z.number()]))]).optional(),
+  senses: z.string().optional(),
+  languages: z.string().optional(),
   lairEffects: z.boolean().optional(),
   auraEffects: z.array(z.string()).optional(),
   appliedEffects: z.array(z.string()).optional(),

@@ -216,7 +216,37 @@ function traitFrom(block, kind, useFirstSentence = true) {
  * Throws on a `_copy` reprint shell (no stats of its own -- the caller
  * decides whether to fall back to the compact row).
  */
+/** The six ability scores off a raw 5etools record, omitted entirely when the
+ * record carries none (a `_copy` shell, or a non-creature). */
+function abilitiesFrom(raw) {
+  const keys = ["str", "dex", "con", "int", "wis", "cha"];
+  const out = {};
+  for (const k of keys) if (typeof raw?.[k] === "number") out[k] = raw[k];
+  return Object.keys(out).length === keys.length ? { abilities: out } : {};
+}
+
+/** 5etools speed is an object of modes; keep the object when it is one (the
+ * renderer formats it), stringify anything else. */
+function speedFrom(speed) {
+  if (speed && typeof speed === "object" && !Array.isArray(speed)) {
+    const out = {};
+    for (const [k, v] of Object.entries(speed)) if (typeof v === "number" || typeof v === "string") out[k] = v;
+    return Object.keys(out).length ? out : undefined;
+  }
+  return String(speed);
+}
+
+/** Senses arrive as an array; the renderer's object branch would print array
+ * INDEXES, so flatten to one string here. Passive Perception rides along when
+ * the record carries it, the way a PHB block prints it. */
+function sensesFrom(raw) {
+  const parts = Array.isArray(raw?.senses) ? raw.senses.filter((s) => typeof s === "string") : [];
+  if (typeof raw?.passive === "number" || typeof raw?.passive === "string") parts.push(`passive Perception ${raw.passive}`);
+  return parts.length ? parts.join(", ") : null;
+}
+
 export function rawFieldsFromPlutoniumRecord(raw) {
+
   const row = normalizeMonster(raw);
   if (!row) throw new Error(`rawFieldsFromPlutoniumRecord: "${raw?.name ?? "?"}" is not a usable Plutonium monster record (missing name/stats, or a _copy reprint shell).`);
 
@@ -228,7 +258,17 @@ export function rawFieldsFromPlutoniumRecord(raw) {
     ...(row.cr != null ? { challengeRating: row.cr } : {}),
     ...(row.size?.length ? { size: row.size.join("/") } : {}),
     ...(row.environment?.length ? { environment: row.environment.join(", ") } : {}),
-    ...(row.legendary ? { legendary: true } : {})
+    ...(row.legendary ? { legendary: true } : {}),
+    // v5's person card renders a PHB-style line from these optional keys
+    // (withBestiarySummary passes them through verbatim, the Run spread's
+    // stat block reads them) -- but nothing ever WROTE them, so that whole
+    // branch was dead for every shelf row. Mapped straight off the raw
+    // record; an absent key stays absent, never invented.
+    ...abilitiesFrom(raw),
+    ...(raw.skill && typeof raw.skill === "object" && Object.keys(raw.skill).length ? { skills: { ...raw.skill } } : {}),
+    ...(raw.speed != null ? { speed: speedFrom(raw.speed) } : {}),
+    ...(sensesFrom(raw) ? { senses: sensesFrom(raw) } : {}),
+    ...(Array.isArray(raw.languages) && raw.languages.length ? { languages: raw.languages.join(", ") } : {})
   };
 
   const attacks = [];

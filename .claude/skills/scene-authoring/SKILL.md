@@ -43,59 +43,81 @@ explicit on every call; canon still goes through review).
 
 ## 3. The element stack (in this order)
 
-1. **Read Aloud** — `looks` = the prose (2–3 sentences, end on a sensory
-   detail or open question, NEVER an instruction); `means` = delivery
-   notes (pacing, what to fix in players' minds, what changes on a
-   reprise).
-2. **What's happening** — run role `now`, main column, right after the
-   opener: `looks` = present-tense motion (what is in progress as the
-   party arrives, who is mid-what), `gives` = what changes no matter how
-   the scene resolves (this is what feeds the chronicle/world state
-   afterward). Renamed from "Residue" (table round 2026-09-09) so it
-   reads as the second thing out of the GM's mouth, not an afterthought.
-3. **People** — one graph-linked element per named person present, run
-   role `person`, MAIN column (the GM has to describe them aloud the
-   moment the party meets them — a person is never a side card):
-   - `looks`: REQUIRED, always exactly three lines —
+Revised 2026-10-05 from a GM's own review of a built session: the old order
+opened with two near-duplicate elements (an opener and a separate "What's
+happening"), buried the exits at the bottom, and spent a whole side card
+re-explaining a house mechanic the GM already knows. This order is what a GM
+actually reads, top to bottom, while running.
+
+1. **Read Aloud** (`run: {column:"main", role:"read"}`) — paint the room.
+   `looks` = the prose the GM says out loud: what is here, and what is already
+   in motion. 2-4 sentences, ending on a detail or an open question, never on
+   an instruction. This ABSORBS the old separate "What's happening" element —
+   what is in motion is part of the picture, not a second card. `means` =
+   delivery notes, one or two lines.
+2. **The room** (`role:"dressing"`) — what is around the edges, and
+   `secret` = what the GM should be hinting at or alluding to here. The secret
+   belongs in this slot precisely BECAUSE it is never read aloud: it is the
+   cue, read before play, for what to seed. `looks` = texture the GM can
+   sprinkle. Keep both short.
+3. **Plot / Linger** (`role:"exits"`) — where this goes, before any of it is
+   played. Two labelled lines: `PLOT:` the way the session continues, and
+   `LINGER:` what is here if they stay. Name target scenes verbatim.
+4. **Characters** (`role:"person"`, one per named NPC, MAIN column) — the GM
+   has to play these people, so everything needed is in the one block:
+   - `looks`: exactly four lines —
      `<race/ancestry>, <build/age>, <one visual tell>` /
-     `Mannerism: <one physical habit>` / `Voice: <one line of how they
-     talk>`,
-   - `wants` / `means` / `gives` / `secret` per role,
-   - `checks`: the actual DCs a GM rolls against them,
-   - `statblockRef` or `bestiaryEntryId`: exact shelf entry name for
-     stats. Every named person MUST have a shelf statblock (see §6); Run
-     renders its compact PHB-style block inline under the description.
-4. **Interactive objects** (threads, levers, evidence) — run role
-   `object`, main column, after the people: `trigger` (how it's found),
-   `checks` (skill+DC+purpose per approach), `secret` (what actually
-   happens, including failure rules), `gives` (what the party walks away
-   with). `looks` optional here — a short phrase only if it helps.
-5. **Backdrops ×3** — "Backdrop — Present / Bad-future bleed /
-   Good-future bleed" (or this world's equivalent states): `trigger` =
-   when that state applies, `looks` = the texture, **`gives` = a movement
-   NUDGE pointing outward** (each state should quietly point somewhere
-   else — the world moves the party, the GM never has to).
-6. **Conditional read-aloud pairs** for irreversible events: e.g.
-   "Read Aloud — X burns in place" / "Read Aloud — X redirected". The GM
-   delivers one cold while the agent mutates the scene stack behind it.
-   **Run placement (2026-08-26, roles v5 2026-09-09):** every element
-   can carry an explicit `run: {column: main|side|off, role: read|now|
-   person|object|dressing|beat|exits|block|card|gm|sketch, variant?}` —
-   set it when you create the element (`wf_add_scene_element … run:`)
-   rather than relying on name inference. The principle: MAIN is what
-   comes out of the GM's mouth, top-down in delivery order (opener →
-   now → people → objects → dressing → beats → exits); SIDE is what the
-   GM reaches for only if something happens (card → gm → block →
-   sketch). Variants are free strings gated by `scene.activeVariants`
-   (`wf_set_scene_active_variants`); tag backdrops and conditional
-   read-alouds with one. `wf_seed_run_skeleton` pre-creates placeholders
-   for a fresh scene; `wf_infer_run_layout` tags a legacy one.
-7. **"→ Where this leads"** — nav references naming exact target scenes
-   (and which backdrop/variant to use on arrival). Until scene
-   hyperlinking exists, verbatim scene names are the contract. Encode
-   each exit as `LABEL: text → 'Target scene'` (LABEL ∈ ONWARD (plot) /
-   ONWARD (explore) / LINGER, or any uppercase word) — Run mode parses
-   that into the Plot / Explore / Linger footer.
+     `Mannerism: <one physical habit>` /
+     `Voice: <one line of how they talk>` /
+     `Opens with: "<the first thing out of their mouth>"` — the opening line
+     only when they approach or address the party; omit it for someone the
+     party has to go and talk to.
+   - `wants`: one sentence.
+   - `means`: how they play, two or three sentences at most.
+   - `gives`: what the party can walk away with.
+   - `secret`: GM-only.
+   - **Levers and landmines go HERE**, in this block, as two short lines
+     inside `means` or `gives` — never a separate reference card, and never
+     with the mechanic re-explained. The GM knows how levers work. Lead with
+     the NPC's **chief care-about** for this week (see the levers-and-landmines
+     house doc): the levers speak to it, the landmines expose it.
+   - `checks`: the actual DCs, as skill + DC + what it buys.
+   - `bestiaryEntryId`: the shelf row. Run renders its PHB-style block inline,
+     including ability scores and skills — so never retype stats into prose.
+     If a row has no ability scores, refresh it from Plutonium rather than
+     writing numbers by hand.
+5. **Things in play** (`role:"object"`) — ONLY when there is a real object
+   decision (a thing to take, break, return or hand over). `trigger` = how it
+   comes up, `checks`, `gives`, `secret`. If an object has no decision
+   attached, it is a line of dressing instead.
+6. **GM notes** (`role:"gm"`, SIDE column) — one block, plain prose. What the
+   scene is doing, what it must not force, how long it should take, and any
+   house rule or piece of world machinery this scene is introducing. This is
+   the slot for explaining the mechanism, in plain words.
+
+Combat scenes keep their baked **ENEMIES** block (§5). `beat` stays for a
+downtime scene whose content genuinely IS a list of per-character beats.
+
+### Writing rules (same revision)
+
+- **Plain, not clever.** The purpose note and every GM-facing field are read
+  once, fast, by a tired person. "The only threat in the scene is chalk" is an
+  epigram that cost its GM a re-read and told them nothing. Write "Nobody is
+  in danger here. The pressure is that the House marks their cart."
+- **Say what a scene is FOR in one or two sentences**, then stop. If a scene
+  is a negotiation that introduces a rule and sets up a rest, the purpose note
+  says exactly that. Resist adding a thesis.
+- **One number, or none.** Never build a ladder of figures (a price that moves
+  60 → 55 → 40) for the GM to track; it reads as a movie prop and does not
+  survive the table. Quote one figure, in a unit the players can picture.
+- **Pay in things, not coin.** Reward that inflates the party's purse buys
+  nothing and costs the economy. Prefer payment in what the setting makes
+  scarce and useful — a permit, a supply, access, standing. Introduce such a
+  currency ONCE, plainly, through an NPC who has a reason to explain it.
+- **Every field one to three sentences.** If a field wants more, it is two
+  fields, or it belongs in GM notes.
+- **Never invent a mechanic mid-prep.** A rule the GM has not ruled on is a
+  question to ask, not content to write.
 
 ## 4. Filler & hook scenes
 

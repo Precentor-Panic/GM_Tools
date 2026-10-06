@@ -499,6 +499,14 @@ export function updateBestiaryEntryRating(entryId, rating) {
 
 export const BESTIARY_ACTION_FIELD_KEYS = Object.freeze(["attacks", "multiattack", "rechargeAbilities", "legendaryActions", "traits"]);
 
+/** The optional PHB-line keys the Run spread's inline stat block reads
+ * (withBestiarySummary passes them straight through). Refreshed alongside the
+ * action fields: unlike an action's text, a reskin has no renamed copy of an
+ * ability score to preserve, so these merge verbatim. Kept a separate list so
+ * mergeBestiaryEntryActionFields' "name/ac/hp/cr can never change through this
+ * path" guarantee is unchanged. */
+export const BESTIARY_PHB_FIELD_KEYS = Object.freeze(["abilities", "skills", "speed", "senses", "languages"]);
+
 /**
  * Status-INDEPENDENT merge of the action-field keys onto an entry's
  * rawFields. Only BESTIARY_ACTION_FIELD_KEYS are honoured (anything else in
@@ -510,7 +518,7 @@ export const BESTIARY_ACTION_FIELD_KEYS = Object.freeze(["attacks", "multiattack
 export function mergeBestiaryEntryActionFields(entryId, actionFields) {
   const entry = readEntry(entryId);
   const rawFields = { ...(entry.rawFields ?? {}) };
-  for (const key of BESTIARY_ACTION_FIELD_KEYS) {
+  for (const key of [...BESTIARY_ACTION_FIELD_KEYS, ...BESTIARY_PHB_FIELD_KEYS]) {
     if (!actionFields || !(key in actionFields)) continue;
     if (actionFields[key] == null) delete rawFields[key];
     else rawFields[key] = actionFields[key];
@@ -586,6 +594,7 @@ export function refreshBestiaryEntryFromPlutonium(dir, entryId) {
     const value = fresh[key] ?? null;
     actionFields[key] = isReskin && Array.isArray(value) ? keepReskinText(value, entry.rawFields?.[key]) : value;
   }
+  for (const key of BESTIARY_PHB_FIELD_KEYS) actionFields[key] = fresh[key] ?? null;
   return mergeBestiaryEntryActionFields(entryId, actionFields);
 }
 
