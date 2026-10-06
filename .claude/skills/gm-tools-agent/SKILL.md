@@ -269,6 +269,17 @@ destructive/external precedent, HTTP-only like push-scene above:**
   refuses to delete the ACTIVE scene. Only use when the GM explicitly asks for
   a swap, same precedent as `push-scene`/`remove-stale`.
 
+**Party sheets (read-only, 2026-10-06):** `GET /api/foundry/party-sheets?world=`
+— the Run view's party rail. A read-through projection of the Foundry index
+into per-PC numbers (passive Perception/Insight/Investigation, all 18 skill
+mods and passives, the six saves, abilities, AC, HP max, derived proficiency
+bonus), seats taken from `users[].characterUuid` only so pack mules never
+appear. Returns the same freshness fields as the connection route
+(`state`/`ageMs`/`staleThresholdMs`) because the index only re-exports while a
+GM client is connected — quote the age, never present stale sheets as current.
+Writes nothing, so no review gate; it is NOT a second party store, and the
+roster's own `passive`/`skills` fields remain the wrong place to look for these.
+
 **Foundry connection:** `GET /api/foundry/connection?world=`,
 `POST /api/foundry/sync-now` `{world}` — connection state + the pull-style
 sync (proposals, review-gated), for when the user asks "is Foundry live?".

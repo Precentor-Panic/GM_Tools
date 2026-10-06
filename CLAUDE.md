@@ -58,6 +58,46 @@ Don't trust a summary of status here or in memory over that table; it's the thin
 
 **Table round (2026-09-09, after the Aureus session one) — in progress; plan at `plans/table-round-2026-09-09.md`, feedback at `plans/table-feedback-2026-09-09.md`.** Russell's seven table items plus three intake defects, worked cheapest-widest first. Done so far: **WS-A** bridge fixes in `foundry_worldFabric` (tokens now built from the actor's own prototype token — every pushed PC had been hostile-red and blind; `playlist`/`playlistSound` on create/update_scene; `update_actor` op) → bridge contract v5. **WS-B** spoiler-safe scene names: the generator rule (a scene name is a place-and-moment label; nothing after the dash may state an outcome) in the scene-authoring skill + prompts, and the push echoes the exact Foundry name the players will see instead of guessing at outcome-shaped subtitles. **WS-C** Run layout v5 — the principle, not the symptom: MAIN is what comes out of the GM's mouth top-down in delivery order (opener, `now` = "What's happening" (renamed from Residue), `person` cards with the 3-line looks + the bestiary stat block rendered INLINE as a compact PHB-style block, `object`, dressing, beats, exits); SIDE is reach-for-if-needed (card, gm, block, sketch); `RUN_ROLES` in `run-layout.mjs` is the single source every zod/MCP enum derives from; the functional-prep prompt now REQUIRES the three-line looks (`race, build/age, tell` / `Mannerism:` / `Voice:`) for a person. **WS-D** notes at the table: the Add Event control creates ONE note then edits it in place (the old "notes save — duplicated" gap, fixed at the source), mounts in the Run head band too, a "Notes — this scene" strip reads notes back in Prep and at the foot of the Run side column (re-read every poll tick — notes are deliberately NOT in the run-version fingerprint), `GET/POST/DELETE /api/session-planner/notes[/:id]` with 404/409 (consumed notes are history), and the Plan page's "Wrap the session" panel counts "N notes across M scenes" with per-scene links. **WS-H** a real bestiary `status:'retired'` (accepted ↔ retired, reversible via `POST /api/combat-planning/bestiary/:id/retire|unretire`; never from `proposed`, never discardable): `eligibleTokenActors` skips it with an explicit reason, the from-Library picker and the Library card's drag both refuse it, the Library shows it dimmed with a "retired" pill and a Retire/Restore chip on the stat rail — renaming a row "(retired)" had left it droppable and pushable. **WS-E** one music track per scene: the Foundry pull lands every playlist track as a `kind:'music'` stagecraft row (`foundryRef {playlistUuid, playlistName, trackName, trackId?, path?}`, deduped on playlist + track name); scene field `musicAssetId` beside `mapAssetId` (store, patch route with a kind + playlist-ref guard, `wf_update_scene` now takes both asset ids, forks inherit); the Prep band's `♪` chip + picker grouped by playlist; `sceneMusicData` in `foundry-push-ops.mjs` sets `playlist`/`playlistSound` on create AND update ops (bare `pushSceneToFoundry` too) — an unlinked scene never touches Foundry's music. **WS-F** token faces: bestiary fields `tokenImg` (the ACCEPTED face, a Foundry-Data-relative path the GM typed or accepted — the app never guesses one; absolute/URL/`..` refused) and `tokenImgCandidate` (generated, unreviewed — invisible to every push); `combat-planning/token-art.mjs` makes ONE Gemini image call (`gemini-2.5-flash-image`, the same raw REST path as `bin/gen-splash.mjs`) from the creature's `looks` line on a scene element, centre-crops to a 512² webp via the system python3/PIL (raw bytes kept if that fails), and writes `gm-tools/tokens/<world>/<slug>.candidate.webp`; the Library stat rail's "Token face" section shows the candidate with Accept (file moves to `<slug>.webp`, `tokenImg` set) / Reject (file deleted); `composeSceneOps` carries `tokenImg` as `tokens[].img` on the create path; `pushBestiaryTokenArtToFoundry` (`POST /api/foundry/push-bestiary-token-art`, the rail's "Push face to Foundry" chip) emits one `update_actor` op patching `img` + `prototypeToken.texture.src` — explicit, never automatic. **WS-G** layout stability, measured not guessed: `review-ui/test/e2e/layout-stability.probe.mjs` (a `.probe.mjs`, outside the e2e glob; prints a getBoundingClientRect diff per transition, classic scrollbars on) named the causes — the click-to-edit textarea's border+padding grew rows 13–16px; a bare `.btn` rail toggle 3px taller than Wrap shifted the page on Prep→Layout; the bold active segmented label wobbled 1px; band/read-aloud went full-width in Layout/Run/rail-open (272–912px) and reflowed; the rail-open page went full-width so rows reflowed to 1456px; hiding rail/Wrap slid the controls 92+78px out from under the pointer. Fixes: textarea as a negative-margin overlay; rail toggle styled like Wrap with a fixed 26px box; `::after` bold-width reservation on segmented buttons (`data-label`); band/read-aloud/top-bar keep the 720/780 measure centred in every mode; rail-open caps the page at 780+220+16; rail/Wrap toggles `visibility:hidden` instead of `display:none`; `scrollbar-gutter: stable` on the scene surface. `layout-stability.e2e.mjs` (shared kit in `layout-stability-fixture.mjs`) asserts the invariants at 1280/1920 and fails 6/6 against the pre-fix CSS. All corrective streams are done. The Aureus data pass that goes with each stream lives in the campaign repo (`campaigns/aureus/scripts/retag-run-v5.py` for v5). Session-two prep follows the corrective streams, per Russell.
 
+**The party rail (2026-10-06) is done** — the Run view gained a collapsible
+232px right-hand rail listing the PCs with their passive Perception, Insight and
+Investigation, hover (or focus) for saves and proficient skills, click to PIN.
+Prompted by Russell asking for "the thing I need quickest to hand" at the table,
+and preceded by a published interactive prototype he picked the row treatment
+from. **The finding that made it cheap: every number was already on disk.** The
+World Fabric module's own exporter writes all 18 skills as
+`{value, proficient, passive}`, every ability as `{value, mod, save}`, plus
+ac/level/hp per PC into `world-fabric-foundry-index.json` — and
+`foundry-actor-mapper.mjs` reads `skills[k].proficient` and throws the rest
+away, which is why the Library's "Passive" column has always rendered "—" (its
+only writer route, `POST /api/combat-planning/party-roster/:id/passive`, has
+zero callers). So this is a READ-THROUGH projection
+(`combat-planning/party-sheet-index.mjs` + `foundry-connection.mjs`'s
+`readPartySheets` + `GET /api/foundry/party-sheets`), not a roster/mapper/zod
+change: copying derived numbers into a second store is exactly what produced
+`passive: null` on every PC in every world. Seats come from
+`users[].characterUuid` ONLY — deliberately NOT `classifyActor`, whose
+documented `type === "character"` fallback yields 14 "PCs" in the real aureus
+world where there are 7 seats, because every player also keeps a pack mule
+actor; the mule case is pinned by test at both the unit and e2e level. Saves are
+unwrapped from dnd5e 5.x's `{roll, value}` (the same shape that sits, schema-
+violating, in `combatRelevant.saveDCs` today). `indexFreshness` was extracted out
+of `deriveConnectionState` so the second consumer could not grow a drifting copy
+of the freshness rules. The rail mounts as a SIBLING of the run-spread host
+inside a `display: contents` wrapper — `rebuildRunSpread`'s
+`runHost.innerHTML = ""` would otherwise destroy a pinned card on the next
+3s poll — and party data is deliberately NOT in the run-version fingerprint.
+HP MAX only is displayed and the index's age is stated in the header, because
+nothing on this side can force a Foundry reindex. New e2e `party-rail.e2e.mjs`
+(7 tests incl. the mule exclusion, the pin surviving a real poll rebuild, and
+phone width) plus a new **invariant 4** in `layout-stability.e2e.mjs` that is
+stronger than the lanes rail's: the Run page's own width never changes, so every
+tracked sub-bar box must hold its exact position AND size, which is what catches
+an accidental `data-rail` reuse. Suites: root 207 / wf-mcp 80 / review-ui 457 +
+310 e2e. Deliberately left alone, each its own follow-up: the mapper dropping
+skill mods/passives, the `saveDCs` zod violation, accepted roster rows being
+unrefreshable from Foundry (Velthar and Dio are frozen at level 0 / AC 10), and
+the bridge contract documenting `saves` as numbers while dnd5e sends objects.
+
 Engineering conventions for writing code in this repo live in `.claude/skills/gm-tools-conventions/` — load it before touching `mutation-engine/`, `time-skip/`, `graph-import/`, or `wf-mcp-server/`.
 
 ## Key architectural fact to internalize immediately

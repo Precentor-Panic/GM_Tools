@@ -47,6 +47,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withLock, ConcurrentWriteError } from "../../mutation-engine/review-state.mjs";
 import { readFoundryIndex } from "./foundry-index.mjs";
+import { partySheetsFromIndex, PARTY_SHEETS_VERSION } from "../../combat-planning/party-sheet-index.mjs";
+import { listPartyMembers } from "../../combat-planning/party-roster-store.mjs";
 import { pullFoundryActorsToStores } from "./foundry-pull-ops.mjs";
 // Phase 36 task 36.2, §5 -- the quiet-push flush engine's own entry point.
 // sync-now is the SECOND of its two flush triggers, run UNCONDITIONALLY
@@ -135,27 +137,73 @@ function countsFromIndex(index) {
  * @param {number|string} [opts.now]  injectable "now" (ms epoch or ISO string), for deterministic tests
  * @returns {{state:'live'|'stale'|'off', exportedAt:string|null, ageMs:number|null, staleThresholdMs:number, counts:object|null, lastSync:object|null, world:string}}
  */
-export function deriveConnectionState(dataDir, world, opts = {}) {
+/**
+ * The freshness rules, extracted (2026-10-06) so a second consumer --
+ * readPartySheets below -- cannot grow a drifting copy of them.
+ * deriveConnectionState calls this; its own behaviour is unchanged, and
+ * wf-mcp-server/test/foundry-connection.test.mjs is the regression net.
+ *
+ *   - no exportedAt at all            -> state 'off', ageMs null
+ *   - present but unparseable         -> state 'off' (an honest "no usable
+ *     freshness signal" rather than claiming 'live' with a bogus age)
+ *   - otherwise                       -> 'live' | 'stale' against the threshold
+ *
+ * @param {string|null|undefined} exportedAt
+ * @param {object} [opts]
+ * @param {number} [opts.staleThresholdMs]
+ * @param {number|string} [opts.now]  injectable, for deterministic tests
+ * @returns {{state:'live'|'stale'|'off', exportedAt:string|null, ageMs:number|null, staleThresholdMs:number}}
+ */
+export function indexFreshness(exportedAt, opts = {}) {
   const staleThresholdMs = opts.staleThresholdMs ?? DEFAULT_STALE_THRESHOLD_MS;
   const nowMs = opts.now === undefined ? Date.now() : typeof opts.now === "string" ? Date.parse(opts.now) : opts.now;
-  const lastSync = lastSyncFor(world);
 
-  const index = readFoundryIndex(dataDir, world);
-  if (!index || !index.exportedAt) {
-    return { state: "off", exportedAt: null, ageMs: null, staleThresholdMs, counts: null, lastSync, world };
-  }
+  if (!exportedAt) return { state: "off", exportedAt: null, ageMs: null, staleThresholdMs };
 
-  const exportedAtMs = Date.parse(index.exportedAt);
-  if (Number.isNaN(exportedAtMs)) {
-    // A present-but-unparseable exportedAt is informationally the same as
-    // "no usable freshness signal" -- treat it as off rather than crashing
-    // or silently claiming "live" with a bogus age.
-    return { state: "off", exportedAt: index.exportedAt, ageMs: null, staleThresholdMs, counts: null, lastSync, world };
-  }
+  const exportedAtMs = Date.parse(exportedAt);
+  if (Number.isNaN(exportedAtMs)) return { state: "off", exportedAt, ageMs: null, staleThresholdMs };
 
   const ageMs = Math.max(0, nowMs - exportedAtMs);
-  const state = ageMs > staleThresholdMs ? "stale" : "live";
-  return { state, exportedAt: index.exportedAt, ageMs, staleThresholdMs, counts: countsFromIndex(index), lastSync, world };
+  return { state: ageMs > staleThresholdMs ? "stale" : "live", exportedAt, ageMs, staleThresholdMs };
+}
+
+export function deriveConnectionState(dataDir, world, opts = {}) {
+  const lastSync = lastSyncFor(world);
+  const index = readFoundryIndex(dataDir, world);
+  const fresh = indexFreshness(index?.exportedAt, opts);
+  const counts = fresh.state === "off" ? null : countsFromIndex(index);
+  return { ...fresh, counts, lastSync, world };
+}
+
+/**
+ * The Run view's party rail (2026-10-06). Composes readFoundryIndex with the
+ * pure projection in combat-planning/party-sheet-index.mjs and the roster
+ * store's curated rows. READ-ONLY -- writes nothing, so no review gate
+ * applies; see that module's header for why this is a projection rather than
+ * another store.
+ *
+ * Never throws: a world with no index yet returns state 'off', empty sheets,
+ * and the same reindex instruction syncNow uses, so the rail can say what to
+ * do instead of rendering dashes that read like real zeroes.
+ *
+ * @param {string} dataDir
+ * @param {string} world
+ * @param {object} [opts]  staleThresholdMs / now, forwarded to indexFreshness
+ * @returns {object}
+ */
+export function readPartySheets(dataDir, world, opts = {}) {
+  const index = readFoundryIndex(dataDir, world);
+  const fresh = indexFreshness(index?.exportedAt, opts);
+  if (fresh.state === "off") {
+    return {
+      version: PARTY_SHEETS_VERSION, world, ...fresh, sheets: [], excluded: [],
+      note: "No Foundry index for this world yet -- open it in Foundry with the World Fabric module active and run a reindex (`api.reindexForGmTools()`)."
+    };
+  }
+  let rosterMembers = [];
+  try { rosterMembers = listPartyMembers(world); } catch { rosterMembers = []; }
+  const projected = partySheetsFromIndex(index, { rosterMembers });
+  return { version: projected.version, world, ...fresh, sheets: projected.sheets, excluded: projected.excluded };
 }
 
 /**

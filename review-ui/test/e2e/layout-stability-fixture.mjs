@@ -1,14 +1,16 @@
 // WS-G measurement kit (table round 2026-09-09, feedback 7). Shared by the
 // probe (`layout-stability.probe.mjs`, prints a diff table) and the guard
 // (`layout-stability.e2e.mjs`, asserts). Not a test itself.
+import { writeFileSync } from "node:fs";
 import { createSceneViaRoute } from "./phase30-fixture.mjs";
+import { foundryIndexPath } from "../../../wf-mcp-server/lib/snapshot.mjs";
 import { createSceneElementViaRoute, saveNarrationViaRoute } from "./phase29-fixture.mjs";
 
 // The selectors the plan names, each with a stable key so the same DOM node
 // can be matched across steps (rows/fields by element id + field; run boxes
 // and band rows by class + index).
 export const TRACKED = [
-  { sel: ".scene-subbar, .scene-subbar-controls, .sp-segmented, .scene-rail-toggle-btn, .scene-wrap-toggle-btn", key: (el) => `bar:${el.className.split(" ").filter((c) => c !== "btn")[0]}` },
+  { sel: ".scene-subbar, .scene-subbar-controls, .sp-segmented, .scene-rail-toggle-btn, .scene-party-toggle-btn, .scene-wrap-toggle-btn", key: (el) => `bar:${el.className.split(" ").filter((c) => c !== "btn")[0]}` },
   { sel: ".scene-place-header", key: (el) => "head-band" },
   { sel: ".scene-band-titlerow, .scene-band-intentrow, .scene-band-chiprow", key: (el) => el.className },
   { sel: ".scene-read-aloud-section", key: () => "read-aloud-section" },
@@ -61,6 +63,37 @@ export async function settle(page) {
 
 // A Prep page tall enough to scroll at 900px: one graph person with every
 // field kind, an object, dressing, GM side boxes, a side card, six filler rows.
+// The party rail (2026-10-06) needs seats to lay out, or its geometry is
+// untested. Written into the world's data dir, same idiom the party-rail e2e
+// uses. Two claimed sheets plus a MULE that must not appear.
+export function seedFoundryIndex(dataDir, world) {
+  const save = (v) => ({ roll: { min: null, max: null, mode: 0 }, value: v });
+  const sk = (value, proficient, passive) => ({ value, proficient, passive });
+  const abil = (score, mod, s) => ({ value: score, mod, save: save(s) });
+  const index = {
+    version: 1, worldId: world, exportedAt: new Date().toISOString(),
+    scenes: [], tokens: [], playlists: [], worldItems: [], compendia: [], journals: [],
+    users: [
+      { id: "u1", name: "Ada", characterUuid: "Actor.ls1" },
+      { id: "u2", name: "Bo", characterUuid: "Actor.ls2" }
+    ],
+    actors: [
+      { uuid: "Actor.ls1", name: "Keeneye Vance", type: "character",
+        items: [{ type: "class", name: "Rogue" }],
+        system: { level: 3, ac: 15, hp: { value: 14, max: 22 },
+          abilities: { str: abil(10, 0, 0), dex: abil(18, 4, 6), con: abil(12, 1, 1), int: abil(14, 2, 2), wis: abil(14, 2, 4), cha: abil(12, 1, 1) },
+          skills: { prc: sk(6, 2, 19), ste: sk(6, 2, 16), ins: sk(2, 1, 12) } } },
+      { uuid: "Actor.ls2", name: "Brawn Olafsson & Dog", type: "character",
+        items: [{ type: "class", name: "Fighter" }],
+        system: { level: 3, ac: 17, hp: { value: 24, max: 30 },
+          abilities: { str: abil(17, 3, 5), dex: abil(11, 0, 0), con: abil(16, 3, 5), int: abil(8, -1, -1), wis: abil(10, 0, 0), cha: abil(9, -1, -1) },
+          skills: { prc: sk(0, 0, 10), ath: sk(5, 1, 15) } } },
+      { uuid: "Actor.mule", name: "Ada's Mule", type: "character", items: [], system: { level: 0 } }
+    ]
+  };
+  writeFileSync(foundryIndexPath(dataDir, world), JSON.stringify(index), "utf8");
+}
+
 export async function seedScene(base, world) {
   const scene = await createSceneViaRoute(base, world, { locationEntityId: "lp-pit", name: "The Pit — call" });
   await saveNarrationViaRoute(base, world, scene.id, "The pit is a bowl of sand under three tiers of benches. Torches gutter in iron cages; the crowd is already loud, and someone is selling dates from a tray.");

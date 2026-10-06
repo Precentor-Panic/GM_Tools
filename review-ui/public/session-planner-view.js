@@ -582,6 +582,253 @@ function mountAddEventControl(scene, testid = "add-event-btn", { onSaved } = {})
 // it every tick (a note typed on a phone shows on the laptop) without
 // flicker. Consumed notes (a wrap batch already read them) never show -- they
 // are that batch's provenance now, not the table's running list.
+// --- the party rail (2026-10-06) -------------------------------------------
+//
+// The Run view's right-hand PC rail: every seat's passive Perception, Insight
+// and Investigation at a glance, hover (or focus) for saves and proficient
+// skills, click to PIN that card open while you read or roll.
+//
+// Mounted as a SIBLING of the run-spread host, never inside it: rebuildRunSpread
+// does `runHost.innerHTML = ""` on every run-version change, which would destroy
+// the rail, its scroll position and — worst — the GM's pinned card, three
+// seconds after they pinned it.
+//
+// Data comes from GET /api/foundry/party-sheets (a read-through projection of
+// the Foundry index; see combat-planning/party-sheet-index.mjs). That data is
+// deliberately NOT part of the run-version fingerprint: a Foundry reindex must
+// not rebuild the whole spread and flash "updated", because that would throw
+// away the GM's run-tab state for a reason that has nothing to do with the
+// scene. The rail refreshes on its own slow schedule instead.
+//
+// Returns the same `{el, refresh}` contract buildSceneNotesStrip uses, with the
+// same lastKey guard — an unchanged response must not re-render, or a poll tick
+// would silently close a pinned card.
+function buildPartyRail() {
+  const el = document.createElement("div");
+  el.className = "scene-party-rail-host";
+  el.setAttribute("data-testid", "party-rail-host");
+
+  const rail = document.createElement("aside");
+  rail.className = "party-rail";
+  rail.setAttribute("data-testid", "party-rail");
+  const head = document.createElement("div");
+  head.className = "party-rail-h";
+  const headLabel = document.createElement("span");
+  headLabel.className = "party-rail-t";
+  headLabel.textContent = "Party";
+  const asOf = document.createElement("span");
+  asOf.className = "party-rail-asof";
+  asOf.setAttribute("data-testid", "party-rail-asof");
+  head.append(headLabel, asOf);
+  const colhead = document.createElement("div");
+  colhead.className = "party-colhead";
+  colhead.innerHTML = '<span></span><span>Per</span><span>Ins</span><span>Inv</span>';
+  const list = document.createElement("ul");
+  list.className = "party-seats";
+  list.setAttribute("data-testid", "party-seats");
+  const note = document.createElement("p");
+  note.className = "party-rail-note";
+  note.hidden = true;
+  rail.append(head, colhead, list, note);
+
+  const detail = document.createElement("div");
+  detail.className = "party-detail";
+  detail.setAttribute("data-testid", "party-seat-detail");
+  detail.setAttribute("role", "group");
+  detail.hidden = true;
+  el.append(rail, detail);
+
+  let sheets = [];
+  let lastKey = null;
+  let pinnedUuid = null;
+  let hoverUuid = null;
+  let closeTimer = null;
+  let dismissWired = null; // the lazily-registered {onClick, onKey}, or null
+
+  const fmtMod = (n) => (n === null || n === undefined ? "\u2014" : n >= 0 ? `+${n}` : String(n));
+  const fmtNum = (n) => (n === null || n === undefined ? "\u2014" : String(n));
+
+  const seatFor = (uuid) => sheets.find((m) => m.actorUuid === uuid) || null;
+
+  const paintPressed = () => {
+    for (const b of list.querySelectorAll(".party-seat")) {
+      const uuid = b.dataset.actorUuid;
+      const open = pinnedUuid === uuid || (pinnedUuid === null && hoverUuid === uuid);
+      b.setAttribute("aria-expanded", open ? "true" : "false");
+      b.classList.toggle("party-seat--pinned", pinnedUuid === uuid);
+    }
+  };
+
+  const showDetail = (uuid) => {
+    const m = seatFor(uuid);
+    if (!m) return;
+    hoverUuid = uuid;
+    const saves = m.saves.map((s) =>
+      `<div><b>${s.key.toUpperCase()}</b><span>${fmtMod(s.mod)}</span></div>`).join("");
+    const prof = m.skills.filter((sk) => sk.prof > 0);
+    const rows = prof.length
+      ? prof.map((sk) =>
+          `<tr><td class="psk-n">${sk.label}${sk.prof === 2 ? ' <span class="psk-x" title="Expertise">\u2726</span>' : ""}</td>` +
+          `<td class="psk-m">${fmtMod(sk.mod)}</td><td class="psk-p">${fmtNum(sk.passive)}</td></tr>`).join("")
+      : '<tr><td class="psk-n">No skill proficiencies on the sheet.</td><td></td><td></td></tr>';
+    const meta = [m.cls && m.level ? `${m.cls} ${m.level}` : m.cls || null, m.userName,
+      m.ac !== null ? `AC ${m.ac}` : null, m.hpMax !== null ? `HP ${m.hpMax}` : null]
+      .filter(Boolean).join(" \u00b7 ");
+    detail.innerHTML =
+      `<p class="party-d-name">${m.name ?? ""}</p>` +
+      `<p class="party-d-meta">${meta}</p>` +
+      '<p class="party-d-sec">Saves</p>' +
+      `<div class="party-saves">${saves}</div>` +
+      '<p class="party-d-sec">Proficient skills <span class="party-d-sub">mod / passive</span></p>' +
+      `<table class="party-sk">${rows}</table>` +
+      (pinnedUuid === uuid ? '<p class="party-d-pin">Pinned \u2014 click again or press Escape</p>' : "");
+    detail.hidden = false;
+    positionDetail(uuid);
+    paintPressed();
+  };
+
+  // Vertical-only clamp. The rail is pinned to the right edge of the scene
+  // surface and the card opens LEFTWARD (`right: 100%`), so horizontal overflow
+  // is structurally impossible here — which is why this does not reuse
+  // graph-view.js's clampPopoverIntoView (that one assumes left/top are the
+  // authoritative offsets, which a right-anchored card does not have).
+  const positionDetail = (uuid) => {
+    const btn = list.querySelector(`.party-seat[data-actor-uuid="${CSS.escape(uuid)}"]`);
+    if (!btn) return;
+    if (window.matchMedia("(max-width: 760px)").matches) { detail.style.top = ""; return; }
+    // Align with the hovered row, then pull UP only by however much the card
+    // would overhang the bottom of the visible scroller. Clamping to the rail's
+    // own height instead would be far too aggressive: the rail is only as tall
+    // as the party, so a tall card would jump to the top of the list however
+    // far down you hovered.
+    detail.style.top = "0px";
+    const surface = el.closest(".planner-scene-surface") || document.scrollingElement;
+    let top = btn.offsetTop;
+    if (surface) {
+      const overhang = (el.getBoundingClientRect().top + top + detail.offsetHeight) - surface.getBoundingClientRect().bottom;
+      if (overhang > 0) top = Math.max(0, top - overhang);
+    }
+    detail.style.top = `${top}px`;
+  };
+
+  const hideDetail = () => {
+    if (pinnedUuid !== null) return;
+    detail.hidden = true;
+    hoverUuid = null;
+    paintPressed();
+  };
+
+  // Outside-click and Escape are registered ONLY while something is pinned and
+  // removed on unpin, so they cannot stack across the wholesale re-render that
+  // every scene navigation performs.
+  const unwireDismiss = () => {
+    if (!dismissWired) return;
+    document.removeEventListener("click", dismissWired.onClick, true);
+    document.removeEventListener("keydown", dismissWired.onKey, true);
+    dismissWired = null;
+  };
+  const unpin = () => {
+    pinnedUuid = null;
+    unwireDismiss();
+    detail.hidden = true;
+    hoverUuid = null;
+    paintPressed();
+  };
+  const wireDismiss = () => {
+    if (dismissWired) return;
+    const onClick = (evt) => {
+      // composedPath captured at dispatch — graph-view.js's own convention,
+      // adopted after a popover button that mutated its DOM mid-click detached
+      // its target and closed the popover out from under its confirm UI.
+      if (evt.composedPath().includes(el)) return;
+      unpin();
+    };
+    const onKey = (evt) => {
+      if (evt.key !== "Escape" || pinnedUuid === null) return;
+      // Only swallow Escape while pinned — the scene keydown handler uses it
+      // for the Wrap panel, and must keep working when nothing is pinned.
+      evt.stopPropagation();
+      unpin();
+    };
+    document.addEventListener("click", onClick, true);
+    document.addEventListener("keydown", onKey, true);
+    dismissWired = { onClick, onKey };
+  };
+
+  const render = () => {
+    list.innerHTML = "";
+    for (const m of sheets) {
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "party-seat";
+      b.setAttribute("data-testid", "party-seat");
+      b.dataset.actorUuid = m.actorUuid ?? "";
+      b.setAttribute("aria-expanded", "false");
+      const sub = [m.cls && m.level ? `${m.cls} ${m.level}` : m.cls, m.ac !== null ? `AC ${m.ac}` : null]
+        .filter(Boolean).join(" \u00b7 ");
+      b.innerHTML =
+        `<span class="party-seat-n" title="${m.name ?? ""}">${m.label ?? ""}</span>` +
+        `<span class="party-seat-p" data-testid="party-seat-passive">${fmtNum(m.passive.prc)}</span>` +
+        `<span class="party-seat-s">${fmtNum(m.passive.ins)}</span>` +
+        `<span class="party-seat-s">${fmtNum(m.passive.inv)}</span>` +
+        `<span class="party-seat-sub">${sub}</span>`;
+      b.addEventListener("pointerenter", () => { if (pinnedUuid === null) showDetail(b.dataset.actorUuid); });
+      b.addEventListener("focus", () => { if (pinnedUuid === null) showDetail(b.dataset.actorUuid); });
+      b.addEventListener("click", () => {
+        const uuid = b.dataset.actorUuid;
+        if (pinnedUuid === uuid) { unpin(); return; }
+        pinnedUuid = uuid;
+        wireDismiss();
+        showDetail(uuid);
+      });
+      li.appendChild(b);
+      list.appendChild(li);
+    }
+    colhead.hidden = sheets.length === 0;
+  };
+
+  el.addEventListener("pointerleave", () => {
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(hideDetail, 120);
+  });
+  el.addEventListener("pointerenter", () => clearTimeout(closeTimer));
+
+  const refresh = async () => {
+    let data = null;
+    try { data = await spApi(`/api/foundry/party-sheets${spWithWorld()}`); } catch { return; }
+    const key = JSON.stringify([data.state, data.exportedAt, data.sheets]);
+    if (key === lastKey) return; // unchanged — never re-render over a pinned card
+    lastKey = key;
+    sheets = Array.isArray(data.sheets) ? data.sheets : [];
+    pinnedUuid = null;
+    unwireDismiss();
+    detail.hidden = true;
+    hoverUuid = null;
+
+    if (data.state === "off") {
+      asOf.textContent = "";
+      asOf.removeAttribute("title");
+      note.hidden = false;
+      note.textContent = data.note || "No sheets exported from Foundry yet.";
+    } else {
+      // Honest staleness: the index only re-exports while a GM client has the
+      // world open, and nothing on this side can force it. State the age rather
+      // than presenting days-old numbers as current.
+      const d = new Date(data.exportedAt);
+      asOf.textContent = Number.isNaN(d.getTime())
+        ? "" : `as of ${d.toLocaleDateString([], { day: "numeric", month: "short" })}`;
+      asOf.title = `${data.exportedAt} \u2014 run api.reindexForGmTools() in Foundry to refresh`;
+      asOf.classList.toggle("party-rail-asof--stale", data.state === "stale");
+      note.hidden = sheets.length > 0;
+      if (!sheets.length) note.textContent = "No player characters are claimed by a user in this world.";
+    }
+    render();
+  };
+
+  return { el, refresh, teardown: unwireDismiss };
+}
+
 function buildSceneNotesStrip(sceneId, { testid = "scene-notes-strip" } = {}) {
   const el = document.createElement("div");
   el.className = "scene-notes-strip";
@@ -906,6 +1153,12 @@ let sceneView = "prep"; // "prep" (page list) | "board" (layout board) | "run" (
 // O1 (variants round): the Prep layout rail's disclosure — view-local like
 // sceneView, persists across scene nav, resets with it.
 let railOpen = false;
+// Party rail (2026-10-06): the Run view's right-hand PC rail. Same view-local,
+// deliberately NOT-persisted treatment as railOpen above, and for one extra
+// reason — layout-stability.e2e asserts Run's geometry is identical whichever
+// view you arrive from, which only holds if the default is deterministic.
+// Default CLOSED.
+let partyRailOpen = false;
 // QA W2 fix (Group A #1): the view must survive prev/next/rail navigation
 // between scenes -- it only resets when the world changes underneath it, or
 // when the caller explicitly leaves the planner surface (resetScenePageMode,
@@ -918,6 +1171,7 @@ let scenePageModeWorld = null;
 export function resetScenePageMode() {
   sceneView = "prep";
   railOpen = false;
+  partyRailOpen = false;
   scenePageModeWorld = null;
 }
 
@@ -4929,6 +5183,31 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   paintRail();
   subBarRight.appendChild(railBtn);
 
+  // Party rail toggle (2026-10-06). Run-only, but it keeps its SLOT in every
+  // view (CSS hides it with `visibility`, never `display`) so the segmented
+  // control to its left never slides out from under the pointer that just
+  // clicked it — the same rule, and the same measured reason, as the lanes and
+  // Wrap toggles. The caret lives in a fixed-width span so flipping it cannot
+  // change the button's width either.
+  const partyBtn = document.createElement("button");
+  partyBtn.type = "button";
+  partyBtn.className = "btn scene-party-toggle-btn";
+  partyBtn.setAttribute("data-testid", "party-rail-toggle-btn");
+  partyBtn.title = "Show the party's passive Perception, Insight and Investigation beside the scene — hover a name for saves and skills, click to pin";
+  partyBtn.innerHTML = '\u25cd party <span class="sp-caret"></span>';
+  const partyCaret = partyBtn.querySelector(".sp-caret");
+  const paintPartyRail = () => {
+    partyCaret.textContent = partyRailOpen ? "\u25be" : "\u25b8";
+    partyBtn.setAttribute("aria-pressed", partyRailOpen ? "true" : "false");
+    root.setAttribute("data-partyrail", partyRailOpen ? "open" : "closed");
+  };
+  partyBtn.addEventListener("click", () => {
+    partyRailOpen = !partyRailOpen;
+    paintPartyRail();
+    if (partyRailOpen) partyRail.refresh();
+  });
+  subBarRight.appendChild(partyBtn);
+
   const wrapBtn = document.createElement("button");
   wrapBtn.type = "button";
   wrapBtn.className = "btn scene-wrap-toggle-btn";
@@ -4945,7 +5224,17 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   const runHost = document.createElement("div");
   runHost.className = "scene-run-spread-host";
   runHost.setAttribute("data-testid", "scene-run-spread-host");
-  root.appendChild(runHost);
+  // The rail is a SIBLING of runHost inside this row, never a child: the poll's
+  // `runHost.innerHTML = ""` must not be able to destroy a pinned card. The row
+  // is `display: contents` while the rail is closed, so the closed layout is
+  // byte-identical to the plain host it replaced.
+  const partyRail = buildPartyRail();
+  const runRow = document.createElement("div");
+  runRow.className = "scene-run-row";
+  runRow.setAttribute("data-testid", "scene-run-row");
+  runRow.append(runHost, partyRail.el);
+  root.appendChild(runRow);
+  paintPartyRail();
 
   // View switching (applyView) is wired further down, next to the run-poll
   // machinery it starts/stops -- it needs wrapPanel/rebuildRunSpread, which
@@ -5398,6 +5687,7 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   // never an unbounded setInterval; stops on leaving Run, navigation
   // (stale()), and while the tab is hidden.
   const RUN_POLL_MS = 3000;
+  let partyTick = 0;
   let runPollTimer = null;
   let runVersion = null;
   const stopRunPoll = () => { if (runPollTimer) { clearTimeout(runPollTimer); runPollTimer = null; } };
@@ -5422,7 +5712,14 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
         await rebuildRunSpread();
         flashSpreadUpdated();
       } else {
-        // Notes aren't in the fingerprint (they're the table's own jottings,
+        // The party rail is refreshed on a slow multiple of this tick, not every
+      // one: the Foundry index changes on a reindex (minutes to days apart) and
+      // each read re-parses a multi-MB file. Every 10th tick is ~30s.
+      // offsetParent is null whenever the host is display:none, which covers
+      // both the closed toggle and any future hiding rule, instead of this
+      // tick second-guessing the CSS.
+      if (partyRail.el.offsetParent !== null && ++partyTick % 10 === 0) partyRail.refresh();
+      // Notes aren't in the fingerprint (they're the table's own jottings,
         // not scene data) -- re-read the strip each tick so a note typed on
         // another device shows here. No-op DOM-wise when nothing changed.
         const refreshNotes = runHost.querySelector('[data-testid="scene-run-spread"]')?._refreshNotes;
@@ -5469,12 +5766,16 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
       }
       rebuildRunSpread();
       startRunPoll();
+      // Unconditional: at phone width the rail is always visible and the toggle
+      // does not exist, so gating this on partyRailOpen would render it empty.
+      partyRail.refresh();
     } else if (wasRun) {
       stopRunPoll();
       prepNotes.refresh();
     }
   };
-  if (sceneView === "run") { rebuildRunSpread(); startRunPoll(); } // navigated here already in Run
+  // navigated here already in Run
+  if (sceneView === "run") { rebuildRunSpread(); startRunPoll(); partyRail.refresh(); }
   viewControl.buttons.prep.addEventListener("click", () => applyView("prep"));
   viewControl.buttons.board.addEventListener("click", () => applyView("board"));
   viewControl.buttons.run.addEventListener("click", () => applyView("run"));

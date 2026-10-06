@@ -1876,13 +1876,15 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 /* WS-G: the ▤ lanes toggle shares the Wrap button's metrics, and both pin
    line-height -- the ▤ glyph's fallback font raised the bare .btn's line box
    ~3px, so hiding the toggle (Layout / Run) shifted the whole page up. */
-:is(#view-session-planner, #app-shell) .scene-rail-toggle-btn {
+:is(#view-session-planner, #app-shell) .scene-rail-toggle-btn,
+:is(#view-session-planner, #app-shell) .scene-party-toggle-btn {
   flex-shrink: 0; border: 1px solid var(--sp-border-control); background: transparent;
   color: var(--sp-ink-muted); border-radius: var(--sp-radius-lg);
   font-family: var(--sp-font-ui); font-size: 12.5px; padding: 5px 12px;
 }
 :is(#view-session-planner, #app-shell) .scene-rail-toggle-btn:hover { color: var(--sp-accent-teal); }
 :is(#view-session-planner, #app-shell) .scene-rail-toggle-btn,
+:is(#view-session-planner, #app-shell) .scene-party-toggle-btn,
 :is(#view-session-planner, #app-shell) .scene-wrap-toggle-btn { line-height: 1.2; height: 26px; box-sizing: border-box; }
 
 /* Place name — the page title (Spectral 34px). */
@@ -2671,6 +2673,170 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   font-size: 11px; color: var(--sp-ink-muted); font-style: italic; padding: 2px 0;
 }
 :is(#view-session-planner, #app-shell) .scene-element-glyph[draggable="true"] { cursor: grab; }
+/* --- the party rail (2026-10-06) ------------------------------------------
+   The Run view's right-hand PC rail. Structurally the mirror of the Prep lanes
+   rail, with one deliberate divergence: Run is already `max-width: none`
+   (full-bleed), so there is no page cap to widen and no column to slide. The
+   rail takes its width from the FLEX ROW instead, which is why nothing above
+   it can move when it opens — the page's own width never changes.
+
+   Closed, .scene-run-row is `display: contents`, so the layout is
+   byte-identical to the bare run-spread host this row replaced. That is what
+   keeps layout-stability's "Run geometry is the same whichever view it came
+   from" assertion true, and it is the same trick .scene-prep-with-rail uses.
+
+   Deliberately a NEW attribute (`data-partyrail`), never `data-rail`: that one
+   caps .scene-page at 780+220+16 with no [data-mode] guard, so reusing it
+   would clamp full-bleed Run to 1016px.
+
+   No transitions anywhere here — the rail and its card appear instantly. That
+   satisfies prefers-reduced-motion by construction and keeps the e2e's settle()
+   deterministic. Any future fade must be guarded by
+   @media (prefers-reduced-motion: reduce). */
+:is(#view-session-planner, #app-shell) .scene-run-row { display: contents; }
+:is(#view-session-planner, #app-shell) .scene-party-rail-host { display: none; }
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"][data-partyrail="open"] .scene-run-row {
+  display: flex; gap: 14px; align-items: flex-start;
+}
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"][data-partyrail="open"] .scene-run-spread-host {
+  flex: 1 1 auto; min-width: 0;
+}
+/* 232px echoes the app shell's own rail width rather than inventing a third.
+   `position: relative` is the anchor the detail card's `right: 100%` resolves
+   against; NO overflow on either this host or the row, or the card is clipped. */
+:is(#view-session-planner, #app-shell) .scene-page[data-mode="run"][data-partyrail="open"] .scene-party-rail-host {
+  display: block; flex: 0 0 232px; width: 232px; position: sticky; top: 8px;
+}
+:is(#view-session-planner, #app-shell) .party-rail {
+  position: relative;
+  background: var(--sp-surface-card); border: 1px solid var(--sp-border-hairline);
+  border-radius: var(--sp-radius-sm);
+}
+:is(#view-session-planner, #app-shell) .party-rail-h {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 6px;
+  padding: 8px 10px; border-bottom: 1px solid var(--sp-border-hairline);
+}
+:is(#view-session-planner, #app-shell) .party-rail-t {
+  font-family: var(--sp-font-mono); font-size: 10px; font-weight: 600;
+  letter-spacing: var(--sp-mono-label-tracking); text-transform: uppercase;
+  color: var(--sp-ink-muted);
+}
+/* Honest staleness. The index only re-exports while a GM client has the world
+   open and nothing here can force it, so the age is stated, not hidden. */
+:is(#view-session-planner, #app-shell) .party-rail-asof {
+  font-family: var(--sp-font-mono); font-size: 9.5px; letter-spacing: 0.04em;
+  color: var(--sp-ink-muted); cursor: help; white-space: nowrap;
+}
+:is(#view-session-planner, #app-shell) .party-rail-asof--stale { color: var(--sp-accent-amber); }
+:is(#view-session-planner, #app-shell) .party-rail-note {
+  margin: 0; padding: 9px 10px; font-size: 12.5px; color: var(--sp-ink-secondary);
+}
+:is(#view-session-planner, #app-shell) .party-colhead {
+  display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px;
+  padding: 3px 10px 5px; border-bottom: 1px solid var(--sp-border-hairline);
+}
+:is(#view-session-planner, #app-shell) .party-colhead span {
+  font-family: var(--sp-font-mono); font-size: 9px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--sp-ink-muted);
+  text-align: right;
+}
+:is(#view-session-planner, #app-shell) .party-colhead span:first-child { text-align: left; }
+:is(#view-session-planner, #app-shell) .party-seats { list-style: none; margin: 0; padding: 0; }
+:is(#view-session-planner, #app-shell) .party-seat {
+  width: 100%; display: grid; grid-template-columns: 1fr auto auto auto;
+  align-items: baseline; gap: 2px 8px; text-align: left;
+  background: transparent; border: 0;
+  border-bottom: 1px solid var(--sp-border-hairline);
+  padding: 7px 10px; cursor: pointer;
+  font-family: var(--sp-font-ui); color: var(--sp-ink-primary);
+}
+:is(#view-session-planner, #app-shell) .party-seats li:last-child .party-seat { border-bottom: 0; }
+:is(#view-session-planner, #app-shell) .party-seat:hover { background: var(--sp-row-hover-bg); }
+:is(#view-session-planner, #app-shell) .party-seat[aria-expanded="true"] { background: var(--sp-row-active-bg); }
+:is(#view-session-planner, #app-shell) .party-seat:focus-visible {
+  outline: 2px solid var(--sp-accent-teal); outline-offset: -2px;
+}
+:is(#view-session-planner, #app-shell) .party-seat-n {
+  font-size: 13.5px; font-weight: 500; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+:is(#view-session-planner, #app-shell) .party-seat-p {
+  font-family: var(--sp-font-mono); font-size: 14.5px; font-weight: 600;
+  color: var(--sp-ink-heading); font-variant-numeric: tabular-nums;
+  text-align: right; min-width: 2.1ch;
+}
+:is(#view-session-planner, #app-shell) .party-seat-s {
+  font-family: var(--sp-font-mono); font-size: 12.5px; color: var(--sp-ink-secondary);
+  font-variant-numeric: tabular-nums; text-align: right; min-width: 2.1ch;
+}
+:is(#view-session-planner, #app-shell) .party-seat-sub {
+  grid-column: 1 / -1; font-family: var(--sp-font-mono); font-size: 10px;
+  letter-spacing: 0.03em; color: var(--sp-ink-muted);
+}
+/* The detail card opens INWARD (leftward, over the spread). Because the rail is
+   pinned to the right edge of the scroller, a leftward card cannot overflow
+   horizontally — which is why the JS clamp is vertical-only. */
+:is(#view-session-planner, #app-shell) .party-detail {
+  position: absolute; right: 100%; margin-right: 8px; width: 290px; z-index: 5;
+  background: var(--sp-surface-card); border: 1px solid var(--sp-border-control);
+  border-radius: var(--sp-radius-md); padding: 10px 12px;
+  box-shadow: 0 6px 20px oklch(0.26 0.015 60 / 0.18);
+  max-height: 420px; overflow-y: auto;
+}
+:is(#view-session-planner, #app-shell) .party-d-name {
+  margin: 0 0 1px; font-size: 14px; font-weight: 600; color: var(--sp-ink-heading);
+}
+:is(#view-session-planner, #app-shell) .party-d-meta {
+  margin: 0 0 9px; font-family: var(--sp-font-mono); font-size: 10px;
+  letter-spacing: 0.04em; color: var(--sp-ink-muted);
+}
+:is(#view-session-planner, #app-shell) .party-d-sec {
+  margin: 9px 0 4px; font-family: var(--sp-font-mono); font-size: 9px; font-weight: 600;
+  letter-spacing: 0.09em; text-transform: uppercase; color: var(--sp-ink-muted);
+}
+:is(#view-session-planner, #app-shell) .party-d-sub { text-transform: none; letter-spacing: 0; }
+:is(#view-session-planner, #app-shell) .party-saves { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; }
+:is(#view-session-planner, #app-shell) .party-saves div {
+  text-align: center; border: 1px solid var(--sp-border-hairline); border-radius: 2px; padding: 3px 0;
+}
+:is(#view-session-planner, #app-shell) .party-saves b {
+  display: block; font-family: var(--sp-font-mono); font-size: 8.5px; font-weight: 600;
+  letter-spacing: 0.06em; color: var(--sp-ink-muted);
+}
+:is(#view-session-planner, #app-shell) .party-saves span {
+  font-family: var(--sp-font-mono); font-size: 12.5px; color: var(--sp-ink-heading);
+  font-variant-numeric: tabular-nums;
+}
+:is(#view-session-planner, #app-shell) table.party-sk { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+:is(#view-session-planner, #app-shell) table.party-sk td {
+  padding: 2.5px 0; border-bottom: 1px solid var(--sp-border-hairline);
+}
+:is(#view-session-planner, #app-shell) table.party-sk tr:last-child td { border-bottom: 0; }
+:is(#view-session-planner, #app-shell) td.psk-n { color: var(--sp-ink-primary); }
+:is(#view-session-planner, #app-shell) td.psk-m,
+:is(#view-session-planner, #app-shell) td.psk-p {
+  font-family: var(--sp-font-mono); text-align: right;
+  font-variant-numeric: tabular-nums; color: var(--sp-ink-heading);
+}
+:is(#view-session-planner, #app-shell) td.psk-m { width: 3.4ch; }
+:is(#view-session-planner, #app-shell) td.psk-p { width: 4.2ch; color: var(--sp-ink-muted); }
+:is(#view-session-planner, #app-shell) .psk-x { color: var(--sp-accent-teal); font-size: 10px; }
+:is(#view-session-planner, #app-shell) .party-d-pin {
+  margin: 8px 0 0; font-family: var(--sp-font-mono); font-size: 9px;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--sp-accent-teal);
+}
+/* The caret sits in a fixed-width box so flipping it never changes the
+   button's width — see the sub-bar stability rule above. */
+:is(#view-session-planner, #app-shell) .scene-party-toggle-btn .sp-caret {
+  display: inline-block; width: 1ch; text-align: center;
+}
+/* Run-only affordance, hidden by VISIBILITY in Prep/Layout so the segmented
+   control to its left never shifts (same rule and same measured reason as the
+   lanes and Wrap toggles below). */
+:is(#view-session-planner, #app-shell) .scene-page:not([data-mode="run"]) .scene-party-toggle-btn {
+  visibility: hidden; pointer-events: none;
+}
+
 /* The rail is a Prep-only affordance: hidden in Run with the edit chrome,
    pointless in the board view, gone at mobile widths (the board covers it).
    WS-G: hidden by VISIBILITY, keeping its slot -- the Wrap button in Run
@@ -2681,6 +2847,19 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-wrap-toggle-btn { visibility: hidden; pointer-events: none; }
 @media (max-width: 760px) {
   :is(#view-session-planner, #app-shell) .scene-rail-toggle-btn { display: none; }
+  /* Party rail at phone width: SCALE, not reflow — a 232px column on a 390px
+     screen is a second layout, not a smaller one. The row becomes a block and
+     the rail sits ABOVE the scene (party numbers earn that spot at the table in
+     a way the lanes never did), and its detail card goes inline instead of
+     floating. The toggle disappears; the rail is simply always there. */
+  :is(#view-session-planner, #app-shell) .scene-party-toggle-btn { display: none; }
+  :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-run-row { display: block; }
+  :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"] .scene-party-rail-host {
+    display: block; width: auto; flex: none; position: static; margin-bottom: 10px;
+  }
+  :is(#view-session-planner, #app-shell) .party-detail {
+    position: static; right: auto; margin: 8px 0 0; width: auto; max-height: none;
+  }
   :is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-prep-with-rail { display: contents; }
   :is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-layout-rail { display: none; }
 }

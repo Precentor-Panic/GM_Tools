@@ -47,7 +47,7 @@ process.env.GM_TOOLS_STAGECRAFT_DIR = join(scratchDir, "stagecraft");
 process.env.GM_TOOLS_SCENE_TRAY_DIR = join(scratchDir, "scene-tray");
 const dataDir = join(scratchDir, "foundrydata");
 
-const { deriveConnectionState, syncNow, readSyncLog, appendSyncLogEntry, DEFAULT_STALE_THRESHOLD_MS, SYNC_LOG_MAX_ENTRIES } =
+const { deriveConnectionState, indexFreshness, syncNow, readSyncLog, appendSyncLogEntry, DEFAULT_STALE_THRESHOLD_MS, SYNC_LOG_MAX_ENTRIES } =
   await import("../lib/foundry-connection.mjs");
 const { foundryIndexPath } = await import("../lib/snapshot.mjs");
 
@@ -171,3 +171,46 @@ await test("syncNow: real fixture -- pulls actors, appends a sync-log entry, rep
 
 console.log(`\n${passed} test(s) passed.`);
 void existsSync;
+
+// ---------------------------------------------------------------- indexFreshness
+// Extracted out of deriveConnectionState (2026-10-06) so readPartySheets -- the
+// party rail's reader -- cannot grow a second, drifting copy of these rules.
+// deriveConnectionState's own tests above are the behaviour-preserving net;
+// these pin the extracted function directly.
+
+test("indexFreshness: no exportedAt is 'off' with a null age", () => {
+  for (const v of [undefined, null, ""]) {
+    const f = indexFreshness(v);
+    assert.equal(f.state, "off");
+    assert.equal(f.exportedAt, null);
+    assert.equal(f.ageMs, null);
+    assert.equal(f.staleThresholdMs, DEFAULT_STALE_THRESHOLD_MS);
+  }
+});
+
+test("indexFreshness: a present-but-unparseable exportedAt is 'off', not a bogus 'live'", () => {
+  const f = indexFreshness("not a date");
+  assert.equal(f.state, "off");
+  assert.equal(f.exportedAt, "not a date", "the raw value is still reported");
+  assert.equal(f.ageMs, null);
+});
+
+test("indexFreshness: live under the threshold, stale over it", () => {
+  const now = "2026-10-06T12:00:00.000Z";
+  const live = indexFreshness("2026-10-06T11:55:00.000Z", { now });
+  assert.equal(live.state, "live");
+  assert.equal(live.ageMs, 5 * 60 * 1000);
+  const stale = indexFreshness("2026-10-06T11:00:00.000Z", { now });
+  assert.equal(stale.state, "stale");
+  assert.equal(stale.ageMs, 60 * 60 * 1000);
+});
+
+test("indexFreshness: a custom threshold is honored, and a future export clamps to age 0", () => {
+  const now = "2026-10-06T12:00:00.000Z";
+  const f = indexFreshness("2026-10-06T11:00:00.000Z", { now, staleThresholdMs: 2 * 60 * 60 * 1000 });
+  assert.equal(f.state, "live", "an hour old is live under a two-hour threshold");
+  assert.equal(f.staleThresholdMs, 2 * 60 * 60 * 1000);
+  const future = indexFreshness("2026-10-06T13:00:00.000Z", { now });
+  assert.equal(future.ageMs, 0, "a clock-skewed future export never reports a negative age");
+  assert.equal(future.state, "live");
+});

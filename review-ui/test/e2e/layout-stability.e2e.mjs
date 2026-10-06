@@ -15,11 +15,17 @@
 //   3. The lanes rail is a pure column shift: every row keeps its height and
 //      width, all rows shift left by the same amount, and closing restores
 //      the identical geometry.
+//   4. The party rail narrows the Run spread and NOTHING ABOVE IT MOVES: every
+//      tracked sub-bar box holds its exact position and size (a stronger claim
+//      than invariant 3's uniform shift -- the Run page's own width never
+//      changes, so an accidental `data-rail` reuse or any page-cap change shows
+//      up here), the spread's left edge stays put while its width shrinks, the
+//      gutter never toggles, and closing restores the identical geometry.
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import { chromium } from "playwright";
 import { setupPhase30Env, cleanupScratchEnv, primeWorldSelection } from "./phase30-fixture.mjs";
-import { SEED_ENTITIES, snapshot, diff, settle, seedScene, openScenePrep } from "./layout-stability-fixture.mjs";
+import { SEED_ENTITIES, snapshot, diff, settle, seedScene, seedFoundryIndex, openScenePrep } from "./layout-stability-fixture.mjs";
 
 const PX = 1; // tolerance: sub-pixel text metrics only, never a visible jump
 const WIDTHS = [1280, 1920];
@@ -45,6 +51,7 @@ before(async () => {
   // Headless Chromium hides scrollbars (0px overlay); the desktop browser at
   // the table paints classic ones, and the gutter is a named suspect.
   browser = await chromium.launch({ ignoreDefaultArgs: ["--hide-scrollbars"] });
+  seedFoundryIndex(dataDir, WORLD);
   ({ scene, marek } = await seedScene(base, WORLD));
 });
 
@@ -173,6 +180,36 @@ for (const width of WIDTHS) {
       assertGutterStable("rail open", closed, open);
       await railBtn.click(); await settle(page);
       assertStill("rail close restores", closed, await snapshot(page));
+    } finally {
+      await page.close();
+    }
+  });
+
+  test(`@${width}: the party rail narrows the Run spread and nothing above it moves`, async () => {
+    const page = await openPage(width);
+    try {
+      await toRun(page);
+      const closed = await snapshot(page);
+      const partyBtn = page.locator('[data-testid="party-rail-toggle-btn"]');
+      await partyBtn.click();
+      await page.locator('[data-testid="party-seat"]').first().waitFor({ state: "visible" });
+      await settle(page);
+      const open = await snapshot(page);
+
+      // The sub-bar is a centred band independent of the spread, so unlike the
+      // lanes rail NOTHING in it may move at all -- not even a uniform shift.
+      const barBad = diff(closed, open).filter((r) => isBar(r.key)).filter((r) => movedBy([r], PX).length > 0);
+      assert.equal(barBad.length, 0, `the party rail moved the sub-bar:\n  ${barBad.map(fmt).join("\n  ")}`);
+
+      // The spread gives up width from its right edge only.
+      const spread = diff(closed, open).find((r) => r.key === "run-spread");
+      assert.ok(spread, "the run spread is tracked");
+      assert.ok(Math.abs(spread.dleft) < PX, `the spread's left edge moved by ${spread.dleft}px`);
+      assert.ok(spread.dw < -200, `the spread should narrow by the rail's width, got ${spread.dw}px`);
+
+      assertGutterStable("party rail open", closed, open);
+      await partyBtn.click(); await settle(page);
+      assertStill("party rail close restores", closed, await snapshot(page));
     } finally {
       await page.close();
     }

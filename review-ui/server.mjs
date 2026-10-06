@@ -301,7 +301,7 @@ import { generateTokenArt, acceptTokenArt, rejectTokenArt, resolveUnderDataDir, 
 // the per-world app-settings store, and the World Anvil URL lore-intake
 // route (composes with the EXISTING importWriteup pipeline, same shape as
 // /api/writeup-propose below).
-import { deriveConnectionState, syncNow } from "../wf-mcp-server/lib/foundry-connection.mjs";
+import { deriveConnectionState, syncNow, readPartySheets } from "../wf-mcp-server/lib/foundry-connection.mjs";
 import { getSettings as getAppSettings, patchSettings as patchAppSettings } from "../session-planner/app-settings.mjs";
 import { importFromWorldAnvil } from "../wf-mcp-server/lib/worldanvil-intake.mjs";
 
@@ -4215,6 +4215,25 @@ async function handleApi(req, res, url, parts) {
       journals = JSON.parse(readFileSync(join(dir, "worlds", w, "world-fabric-foundry-index.json"), "utf8")).journals ?? [];
     } catch { journals = []; }
     return sendJson(res, 200, { journals });
+  }
+
+  // GET /api/foundry/party-sheets?world=
+  // -> {version, world, state, exportedAt, ageMs, staleThresholdMs, sheets, excluded, note?}
+  // The Run view's party rail (2026-10-06). Read-only and index-derived, same
+  // family and same shape of composition as /api/foundry/journals above: the
+  // whole body is readPartySheets, which never throws and reports state 'off'
+  // with a reindex note for a world Foundry has never exported. No write path,
+  // so no review gate -- see combat-planning/party-sheet-index.mjs's header on
+  // why the party rail reads THROUGH to the index instead of copying derived
+  // numbers into the roster store. `world` goes through resolveWorld (format-
+  // validated); `dataDir` is NEVER taken from the query, per this file's
+  // standing security rule.
+  if (method === "GET" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "party-sheets") {
+    const dir = resolveDir();
+    const w = resolveWorld(q.get("world"));
+    const settings = getAppSettings(w);
+    const opts = settings.staleThresholdMs !== undefined ? { staleThresholdMs: settings.staleThresholdMs } : {};
+    return sendJson(res, 200, readPartySheets(dir, w, opts));
   }
 
   // POST /api/combat-planning/bestiary/:id/token-art/generate   {world, looks?, avoid?}
