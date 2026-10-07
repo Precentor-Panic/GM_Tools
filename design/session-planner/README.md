@@ -233,8 +233,45 @@ All colours are oklch (the prototypes use no hex).
 **Rules & borders** — hairline `oklch(0.88 0.010 80)`; control border `oklch(0.86 0.010 80)`; dashed `oklch(0.80 0.010 80)`.
 **Ink** — primary `oklch(0.27 0.015 60)`; headings `oklch(0.24 0.015 60)`; secondary `oklch(0.47 0.014 65)`; muted/mono labels `oklch(0.58 0.012 70)`.
 **Accents** — teal (primary/UI) `oklch(0.55 0.075 185)`, selected fill `oklch(0.90 0.020 185)`; amber (KEY elements, unreviewed, wrap) `oklch(0.62 0.10 65)`; rust (stat blocks) `oklch(0.55 0.11 40)`; danger `oklch(0.50 0.13 25)`; accept-green `oklch(0.55 0.070 150)`.
-**Type** — Spectral (serif: titles, element names, read-aloud); IBM Plex Sans (UI); IBM Plex Mono (labels, ids, numbers, table notes). Mono labels are 9–10.5px, uppercase, `letter-spacing: 0.07–0.11em`.
-**Spacing** — 4 / 6 / 8 / 12 / 14 / 18 / 26 / 34 px. **Radii** — 3px (paper-ish panels), 4px (rows, inputs), 5–6px (buttons), 20px (pills). **Shadows** — only the toast: `0 8px 26px oklch(0.26 0.015 60 / 0.28)`.
+**Type** — Spectral (serif: titles, element names, read-aloud); IBM Plex Sans (UI); IBM Plex Mono (labels, ids, numbers, table notes).
+**Spacing** — 4 / 6 / 8 / 12 / 14 / 18 / 26 / 34 px. **Radii** — 3px (paper-ish panels), 4px (rows, inputs), 5–6px (buttons), 20px (pills). **Shadows** — only the toast.
+
+### Section labels and rails — ONE recipe each (beautification pass, 2026-10-07)
+
+The ranges above ("9–10.5px", "0.07–0.11em") read as permission, and the scene
+page ended up with **six** section-label recipes and **three** rail widths. A
+section label is one thing, so it gets one recipe, and both are now tokens:
+
+| Token | Value | What it governs |
+|---|---|---|
+| `--sp-label-size` | 9.5px | every mono uppercase section label |
+| `--sp-label-weight` | 600 | the same |
+| `--sp-mono-label-tracking` | 0.09em | the same |
+| `--sp-rail-width` | 232px | the app-shell rail, the Prep lanes rail, the party rail |
+| `--sp-rail-gap` | 16px | the gutter beside either scene-page rail |
+| `--sp-toast-shadow` | light + **dark** variants | the toast and both popovers |
+
+Rules, not ranges:
+
+- A section label never sets its own size, weight or tracking. One exception
+  of colour is allowed and documented: the per-scene notes strip is amber,
+  because a live table note is the thing that should draw the eye.
+- A pill uses `--sp-radius-pill`, never a `20px` literal.
+- A shadow is `--sp-toast-shadow`. There is no second recipe, and it has a
+  dark variant — a light-ground shadow is invisible on a dark ground.
+- Any colour defined only inside a `@media (prefers-color-scheme)` or
+  `[data-theme]` block, or hardcoded in a rule, is a bug. Three shipped that
+  way and all three showed up in dark mode: the band's place label, the
+  "develop this place" amber cue, and the map/music chips' near-white fills.
+- A scene-page rule is scoped `:is(#view-session-planner, #app-shell)`. Two
+  unscoped ones had leaked into the global sheet.
+
+### Element row controls
+
+The row's `⭑` / `✦` / `✕` cluster is **hover-revealed**, guarded by
+`@media (hover: hover) and (pointer: fine)` so a touch device always shows it,
+and revealed by `:focus-within` so a keyboard user never gets a focus ring on
+something invisible. All three are icon buttons — no text link among them.
 
 ## Assets
 

@@ -114,11 +114,30 @@ export const SIDE_ROLE_RANK = { card: 0, gm: 1, read: 1, block: 3, sketch: 4 };
 // Looks/Means/Secret, so the GM typed in one vocabulary and ran in another
 // (two personas independently flagged it). Edit THIS table to rename a
 // field's presentation; every surface follows.
+// Extended in the beautification pass (2026-10-07) from 4 roles to 8. The
+// four that were missing are the four the current element form leans on
+// hardest, and their generic labels were actively wrong at the table:
+// "TRIGGER" on a person means nothing, and "LOOKS" on a dressing element
+// labels the thing that IS the dressing. Run now consults this table for
+// every role (see runSpreadFieldLines), so a word changed here changes both
+// surfaces at once -- which is what this table was always for.
 export const RUN_FIELD_LABELS = {
   read: { means: "GM" },
   now: { looks: "Happening", gives: "Changes" },
   object: { trigger: "Found by", gives: "Yields" },
-  card: { gives: "Phrase", looks: "Effect", means: "Alternate", secret: "Failure" }
+  card: { gives: "Phrase", looks: "Effect", means: "Alternate", secret: "Failure" },
+  // A person: what they open with, what they want, what they will trade, and
+  // the lever/landmine pair that lives in the block with them.
+  person: { trigger: "Opens with", looks: "Looks", wants: "Wants", gives: "Gives", means: "Lever", function: "Landmine" },
+  // Dressing: the detail is the point, and `gives` is the reason it is on the
+  // page at all -- what the players get for touching it.
+  dressing: { looks: "Detail", gives: "If touched", trigger: "Noticed by", means: "Reads as" },
+  // A GM box is instruction, not description.
+  gm: { gives: "Do", means: "If asked", wants: "Aim", function: "Fallback", secret: "Secret" },
+  // Exits: see the note in buildExits. Every one of these keys pools into the
+  // same stream, so they all get the SAME label -- saying "GIVES" beside a
+  // line whose real label is inside the value was pure noise.
+  exits: { gives: "Exit", means: "Exit", looks: "Exit", wants: "Exit", function: "Exit" }
 };
 
 /** The display label for `field` on an element of `role`; falls back to the generic label. */

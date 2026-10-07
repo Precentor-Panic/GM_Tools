@@ -1417,11 +1417,18 @@ function renderElementFieldLines(scene, element, fieldsEl) {
   }
 }
 
+// Fields a given role must never be OFFERED. Only one entry so far, and it
+// earns its place: an exits element's `secret` used to render in the public
+// exits footer, so Prep was handing the GM a chip that leaked. The renderer
+// is fixed too (buildExits), but offering it at all invites the mistake.
+const ROLE_SUPPRESSED_FIELDS = { exits: ["secret"] };
+
 function buildAddFieldControl(scene, element, fieldsEl, refreshList) {
   const present = new Set(
     SCENE_TEXT_FIELDS.filter((f) => element.fields?.[f] != null && String(element.fields[f]).trim() !== "")
   );
-  const missing = SCENE_TEXT_FIELDS.filter((f) => !present.has(f));
+  const suppressed = new Set(ROLE_SUPPRESSED_FIELDS[effectiveRun(element).run.role] ?? []);
+  const missing = SCENE_TEXT_FIELDS.filter((f) => !present.has(f) && !suppressed.has(f));
   // Phase 29 task 29.4: the "+ STAT BLOCK" chip joins the same dashed add-field
   // chip row, and only when the element has NO stat yet (same "only unfilled
   // things get a chip" rule the text-field chips follow). An element can carry
@@ -1431,6 +1438,9 @@ function buildAddFieldControl(scene, element, fieldsEl, refreshList) {
 
   const wrap = document.createElement("div");
   wrap.className = "scene-add-field";
+  // Held back so the field MENU lands after both chips rather than between
+  // them -- see the note at its append below.
+  let deferredMenu = null;
 
   if (missing.length) {
     const addBtn = document.createElement("button");
@@ -1460,7 +1470,13 @@ function buildAddFieldControl(scene, element, fieldsEl, refreshList) {
     addBtn.addEventListener("click", () => {
       menu.style.display = menu.style.display === "none" ? "" : "none";
     });
-    wrap.append(addBtn, menu);
+    // Beautification pass (2026-10-07): the menu used to be appended BETWEEN
+    // `+ FIELD` and `+ STAT BLOCK`, and it is a block-level flex container --
+    // so opening it shoved the stat chip onto a third line and reflowed the
+    // row under the pointer. The two buttons are now adjacent and the menu is
+    // appended last, on its own full-width line (see the CSS).
+    wrap.appendChild(addBtn);
+    deferredMenu = menu;
   }
 
   if (canAddStat) {
@@ -1494,6 +1510,10 @@ function buildAddFieldControl(scene, element, fieldsEl, refreshList) {
     });
     wrap.appendChild(statChip);
   }
+
+  // Last, after both chips, so it opens on its own line below them instead of
+  // splitting the pair.
+  if (deferredMenu) wrap.appendChild(deferredMenu);
 
   return wrap;
 }
@@ -2403,16 +2423,22 @@ function buildLayoutBoard(scene, elements, refreshList) {
     top.appendChild(buildRunRoleChip(scene, lead, { onChange: refreshList }));
     card.appendChild(top);
 
-    const variants = stack.members.map((m) => effectiveRun(m).run.variant).filter(Boolean);
-    const tabsRow = document.createElement("div");
-    tabsRow.className = "layout-stack-tabs";
-    for (const v of [...new Set(variants)]) {
-      const chip = document.createElement("span");
-      chip.className = "layout-stack-tab";
-      chip.textContent = v;
-      tabsRow.appendChild(chip);
+    const variants = [...new Set(stack.members.map((m) => effectiveRun(m).run.variant).filter(Boolean))];
+    // Beautification pass (2026-10-07): this row was appended whether or not
+    // there were any variants, and `.layout-card` is a grid with a gap -- so
+    // every UNTABBED group stack card carried ~10px of dead space, a literal
+    // hole left where the retired `+ variant` chip used to sit.
+    if (variants.length) {
+      const tabsRow = document.createElement("div");
+      tabsRow.className = "layout-stack-tabs";
+      for (const v of variants) {
+        const chip = document.createElement("span");
+        chip.className = "layout-stack-tab";
+        chip.textContent = v;
+        tabsRow.appendChild(chip);
+      }
+      card.appendChild(tabsRow);
     }
-    card.appendChild(tabsRow);
 
     for (const m of stack.members.slice(1)) {
       const row = document.createElement("div");
@@ -2851,7 +2877,9 @@ function buildWrapPanel(scene, refreshElements) {
       const blurb = document.createElement("p");
       blurb.className = "wrap-rail-blurb";
       const n = data.mutationCount ?? 0;
-      blurb.textContent = `Read your table notes for this scene and proposed ${n} graph edit${n === 1 ? "" : "s"}. Nothing is written until you apply.`;
+      // "Table notes" is a surface the README specified and nobody ever built.
+    // The real one is "Events, encounters & notes" plus the per-scene strip.
+    blurb.textContent = `Read this scene's notes and proposed ${n} graph edit${n === 1 ? "" : "s"}. Nothing is written until you apply.`;
       result.appendChild(blurb);
       resultHost.appendChild(result);
 
@@ -3243,10 +3271,16 @@ function buildProposeElementsGhostLink(scene, refreshElements) {
 function buildDraftFieldsGhostLink(scene, element, refreshList) {
   const link = document.createElement("button");
   link.type = "button";
-  link.className = "link-btn scene-assist-draft-link";
+  // Beautification pass (2026-10-07): this was a ~95px teal TEXT link wedged
+  // between two 22px icon buttons, the three of them 1.6px apart -- the
+  // loudest thing on the page and the single clearest "out of place" item
+  // Russell reported. It is now an icon-button PEER of ⭑ and ✕; the sentence
+  // it used to spell out lives in the title, which it already carried.
+  link.className = "icon-btn scene-assist-draft-link";
   link.setAttribute("data-testid", "scene-assist-draft-link");
   link.setAttribute("data-element-id", element.id);
-  link.textContent = "✦ draft fields";
+  link.textContent = "✦";
+  link.setAttribute("aria-label", "Draft fields for this element");
   link.title = "Ask the model to draft functional-prep fields for this element (additive; you keep what you want)";
   link.addEventListener("click", async () => {
     link.disabled = true;
@@ -4694,12 +4728,19 @@ function runSpreadChecks(fields) {
   return out;
 }
 
-function runSpreadFieldLines(fields, keys) {
+// Beautification pass (2026-10-07): this takes the ROLE now. It used to label
+// every line with the generic SCENE_FIELD_LABELS entry, ignoring role
+// entirely, while Run consulted the role-aware mapping at only six
+// hand-written sites -- so Prep labelled fields Run never labelled, and
+// RUN_FIELD_LABELS' whole stated purpose ("edit THIS table to rename a
+// field's presentation; every surface follows") held for four roles out of
+// eleven. One parameter puts every generic branch on the same mapping.
+function runSpreadFieldLines(role, fields, keys) {
   const out = [];
   for (const f of keys) {
     const v = fields?.[f];
     if (v == null || String(v).trim() === "") continue;
-    out.push(runSpreadLabeledLine(SCENE_FIELD_LABELS[f] ?? f, v, { secret: f === "secret" }));
+    out.push(runSpreadLabeledLine(runFieldLabel(role, f, SCENE_FIELD_LABELS[f] ?? f), v, { secret: f === "secret" }));
   }
   return out;
 }
@@ -4980,7 +5021,7 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
         if (f.looks) host.appendChild(runSpreadEl("p", "rs-now", f.looks));
         if (f.gives) host.appendChild(runSpreadLabeledLine(runFieldLabel("now", "gives", SCENE_FIELD_LABELS.gives), f.gives));
         for (const c of runSpreadChecks(f)) host.appendChild(c);
-        for (const line of runSpreadFieldLines(f, ["means", "wants", "function", "secret"])) host.appendChild(line);
+        for (const line of runSpreadFieldLines("now", f, ["means", "wants", "function", "secret"])) host.appendChild(line);
         break;
       case "person":
         // v5: ONE card, nothing split (Russell: "why have the info split?").
@@ -4990,7 +5031,7 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
         // abbreviated shape, right where the description is.
         if (f.trigger) host.appendChild(runSpreadEl("div", "rs-when", f.trigger));
         if (f.looks) host.appendChild(runSpreadEl("p", "rs-looks", f.looks));
-        for (const line of runSpreadFieldLines(f, ["wants", "means", "gives", "function"])) host.appendChild(line);
+        for (const line of runSpreadFieldLines("person", f, ["wants", "means", "gives", "function"])) host.appendChild(line);
         for (const c of runSpreadChecks(f)) host.appendChild(c);
         if (f.secret) host.appendChild(runSpreadLabeledLine(SCENE_FIELD_LABELS.secret, f.secret, { secret: true }));
         runSpreadCompactStat(el, host);
@@ -5003,7 +5044,7 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
         for (const c of runSpreadChecks(f)) host.appendChild(c);
         if (f.secret) host.appendChild(runSpreadLabeledLine(SCENE_FIELD_LABELS.secret, f.secret, { secret: true }));
         if (f.gives) host.appendChild(runSpreadLabeledLine(runFieldLabel("object", "gives", SCENE_FIELD_LABELS.gives), f.gives));
-        for (const line of runSpreadFieldLines(f, ["means", "wants", "function"])) host.appendChild(line);
+        for (const line of runSpreadFieldLines("object", f, ["means", "wants", "function"])) host.appendChild(line);
         break;
       case "card":
         if (f.gives) host.appendChild(runSpreadEl("p", "rs-phrase", f.gives));
@@ -5011,13 +5052,18 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
         if (f.means) host.appendChild(runSpreadLabeledLine(runFieldLabel("card", "means"), f.means));
         for (const c of runSpreadChecks(f)) host.appendChild(c);
         if (f.secret) host.appendChild(runSpreadLabeledLine(runFieldLabel("card", "secret"), f.secret, { secret: true }));
-        for (const line of runSpreadFieldLines(f, ["trigger", "wants", "function"])) host.appendChild(line);
+        for (const line of runSpreadFieldLines("card", f, ["trigger", "wants", "function"])) host.appendChild(line);
         break;
       case "gm":
         if (f.trigger) host.appendChild(runSpreadEl("div", "rs-when", f.trigger));
-        for (const k of ["looks", "gives", "means", "wants", "function", "secret"]) {
-          if (f[k]) host.appendChild(runSpreadEl("div", "rs-boxp", f[k]));
-        }
+        // Six anonymous paragraphs was the worst Prep/Run divergence on the
+        // page: Prep labels all seven fields of a GM box, Run printed them as
+        // undifferentiated prose, so the GM could not tell which paragraph
+        // was the secret. `looks` stays unlabelled -- in a GM box it IS the
+        // body text -- and the rest carry their labels, with `secret` taking
+        // the rust secret treatment it always should have had.
+        if (f.looks) host.appendChild(runSpreadEl("div", "rs-boxp", f.looks));
+        for (const line of runSpreadFieldLines("gm", f, ["gives", "means", "wants", "function", "secret"])) host.appendChild(line);
         for (const c of runSpreadChecks(f)) host.appendChild(c);
         break;
       case "block":
@@ -5045,7 +5091,7 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
         }
         for (const c of runSpreadChecks(f)) host.appendChild(c);
         if (f.looks) host.appendChild(runSpreadEl("p", "rs-p", f.looks));
-        for (const line of runSpreadFieldLines(f, ["trigger", "gives", "means", "wants", "function", "secret"])) host.appendChild(line);
+        for (const line of runSpreadFieldLines("sketch", f, ["trigger", "gives", "means", "wants", "function", "secret"])) host.appendChild(line);
         if (el.stat?.raw && String(el.stat.raw).trim()) host.appendChild(runSpreadEl("pre", "rs-stat", String(el.stat.raw)));
         break;
       case "sketch": {
@@ -5059,7 +5105,7 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
         if (f.trigger) host.appendChild(runSpreadEl("div", "rs-when", f.trigger));
         if (f.looks) host.appendChild(runSpreadEl("p", "rs-p", f.looks));
         for (const c of runSpreadChecks(f)) host.appendChild(c);
-        for (const line of runSpreadFieldLines(f, ["gives", "means", "wants", "function", "secret"])) host.appendChild(line);
+        for (const line of runSpreadFieldLines(run.role, f, ["gives", "means", "wants", "function", "secret"])) host.appendChild(line);
         break;
     }
   };
@@ -5122,7 +5168,7 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
     withDraftPill(li, el);
     const lead = [f.looks, f.gives].filter((x) => x && String(x).trim()).join(" ");
     if (lead) li.appendChild(document.createTextNode(` — ${lead}`));
-    for (const line of runSpreadFieldLines(f, ["trigger", "means", "wants", "function", "secret"])) li.appendChild(line);
+    for (const line of runSpreadFieldLines("dressing", f, ["trigger", "means", "wants", "function", "secret"])) li.appendChild(line);
     for (const c of runSpreadChecks(f)) li.appendChild(c);
     return li;
   };
@@ -5145,7 +5191,13 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
   const buildExits = (el) => {
     const f = el.fields || {};
     if (f.trigger) exitsFooter.appendChild(runSpreadEl("div", "rs-when", f.trigger));
-    for (const k of ["gives", "means", "secret", "looks", "wants", "function"]) {
+    // `secret` is NO LONGER pooled in with the exit lines (beautification
+    // pass, 2026-10-07). It used to be, which meant anything typed into an
+    // exits element's Secret field rendered in the public exits footer with
+    // none of the rust secret treatment -- a table-safety bug, not a cosmetic
+    // one. Prep no longer offers the chip either, but existing data has to
+    // render safely, so it is pulled out and shown as a real secret below.
+    for (const k of ["gives", "means", "looks", "wants", "function"]) {
       const raw = f[k];
       if (!raw) continue;
       // One field may carry several exit lines (one per line).
@@ -5159,6 +5211,11 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
         exitsFooter.appendChild(row);
         exitsCount++;
       }
+    }
+    // Any secret on an exits element, rendered as what it is.
+    if (f.secret && String(f.secret).trim()) {
+      exitsFooter.appendChild(runSpreadLabeledLine(runFieldLabel("exits", "secret", SCENE_FIELD_LABELS.secret), f.secret, { secret: true }));
+      exitsCount++;
     }
   };
 

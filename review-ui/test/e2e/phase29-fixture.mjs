@@ -416,7 +416,7 @@ export const setupPhase29Env = setupPhase28Env;
 //       -- one per mutation returned by `GET /api/batches/:batchId`, fetched
 //       automatically once note-intake succeeds (no extra click required
 //       beyond running note-intake itself -- README §D's blurb is shown
-//       immediately: "Read your table notes... proposed N graph edits").
+//       immediately: "Read this scene's notes... proposed N graph edits").
 //         - `[data-testid="wrap-proposal-kind-badge"]` -- text content one
 //           of `promote` / `field edit` / `new edge` / `new node`,
 //           DERIVED client-side from the mutation's own `op`+`diff`

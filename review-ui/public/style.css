@@ -1268,6 +1268,13 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   --sp-font-ui: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   --sp-font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --sp-mono-label-tracking: 0.09em; /* README: "9-10.5px, uppercase, letter-spacing 0.07-0.11em" -- mid value as the default */
+  /* Beautification pass (2026-10-07): the tracking was already a token but
+     the SIZE and WEIGHT were not, so one page carried six section-label
+     recipes -- mono at 9, 9.5, 10 and 10.5px with the weight flipping between
+     400 and 600. A section label is one thing; it gets one recipe. 9.5px is
+     the README band's own midpoint and the value most of them already used. */
+  --sp-label-size: 9.5px;
+  --sp-label-weight: 600;
 
   /* ---- Spacing scale (README "Spacing": 4/6/8/12/14/18/26/34px) -------- */
   --sp-space-1: 4px;
@@ -1284,6 +1291,16 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   --sp-radius-md: 4px;   /* rows, inputs */
   --sp-radius-lg: 6px;   /* buttons (5-6px) */
   --sp-radius-pill: 20px; /* pills */
+
+  /* ---- Rails (beautification pass, 2026-10-07) -------------------------- */
+  /* There were THREE rail widths and TWO rail gaps in this file: the app
+     shell's own left rail at 232/16, the Prep lanes rail at 220/16, and the
+     party rail at 232/14 — whose own comment claimed it "echoes the app
+     shell's own rail width rather than inventing a third", which was true of
+     the width and not of the gap, and left the two rails on the SCENE PAGE
+     disagreeing with each other. One pair now, matching the shell. */
+  --sp-rail-width: 232px;
+  --sp-rail-gap: 16px;
 
   /* ---- Shadows (README "Shadows": "only the toast") --------------------- */
   --sp-toast-shadow: 0 8px 26px oklch(0.26 0.015 60 / 0.28);
@@ -1385,8 +1402,17 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
    families as light, lightness/chroma re-tuned for a dark surface — the
    README specifies light values only, this is this task's own derivation,
    not a second source of truth. */
+/* Beautification pass (2026-10-07) -- `#app-shell` added to all THREE theme
+   blocks below. The light root block at the top of this section was extended
+   to the shell in Phase 30 task 30.2 ("#app-shell joins the token-defining
+   scope alongside the legacy views"); these three were not, and nobody
+   noticed because the body background DOES go dark -- it is painted by the
+   global dark block near the top of the file. So in dark mode the shell
+   rendered a fully LIGHT scene page on a dark page ground, and every --sp-*
+   dark value in here was dead code for the surface the GM actually uses.
+   Any future token block must list all three roots or it is not applied. */
 @media (prefers-color-scheme: dark) {
-  #view-plans, #view-session-planner {
+  #view-plans, #view-session-planner, #app-shell {
     --sp-surface-page: oklch(0.19 0.010 85);
     --sp-surface-chrome: oklch(0.22 0.011 85);
     --sp-surface-topbar: oklch(0.24 0.011 85);
@@ -1455,9 +1481,16 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 
     --sp-toast-bg: oklch(0.20 0.015 60);
     --sp-toast-text: oklch(0.98 0.004 85);
+
+    /* A light-ground shadow is invisible on a dark ground, so both popovers
+       (.party-detail, .scene-element-run-pop) used to float with no lift at
+       all in dark mode. Deeper and more opaque, which is what reads as depth
+       against a dark surface. */
+    --sp-toast-shadow: 0 8px 26px oklch(0.10 0.010 60 / 0.62);
   }
 }
-:root[data-theme="dark"] #view-plans, :root[data-theme="dark"] #view-session-planner {
+:root[data-theme="dark"] #view-plans, :root[data-theme="dark"] #view-session-planner,
+:root[data-theme="dark"] #app-shell {
   --sp-surface-page: oklch(0.19 0.010 85);
   --sp-surface-chrome: oklch(0.22 0.011 85);
   --sp-surface-topbar: oklch(0.24 0.011 85);
@@ -1519,8 +1552,10 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 
   --sp-toast-bg: oklch(0.20 0.015 60);
   --sp-toast-text: oklch(0.98 0.004 85);
+  --sp-toast-shadow: 0 8px 26px oklch(0.10 0.010 60 / 0.62);
 }
-:root[data-theme="light"] #view-plans, :root[data-theme="light"] #view-session-planner {
+:root[data-theme="light"] #view-plans, :root[data-theme="light"] #view-session-planner,
+:root[data-theme="light"] #app-shell {
   --sp-surface-page: oklch(0.955 0.008 85);
   --sp-surface-chrome: oklch(0.938 0.009 85);
   --sp-surface-topbar: oklch(0.925 0.009 85);
@@ -1587,6 +1622,9 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 
   --sp-toast-bg: oklch(0.26 0.015 60);
   --sp-toast-text: oklch(1 0 0);
+  /* Restated so an explicit LIGHT choice beats a dark OS, the same way every
+     other token in this block is restated. */
+  --sp-toast-shadow: 0 8px 26px oklch(0.26 0.015 60 / 0.28);
 }
 
 /* ===========================================================================
@@ -1830,7 +1868,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   max-width: 780px; margin-left: auto; margin-right: auto;
 }
 :is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] {
-  max-width: calc(780px + 220px + 16px);
+  max-width: calc(780px + var(--sp-rail-width) + var(--sp-rail-gap));
 }
 :is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-place-header,
 :is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-read-aloud-section {
@@ -1911,7 +1949,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
      ELEMENTS (the duplicate came from the retired seed skeleton). */
   content: "Read Aloud — opens Run"; display: block; text-transform: uppercase;
   font-family: var(--sp-font-mono); font-size: 9.5px; font-weight: 400;
-  font-style: normal; letter-spacing: 0.11em; color: var(--sp-accent-teal);
+  font-style: normal; letter-spacing: var(--sp-mono-label-tracking); color: var(--sp-accent-teal);
   opacity: 1; margin-bottom: 6px;
 }
 :is(#view-session-planner, #app-shell) .scene-field--empty { color: var(--sp-ink-muted); font-style: italic; }
@@ -1939,8 +1977,8 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 
 /* Section labels ("Elements", "Events, encounters & notes"). */
 :is(#view-session-planner, #app-shell) .scene-section-heading {
-  font-family: var(--sp-font-mono); font-size: 10px; font-weight: 400;
-  text-transform: uppercase; letter-spacing: 0.09em; color: var(--sp-ink-muted);
+  font-family: var(--sp-font-mono); font-size: var(--sp-label-size); font-weight: var(--sp-label-weight);
+  text-transform: uppercase; letter-spacing: var(--sp-mono-label-tracking); color: var(--sp-ink-muted);
   border-top: none; padding-top: 0; margin: 30px 0 12px;
 }
 
@@ -2030,7 +2068,16 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 }
 
 /* Add-field: dashed pill chips ("+ TRIGGER" …). */
-:is(#view-session-planner, #app-shell) .scene-add-field { padding-left: 0; margin-top: 6px; }
+/* The wrapper had NO `display` and NO `gap`, and the chips are built with
+   createElement + append, which emits no whitespace text nodes — so `+ FIELD`
+   and `+ STAT BLOCK` rendered as two dashed pill borders fused into one shape.
+   Flex with a real gap; the field menu takes its own full-width line so
+   opening it cannot reflow the chips. */
+:is(#view-session-planner, #app-shell) .scene-add-field {
+  padding-left: 0; margin-top: 6px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+}
+:is(#view-session-planner, #app-shell) .scene-add-field-menu { flex-basis: 100%; }
 :is(#view-session-planner, #app-shell) .scene-add-field-btn,
 :is(#view-session-planner, #app-shell) .scene-add-field-option {
   font-family: var(--sp-font-mono); font-size: 9.5px; text-transform: uppercase;
@@ -2053,9 +2100,42 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 :is(#view-session-planner, #app-shell) .scene-add-element-row.editable-list-ghost-row:hover {
   border-color: var(--sp-accent-teal); color: var(--sp-accent-teal);
 }
-:is(#view-session-planner, #app-shell) .scene-assist-propose-link,
-:is(#view-session-planner, #app-shell) .scene-assist-draft-link {
+:is(#view-session-planner, #app-shell) .scene-assist-propose-link {
   font-family: var(--sp-font-ui); font-size: 12px; color: var(--sp-accent-teal); opacity: 1;
+}
+/* The draft-fields control is an icon-btn peer of ⭑/✕ now (see its own note in
+   session-planner-view.js). It keeps the teal, because ✦ means "the model
+   wrote this" everywhere else on the page and that signal is worth more than
+   uniformity with its two neighbours. */
+:is(#view-session-planner, #app-shell) .scene-assist-draft-link {
+  color: var(--sp-accent-teal); opacity: 1;
+}
+
+/* ---- The element row's control cluster (beautification pass, 2026-10-07) --
+   Two problems, one shape. `.scene-element-controls` carried `gap: 0.1rem`
+   (1.6px) from the pre-token stylesheet and was never overridden here, so
+   three controls in three shapes sat flush against one another on every row.
+   And the hover-reveal this row was DESIGNED around was parked, so they were
+   also permanently visible — a wall of glyphs down the page.
+   Both fixed together: real spacing, and the cluster fades in on hover. */
+:is(#view-session-planner, #app-shell) .scene-element-controls {
+  gap: 2px; opacity: 1; transition: opacity 0.12s ease;
+}
+/* Only where hovering is a real gesture. On a touch device there is no hover
+   to reveal with, so the cluster stays visible — the correct guard is the
+   input type, not the viewport width (a desktop window narrowed to phone
+   width still has a pointer). */
+@media (hover: hover) and (pointer: fine) {
+  :is(#view-session-planner, #app-shell) .scene-element-controls { opacity: 0; }
+  :is(#view-session-planner, #app-shell) .scene-element-row:hover .scene-element-controls,
+  /* Keyboard parity: tabbing into any control reveals the cluster, so the
+     focus ring is never drawn on something invisible. */
+  :is(#view-session-planner, #app-shell) .scene-element-row:focus-within .scene-element-controls {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(#view-session-planner, #app-shell) .scene-element-controls { transition: none; }
 }
 
 /* =========================================================================
@@ -2085,7 +2165,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   margin-bottom: 8px;
 }
 :is(#view-session-planner, #app-shell) .scene-lookup-kicker {
-  font-family: var(--sp-font-mono); font-size: 10px; font-weight: 600;
+  font-family: var(--sp-font-mono); font-size: var(--sp-label-size); font-weight: var(--sp-label-weight);
   letter-spacing: var(--sp-mono-label-tracking); text-transform: uppercase;
   color: var(--sp-ink-muted);
 }
@@ -2383,7 +2463,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 /* Main column */
 :is(#view-session-planner, #app-shell) .rs-sensory { font-style: italic; font-size: 17px; line-height: 1.5; margin: 2px 0 8px; white-space: pre-line; }
 :is(#view-session-planner, #app-shell) .rs-h {
-  font-family: var(--sp-font-mono); font-size: 10px; font-weight: 600; letter-spacing: var(--sp-mono-label-tracking);
+  font-family: var(--sp-font-mono); font-size: var(--sp-label-size); font-weight: var(--sp-label-weight); letter-spacing: var(--sp-mono-label-tracking);
   text-transform: uppercase; color: var(--sp-accent-rust); margin: 14px 0 4px;
 }
 :is(#view-session-planner, #app-shell) .rs-main > .rs-h:first-child { margin-top: 2px; }
@@ -2554,7 +2634,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--sp-border-dashed);
 }
 :is(#view-session-planner, #app-shell) .scene-notes-strip-h {
-  font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: var(--sp-mono-label-tracking);
+  font-family: var(--sp-font-mono); font-size: var(--sp-label-size); font-weight: var(--sp-label-weight); letter-spacing: var(--sp-mono-label-tracking);
   text-transform: uppercase; color: var(--sp-accent-amber); margin-bottom: 4px;
 }
 :is(#view-session-planner, #app-shell) .scene-note-row {
@@ -2633,7 +2713,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 :is(#view-session-planner, #app-shell) .layout-lane--over { border-color: var(--sp-accent-teal); background: var(--sp-accent-teal-selected); }
 :is(#view-session-planner, #app-shell) .layout-lane--off { min-height: 64px; opacity: 0.85; }
 :is(#view-session-planner, #app-shell) .layout-lane-title {
-  font-family: var(--sp-font-mono); font-size: 9.5px; letter-spacing: var(--sp-mono-label-tracking); text-transform: uppercase;
+  font-family: var(--sp-font-mono); font-size: var(--sp-label-size); font-weight: var(--sp-label-weight); letter-spacing: var(--sp-mono-label-tracking); text-transform: uppercase;
   color: var(--sp-ink-muted); margin: 0 0 6px 2px;
 }
 :is(#view-session-planner, #app-shell) .layout-lane-list { display: grid; gap: 6px; }
@@ -2701,7 +2781,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 }
 :is(#view-session-planner, #app-shell) .scene-about-summary::-webkit-details-marker { display: none; }
 :is(#view-session-planner, #app-shell) .scene-about-summary-label {
-  font-family: var(--sp-font-mono); font-size: 9.5px; font-weight: 600; letter-spacing: var(--sp-mono-label-tracking);
+  font-family: var(--sp-font-mono); font-size: var(--sp-label-size); font-weight: var(--sp-label-weight); letter-spacing: var(--sp-mono-label-tracking);
   text-transform: uppercase; color: var(--sp-ink-muted); flex: none;
 }
 :is(#view-session-planner, #app-shell) .scene-about-summary-label::after { content: " ▸"; }
@@ -2710,9 +2790,12 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   font-size: 12px; color: var(--sp-ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
 }
 :is(#view-session-planner, #app-shell) .scene-about-place[open] .scene-about-summary-preview { display: none; }
+/* The "develop this place" nudge. Hardcoded, so it went near-invisible in dark
+   mode -- exactly when it matters most, since an undescribed place is the one
+   thing this band exists to flag. --sp-accent-amber has a dark variant. */
 :is(#view-session-planner, #app-shell) .scene-about-summary--empty .scene-about-summary-label,
 :is(#view-session-planner, #app-shell) .scene-about-summary--empty .scene-about-summary-preview {
-  color: oklch(0.52 0.10 65);
+  color: var(--sp-accent-amber);
 }
 :is(#view-session-planner, #app-shell) .scene-about-place .scene-place-desc-host { margin-top: 6px; }
 /* Inside the disclosure the summary is the section label — no divider
@@ -2728,13 +2811,13 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 :is(#view-session-planner, #app-shell) .scene-prep-with-rail { display: contents; }
 :is(#view-session-planner, #app-shell) .scene-layout-rail { display: none; }
 :is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-prep-with-rail {
-  display: flex; gap: 16px; align-items: flex-start;
+  display: flex; gap: var(--sp-rail-gap); align-items: flex-start;
 }
 :is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-prep-with-rail > .scene-elements-list {
   flex: 0 1 720px; min-width: 0; /* WS-G: Prep's exact measure -- rows never reflow when the rail opens */
 }
 :is(#view-session-planner, #app-shell) .scene-page[data-rail="open"] .scene-layout-rail {
-  display: block; width: 220px; flex: none; position: sticky; top: 8px;
+  display: block; width: var(--sp-rail-width); flex: none; position: sticky; top: 8px;
 }
 :is(#view-session-planner, #app-shell) .rail-lane {
   border: 1px dashed var(--sp-border-dashed); border-radius: var(--sp-radius-md);
@@ -2744,7 +2827,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   border-color: var(--sp-accent-teal); background: var(--sp-accent-teal-selected);
 }
 :is(#view-session-planner, #app-shell) .rail-lane-title {
-  font-family: var(--sp-font-mono); font-size: 9px; font-weight: 600; letter-spacing: var(--sp-mono-label-tracking);
+  font-family: var(--sp-font-mono); font-size: var(--sp-label-size); font-weight: var(--sp-label-weight); letter-spacing: var(--sp-mono-label-tracking);
   text-transform: uppercase; color: var(--sp-ink-muted); margin-bottom: 5px;
 }
 :is(#view-session-planner, #app-shell) .rail-lane-list { display: grid; gap: 4px; }
@@ -2763,7 +2846,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
 }
 :is(#view-session-planner, #app-shell) .rail-card-count {
-  font-family: var(--sp-font-mono); font-size: 9px; color: oklch(0.52 0.10 65); flex: none;
+  font-family: var(--sp-font-mono); font-size: 9px; color: var(--sp-accent-amber); flex: none;
 }
 :is(#view-session-planner, #app-shell) .rail-lane-empty {
   font-size: 11px; color: var(--sp-ink-muted); font-style: italic; padding: 2px 0;
@@ -2792,16 +2875,18 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 :is(#view-session-planner, #app-shell) .scene-run-row { display: contents; }
 :is(#view-session-planner, #app-shell) .scene-party-rail-host { display: none; }
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"][data-partyrail="open"] .scene-run-row {
-  display: flex; gap: 14px; align-items: flex-start;
+  display: flex; gap: var(--sp-rail-gap); align-items: flex-start;
 }
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"][data-partyrail="open"] .scene-run-spread-host {
   flex: 1 1 auto; min-width: 0;
 }
-/* 232px echoes the app shell's own rail width rather than inventing a third.
-   `position: relative` is the anchor the detail card's `right: 100%` resolves
-   against; NO overflow on either this host or the row, or the card is clipped. */
+/* --sp-rail-width/-gap: the ONE rail pair, shared with the Prep lanes rail and
+   the app shell's own (see the token's note). `position: relative` is the
+   anchor the detail card's `right: 100%` resolves against; NO overflow on
+   either this host or the row, or the card is clipped. */
 :is(#view-session-planner, #app-shell) .scene-page[data-mode="run"][data-partyrail="open"] .scene-party-rail-host {
-  display: block; flex: 0 0 232px; width: 232px; position: sticky; top: 8px;
+  display: block; flex: 0 0 var(--sp-rail-width); width: var(--sp-rail-width);
+  position: sticky; top: 8px;
 }
 :is(#view-session-planner, #app-shell) .party-rail {
   position: relative;
@@ -2813,19 +2898,21 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   padding: 8px 10px; border-bottom: 1px solid var(--sp-border-hairline);
 }
 :is(#view-session-planner, #app-shell) .party-rail-t {
-  font-family: var(--sp-font-mono); font-size: 10px; font-weight: 600;
+  font-family: var(--sp-font-mono); font-size: var(--sp-label-size); font-weight: var(--sp-label-weight);
   letter-spacing: var(--sp-mono-label-tracking); text-transform: uppercase;
   color: var(--sp-ink-muted);
 }
 /* Honest staleness. The index only re-exports while a GM client has the world
    open and nothing here can force it, so the age is stated, not hidden. */
 :is(#view-session-planner, #app-shell) .party-rail-asof {
-  font-family: var(--sp-font-mono); font-size: 9.5px; letter-spacing: 0.04em;
+  font-family: var(--sp-font-mono); font-size: 9.5px; letter-spacing: var(--sp-mono-label-tracking);
   color: var(--sp-ink-muted); cursor: help; white-space: nowrap;
 }
 :is(#view-session-planner, #app-shell) .party-rail-asof--stale { color: var(--sp-accent-amber); }
+/* Every other empty state on this page sits under a rule; this one floated. */
 :is(#view-session-planner, #app-shell) .party-rail-note {
   margin: 0; padding: 9px 10px; font-size: 12.5px; color: var(--sp-ink-secondary);
+  border-top: 1px solid var(--sp-border-hairline);
 }
 :is(#view-session-planner, #app-shell) .party-colhead {
   display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px;
@@ -2833,7 +2920,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 }
 :is(#view-session-planner, #app-shell) .party-colhead span {
   font-family: var(--sp-font-mono); font-size: 9px; font-weight: 600;
-  letter-spacing: 0.08em; text-transform: uppercase; color: var(--sp-ink-muted);
+  letter-spacing: var(--sp-mono-label-tracking); text-transform: uppercase; color: var(--sp-ink-muted);
   text-align: right;
 }
 :is(#view-session-planner, #app-shell) .party-colhead span:first-child { text-align: left; }
@@ -2849,6 +2936,20 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 :is(#view-session-planner, #app-shell) .party-seats li:last-child .party-seat { border-bottom: 0; }
 :is(#view-session-planner, #app-shell) .party-seat:hover { background: var(--sp-row-hover-bg); }
 :is(#view-session-planner, #app-shell) .party-seat[aria-expanded="true"] { background: var(--sp-row-active-bg); }
+/* The PINNED seat (beautification pass, 2026-10-07). `.party-seat--pinned` was
+   toggled in JS and had no rule anywhere in this file, so a pinned row was
+   pixel-identical to a merely hovered one — the headline gesture of the whole
+   feature rendered no state on the thing you clicked. It needs to differ from
+   hover, which already owns a background change, so the pin takes a left rule
+   in the teal accent plus the heavier name: "this one is held open", readable
+   at a glance across the rail while your eyes are on the table. */
+:is(#view-session-planner, #app-shell) .party-seat--pinned {
+  background: var(--sp-row-active-bg);
+  box-shadow: inset 2px 0 0 var(--sp-accent-teal);
+}
+:is(#view-session-planner, #app-shell) .party-seat--pinned .party-seat-n {
+  font-weight: 600; color: var(--sp-ink-heading);
+}
 :is(#view-session-planner, #app-shell) .party-seat:focus-visible {
   outline: 2px solid var(--sp-accent-teal); outline-offset: -2px;
 }
@@ -2867,7 +2968,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 }
 :is(#view-session-planner, #app-shell) .party-seat-sub {
   grid-column: 1 / -1; font-family: var(--sp-font-mono); font-size: 10px;
-  letter-spacing: 0.03em; color: var(--sp-ink-muted);
+  letter-spacing: var(--sp-mono-label-tracking); color: var(--sp-ink-muted);
 }
 /* The detail card opens INWARD (leftward, over the spread). Because the rail is
    pinned to the right edge of the scroller, a leftward card cannot overflow
@@ -2876,7 +2977,10 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   position: absolute; right: 100%; margin-right: 8px; width: 290px; z-index: 5;
   background: var(--sp-surface-card); border: 1px solid var(--sp-border-control);
   border-radius: var(--sp-radius-md); padding: 10px 12px;
-  box-shadow: 0 6px 20px oklch(0.26 0.015 60 / 0.18);
+  /* --sp-toast-shadow, not a second hand-rolled recipe: its sibling popover
+     (.scene-element-run-pop) already uses the token, and the README's token
+     table says shadows are the toast's alone. */
+  box-shadow: var(--sp-toast-shadow);
   max-height: 420px; overflow-y: auto;
 }
 :is(#view-session-planner, #app-shell) .party-d-name {
@@ -2888,12 +2992,13 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 }
 :is(#view-session-planner, #app-shell) .party-d-sec {
   margin: 9px 0 4px; font-family: var(--sp-font-mono); font-size: 9px; font-weight: 600;
-  letter-spacing: 0.09em; text-transform: uppercase; color: var(--sp-ink-muted);
+  letter-spacing: var(--sp-mono-label-tracking); text-transform: uppercase; color: var(--sp-ink-muted);
 }
 :is(#view-session-planner, #app-shell) .party-d-sub { text-transform: none; letter-spacing: 0; }
 :is(#view-session-planner, #app-shell) .party-saves { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; }
 :is(#view-session-planner, #app-shell) .party-saves div {
-  text-align: center; border: 1px solid var(--sp-border-hairline); border-radius: 2px; padding: 3px 0;
+  text-align: center; border: 1px solid var(--sp-border-hairline);
+  border-radius: var(--sp-radius-sm); padding: 3px 0;
 }
 :is(#view-session-planner, #app-shell) .party-saves b {
   display: block; font-family: var(--sp-font-mono); font-size: 8.5px; font-weight: 600;
@@ -2919,7 +3024,8 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 :is(#view-session-planner, #app-shell) .psk-x { color: var(--sp-accent-teal); font-size: 10px; }
 :is(#view-session-planner, #app-shell) .party-d-pin {
   margin: 8px 0 0; font-family: var(--sp-font-mono); font-size: 9px;
-  letter-spacing: 0.06em; text-transform: uppercase; color: var(--sp-accent-teal);
+  letter-spacing: var(--sp-mono-label-tracking); text-transform: uppercase;
+  color: var(--sp-accent-teal);
 }
 /* The caret sits in a fixed-width box so flipping it never changes the
    button's width — see the sub-bar stability rule above. */
@@ -3046,9 +3152,9 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   margin: 0 0 18px;
 }
 :is(#view-session-planner, #app-shell) .scene-stage-dressing-chip {
-  font-family: var(--sp-font-mono); font-size: 10.5px; letter-spacing: 0.02em;
+  font-family: var(--sp-font-mono); font-size: 10.5px; letter-spacing: var(--sp-mono-label-tracking);
   color: var(--sp-ink-muted); background: transparent;
-  border: 1px solid var(--sp-border-hairline); border-radius: 20px; padding: 2px 9px;
+  border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-pill); padding: 2px 9px;
   cursor: pointer; transition: box-shadow 0.1s ease, background-color 0.1s ease;
 }
 :is(#view-session-planner, #app-shell) .scene-stage-dressing-chip:hover {
@@ -3065,23 +3171,34 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   margin: 0 0 18px; font-family: var(--sp-font-ui); font-size: 13px;
 }
 :is(#view-session-planner, #app-shell) .scene-map-chip {
-  font-family: var(--sp-font-mono); font-size: 10.5px; letter-spacing: 0.02em;
+  font-family: var(--sp-font-mono); font-size: 10.5px; letter-spacing: var(--sp-mono-label-tracking);
   color: var(--sp-ink-muted); background: transparent;
-  border: 1px solid var(--sp-border-hairline); border-radius: 20px; padding: 2px 9px;
+  border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-pill); padding: 2px 9px;
 }
+/* Beautification pass (2026-10-07): both of these hardcoded a near-WHITE fill
+   with dark ink, so a linked map or track rendered as a glaring pale pill
+   inside an otherwise dark band. Mixed off the accent and the SURFACE token
+   instead, which inverts with the theme on its own -- a light tint on the
+   light ground, a dark tint on the dark one -- and keeps the green/amber
+   split that makes map-vs-music read apart at a glance. */
 :is(#view-session-planner, #app-shell) .scene-map-chip[data-has-map="true"] {
-  color: oklch(0.38 0.060 145); border-color: oklch(0.72 0.070 145);
-  background: oklch(0.955 0.020 145);
+  color: var(--sp-accent-accept);
+  border-color: color-mix(in srgb, var(--sp-accent-accept) 55%, var(--sp-border-control));
+  background: color-mix(in srgb, var(--sp-accent-accept) 14%, var(--sp-surface-card));
 }
 /* WS-E (2026-09-09): the music chip shares the map chip's shape; a linked
    track picks up an amber accent so map-vs-music reads apart at a glance. */
 :is(#view-session-planner, #app-shell) .scene-music-chip[data-has-music="true"] {
-  color: oklch(0.40 0.075 75); border-color: oklch(0.74 0.090 75);
-  background: oklch(0.96 0.025 80);
+  color: var(--sp-accent-amber);
+  border-color: color-mix(in srgb, var(--sp-accent-amber) 55%, var(--sp-border-control));
+  background: color-mix(in srgb, var(--sp-accent-amber) 14%, var(--sp-surface-card));
 }
 :is(#view-session-planner, #app-shell) .scene-map-link-btn {
   border: none; background: transparent; padding: 0; cursor: pointer;
-  font: inherit; font-size: 12px; color: var(--sp-accent, oklch(0.50 0.075 185));
+  /* --sp-accent is never defined anywhere in this file, so this always
+     resolved to the light-mode literal in its own fallback. The real token is
+     --sp-accent-teal, which has a dark variant. */
+  font: inherit; font-size: 12px; color: var(--sp-accent-teal);
   text-decoration: underline dotted; text-underline-offset: 3px;
 }
 :is(#view-session-planner, #app-shell) .scene-map-picker {
@@ -3207,7 +3324,8 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
 }
 :is(#view-session-planner, #app-shell) .from-graph-picker-kicker {
-  font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: 0.09em;
+  font-family: var(--sp-font-mono); font-size: var(--sp-label-size); font-weight: var(--sp-label-weight);
+  letter-spacing: var(--sp-mono-label-tracking);
   text-transform: uppercase; color: var(--sp-ink-muted); flex: 1;
 }
 :is(#view-session-planner, #app-shell) .from-graph-picker-close-btn { color: var(--sp-ink-muted); }
@@ -3710,12 +3828,19 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 }
 #app-shell .planner-runsheet-delete-confirm .btn { margin-right: 8px; }
 
-/* --- designer scene-page sub-root labels (README §C.1 / §C.6) --- */
-.scene-place-label {
-  font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: 0.11em; text-transform: uppercase;
-  color: oklch(0.50 0.075 185); margin-bottom: 9px;
+/* --- designer scene-page sub-root labels (README §C.1 / §C.6) ---
+   Beautification pass (2026-10-07): these two were UNSCOPED (no
+   `:is(#view-session-planner, #app-shell)` prefix) and the label hardcoded its
+   teal, even though --sp-place-label exists with a dark variant and
+   .scene-place-grid-label -- the same teal label, forty pixels below it inside
+   the same band's disclosure -- already uses it. In dark mode the two rendered
+   at different lightnesses. Scoped and tokenised, tracking included. */
+:is(#view-session-planner, #app-shell) .scene-place-label {
+  font-family: var(--sp-font-mono); font-size: 10px;
+  letter-spacing: var(--sp-mono-label-tracking); text-transform: uppercase;
+  color: var(--sp-place-label); margin-bottom: 9px;
 }
-.scene-read-aloud-section { margin-bottom: 30px; }
+:is(#view-session-planner, #app-shell) .scene-read-aloud-section { margin-bottom: 30px; }
 
 #app-shell .world-surface-placeholder { color: var(--sp-ink-muted); font-size: 14px; }
 

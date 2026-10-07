@@ -210,9 +210,29 @@ test("click pins the card, the pin survives a poll rebuild, and Escape unpins", 
     await seats(page).first().click();
     await detail(page).waitFor({ state: "visible" });
     assert.match(await detail(page).innerText(), /pinned/i, "the card says it is pinned");
+
+    // Beautification pass (2026-10-07): the ROW must show it too. `.party-seat
+    // --pinned` was toggled in JS and had no CSS rule anywhere, so a pinned
+    // seat was pixel-identical to a merely hovered one -- the feature's
+    // headline gesture rendered no state on the thing you clicked. Asserted
+    // against the HOVERED appearance specifically, since matching hover is the
+    // exact bug: a rule that only repeated hover's background would pass a
+    // naive "has a background" check.
+    const boxOf = (n) => seats(page).nth(n).evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { shadow: cs.boxShadow, bg: cs.backgroundColor };
+    });
+    const pinnedBox = await boxOf(0);
+
     // Pin wins over hover: hovering the other seat must not steal the card.
     await seats(page).nth(1).hover();
     await settle(page);
+    const hoveredBox = await boxOf(1);
+    assert.notDeepEqual(
+      pinnedBox, hoveredBox,
+      "a pinned seat must not look identical to a hovered one"
+    );
+    assert.notEqual(pinnedBox.shadow, "none", "the pinned seat carries its own rule");
     assert.match(await detail(page).innerText(), /Hawkeye Vance/, "hovering another seat must not steal a pinned card");
 
     // Change the scene so the 3s run-version poll rebuilds the spread. The rail

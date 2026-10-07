@@ -38,7 +38,13 @@ const ROWS = {
     { name: "Beat — 1", column: "main", role: "beat", fields: {} },
     { name: "Beat — 2", column: "main", role: "beat", fields: {} }
   ],
-  exits:    { name: "→ Where this leads", column: "main", role: "exits", fields: { gives: EXIT_TEMPLATE, means: EXIT_TEMPLATE_2, secret: EXIT_TEMPLATE_3 } },
+  // The third exit used to be seeded into `secret` (beautification pass,
+  // 2026-10-07). That taught the GM to type exits into the Secret field, and
+  // the Run spread pooled `secret` in with the public exit lines -- so a real
+  // secret typed there rendered to the table with no secret treatment at all.
+  // `looks` is an ordinary exit slot; the secret field is now left alone, and
+  // Prep no longer offers it on an exits element.
+  exits:    { name: "→ Where this leads", column: "main", role: "exits", fields: { gives: EXIT_TEMPLATE, means: EXIT_TEMPLATE_2, looks: EXIT_TEMPLATE_3 } },
   gm:       { name: "GM note", column: "side", role: "gm", fields: {} },
   block:    { name: "Enemies", column: "side", role: "block", fields: {} },
   sketch:   { name: "Sketch", column: "side", role: "sketch", fields: {} }
