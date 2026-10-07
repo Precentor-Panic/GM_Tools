@@ -1,0 +1,138 @@
+#!/usr/bin/env node
+/**
+ * One command to get a world's staged scenes (and the actors their trays need)
+ * into Foundry, safely. See wf-mcp-server/lib/foundry-push-orchestrator.mjs for
+ * why each guard exists -- every one of them is a failure this project actually
+ * hit pushing session three by hand.
+ *
+ *   node bin/foundry-push --world aureus --plan plan_x [--plan plan_y]
+ *   node bin/foundry-push --world aureus --verify          # report only
+ *   node bin/foundry-push --world aureus --plan plan_x --dry-run
+ *
+ * Requires a connected GM client (review-ui/gm-client.mjs). Never deletes
+ * anything: the destructive weekly swap stays its own confirm-gated route.
+ */
+import { withPushLock, clientLooksLive, pushOne, verifyWorld } from "../wf-mcp-server/lib/foundry-push-orchestrator.mjs";
+import { resolveDataDir } from "../wf-mcp-server/lib/data-dir.mjs";
+
+const argv = process.argv.slice(2);
+const opt = (name, dflt = null) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : dflt; };
+const all = (name) => argv.reduce((acc, a, i) => (a === name ? [...acc, argv[i + 1]] : acc), []);
+const flag = (name) => argv.includes(name);
+
+const world = opt("--world");
+if (!world) { console.error("--world is required"); process.exit(2); }
+const dataDir = opt("--data-dir") || resolveDataDir();
+const base = opt("--base", "http://localhost:8787");
+const planIds = all("--plan");
+const dryRun = flag("--dry-run");
+const force = flag("--force");
+
+const api = async (path, body) => {
+  const res = await fetch(base + path, body
+    ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ world, ...body }) }
+    : undefined);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || `${res.status} ${res.statusText}`);
+  return json;
+};
+
+function report(title, rows) {
+  console.log(`\n${title}`);
+  for (const r of rows) {
+    const mark = r.status === "ok" ? "  ok     " : r.status === "skipped" ? "  skip   " : "  FAILED ";
+    console.log(`${mark}${r.label.slice(0, 44).padEnd(46)}${r.ref ?? ""}${r.reason ? "  " + r.reason : ""}`);
+  }
+}
+
+function printVerify(v) {
+  console.log(`\nIn Foundry as of ${v.exportedAt ?? "(no index)"}:`);
+  for (const s of v.scenes) console.log(`  ${String(s.tokens).padStart(3)} tokens  ${s.name}`);
+  if (v.duplicates.length) {
+    console.log("\nDUPLICATE SCENE NAMES -- two documents share a name, which usually means a lost ref:");
+    for (const d of v.duplicates) console.log(`  ${d.name}: ${d.uuids.join(", ")}`);
+  }
+  const empty = v.scenes.filter((s) => s.tokens === 0 && !/^Foundry Virtual Tabletop$/.test(s.name));
+  if (empty.length) {
+    console.log("\nScenes with NO tokens (expected for a map-only scene, otherwise a lost ref):");
+    for (const s of empty) console.log(`  ${s.name}`);
+  }
+}
+
+const live = clientLooksLive(dataDir, world);
+console.log(`GM client: ${live.live ? "connected" : "possibly not connected -- " + live.reason}`);
+if (flag("--verify")) { printVerify(verifyWorld(dataDir, world)); process.exit(0); }
+if (!live.live) {
+  // Advisory, not a gate: the client only re-exports the index on connect and
+  // after applying ops, so an idle-but-connected client looks exactly like a
+  // missing one. Proceed -- a genuinely absent client surfaces as the first
+  // op's drain timeout, with this same reason attached.
+  console.log("Proceeding anyway; if no client is really there the first step will time out.");
+  console.log("To start one:  cd review-ui && node --env-file-if-exists=../.env gm-client.mjs --hold 3000");
+}
+if (!planIds.length) { console.error("--plan <planId> is required (repeatable), or use --verify"); process.exit(2); }
+
+await withPushLock(dataDir, world, async () => {
+  // Collect the staged scenes of every named plan, and the creature entries
+  // their trays reference. Actors go FIRST: Foundry copies a prototype token's
+  // art at the moment the token is created, so a face that lands after its
+  // scene never reaches the table.
+  const scenes = [];
+  for (const planId of planIds) {
+    const { plan } = await api(`/api/scene-planning/plans/${planId}?world=${world}`);
+    for (const sceneId of plan.sceneIds) {
+      const { scene } = await api(`/api/session-planner/scenes/${sceneId}?world=${world}`);
+      if (scene.stagedForFoundry) scenes.push(scene);
+    }
+  }
+  const creatureIds = new Set();
+  for (const s of scenes) {
+    const tray = await api(`/api/scene-planning/scenes/${s.id}/tray?world=${world}`);
+    for (const r of tray.roster ?? []) if (r.kind === "creature") creatureIds.add(r.id);
+  }
+  const { entries } = await api(`/api/combat-planning/bestiary?world=${world}`);
+  const byId = new Map((entries ?? []).map((e) => [e.id, e]));
+
+  console.log(`\n${scenes.length} staged scene(s), ${creatureIds.size} creature(s) on their trays.`);
+  if (dryRun) {
+    for (const id of creatureIds) {
+      const e = byId.get(id);
+      console.log(`  actor  ${(e?.rawFields?.name ?? id).slice(0, 40).padEnd(42)}${e?.foundryActorRef ? "already pushed" : "WOULD PUSH"}`);
+    }
+    for (const s of scenes) console.log(`  scene  ${s.name.slice(0, 40).padEnd(42)}${s.foundrySceneRef ? "already pushed" : "WOULD PUSH"}`);
+    return;
+  }
+
+  const { setBestiaryFoundryActorRef } = await import("../combat-planning/bestiary-store.mjs");
+  const { markScenePushed } = await import("../session-planner/scenes.mjs");
+
+  const actorRows = [];
+  for (const id of creatureIds) {
+    const e = byId.get(id);
+    actorRows.push(await pushOne({
+      dataDir, world, force,
+      label: e?.rawFields?.name ?? id,
+      alreadyPushed: Boolean(e?.foundryActorRef),
+      queueFn: () => api("/api/foundry/push-bestiary-entry", { entryId: id }),
+      reconcileFn: (ref) => { setBestiaryFoundryActorRef(id, ref); }
+    }));
+  }
+  report("Actors", actorRows);
+
+  const sceneRows = [];
+  for (const s of scenes) {
+    sceneRows.push(await pushOne({
+      dataDir, world, force,
+      label: s.name,
+      alreadyPushed: Boolean(s.foundrySceneRef),
+      queueFn: () => api("/api/foundry/push-scene", { sceneId: s.id }),
+      reconcileFn: (ref) => { markScenePushed(world, s.id, { foundrySceneRef: ref, lastPushedAt: new Date().toISOString() }); }
+    }));
+  }
+  report("Scenes", sceneRows);
+
+  const failed = [...actorRows, ...sceneRows].filter((r) => r.status === "failed");
+  printVerify(verifyWorld(dataDir, world));
+  if (failed.length) { console.error(`\n${failed.length} step(s) failed -- see above. Re-run to retry; already-pushed records are skipped.`); process.exit(1); }
+  console.log("\nDone. Re-run with --verify after the client re-exports the index to confirm token counts.");
+});

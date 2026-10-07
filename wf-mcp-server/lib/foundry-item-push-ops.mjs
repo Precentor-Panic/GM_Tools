@@ -112,6 +112,8 @@ import { getRawPlutoniumEntry } from "../../combat-planning/plutonium-source.mjs
 import { parsePlutoniumProvenance } from "../../combat-planning/plutonium-monster-fields.mjs";
 import { writeFoundryOps, makeOpId } from "./foundry-ops.mjs";
 import { foundryResultsPath } from "./snapshot.mjs";
+import { getScene } from "../../session-planner/scenes.mjs";
+import { getSceneTray } from "../../session-planner/scene-tray.mjs";
 
 /**
  * PURE. Parses the "SOURCE[ pPAGE] via Plutonium" provenance line the
@@ -538,10 +540,76 @@ export async function pushBestiaryTokenArtToFoundry(dir, entryId, { world } = {}
     );
   }
   const opId = opts.makeOpId ? opts.makeOpId() : makeOpId();
-  const patch = { img: entry.tokenImg, "prototypeToken.texture.src": entry.tokenImg };
+  // Both the plain texture AND the dynamic token ring's subject (2026-10-07).
+  // Foundry draws the ring itself and reads its artwork from
+  // `ring.subject.texture`, falling back to `texture.src` only when the subject
+  // is unset -- and Plutonium's importer switches the ring ON with its subject
+  // pointed at stock 5etools art. Writing texture.src alone therefore changed
+  // nothing visible on any imported NPC. Scale 1 because our faces are already
+  // a centred square crop with a circular alpha, the same shape the stock
+  // subjects assume.
+  const patch = {
+    img: entry.tokenImg,
+    "prototypeToken.texture.src": entry.tokenImg,
+    "prototypeToken.ring.enabled": true,
+    "prototypeToken.ring.subject.texture": entry.tokenImg,
+    "prototypeToken.ring.subject.scale": 1
+  };
   const outcome = await writeFoundryOps(dir, world, [{ opId, kind: "update_actor", data: { actorUuid: entry.foundryActorRef, patch } }], opts);
   if (outcome.status === "queued") return { status: "queued", entryId, opId, note: outcome.note };
   const result = outcome.results.find((r) => r.opId === opId);
   if (!result?.ok) return { status: "applied", entryId, opId, ok: false, error: result?.error ?? "no result for this op" };
   return { status: "applied", entryId, opId, ok: true, foundryUuid: result.foundryUuid, tokenImg: entry.tokenImg };
+}
+
+/**
+ * Repair the appearance of tokens ALREADY PLACED on a scene (2026-10-07).
+ *
+ * Fixing an actor's prototype does nothing for tokens already on a map --
+ * a token carries its own copy of the texture and ring config, cloned at
+ * creation. Before the v7 `update_token` op the only remedy was to delete the
+ * scene and recreate it, which destroys manual placement, starting views and
+ * any token the GM added by hand. On a scene the GM has dressed, that is not an
+ * acceptable trade, so this patches in place instead.
+ *
+ * One op per distinct creature on the scene's tray that has BOTH a Foundry
+ * actor and an accepted face. Party heroes are deliberately untouched: a PC's
+ * token art is the player's, never ours.
+ *
+ * @returns {Promise<{status:string, sceneId:string, ops:object[]}>}
+ */
+export async function refreshSceneTokenArt(dir, world, sceneId, opts = {}) {
+  const scene = getScene(world, sceneId);
+  const ref = typeof scene.foundrySceneRef === "string" ? scene.foundrySceneRef : scene.foundrySceneRef?.uuid;
+  if (!ref) {
+    throw new Error(`refreshSceneTokenArt: scene "${sceneId}" has no Foundry scene to refresh (push it first).`);
+  }
+  const tray = getSceneTray(world, sceneId);
+  const roster = Array.isArray(tray.roster) ? tray.roster : [];
+
+  const ops = [];
+  const skipped = [];
+  for (const row of roster.filter((r) => r.kind === "creature")) {
+    let entry;
+    try { entry = getBestiaryEntry(row.id); } catch { skipped.push({ id: row.id, reason: "not on the shelf" }); continue; }
+    if (!entry.foundryActorRef) { skipped.push({ id: row.id, reason: "no Foundry actor" }); continue; }
+    if (!entry.tokenImg) { skipped.push({ id: row.id, reason: "no accepted face" }); continue; }
+    ops.push({
+      opId: opts.makeOpId ? opts.makeOpId() : makeOpId(),
+      kind: "update_token",
+      data: {
+        sceneUuid: ref,
+        actorUuid: entry.foundryActorRef,
+        patch: {
+          "texture.src": entry.tokenImg,
+          "ring.enabled": true,
+          "ring.subject.texture": entry.tokenImg,
+          "ring.subject.scale": 1
+        }
+      }
+    });
+  }
+  if (!ops.length) return { status: "noop", sceneId, ops: [], skipped };
+  const outcome = await writeFoundryOps(dir, world, ops, opts);
+  return { status: outcome.status, sceneId, ops, skipped, results: outcome.results ?? null, note: outcome.note };
 }

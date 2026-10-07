@@ -507,7 +507,7 @@ await test("pushBestiaryEntryToFoundry: ok:false leaves foundryActorRef null; qu
   assert.equal(after.pendingPush, null);
 });
 
-await test("WS-F pushBestiaryTokenArtToFoundry: one update_actor op with img + prototypeToken.texture.src from the ACCEPTED face; refuses without an actor ref, without a face, or with only a candidate", async () => {
+await test("WS-F pushBestiaryTokenArtToFoundry: one update_actor op with img + texture.src + the v7 ring keys from the ACCEPTED face; refuses without an actor ref, without a face, or with only a candidate", async () => {
   const WORLD = "token-art-push-world";
   const entry = saveBestiaryEntry({ rawFields: { name: "The Ledger-Man" }, sourceText: "hand" });
   await assert.rejects(() => pushBestiaryTokenArtToFoundry(dataDir, entry.id, { world: WORLD }), /no linked Foundry actor/);
@@ -533,7 +533,18 @@ await test("WS-F pushBestiaryTokenArtToFoundry: one update_actor op with img + p
   assert.deepEqual(captured[0], {
     opId: "op_face",
     kind: "update_actor",
-    data: { actorUuid: "Actor.ledger", patch: { img: "gm-tools/tokens/w/the-ledger-man.webp", "prototypeToken.texture.src": "gm-tools/tokens/w/the-ledger-man.webp" } }
+    // v7 (2026-10-07): the ring keys ride along. Foundry draws the dynamic
+    // token ring itself and takes its artwork from ring.subject.texture, so
+    // writing texture.src alone left every ring-enabled NPC (which is every
+    // Plutonium import) showing stock art on the canvas while the actor data
+    // looked correct.
+    data: { actorUuid: "Actor.ledger", patch: {
+      img: "gm-tools/tokens/w/the-ledger-man.webp",
+      "prototypeToken.texture.src": "gm-tools/tokens/w/the-ledger-man.webp",
+      "prototypeToken.ring.enabled": true,
+      "prototypeToken.ring.subject.texture": "gm-tools/tokens/w/the-ledger-man.webp",
+      "prototypeToken.ring.subject.scale": 1
+    } }
   });
   // The candidate is untouched by a push -- it is the GM's to accept or reject.
   assert.equal(getBestiaryEntry(entry.id).tokenImgCandidate, "gm-tools/tokens/w/the-ledger-man.candidate.webp");

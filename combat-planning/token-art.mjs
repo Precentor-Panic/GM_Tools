@@ -37,7 +37,7 @@
  * call) and `postprocess` (the crop/encode; `null` skips it).
  */
 
-import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, resolve, sep } from "node:path";
 import { execFileSync } from "node:child_process";
 import {
@@ -134,18 +134,66 @@ export function buildTokenArtPrompt({ name, looks, avoid } = {}) {
  * or fails (the caller decides whether to fall back).
  */
 export function convertToSquareWebp(inputAbs, outputAbs, { size = TOKEN_ART_SIZE } = {}) {
-  const script =
-    "import sys\n" +
-    "from PIL import Image\n" +
-    "src, dst, size = sys.argv[1], sys.argv[2], int(sys.argv[3])\n" +
-    "im = Image.open(src).convert('RGBA')\n" +
-    "w, h = im.size\n" +
-    "side = min(w, h)\n" +
-    "left, top = (w - side) // 2, (h - side) // 2\n" +
-    "im = im.crop((left, top, left + side, top + side)).resize((size, size), Image.LANCZOS)\n" +
-    "im.save(dst, 'WEBP', quality=88, method=6)\n";
-  execFileSync("python3", ["-c", script, inputAbs, outputAbs, String(size)], { stdio: ["ignore", "ignore", "pipe"] });
+  execFileSync("python3", ["-c", MASK_SCRIPT, inputAbs, outputAbs, String(size)], { stdio: ["ignore", "ignore", "pipe"] });
   return outputAbs;
+}
+
+/**
+ * Centre-crop to a square, then punch a CIRCULAR ALPHA MASK through it.
+ *
+ * The mask is the whole reason this isn't a plain square crop (2026-10-07).
+ * Foundry's dynamic token ring draws the frame and background itself and
+ * expects its `subject` texture to be the character art on TRANSPARENT ground;
+ * handed an opaque square it renders the square, which is exactly the "tokens
+ * are square boxes on the canvas" the GM reported. A circular-alpha image is
+ * also correct with the ring switched OFF -- it simply reads as a round token
+ * -- so one file serves both `texture.src` and `ring.subject.texture` and there
+ * is no second asset to keep in sync.
+ *
+ * The 1px antialiased edge (supersample at 4x, then LANCZOS down) matters at
+ * table zoom: a hard-thresholded alpha reads as a jagged cut-out against the
+ * ring.
+ */
+const MASK_SCRIPT =
+  "import sys\n" +
+  "from PIL import Image, ImageDraw\n" +
+  "src, dst, size = sys.argv[1], sys.argv[2], int(sys.argv[3])\n" +
+  "im = Image.open(src).convert('RGBA')\n" +
+  "w, h = im.size\n" +
+  "side = min(w, h)\n" +
+  "left, top = (w - side) // 2, (h - side) // 2\n" +
+  "im = im.crop((left, top, left + side, top + side)).resize((size, size), Image.LANCZOS)\n" +
+  // Supersampled circle -> antialiased edge. 'L' mask multiplied into any alpha
+  // the source already had, so art that arrives with transparency keeps it.
+  "ss = 4\n" +
+  "mask = Image.new('L', (size * ss, size * ss), 0)\n" +
+  "ImageDraw.Draw(mask).ellipse((0, 0, size * ss - 1, size * ss - 1), fill=255)\n" +
+  "mask = mask.resize((size, size), Image.LANCZOS)\n" +
+  "existing = im.split()[3]\n" +
+  "from PIL import ImageChops\n" +
+  "im.putalpha(ImageChops.multiply(existing, mask))\n" +
+  "im.save(dst, 'WEBP', quality=88, method=6, lossless=False)\n";
+
+/**
+ * Re-mask a token-art file that is already on disk, in place.
+ *
+ * Needed because the circular mask arrived after ~24 faces had already been
+ * generated and accepted; re-running Gemini for all of them would cost money
+ * and change artwork the GM has already approved. Keeps a `.orig` copy the
+ * first time it touches a file so a bad mask is reversible without
+ * regenerating.
+ *
+ * @param {string} absPath  an existing token-art file under the Foundry data dir
+ * @returns {{path:string, backedUp:boolean, skipped?:string}}
+ */
+export function remaskTokenArt(absPath, { size = TOKEN_ART_SIZE } = {}) {
+  if (!existsSync(absPath)) return { path: absPath, backedUp: false, skipped: "file not found" };
+  const orig = `${absPath}.orig`;
+  let backedUp = false;
+  if (!existsSync(orig)) { copyFileSync(absPath, orig); backedUp = true; }
+  // Always mask from the ORIGINAL, so re-running never compounds the mask.
+  execFileSync("python3", ["-c", MASK_SCRIPT, orig, absPath, String(size)], { stdio: ["ignore", "ignore", "pipe"] });
+  return { path: absPath, backedUp };
 }
 
 const MIME_EXT = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
