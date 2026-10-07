@@ -12,7 +12,7 @@ import { join } from "node:path";
 
 const {
   withPushLock, clientLooksLive, awaitQueueDrain, awaitOpResult, pushOne, verifyWorld, OP_TIMEOUT_MS
-} = await import("../wf-mcp-server/lib/foundry-push-orchestrator.mjs");
+} = await import("../lib/foundry-push-orchestrator.mjs");
 
 const WORLD = "orch-test-world";
 

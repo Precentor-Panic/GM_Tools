@@ -12,7 +12,7 @@
  * Requires a connected GM client (review-ui/gm-client.mjs). Never deletes
  * anything: the destructive weekly swap stays its own confirm-gated route.
  */
-import { withPushLock, clientLooksLive, pushOne, verifyWorld } from "../wf-mcp-server/lib/foundry-push-orchestrator.mjs";
+import { withPushLock, clientLooksLive, pushOne, verifyWorld, awaitQueueDrain } from "../wf-mcp-server/lib/foundry-push-orchestrator.mjs";
 import { resolveDataDir } from "../wf-mcp-server/lib/data-dir.mjs";
 
 const argv = process.argv.slice(2);
@@ -95,43 +95,144 @@ await withPushLock(dataDir, world, async () => {
 
   console.log(`\n${scenes.length} staged scene(s), ${creatureIds.size} creature(s) on their trays.`);
   if (dryRun) {
+    // The dry run says what the apply will DO, step for step, in the same
+    // order -- including the face state, which is the thing most likely to be
+    // wrong (an unaccepted candidate is invisible to every push) and was not
+    // reported at all before.
     for (const id of creatureIds) {
       const e = byId.get(id);
-      console.log(`  actor  ${(e?.rawFields?.name ?? id).slice(0, 40).padEnd(42)}${e?.foundryActorRef ? "already pushed" : "WOULD PUSH"}`);
+      const name = (e?.rawFields?.name ?? id).slice(0, 36).padEnd(38);
+      const face = e?.tokenImg ? "face: push" : e?.tokenImgCandidate ? "face: CANDIDATE NOT ACCEPTED" : "face: none";
+      console.log(`  actor  ${name}${e?.foundryActorRef ? "exists" : "WOULD CREATE"}   ${face}`);
     }
-    for (const s of scenes) console.log(`  scene  ${s.name.slice(0, 40).padEnd(42)}${s.foundrySceneRef ? "already pushed" : "WOULD PUSH"}`);
+    for (const s of scenes) {
+      const name = s.name.slice(0, 36).padEnd(38);
+      console.log(`  scene  ${name}${s.foundrySceneRef ? "exists  WOULD REFRESH TOKENS IN PLACE" : "WOULD CREATE (map, music, tokens)"}`);
+    }
+    console.log("\nNothing was written. Re-run without --dry-run to apply.");
     return;
   }
 
   const { setBestiaryFoundryActorRef } = await import("../combat-planning/bestiary-store.mjs");
-  const { markScenePushed } = await import("../session-planner/scenes.mjs");
 
+  // ACTORS FIRST, THEN FACES, THEN SCENES. Foundry copies a prototype token's
+  // art at the moment a token is CREATED, so a face that lands after its
+  // scene never reaches the table -- which is how six NPCs ended up as blank
+  // boxes on session three's maps.
   const actorRows = [];
   for (const id of creatureIds) {
     const e = byId.get(id);
+    const already = Boolean(e?.foundryActorRef);
+    // `--force` never re-creates an actor. The route refuses an
+    // already-pushed entry and `pushOne` surfaced that refusal as a hard
+    // FAILURE, which made --force unusable on any real second run. Creating
+    // a second actor would be the wrong repair anyway: it orphans every
+    // token already pointing at the first. The thing worth re-sending for an
+    // existing actor is its FACE, and that happens in the next loop.
     actorRows.push(await pushOne({
-      dataDir, world, force,
+      dataDir, world, force: false,
       label: e?.rawFields?.name ?? id,
-      alreadyPushed: Boolean(e?.foundryActorRef),
+      alreadyPushed: already,
       queueFn: () => api("/api/foundry/push-bestiary-entry", { entryId: id }),
       reconcileFn: (ref) => { setBestiaryFoundryActorRef(id, ref); }
     }));
   }
   report("Actors", actorRows);
 
+  // Faces. Only for a row that has BOTH an actor and an accepted face; a
+  // candidate nobody has accepted is invisible to every push by design.
+  // Idempotent and cheap, so it is re-sent every run rather than tracked:
+  // the patch is the same five keys either way, and the failure this guards
+  // against (art pushed after its scene) is far worse than a redundant op.
+  const faceRows = [];
+  for (const id of creatureIds) {
+    const e = byId.get(id);
+    const name = e?.rawFields?.name ?? id;
+    if (!e?.foundryActorRef) { faceRows.push({ label: name, status: "skipped", reason: "no Foundry actor yet" }); continue; }
+    if (!e?.tokenImg) {
+      faceRows.push({
+        label: name,
+        status: "skipped",
+        reason: e?.tokenImgCandidate ? "a generated face is waiting to be ACCEPTED in the Library" : "no face"
+      });
+      continue;
+    }
+    faceRows.push(await pushOne({
+      dataDir, world, force: true, // the face is a patch; re-sending is the point
+      label: name,
+      alreadyPushed: false,
+      queueFn: () => api("/api/foundry/push-bestiary-token-art", { entryId: id })
+    }));
+  }
+  report("Faces", faceRows);
+
+  // SCENES GO THROUGH THE COMPOSER, ONE AT A TIME (push round, 2026-10-07).
+  //
+  // This used to call `/api/foundry/push-scene`, which is a bare
+  // map-and-music path that composes NO token ops -- the direct cause of the
+  // eight empty scenes session three landed with. `flush-scenes` runs
+  // `composeSceneOps` via `flushDirtyStagedScenes`, which is the only path
+  // that carries a tray.
+  //
+  // It also reconciles and records `lastPushedAt` itself, from the
+  // compose-time snapshot rather than the wall clock -- the old wall-clock
+  // stamp here re-introduced the very race the flush is careful to avoid: an
+  // edit landing between compose and stamp was marked as already pushed.
+  // So there is no reconcileFn to write here, and pushOne is not the right
+  // shape for it either.
   const sceneRows = [];
   for (const s of scenes) {
-    sceneRows.push(await pushOne({
-      dataDir, world, force,
-      label: s.name,
-      alreadyPushed: Boolean(s.foundrySceneRef),
-      queueFn: () => api("/api/foundry/push-scene", { sceneId: s.id }),
-      reconcileFn: (ref) => { markScenePushed(world, s.id, { foundrySceneRef: ref, lastPushedAt: new Date().toISOString() }); }
-    }));
+    const label = s.name;
+    if (s.foundrySceneRef && !force) {
+      // ALREADY IN FOUNDRY. Do not re-create it -- Russell's standing rule is
+      // that a scene he has placed tokens on and set a starting view for is
+      // never deleted or recreated. Refresh its token art in place instead,
+      // which is what the `update_token` op exists for.
+      try {
+        const r = await api("/api/foundry/refresh-scene-tokens", { sceneId: s.id });
+        const n = (r.ops ?? []).length;
+        sceneRows.push({
+          label,
+          status: r.status === "queued" ? "failed" : "ok",
+          ref: s.foundrySceneRef,
+          reason: r.status === "queued"
+            ? `token refresh queued, not confirmed — ${r.note ?? "no live client?"}`
+            : n ? `in place: refreshed ${n} token${n === 1 ? "" : "s"}` : "in place: nothing to refresh"
+        });
+      } catch (err) {
+        sceneRows.push({ label, status: "failed", ref: s.foundrySceneRef, reason: `token refresh failed: ${String(err?.message ?? err).slice(0, 140)}` });
+      }
+      continue;
+    }
+    if (!(await awaitQueueDrain(dataDir, world))) {
+      sceneRows.push({ label, status: "failed", reason: "the ops queue never drained before this scene" });
+      continue;
+    }
+    try {
+      const out = await api("/api/foundry/flush-scenes", { sceneIds: [s.id] });
+      const skipped = (out.skipped ?? []).filter((x) => x.sceneId === s.id);
+      if (out.queued) {
+        sceneRows.push({ label, status: "failed", reason: `queued, not confirmed — ${out.note ?? "no live client?"}` });
+      } else if (out.flushed === 0) {
+        sceneRows.push({ label, status: "skipped", reason: "not dirty — already matches what Foundry holds" });
+      } else {
+        const after = await api(`/api/session-planner/scenes/${s.id}?world=${world}`);
+        sceneRows.push({
+          label,
+          status: after.scene?.foundrySceneRef ? "ok" : "failed",
+          ref: after.scene?.foundrySceneRef ?? null,
+          reason: after.scene?.foundrySceneRef
+            ? (skipped.length ? `${skipped.length} tray row(s) not eligible for a token` : undefined)
+            : "the flush reported no error but no ref was written"
+        });
+      }
+    } catch (err) {
+      sceneRows.push({ label, status: "failed", reason: String(err?.message ?? err).slice(0, 200) });
+    }
   }
   report("Scenes", sceneRows);
 
-  const failed = [...actorRows, ...sceneRows].filter((r) => r.status === "failed");
+  const failed = [...actorRows, ...faceRows, ...sceneRows].filter((r) => r.status === "failed");
   printVerify(verifyWorld(dataDir, world));
   if (failed.length) { console.error(`\n${failed.length} step(s) failed -- see above. Re-run to retry; already-pushed records are skipped.`); process.exit(1); }
   console.log("\nDone. Re-run with --verify after the client re-exports the index to confirm token counts.");

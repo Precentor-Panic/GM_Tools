@@ -30,6 +30,27 @@
  *      skipping ones already pushed. -> every step skips a record that already
  *      carries a ref unless `force` is set.
  *
+ * PUSH ROUND (2026-10-07) closed three more, found by reading the code rather
+ * than by losing another evening to them:
+ *
+ *   6. `pushOne` RACED THE ROUTE IT WAS WAITING ON. Every push route polls
+ *      the bridge itself, and `writeFoundryOps` deletes its own batch's
+ *      results before returning them -- so the file poll below looked for
+ *      something already consumed, waited out the full ten-minute budget and
+ *      reported a FAILURE for a push that had worked. The worst failure mode
+ *      a push tool can have, because the obvious response is to run it again
+ *      and create a duplicate. The route's own answer is now used directly;
+ *      the file poll is the `queued` fallback only.
+ *   7. THE LOCK LIVED IN FOUNDRY'S WORLD FOLDER. Moved to GM_Tools' own
+ *      store dir -- a dotfile in there gets carried into backups and
+ *      restores, where a dead pid can wedge a push on a machine that never
+ *      ran one.
+ *   8. `--force` ON AN ACTOR WAS UNUSABLE. The route refuses an
+ *      already-pushed entry and this surfaced that as a hard failure.
+ *      bin/foundry-push no longer forces actors at all: re-creating one
+ *      orphans every token pointing at the first. It re-sends the FACE,
+ *      which is the thing that actually changes.
+ *
  * Deliberately NOT a new route and NOT an MCP tool: pushing is a destructive,
  * external, GM-initiated act (the same precedent push-scene/sync-to-plans
  * already set), and an LLM-reachable "push everything" verb is exactly the
@@ -60,8 +81,20 @@ function readJsonArray(path) {
 
 // --- the concurrency guard, i.e. failure (1) -------------------------------
 
+/**
+ * The lock lives in GM_TOOLS' OWN store dir, not inside the Foundry world
+ * folder (push round, 2026-10-07). The world folder is Foundry's to manage --
+ * it gets backed up, copied between installs and occasionally rebuilt, and a
+ * stray dotfile in there is at best confusing and at worst carried into a
+ * restore, where a dead pid could wedge a push on a machine that never ran
+ * it. Honours GM_TOOLS_PUSH_LOCK_DIR, the same env-override convention every
+ * other store in this project uses, which is also what lets tests point it
+ * somewhere disposable.
+ */
 function lockPath(dataDir, world) {
-  return join(dataDir, "worlds", world, ".gm-tools-push.lock");
+  const base = process.env.GM_TOOLS_PUSH_LOCK_DIR
+    || join(process.env.HOME ?? dataDir, ".gm-tools", "push-locks");
+  return join(base, `${world}.lock`);
 }
 
 /**
@@ -182,8 +215,26 @@ export async function pushOne({ label, alreadyPushed, queueFn, reconcileFn, data
   const opId = queued?.opId;
   if (!opId) return { label, status: "failed", reason: `the push returned no opId: ${JSON.stringify(queued).slice(0, 160)}` };
 
-  const result = await awaitOpResult(dataDir, world, opId, { timeoutMs });
-  if (!result) return { label, status: "failed", reason: `no result for ${opId} within ${Math.round(timeoutMs / 1000)}s`, opId };
+  // THE ROUTE'S OWN ANSWER COMES FIRST (push round, 2026-10-07). Every push
+  // route polls the bridge itself and, on success, returns
+  // `{status:'applied', ok, foundryUuid}` -- and `writeFoundryOps` DELETES
+  // its own batch's entries from the results file before returning them. So
+  // polling the file afterwards, as this used to do unconditionally, looks
+  // for something that has already been consumed: it waited out the full
+  // ten-minute budget and reported a FAILURE for a push that had worked.
+  // That is the single worst failure mode a push tool can have, because the
+  // obvious response to it is to run the push again.
+  //
+  // The file poll is now only the `queued` fallback -- the genuine case where
+  // the route's own short window expired before Foundry's ~5s watcher tick,
+  // and the result really is still coming.
+  let result;
+  if (queued.status === "applied") {
+    result = { ok: queued.ok !== false, foundryUuid: queued.foundryUuid ?? null, error: queued.error };
+  } else {
+    result = await awaitOpResult(dataDir, world, opId, { timeoutMs });
+    if (!result) return { label, status: "failed", reason: `no result for ${opId} within ${Math.round(timeoutMs / 1000)}s`, opId };
+  }
   if (!result.ok) return { label, status: "failed", reason: result.error ?? "the bridge reported a failure", opId };
 
   let ref = result.foundryUuid ?? null;

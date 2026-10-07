@@ -183,6 +183,42 @@ export function mapActorToPartySheet(actor, seat = {}) {
 }
 
 /**
+ * Every actor uuid that belongs to a PLAYER, as a Set — the guard set for
+ * "never write to a player character" (push round, 2026-10-07).
+ *
+ * Deliberately BROADER than partySheetsFromIndex's own seat list, and the
+ * difference is the whole point: that function drops a claimed actor with an
+ * empty sheet, because an empty row in the rail is noise. A safety guard must
+ * do the opposite — an unfinished PC is still a PC, and so is one whose
+ * roster row is the only record of it. Union of both sources, never the
+ * intersection.
+ *
+ * Discarded roster rows are excluded: the real aureus world carries a
+ * discarded duplicate of one PC, and treating a dead row as protected would
+ * block a legitimate push to whatever reused that uuid.
+ *
+ * Still NOT `classifyActor` — see the header's do-not-DRY note. Its
+ * `type === "character"` fallback counts every player's pack mule, which
+ * would over-block rather than under-block, but on a guard that silently
+ * refuses writes "too many" is its own kind of wrong.
+ *
+ * @param {object|null} index  a parsed world-fabric-foundry-index.json
+ * @param {object[]} [rosterMembers]  listPartyMembers(world) output
+ * @returns {Set<string>}
+ */
+export function playerCharacterUuids(index, rosterMembers = []) {
+  const out = new Set();
+  for (const u of Array.isArray(index?.users) ? index.users : []) {
+    if (u?.characterUuid != null) out.add(String(u.characterUuid));
+  }
+  for (const m of Array.isArray(rosterMembers) ? rosterMembers : []) {
+    if (m?.status === "discarded") continue;
+    if (m?.foundryActorRef != null) out.add(String(m.foundryActorRef));
+  }
+  return out;
+}
+
+/**
  * The whole projection.
  *
  * Seats come from `index.users[].characterUuid` ONLY (see the header's

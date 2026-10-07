@@ -98,6 +98,92 @@ skill mods/passives, the `saveDCs` zod violation, accepted roster rows being
 unrefreshable from Foundry (Velthar and Dio are frozen at level 0 / AC 10), and
 the bridge contract documenting `saves` as numbers while dnd5e sends objects.
 
+**Navigation, beautification and the push round (2026-10-07) is done** — three
+of Russell's four asks after Aureus session three; the fourth (the session
+intake) lives in the campaign repo. Plan at
+`~/.claude/plans/how-difficult-would-it-flickering-dahl.md`.
+
+**Navigation.** Both halves of "I find myself hunting longer than necessary for
+new people, names, and even area names… it would be great if the session runner
+remembered the last scene if I had to jump to the World tab" had one cause each,
+and both were deliberate past decisions. **Decision 4 is AMENDED**
+(`app-shell.js`): the Session-planner toggle used to always navigate to the
+surface's canonical entry, which is right for four surfaces and wrong for the
+planner — at the table it is not a place you browse to, it is the scene you are
+running. It now resumes the remembered route, stored per world (the arg is a
+world-scoped id) and self-healing (a route naming a since-deleted scene is
+forgotten on the next render rather than poisoning every later click). The other
+four surfaces keep the original rule; the breadcrumb's Plans crumb stays the way
+to the shelf. `resetScenePageMode` no longer clears `sceneView` so Run survives
+the round trip, but still clears both rails (layout-stability needs a
+deterministic default) and must NOT clear `scenePageModeWorld` — that is the
+world-change sentinel, and nulling it made the guard force Prep anyway. A new
+read-only **lookup panel** on the scene page (`/` or its own toggle, present in
+every view) forks `buildFromGraphPicker` rather than flagging it: that picker
+excludes nodes already in the scene and mutates on click, and lookup needs the
+opposite of both. Matching reaches the description, ranked behind name and type.
+The `⛓ graph` badge is a link now (its entity id was already in the DOM, unused).
+One shared cached graph index replaces four independent `/api/graph?filter=all`
+fetches on one page. And `renderWorldSurface`'s `alreadyMounted` guard could
+never hold, because `setMain()` empties the column — so every visit re-ran
+`recomputeUsedInScene`'s one `/elements` request PER SCENE; it now paints from
+cache and revalidates behind the painted page.
+
+**Beautification.** The Elements list was the one part of the scene page still
+in the pre-token language (its CSS block sits ABOVE the Phase 29 token block and
+uses `--accent`/`--text`/`--border` with rem sizing). **The biggest find, larger
+than anything on the list: all three theme blocks scoped to `#view-plans,
+#view-session-planner` and never `#app-shell`.** The light root block was
+extended to the shell in Phase 30 task 30.2; the three theme blocks never were,
+and the body background goes dark from a different global rule — so in dark mode
+the shell rendered a fully light scene page on a dark ground and every `--sp-*`
+dark value was dead code for the surface the GM actually uses. **Any new token
+block must list all three roots.** Also: `.party-seat--pinned` was toggled in JS
+with no CSS rule anywhere, so a pinned seat was pixel-identical to a hovered one;
+`.scene-element-controls` carried `gap: 0.1rem` (1.6px) with a text link wedged
+between two icon buttons, now spaced, all-icon, and **hover-revealed** (the park
+is lifted; guarded by `@media (hover: hover) and (pointer: fine)` plus
+`:focus-within`); `.scene-add-field` had no `display`/`gap` so its two pills
+fused and the menu split them; the retired `+ variant` chip's row was still
+appended unconditionally. **Prep and Run now say the same word**:
+`runSpreadFieldLines` takes the role (it ignored role entirely, so
+`RUN_FIELD_LABELS` held for 4 roles of 11) and the table covers
+person/dressing/gm/exits. **One safety bug**: `secret` was pooled in with the
+public exit lines AND `run-skeleton` seeded the third exit template INTO
+`secret`, so an exits element's secret rendered to the table untreated. Six
+section-label recipes and three rail widths collapse to `--sp-label-size`/
+`--sp-label-weight` and `--sp-rail-width`/`--sp-rail-gap`; the design README now
+records rules instead of the ranges that invited the drift.
+
+**The push round.** `bin/foundry-push --world <w> --plan <id>` is the one
+command. Dry run by default, and it now says what the apply will do step for
+step including face state (an unaccepted candidate is invisible to every push).
+Fixed, each verified by a test that fails against the pre-fix code: the CLI
+pushed through **`push-scene`, which composes NO token ops** — the direct cause
+of session three's eight empty scenes, now `flush-scenes` →
+`flushDirtyStagedScenes` → `composeSceneOps` (create-path tokens ride INSIDE
+`create_scene.data.tokens[]`, not as separate ops); `syncFoundryToPlans`
+**re-created the scenes it just deleted** (cleared the ref, left
+`stagedForFoundry` true) and its deletes now route through
+`removeSceneFromFoundry`, which unstages FIRST and keeps the ref on a queued
+outcome so it is retryable; the **`push` set was advisory** and the flush now
+takes `opts.sceneIds`; **`pushOne` raced the route** (`writeFoundryOps` deletes
+its own batch's results before returning, so the file poll found nothing and
+reported a failure for a push that worked — the worst failure mode, since the
+obvious response is to run it again); `refreshSceneTokenArt` **had no caller**
+and is now `POST /api/foundry/refresh-scene-tokens`, which is how an
+already-pushed scene gets correct token art without being deleted — Russell
+places tokens and sets starting views by hand and his standing rule is that such
+a scene is never recreated. New `assertNotPlayerCharacter` +
+`playerCharacterUuids`: PC safety stays structural (one `update_actor` emitter
+in the codebase) with a cheap belt, verified against the real world where it
+protects all 7 PCs and all 7 player-owned mules and allows NPCs. The push lock
+left Foundry's world folder. `test/foundry-push-orchestrator.test.mjs` moved to
+`wf-mcp-server/test/`. Suites: root 207 / wf-mcp 93 / review-ui 465 + 321 e2e.
+**Not verified end to end**: the real `--apply` needs a live GM client, and the
+index was 8½ hours stale with Russell away — the dry run was run against the
+real aureus world, the apply was not.
+
 Engineering conventions for writing code in this repo live in `.claude/skills/gm-tools-conventions/` — load it before touching `mutation-engine/`, `time-skip/`, `graph-import/`, or `wf-mcp-server/`.
 
 ## Key architectural fact to internalize immediately

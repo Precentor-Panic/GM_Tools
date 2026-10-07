@@ -629,6 +629,7 @@ export function reconcilePendingResults(dataDir, world) {
  * @param {string} dataDir
  * @param {string} world
  * @param {object} [opts]   forwarded to composeSceneOps (opts.makeOpId) and writeFoundryOps (opts.pollMs/opts.timeoutMs)
+ * @param {string[]} [opts.sceneIds]  scope the flush to these scenes only; omitted = every dirty staged scene in the world
  * @returns {Promise<{flushed:number, results:object[], skipped:object[], queued?:true, note?:string}>}
  */
 export async function flushDirtyStagedScenes(dataDir, world, opts = {}) {
@@ -640,7 +641,16 @@ export async function flushDirtyStagedScenes(dataDir, world, opts = {}) {
   // unconsumed and the "stays dirty, retried next trigger" rule re-created
   // the same scene in Foundry on every retry.
   const reconciled = reconcilePendingResults(dataDir, world);
-  const dirtyScenes = listScenesByRecency(world).filter((s) => isSceneDirty(s) && !s.pendingPush);
+  // `opts.sceneIds` scopes the flush to a named set (push round, 2026-10-07).
+  // Without it this function always re-scans the WHOLE world, which is why
+  // syncFoundryToPlans' own `push` set was advisory: it computed one set and
+  // then flushed a different, independently-derived one, so the dry run could
+  // honestly disagree with what the apply did. A caller that knows its set
+  // passes it; everything else keeps the world-wide scan.
+  const only = opts.sceneIds ? new Set(opts.sceneIds) : null;
+  const dirtyScenes = listScenesByRecency(world)
+    .filter((s) => isSceneDirty(s) && !s.pendingPush)
+    .filter((s) => !only || only.has(s.id));
   if (dirtyScenes.length === 0) {
     // Sparse pendingCount here too -- a too-early follow-up (results not
     // landed yet) takes THIS return, and the server's bounded chain needs
@@ -754,7 +764,13 @@ export async function removeSceneFromFoundry(dir, world, sceneId, opts = {}) {
   updateScene(world, sceneId, { stagedForFoundry: false });
   setScenePendingPush(world, sceneId, null);
   const opId = opts.makeOpId ? opts.makeOpId() : makeOpId();
-  const outcome = await writeFoundryOps(dir, world, [{ opId, kind: "delete_scene", data: { sceneUuid: ref } }], opts);
+  // `force` forwarded only when explicitly asked (push round, 2026-10-07):
+  // the module-side creator refuses to delete the ACTIVE scene without it,
+  // which is what stops a swap yanking the canvas out from under a live
+  // table. syncFoundryToPlans routes its deletes through here now, and its
+  // own --force has to keep reaching the op.
+  const data = { sceneUuid: ref, ...(opts.force === true ? { force: true } : {}) };
+  const outcome = await writeFoundryOps(dir, world, [{ opId, kind: "delete_scene", data }], opts);
   if (outcome.status === "queued") {
     return { status: "queued", sceneId, opId, note: `${outcome.note} The scene is unstaged; its Foundry ref is kept for a retry.` };
   }
@@ -922,33 +938,49 @@ export async function syncFoundryToPlans(dataDir, world, planIds, opts = {}) {
 
   // Deletes first: the point of the swap is a lighter world, and doing them
   // first means a mid-way failure leaves LESS in Foundry, never more.
+  //
+  // Every delete goes through `removeSceneFromFoundry` (push round,
+  // 2026-10-07). This block used to compose its own delete_scene batch, and
+  // that hand-rolled copy carried two real defects the shared function does
+  // not:
+  //
+  //   (a) IT RE-CREATED THE SCENES IT JUST DELETED. It cleared
+  //       `foundrySceneRef` but left `stagedForFoundry: true`, so
+  //       `isSceneDirty` was immediately true again and the flush at the end
+  //       of this very function re-created every one of them.
+  //       `removeSceneFromFoundry` unstages FIRST, which is exactly the
+  //       ordering its own doc comment calls load-bearing.
+  //   (b) A QUEUED DELETE LOST ITS REF FOR GOOD. The batch returned early on
+  //       `queued` with no ledger entry and no delete-side reconcile, so the
+  //       late result was never consumed and the next swap re-sent a delete
+  //       for a dead uuid. `removeSceneFromFoundry` keeps the ref on a queued
+  //       outcome and leaves the scene unstaged, which is safe and retryable.
+  //
+  // One op per scene rather than one batch: slower, and the only shape in
+  // which each result can actually be reconciled before the next is queued.
   const removed = [];
   const failed = [];
-  if (remove.length) {
-    const ops = remove.map((r) => ({
-      opId: opts.makeOpId ? opts.makeOpId() : makeOpId(),
-      kind: "delete_scene",
-      data: { sceneUuid: r.foundrySceneRef, ...(opts.force === true ? { force: true } : {}) }
-    }));
-    const outcome = await writeFoundryOps(dataDir, world, ops, opts);
-    if (outcome.status === "queued") {
-      return { status: "queued", note: outcome.note, plans, remove, push, notStaged };
+  const queuedRemovals = [];
+  for (const r of remove) {
+    let outcome;
+    try {
+      outcome = await removeSceneFromFoundry(dataDir, world, r.sceneId, opts);
+    } catch (err) {
+      failed.push({ ...r, error: String(err?.message ?? err) });
+      continue;
     }
-    for (const [i, r] of remove.entries()) {
-      const result = outcome.results.find((x) => x.opId === ops[i].opId);
-      if (result?.ok) {
-        markScenePushed(world, r.sceneId, { foundrySceneRef: null, lastPushedAt: null });
-        removed.push(r);
-      } else {
-        failed.push({ ...r, error: result?.error ?? "no result for this op" });
-      }
-    }
+    if (outcome.status === "queued") queuedRemovals.push({ ...r, note: outcome.note });
+    else if (outcome.ok) removed.push(r);
+    else failed.push({ ...r, error: outcome.error ?? "no result for this op" });
   }
 
   // Then push what belongs, through the normal composer -- create carries
-  // map/music/tokens, update patches in place. Cleared refs above make a
-  // removed-then-re-added scene take the create path naturally.
-  const flush = push.length ? await flushDirtyStagedScenes(dataDir, world, opts) : { flushed: 0, results: [], skipped: [] };
+  // map/music/tokens, update patches in place. SCOPED to the `push` set this
+  // function already computed and reported, so the preview and the apply
+  // cannot disagree: the flush used to re-scan the whole world instead.
+  const flush = push.length
+    ? await flushDirtyStagedScenes(dataDir, world, { ...opts, sceneIds: push.map((p) => p.sceneId) })
+    : { flushed: 0, results: [], skipped: [] };
 
   return {
     status: "applied",
@@ -959,6 +991,9 @@ export async function syncFoundryToPlans(dataDir, world, planIds, opts = {}) {
     pushResults: flush.results,
     skipped: flush.skipped,
     notStaged,
+    // Surfaced, never swallowed: a queued removal is unstaged and retryable,
+    // but it is NOT gone from Foundry yet and the caller has to know.
+    ...(queuedRemovals.length ? { queuedRemovals } : {}),
     ...(flush.queued ? { pushQueued: true, pushNote: flush.note } : {})
   };
 }

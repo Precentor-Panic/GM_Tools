@@ -291,7 +291,7 @@ import { importCompendiumSceneOnAccept, reconcilePendingCompendiumImports } from
 // Bestiary actor PUSH routes. Sibling module to foundry-push-ops.mjs (scene
 // push) -- see foundry-item-push-ops.mjs's own header for the fidelity
 // boundary (import_via_plutonium vs. create_item) and the lostech two-op flow.
-import { pushItemToFoundry, pushBestiaryEntryToFoundry, pushBestiaryTokenArtToFoundry } from "../wf-mcp-server/lib/foundry-item-push-ops.mjs";
+import { pushItemToFoundry, pushBestiaryEntryToFoundry, pushBestiaryTokenArtToFoundry, refreshSceneTokenArt } from "../wf-mcp-server/lib/foundry-item-push-ops.mjs";
 // WS-F (table round 2026-09-09): token faces -- generate from the looks line, accept/reject, preview.
 import { generateTokenArt, acceptTokenArt, rejectTokenArt, resolveUnderDataDir, tokenImgMime } from "../combat-planning/token-art.mjs";
 
@@ -3013,6 +3013,50 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(body.world);
     if (!body.entryId) throw new Error("POST /api/foundry/push-bestiary-entry requires entryId.");
     const result = await pushBestiaryEntryToFoundry(dir, body.entryId, { world: w });
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/foundry/refresh-scene-tokens   { world, sceneId }
+  // -> {status:'applied'|'queued'|'noop', sceneId, ops, skipped, results?, note?}
+  //
+  // Push round (2026-10-07). `refreshSceneTokenArt` has existed since the
+  // token-art pass and had NO caller anywhere -- it was the one primitive
+  // that lets an ALREADY-PUSHED scene get correct token art without being
+  // deleted and recreated. That matters because Russell places party tokens
+  // and sets each scene's starting view by hand, and his standing rule is
+  // that a scene he has dressed is never deleted or recreated. Before the
+  // `update_token` bridge op there was no other way; now there is, so this
+  // exposes it.
+  //
+  // One op per distinct creature on the tray that has both a Foundry actor
+  // and an ACCEPTED face. PC tokens are never touched: a player's token art
+  // is the player's.
+  if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "refresh-scene-tokens") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    if (!body.sceneId) throw new Error("POST /api/foundry/refresh-scene-tokens requires sceneId.");
+    const result = await refreshSceneTokenArt(dir, w, body.sceneId);
+    return sendJson(res, 200, result);
+  }
+
+  // POST /api/foundry/flush-scenes   { world, sceneIds? }
+  // -> flushDirtyStagedScenes' own shape {flushed, results, skipped, ...}
+  //
+  // Push round (2026-10-07): the ONE route that pushes a scene WITH its
+  // tokens. `push-scene` below is a bare map-and-music path -- it composes no
+  // token ops at all, which is exactly why pushing session three by hand
+  // produced eight scenes with nothing on them. Scene pushes go through
+  // `composeSceneOps`, and `flushDirtyStagedScenes` is the function that
+  // calls it; this exposes it with the plan-scoped `sceneIds` filter so a
+  // caller can push a named set instead of whatever the world-wide scan
+  // happens to find.
+  if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "flush-scenes") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    const sceneIds = Array.isArray(body.sceneIds) && body.sceneIds.length ? body.sceneIds : undefined;
+    const result = await flushDirtyStagedScenes(dir, w, sceneIds ? { sceneIds } : {});
     return sendJson(res, 200, result);
   }
 

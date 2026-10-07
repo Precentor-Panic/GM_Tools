@@ -111,7 +111,10 @@ import {
 import { getRawPlutoniumEntry } from "../../combat-planning/plutonium-source.mjs";
 import { parsePlutoniumProvenance } from "../../combat-planning/plutonium-monster-fields.mjs";
 import { writeFoundryOps, makeOpId } from "./foundry-ops.mjs";
-import { foundryResultsPath } from "./snapshot.mjs";
+// The PC guard (push round, 2026-10-07) -- see assertNotPlayerCharacter.
+import { playerCharacterUuids } from "../../combat-planning/party-sheet-index.mjs";
+import { listPartyMembers } from "../../combat-planning/party-roster-store.mjs";
+import { foundryResultsPath, foundryIndexPath } from "./snapshot.mjs";
 import { getScene } from "../../session-planner/scenes.mjs";
 import { getSceneTray } from "../../session-planner/scene-tray.mjs";
 
@@ -539,6 +542,7 @@ export async function pushBestiaryTokenArtToFoundry(dir, entryId, { world } = {}
       `${entry.tokenImgCandidate ? " (a generated candidate is waiting for review in the Library)" : ""} -- set or accept one first.`
     );
   }
+  assertNotPlayerCharacter(dir, world, entry.foundryActorRef);
   const opId = opts.makeOpId ? opts.makeOpId() : makeOpId();
   // Both the plain texture AND the dynamic token ring's subject (2026-10-07).
   // Foundry draws the ring itself and reads its artwork from
@@ -560,6 +564,45 @@ export async function pushBestiaryTokenArtToFoundry(dir, entryId, { world } = {}
   const result = outcome.results.find((r) => r.opId === opId);
   if (!result?.ok) return { status: "applied", entryId, opId, ok: false, error: result?.error ?? "no result for this op" };
   return { status: "applied", entryId, opId, ok: true, foundryUuid: result.foundryUuid, tokenImg: entry.tokenImg };
+}
+
+/**
+ * Refuse to write to a player character. Push round, 2026-10-07.
+ *
+ * PC safety in this codebase has always been STRUCTURAL rather than checked:
+ * `update_actor` is emitted from exactly two places, both in this file, both
+ * about a bestiary row's face, and a scene push only ever READS an actor to
+ * clone its prototype token. That is a good property and it should stay the
+ * primary defence. This is the cheap belt to go with it, because the
+ * structural argument rests on a reader noticing that no third emitter has
+ * appeared, and the cost of being wrong once is overwriting a player's own
+ * character sheet art mid-campaign.
+ *
+ * Throws rather than skipping: a bestiary row pointing at a PC is a corrupt
+ * record, not a routine condition, and silently doing nothing would read as
+ * a successful push.
+ *
+ * Fails OPEN if the index is missing or unreadable. The index only exists
+ * once a GM client has connected, and refusing every face push on a world
+ * that has never been indexed would block the ordinary first-push path to
+ * protect against a record that cannot exist yet.
+ */
+export function assertNotPlayerCharacter(dir, world, actorUuid) {
+  if (!actorUuid) return;
+  const path = foundryIndexPath(dir, world);
+  if (!existsSync(path)) return;
+  let index = null;
+  try { index = JSON.parse(readFileSync(path, "utf8")); } catch { return; }
+  let roster = [];
+  try { roster = listPartyMembers(world); } catch { roster = []; }
+  const pcs = playerCharacterUuids(index, roster);
+  if (!pcs.has(String(actorUuid))) return;
+  const name = (index?.actors ?? []).find((a) => a?.uuid === actorUuid)?.name ?? actorUuid;
+  throw new Error(
+    `Refusing to write to "${name}" (${actorUuid}): it is a PLAYER CHARACTER — claimed by a user in Foundry, ` +
+    `or on this world's party roster. GM_Tools never patches a PC actor. If a bestiary row is pointing at a PC, ` +
+    `that row's foundryActorRef is wrong and should be cleared rather than pushed.`
+  );
 }
 
 /**
