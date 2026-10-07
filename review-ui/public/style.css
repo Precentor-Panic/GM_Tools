@@ -1094,6 +1094,10 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .scene-element-graph-badge {
   font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
   background: var(--accent); color: var(--accent-contrast); border-radius: 4px; padding: 0.08rem 0.4rem; flex-shrink: 0;
+  /* The badge is a <button> now (see the scoped rule's note) — reset its
+     chrome here too, since this unscoped base rule also applies outside the
+     shell, where the scoped overrides never fire. */
+  border: 0; font-family: inherit; line-height: inherit; cursor: pointer;
 }
 .scene-element-controls { display: flex; align-items: center; gap: 0.1rem; margin-left: auto; flex-shrink: 0; }
 .scene-element-key-toggle { opacity: 0.55; }
@@ -1976,6 +1980,17 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   text-transform: uppercase; letter-spacing: 0.06em;
   background: var(--sp-entity-badge-bg); color: var(--sp-ink-heading);
   border-radius: var(--sp-radius-sm); padding: 2px 6px;
+  /* Navigation round (2026-10-07): the badge became a real <button> so it is
+     keyboard reachable and opens its node in the World inspector. These resets
+     keep it rendering pixel-identically to the <span> it replaced — only the
+     pointer and the focus ring are new. */
+  border: 0; line-height: inherit; cursor: pointer;
+}
+:is(#view-session-planner, #app-shell) .scene-element-graph-badge:hover {
+  color: var(--sp-accent-teal);
+}
+:is(#view-session-planner, #app-shell) .scene-element-graph-badge:focus-visible {
+  outline: 2px solid var(--sp-accent-teal); outline-offset: 1px;
 }
 :is(#view-session-planner, #app-shell) .scene-element-key-toggle,
 :is(#view-session-planner, #app-shell) .scene-element-remove-btn { color: var(--sp-ink-muted); }
@@ -2053,6 +2068,87 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
    amber `promote` / teal other kind badges, red/green diff rows, accept-green
    accepted card) with the scoped --sp-* tokens.
    ========================================================================= */
+/* ===========================================================================
+   The lookup panel (navigation round, 2026-10-07) — a read-only graph search
+   that lives IN the scene page, so looking a name up no longer costs the GM
+   his place. Styled off the wrap panel (its sibling in the same slot under the
+   top bar) rather than inventing a fourth panel treatment: same hairline box,
+   same radius, same card fill.
+   ========================================================================= */
+:is(#view-session-planner, #app-shell) .scene-lookup-panel {
+  border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-md);
+  background: var(--sp-surface-card); padding: 10px 12px 12px; margin: 0 0 22px;
+  max-width: 460px;
+}
+:is(#view-session-planner, #app-shell) .scene-lookup-bar {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  margin-bottom: 8px;
+}
+:is(#view-session-planner, #app-shell) .scene-lookup-kicker {
+  font-family: var(--sp-font-mono); font-size: 10px; font-weight: 600;
+  letter-spacing: var(--sp-mono-label-tracking); text-transform: uppercase;
+  color: var(--sp-ink-muted);
+}
+:is(#view-session-planner, #app-shell) .scene-lookup-input {
+  width: 100%; box-sizing: border-box;
+  font-family: var(--sp-font-ui); font-size: 13px; color: var(--sp-ink-primary);
+  background: var(--sp-surface-chrome);
+  border: 1px solid var(--sp-border-control); border-radius: var(--sp-radius-md);
+  padding: 6px 9px;
+}
+:is(#view-session-planner, #app-shell) .scene-lookup-input:focus-visible {
+  outline: 2px solid var(--sp-accent-teal); outline-offset: -2px;
+}
+/* Capped and scrollable: a 160-entity world must not push the scene off the
+   page, and the GM is reading the top few matches, never all 25. */
+:is(#view-session-planner, #app-shell) .scene-lookup-results {
+  margin-top: 8px; max-height: 300px; overflow-y: auto;
+}
+:is(#view-session-planner, #app-shell) .scene-lookup-row + .scene-lookup-row {
+  border-top: 1px solid var(--sp-border-hairline);
+}
+:is(#view-session-planner, #app-shell) .scene-lookup-head {
+  width: 100%; display: flex; align-items: baseline; gap: 8px; text-align: left;
+  background: transparent; border: 0; padding: 6px 4px; cursor: pointer;
+  font-family: var(--sp-font-ui); color: var(--sp-ink-primary);
+}
+:is(#view-session-planner, #app-shell) .scene-lookup-head:hover { background: var(--sp-row-hover-bg); }
+:is(#view-session-planner, #app-shell) .scene-lookup-head[aria-expanded="true"] { background: var(--sp-row-active-bg); }
+:is(#view-session-planner, #app-shell) .scene-lookup-head:focus-visible {
+  outline: 2px solid var(--sp-accent-teal); outline-offset: -2px;
+}
+:is(#view-session-planner, #app-shell) .scene-lookup-name {
+  font-size: 13.5px; font-weight: 500; flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The type carries its own entity-type colour, the same channel the element
+   rows already use (--element-type-color), so a person and a place are
+   tellable apart at a glance instead of by reading. */
+:is(#view-session-planner, #app-shell) .scene-lookup-type {
+  font-family: var(--sp-font-mono); font-size: 9.5px; font-weight: 600;
+  letter-spacing: var(--sp-mono-label-tracking); text-transform: uppercase;
+  color: var(--element-type-color, var(--sp-ink-muted)); flex-shrink: 0;
+}
+:is(#view-session-planner, #app-shell) .scene-lookup-body { padding: 0 4px 10px; }
+:is(#view-session-planner, #app-shell) .scene-lookup-text {
+  margin: 0 0 6px; font-family: var(--sp-font-ui); font-size: 12.5px;
+  line-height: 1.5; color: var(--sp-ink-secondary);
+}
+:is(#view-session-planner, #app-shell) .scene-lookup-text--more { color: var(--sp-ink-muted); }
+:is(#view-session-planner, #app-shell) .scene-lookup-text--empty {
+  font-style: italic; color: var(--sp-accent-amber);
+}
+:is(#view-session-planner, #app-shell) .scene-lookup-tags {
+  display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;
+}
+:is(#view-session-planner, #app-shell) .scene-lookup-tag {
+  font-family: var(--sp-font-mono); font-size: 9px; font-weight: 600;
+  letter-spacing: var(--sp-mono-label-tracking); text-transform: uppercase;
+  color: var(--sp-ink-muted); background: var(--sp-surface-chrome);
+  border-radius: var(--sp-radius-pill); padding: 2px 8px;
+}
+:is(#view-session-planner, #app-shell) .scene-lookup-empty { margin: 6px 4px; }
+
 :is(#view-session-planner, #app-shell) .wrap-panel {
   border: 1px solid var(--sp-border-hairline); border-radius: var(--sp-radius-md);
   background: var(--sp-wrap-rail-bg); padding: 14px 16px; margin: 0 0 26px;

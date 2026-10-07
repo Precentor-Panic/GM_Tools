@@ -80,12 +80,126 @@ test("surface toggle switches planner <-> world, updating the hash and swapping 
   await page.locator('[data-testid="world-surface-root"]').waitFor({ state: "visible", timeout: 10000 });
   assert.equal(await page.locator('[data-testid="shell-rail-planner"]').count(), 0, "the planner rail must not remain mounted on the World surface");
 
+  // Amended Decision 4 (2026-10-07): the toggle returns to the REMEMBERED
+  // planner route. Here the only planner route ever visited was the shelf, so
+  // the expected hash is unchanged from the original Decision 4 -- the
+  // first-visit case still lands exactly where it always did. The scene case
+  // is the next test.
   await page.locator('[data-testid="shell-surface-toggle-planner"]').click();
   await assert.doesNotReject(async () => {
     await page.waitForFunction(() => location.hash === "#planner/plans", { timeout: 10000 });
-  }, "clicking the Session planner toggle must navigate to #planner/plans");
+  }, "with only the shelf ever visited, the Session planner toggle must still navigate to #planner/plans");
   await page.locator('[data-testid="planner-plans-view"]').waitFor({ state: "visible", timeout: 10000 });
   assert.equal(await page.locator('[data-testid="world-surface-root"]').count(), 0);
+  await page.close();
+});
+
+// ---------------------------------------------------------------------------
+// Amended Decision 4 (navigation round, 2026-10-07). This REPLACES the old
+// contract, which the test above used to pin verbatim: "the toggle ALWAYS
+// navigates to the surface's canonical entry (never a remembered last-visited
+// sub-route)."
+//
+// Russell, at the table: "it would be great if the session runner remembered
+// the last scene if I had to jump to the World tab to find a name." Leaving
+// the planner to look up a name and coming back to the plans shelf cost him
+// two clicks and a re-find, every time. World/Chronicle/Library/Briefing keep
+// the original rule; only the planner remembers.
+// ---------------------------------------------------------------------------
+test("amended Decision 4: the planner toggle returns to the last scene, in the view it was left in, per world", async () => {
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+  const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "shell-place-a" });
+  const sceneId = scene.id;
+
+  await page.goto(`${base}/#planner/scene/${sceneId}`);
+  await page.locator('[data-testid="planner-scene-view"]').waitFor({ state: "visible", timeout: 15000 });
+
+  // Leave the scene in RUN -- the second half of the complaint was coming back
+  // to a scene re-opened in Prep.
+  await page.locator('[data-testid="mode-run-btn"]').click();
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="planner-scene-view"] .scene-page')?.getAttribute("data-mode") === "run",
+    { timeout: 10000 }
+  );
+
+  await page.locator('[data-testid="shell-surface-toggle-world"]').click();
+  await page.locator('[data-testid="world-surface-root"]').waitFor({ state: "visible", timeout: 10000 });
+
+  await page.locator('[data-testid="shell-surface-toggle-planner"]').click();
+  await assert.doesNotReject(async () => {
+    await page.waitForFunction(
+      (id) => location.hash === `#planner/scene/${id}`,
+      sceneId,
+      { timeout: 10000 }
+    );
+  }, "the Session planner toggle must return to the scene the GM was last on");
+  await page.locator('[data-testid="planner-scene-view"]').waitFor({ state: "visible", timeout: 10000 });
+
+  assert.equal(
+    await page.locator('[data-testid="planner-scene-view"] .scene-page').getAttribute("data-mode"),
+    "run",
+    "the scene must come back in Run -- jumping to World to look up a name must not reset the view"
+  );
+
+  // Both rails still come back CLOSED. layout-stability asserts Run's geometry
+  // is identical whichever view you arrive from, which only holds while their
+  // default is deterministic -- so this half of resetScenePageMode stays.
+  assert.equal(
+    await page.locator('[data-testid="planner-scene-view"] .scene-page').getAttribute("data-partyrail"),
+    "closed",
+    "the party rail must come back closed"
+  );
+
+  // Per-world: the remembered route is a world-scoped id, so switching worlds
+  // must not try to open world A's scene inside world B.
+  await page.evaluate((w) => localStorage.setItem("gmReview.world", w), WORLD_B);
+  await page.goto(`${base}/#planner/plans`);
+  await page.locator('[data-testid="planner-plans-view"]').waitFor({ state: "visible", timeout: 15000 });
+  await page.locator('[data-testid="shell-surface-toggle-world"]').click();
+  await page.locator('[data-testid="world-surface-root"]').waitFor({ state: "visible", timeout: 10000 });
+  await page.locator('[data-testid="shell-surface-toggle-planner"]').click();
+  await assert.doesNotReject(async () => {
+    await page.waitForFunction(() => location.hash === "#planner/plans", { timeout: 10000 });
+  }, "a second world must not inherit the first world's remembered scene");
+
+  await page.close();
+});
+
+test("amended Decision 4: a remembered scene that no longer exists falls back to the shelf", async () => {
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await primeWorldSelection(page, base, WORLD);
+
+  // Forge a remembered route pointing at a scene id that was never created --
+  // the same state the GM reaches by deleting the scene they were last on.
+  await page.evaluate(
+    (w) => localStorage.setItem(`gmReview.lastPlannerRoute:${w}`, "scene/scene_does_not_exist"),
+    WORLD
+  );
+  await page.goto(`${base}/#world`);
+  await page.locator('[data-testid="world-surface-root"]').waitFor({ state: "visible", timeout: 15000 });
+
+  // First click honours the stale value and lands on the dead scene, which
+  // reports honestly rather than rendering a blank page...
+  await page.locator('[data-testid="shell-surface-toggle-planner"]').click();
+  await page.waitForFunction(() => location.hash.startsWith("#planner/scene/"), { timeout: 10000 });
+
+  // ...and renderShell FORGETS it, so the route cannot stay poisoned.
+  await assert.doesNotReject(async () => {
+    await page.waitForFunction(
+      (w) => localStorage.getItem(`gmReview.lastPlannerRoute:${w}`) === null,
+      WORLD,
+      { timeout: 10000 }
+    );
+  }, "a remembered route naming a missing scene must be cleared");
+
+  await page.goto(`${base}/#world`);
+  await page.locator('[data-testid="world-surface-root"]').waitFor({ state: "visible", timeout: 10000 });
+  await page.locator('[data-testid="shell-surface-toggle-planner"]').click();
+  await assert.doesNotReject(async () => {
+    await page.waitForFunction(() => location.hash === "#planner/plans", { timeout: 10000 });
+  }, "after the stale route is forgotten the toggle must fall back to the shelf");
+
   await page.close();
 });
 

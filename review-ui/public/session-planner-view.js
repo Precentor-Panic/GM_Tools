@@ -224,7 +224,7 @@ function buildEntityPicker({ testidPrefix, placeholder = "Search entities…", e
 
   (async () => {
     try {
-      const graph = await spApi(`/api/graph${spWithWorld({ filter: "all" })}`);
+      const graph = await loadGraphIndex();
       allNodes = (graph.nodes || []).filter((n) => n.id !== excludeId);
       status.textContent = defaultTypeFilter
         ? `Showing ${defaultTypeFilter}s by default (${allNodes.length} entities total) — type to search all types.`
@@ -1168,11 +1168,27 @@ let scenePageModeWorld = null;
 // Exported so app-shell.js can reset the view when the shell navigates away
 // from the planner surface entirely (World/Chronicle/Library) -- scene
 // navigation WITHIN the planner must never call this.
+//
+// Navigation round (2026-10-07): `sceneView` is NO LONGER cleared here.
+// Russell, at the table: "it would be great if the session runner remembered
+// the last scene if I had to jump to the World tab to find a name." Jumping to
+// World to look up a name and coming back to a scene re-opened in PREP was the
+// second half of that complaint (the first half, the lost scene id, is
+// app-shell.js's amended Decision 4). Run already survives prev/next/rail
+// navigation between scenes, so keeping it across a surface switch makes the
+// behaviour consistent rather than adding a new rule.
+//
+// The two RAILS still reset, deliberately and for a different reason:
+// layout-stability.e2e asserts Run's geometry is identical whichever view you
+// arrive from, which only holds while their default is deterministic. Opening
+// a rail is a cheap one-click gesture; re-finding your scene is not.
+// `scenePageModeWorld` is deliberately NOT cleared: it is purely the
+// world-change sentinel for the guard at renderScenePage, and nulling it here
+// would make that guard fire on the next render and force Prep anyway --
+// silently undoing everything above.
 export function resetScenePageMode() {
-  sceneView = "prep";
   railOpen = false;
   partyRailOpen = false;
-  scenePageModeWorld = null;
 }
 
 function detachSceneKeydownHandler() {
@@ -1688,12 +1704,23 @@ function buildSceneElementRow(scene, element, refreshList, nodeMap) {
   head.appendChild(glyph);
 
   if (element.kind === "graph" && element.graphEntityId) {
-    const badge = document.createElement("span");
+    // Navigation round (2026-10-07): the badge is now a LINK. The entity id was
+    // already stamped here and went unused -- a dead end on exactly the rows
+    // the GM is most likely to want to read up on mid-scene. `#world/<id>` is
+    // already a working deep link into the World inspector (world-view.js's
+    // `select`), so this needs no new route and no new view.
+    //
+    // A real <button> rather than a span-with-role: it is keyboard reachable
+    // and Enter/Space activated for free. The CSS resets its chrome so it
+    // renders pixel-identically to the badge it replaced.
+    const badge = document.createElement("button");
+    badge.type = "button";
     badge.className = "scene-element-graph-badge";
     badge.setAttribute("data-testid", "scene-element-graph-badge");
     badge.setAttribute("data-graph-entity-id", element.graphEntityId);
     badge.textContent = "⛓ graph";
-    badge.title = "This element is a KEY graph node";
+    badge.title = "Open this node in the World inspector";
+    badge.addEventListener("click", () => { location.hash = `world/${element.graphEntityId}`; });
     head.appendChild(badge);
   }
 
@@ -1729,6 +1756,8 @@ function buildSceneElementRow(scene, element, refreshList, nodeMap) {
   keyToggle.addEventListener("click", async () => {
     keyToggle.disabled = true;
     const verb = element.kind === "graph" ? "demote" : "promote";
+    // Promote CREATES a graph node; drop the shared index either way.
+    invalidateGraphIndex();
     try {
       await spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements/${encodeURIComponent(element.id)}/${verb}`, {
         method: "POST",
@@ -2722,6 +2751,7 @@ function buildBeyondRoomDrawer(scene, nodeMap, edges) {
         confirmBtn.disabled = true;
         cancelBtn.disabled = true;
         try {
+          invalidateGraphIndex(); // a deleted node must leave the shared index
           const result = await spApi(`/api/graph/nodes/${encodeURIComponent(id)}`, {
             method: "DELETE",
             headers: { "Content-Type": "application/json" },
@@ -3256,6 +3286,9 @@ function buildDraftFieldsGhostLink(scene, element, refreshList) {
 
 /** §5 -- PATCH the anchor place's `description` through the EXISTING editNodeOp route (clears the node's unreviewed flag as a side effect, unchanged). */
 function savePlaceDescription(placeId, v) {
+  // Any write that can change a node's name or description drops the shared
+  // index -- a cached stale name in a lookup panel is worse than a re-fetch.
+  invalidateGraphIndex();
   return spApi(`/api/graph/nodes/${encodeURIComponent(placeId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -3562,6 +3595,256 @@ function buildDraftReadAloudLink(scene, place, narrationField) {
   return wrap;
 }
 
+// ---------------------------------------------------------------------------
+// Shared graph index (navigation round, 2026-10-07).
+//
+// `GET /api/graph?filter=all` returns EVERY entity with its full description,
+// summary, tags and attributes plus every edge between them. Four call sites
+// used to fetch it independently on this page alone (the two entity pickers,
+// the from-graph picker, the beyond-room drawer). At the table that is the
+// same several-hundred-entity payload re-fetched every time the GM opens a
+// panel. One promise per world, shared.
+//
+// Deliberately NOT a persisted store: a stale name is worse than a re-fetch,
+// so the cache lives only as long as the page and any write that could change
+// a node calls invalidateGraphIndex().
+// ---------------------------------------------------------------------------
+let graphIndexCache = { world: null, promise: null };
+
+function loadGraphIndex({ force = false } = {}) {
+  const world = currentWorld();
+  if (!force && graphIndexCache.world === world && graphIndexCache.promise) {
+    return graphIndexCache.promise;
+  }
+  const promise = spApi(`/api/graph${spWithWorld({ filter: "all" })}`).catch((err) => {
+    // A failed load must not be cached, or one blip wedges every later panel.
+    if (graphIndexCache.promise === promise) graphIndexCache = { world: null, promise: null };
+    throw err;
+  });
+  graphIndexCache = { world, promise };
+  return promise;
+}
+
+function invalidateGraphIndex() {
+  graphIndexCache = { world: null, promise: null };
+}
+
+// ---------------------------------------------------------------------------
+// The lookup panel (navigation round, 2026-10-07).
+//
+// Russell, at the table: "I find myself hunting longer than necessary for new
+// people, names, and even area names." The only entity search in the app lives
+// on the World surface, so reaching it IS the navigation that costs him his
+// place in the scene. This is that search, in the scene page, read-only.
+//
+// Forked from buildFromGraphPicker rather than reusing it, because the two
+// want opposite things from the same data and merging them would mean a flag
+// on every branch:
+//   - from-graph EXCLUDES nodes already in the scene; lookup must include them
+//     (the person being looked up is usually already an element).
+//   - from-graph MUTATES the scene on click; lookup only reveals.
+//   - from-graph shows name+type; lookup shows the summary/description/tags
+//     the payload already carries and the picker throws away.
+// They share the fetch (loadGraphIndex) and the CSS idiom, which is the part
+// worth sharing.
+// ---------------------------------------------------------------------------
+function buildLookupPanel() {
+  const panel = document.createElement("div");
+  panel.className = "scene-lookup-panel";
+  panel.setAttribute("data-testid", "scene-lookup-panel");
+  panel.hidden = true;
+
+  const bar = document.createElement("div");
+  bar.className = "scene-lookup-bar";
+  const kicker = document.createElement("span");
+  kicker.className = "scene-lookup-kicker";
+  kicker.textContent = "Look up";
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "icon-btn scene-lookup-close-btn";
+  closeBtn.setAttribute("data-testid", "scene-lookup-close-btn");
+  closeBtn.textContent = "✕";
+  closeBtn.title = "Close (Esc)";
+  bar.append(kicker, closeBtn);
+  panel.appendChild(bar);
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "scene-lookup-input";
+  input.setAttribute("data-testid", "scene-lookup-input");
+  input.placeholder = "Who or where… (name, type, or a word from the description)";
+  panel.appendChild(input);
+
+  const results = document.createElement("div");
+  results.className = "scene-lookup-results";
+  results.setAttribute("data-testid", "scene-lookup-results");
+  panel.appendChild(results);
+
+  let nodes = [];
+  let loaded = false;
+  let expandedId = null;
+
+  // Name and type first, then the description -- a GM typing "water" wants the
+  // Dry Well before a person whose description happens to mention water, and
+  // ranking is the only thing that makes a body-text match usable at all.
+  function matchesFor(q) {
+    if (!q) return nodes.slice(0, 25);
+    const scored = [];
+    for (const n of nodes) {
+      const name = (n.name || "").toLowerCase();
+      const type = (n.type || "").toLowerCase();
+      const body = `${n.summary || ""} ${n.description || ""} ${(n.tags || []).join(" ")}`.toLowerCase();
+      let rank = -1;
+      if (name.startsWith(q)) rank = 0;
+      else if (name.includes(q)) rank = 1;
+      else if (type.includes(q)) rank = 2;
+      else if (body.includes(q)) rank = 3;
+      if (rank >= 0) scored.push({ n, rank });
+    }
+    scored.sort((a, b) => a.rank - b.rank || (a.n.name || "").localeCompare(b.n.name || ""));
+    return scored.slice(0, 25).map((s) => s.n);
+  }
+
+  function renderResults() {
+    const q = input.value.trim().toLowerCase();
+    results.innerHTML = "";
+    if (!loaded) {
+      const l = document.createElement("div");
+      l.className = "hint";
+      l.textContent = "Loading the graph…";
+      results.appendChild(l);
+      return;
+    }
+    const matches = matchesFor(q);
+    if (!matches.length) {
+      const empty = document.createElement("div");
+      empty.className = "scene-lookup-empty hint";
+      empty.setAttribute("data-testid", "scene-lookup-empty");
+      empty.textContent = q ? `Nothing in the graph matches "${input.value.trim()}".` : "The graph is empty for this world.";
+      results.appendChild(empty);
+      return;
+    }
+    for (const n of matches) {
+      const row = document.createElement("div");
+      row.className = "scene-lookup-row";
+      row.setAttribute("data-testid", "scene-lookup-row");
+      row.setAttribute("data-entity-id", n.id);
+
+      const head = document.createElement("button");
+      head.type = "button";
+      head.className = "scene-lookup-head";
+      head.setAttribute("data-testid", "scene-lookup-head");
+      head.setAttribute("data-entity-id", n.id);
+      head.setAttribute("aria-expanded", expandedId === n.id ? "true" : "false");
+      const nm = document.createElement("span");
+      nm.className = "scene-lookup-name";
+      nm.textContent = n.name || n.id;
+      const ty = document.createElement("span");
+      ty.className = "scene-lookup-type";
+      ty.textContent = n.type || "unknown";
+      if (n.type) ty.style.setProperty("--element-type-color", colorForType(n.type));
+      head.append(nm, ty);
+      head.addEventListener("click", () => {
+        expandedId = expandedId === n.id ? null : n.id;
+        renderResults();
+      });
+      row.appendChild(head);
+
+      if (expandedId === n.id) {
+        const body = document.createElement("div");
+        body.className = "scene-lookup-body";
+        body.setAttribute("data-testid", "scene-lookup-body");
+
+        const text = (n.summary || "").trim() || (n.description || "").trim();
+        const para = document.createElement("p");
+        para.className = "scene-lookup-text";
+        // An empty description is the honest answer, and it is also the nudge:
+        // this is a node nobody has written up yet.
+        para.textContent = text || "No description yet — develop this node in the World inspector.";
+        if (!text) para.classList.add("scene-lookup-text--empty");
+        body.appendChild(para);
+
+        // Summary AND description both present: the summary is the one-liner,
+        // so show the longer text underneath rather than dropping it.
+        if ((n.summary || "").trim() && (n.description || "").trim()) {
+          const more = document.createElement("p");
+          more.className = "scene-lookup-text scene-lookup-text--more";
+          more.textContent = n.description.trim();
+          body.appendChild(more);
+        }
+
+        if ((n.tags || []).length) {
+          const tags = document.createElement("div");
+          tags.className = "scene-lookup-tags";
+          for (const t of n.tags) {
+            const chip = document.createElement("span");
+            chip.className = "scene-lookup-tag";
+            chip.textContent = t;
+            tags.appendChild(chip);
+          }
+          body.appendChild(tags);
+        }
+
+        const open = document.createElement("button");
+        open.type = "button";
+        open.className = "link-btn scene-lookup-open-btn";
+        open.setAttribute("data-testid", "scene-lookup-open-btn");
+        open.setAttribute("data-entity-id", n.id);
+        open.textContent = "open in World →";
+        open.title = "Leave the scene for the World inspector (the planner remembers this scene)";
+        open.addEventListener("click", () => { location.hash = `world/${n.id}`; });
+        body.appendChild(open);
+
+        row.appendChild(body);
+      }
+      results.appendChild(row);
+    }
+  }
+
+  async function load() {
+    try {
+      const graph = await loadGraphIndex();
+      nodes = graph.nodes || [];
+      loaded = true;
+    } catch (err) {
+      results.innerHTML = "";
+      const e = document.createElement("div");
+      e.className = "hint";
+      e.textContent = `Could not load the graph: ${err.message}`;
+      results.appendChild(e);
+      return;
+    }
+    renderResults();
+  }
+
+  input.addEventListener("input", renderResults);
+
+  const api = {
+    el: panel,
+    isOpen: () => !panel.hidden,
+    open() {
+      panel.hidden = false;
+      if (!loaded) { renderResults(); load(); } else renderResults();
+      input.focus();
+      input.select();
+    },
+    close() {
+      panel.hidden = true;
+      input.value = "";
+      expandedId = null;
+    },
+    toggle() { if (panel.hidden) api.open(); else api.close(); }
+  };
+  closeBtn.addEventListener("click", () => api.close());
+  // Esc from inside the input closes the panel. The page-level keydown handler
+  // returns early on INPUT targets (so `[`/`]` never navigate mid-type), which
+  // is exactly why this one lives on the input itself.
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.stopPropagation(); api.close(); }
+  });
+  return api;
+}
+
 /**
  * §2 -- the "◇ From graph" inline picker (no modal). Lists every graph node
  * NOT already an element in this scene (name + mono type + a right-aligned
@@ -3667,7 +3950,7 @@ function buildFromGraphPicker(scene, refreshElements, close) {
     results.appendChild(loading);
     try {
       const [graph, elementsRes] = await Promise.all([
-        spApi(`/api/graph${spWithWorld({ filter: "all" })}`),
+        loadGraphIndex(),
         spApi(`/api/scene-planning/scenes/${encodeURIComponent(scene.id)}/elements${spWithWorld()}`)
       ]);
       const used = new Set((elementsRes.elements || []).map((e) => e.graphEntityId).filter(Boolean));
@@ -5089,7 +5372,7 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     return;
   }
 
-  graph = await spApi(`/api/graph${spWithWorld({ filter: "all" })}`).catch(() => ({ nodes: [], edges: [] }));
+  graph = await loadGraphIndex().catch(() => ({ nodes: [], edges: [] }));
   const nodeMap = new Map((graph.nodes || []).map((n) => [n.id, n]));
   // Phase 37.6 task 2: this render's own `/api/graph` fetch IS the "view init"
   // population resolveSceneDisplayName's doc-comment was waiting on -- every
@@ -5207,6 +5490,28 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     if (partyRailOpen) partyRail.refresh();
   });
   subBarRight.appendChild(partyBtn);
+
+  // Lookup toggle (navigation round, 2026-10-07). Present and usable in EVERY
+  // view -- Run is exactly when the GM is hunting a name, so unlike the two
+  // rails this one is never visibility-hidden. Fixed-width caret span for the
+  // same measured reason as its neighbours: flipping it must not change the
+  // button's width and slide Wrap out from under the pointer.
+  const lookupBtn = document.createElement("button");
+  lookupBtn.type = "button";
+  lookupBtn.className = "btn scene-lookup-toggle-btn";
+  lookupBtn.setAttribute("data-testid", "lookup-toggle-btn");
+  lookupBtn.title = "Look up a person, place or area without leaving this scene  ( / )";
+  lookupBtn.innerHTML = '\u2315 look up <span class="sp-caret"></span>';
+  const lookupCaret = lookupBtn.querySelector(".sp-caret");
+  const lookup = buildLookupPanel();
+  const paintLookup = () => {
+    const open = lookup.isOpen();
+    lookupCaret.textContent = open ? "\u25be" : "\u25b8";
+    lookupBtn.setAttribute("aria-pressed", open ? "true" : "false");
+  };
+  lookupBtn.addEventListener("click", () => { lookup.toggle(); paintLookup(); });
+  paintLookup();
+  subBarRight.appendChild(lookupBtn);
 
   const wrapBtn = document.createElement("button");
   wrapBtn.type = "button";
@@ -5641,6 +5946,10 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   // right beneath the top bar so it reads as a slide-down from `Wrap ▸`.
   const wrapPanel = buildWrapPanel(scene, refreshElements);
   topBar.after(wrapPanel);
+  // The lookup panel sits in the same slot, directly under the top bar, so it
+  // reads as a slide-down from its own toggle. Built far earlier (the toggle
+  // needs it); mounted here, next to its sibling panel.
+  topBar.after(lookup.el);
   wrapBtn.addEventListener("click", async () => {
     const opening = wrapPanel.hidden;
     wrapPanel.hidden = !opening;
@@ -5820,11 +6129,23 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable)) return;
     if (e.key === "[") { if (prevId) location.hash = sceneHash(prevId); }
     else if (e.key === "]") { if (nextId) location.hash = sceneHash(nextId); }
+    else if (e.key === "/") {
+      // `/` is the lookup. Chosen because it is the universal search key, it
+      // cannot collide with the existing `[`/`]`, and the guard above already
+      // returns early while any field is being edited, so typing a slash into
+      // prep text can never open it.
+      e.preventDefault();
+      lookup.open();
+      paintLookup();
+    }
     else if (e.key === "Escape") {
       // §3.3: Esc CLOSES an open panel — it must not leave the scene. Wrap
       // panel first, then any open inline add/encounter panel; if nothing is
       // open, do nothing.
-      if (!wrapPanel.hidden) {
+      if (lookup.isOpen()) {
+        lookup.close();
+        paintLookup();
+      } else if (!wrapPanel.hidden) {
         wrapPanel.hidden = true;
         wrapBtn.textContent = "Wrap ▸";
       } else {

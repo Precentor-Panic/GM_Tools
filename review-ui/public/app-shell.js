@@ -33,6 +33,60 @@ function currentWorld() {
   return localStorage.getItem("gmReview.world") || null;
 }
 
+// ---------------------------------------------------------------------------
+// Remembered planner route (navigation round, 2026-10-07).
+//
+// Russell, at the table: "I find myself hunting longer than necessary for new
+// people, names, and even area names... it would be great if the session
+// runner remembered the last scene if I had to jump to the World tab to find
+// a name."
+//
+// Per-world, because the planner arg is a world-scoped id -- a remembered
+// `scene/<id>` from one world is meaningless in another, and a shared key
+// would send a world switch to a 404. Written on every planner render (the
+// one place that already knows the parsed sub-route), read only by the
+// surface toggle. localStorage can throw (private windows, blocked site
+// data), so both sides are guarded and the fallback is the shelf.
+// ---------------------------------------------------------------------------
+function plannerRouteKey(world) {
+  return `gmReview.lastPlannerRoute:${world ?? ""}`;
+}
+
+/** Remember this planner route, and FORGET it if the scene it names has gone.
+ *  Without the forget half, deleting the scene you were last on would send
+ *  every later toggle click to a dead route permanently. getSceneName is
+ *  cached and the breadcrumb already calls it on this same render, so the
+ *  check costs no extra request. */
+async function rememberPlannerRoute(sub) {
+  const world = currentWorld();
+  if (!world) return;
+  const key = plannerRouteKey(world);
+  if (sub.kind === "scene") {
+    await getSceneName(sub.id);
+    if (missingSceneIds.has(sub.id)) {
+      try { localStorage.removeItem(key); } catch { /* unavailable */ }
+      return;
+    }
+  }
+  const route = sub.kind === "plans" ? "plans" : `${sub.kind}/${sub.id}`;
+  try { localStorage.setItem(key, route); } catch { /* unavailable */ }
+}
+
+/** The planner hash to open, honouring the remembered route. Falls back to the
+ *  shelf when nothing is remembered or the value is not one we wrote. */
+function plannerEntryHash() {
+  const world = currentWorld();
+  if (!world) return "planner/plans";
+  let saved = null;
+  try { saved = localStorage.getItem(plannerRouteKey(world)); } catch { /* unavailable */ }
+  if (!saved) return "planner/plans";
+  // Validate against the SAME parser that renders it, so a hand-edited or
+  // stale value can never route somewhere parsePlannerArg would not.
+  const sub = parsePlannerArg(saved);
+  if (sub.kind === "plans") return "planner/plans";
+  return `planner/${sub.kind}/${sub.id}`;
+}
+
 // QA W2 fix (Group C #15): backend error messages meant for an MCP/tool
 // caller (resolveWorld's own "Call wf_list_worlds... WF_DEFAULT_WORLD..."
 // wording) must never reach a human user verbatim -- map that ONE class of
@@ -128,6 +182,11 @@ async function getPlanName(planId) {
   return planId;
 }
 
+// Scene ids this shell has tried and failed to fetch. Recorded EXPLICITLY
+// rather than inferred from getSceneName's "Scene" fallback string, so the
+// remembered-route check below is not reading a display string as a status.
+const missingSceneIds = new Set();
+
 async function getSceneName(sceneId) {
   if (sceneNameCache.has(sceneId)) return sceneNameCache.get(sceneId);
   try {
@@ -135,8 +194,11 @@ async function getSceneName(sceneId) {
     const infoMap = await fetchEntityInfoMap();
     const name = resolveSceneDisplayName(scene, infoMap);
     sceneNameCache.set(sceneId, name);
+    missingSceneIds.delete(sceneId);
     return name;
-  } catch { /* fall through */ }
+  } catch {
+    missingSceneIds.add(sceneId);
+  }
   return "Scene";
 }
 
@@ -171,10 +233,20 @@ function wireStaticControls() {
   if (staticControlsWired) return;
   staticControlsWired = true;
 
-  // Decision 4: the toggle ALWAYS navigates to the surface's canonical entry
-  // (never a remembered last-visited sub-route).
+  // Decision 4, AMENDED 2026-10-07. It used to read: "the toggle ALWAYS
+  // navigates to the surface's canonical entry (never a remembered
+  // last-visited sub-route)." That was right for four surfaces and wrong for
+  // this one. At the table the planner is not a place you browse to, it is
+  // the scene you are running; leaving it to look a name up on the World
+  // surface and coming back to the plans shelf cost Russell the two clicks
+  // AND the re-find, every single time. World/Chronicle/Library/Briefing keep
+  // the original rule -- they have no "where I was" worth preserving.
+  //
+  // The shelf stays one click away on the breadcrumb's "Plans" crumb, so
+  // nothing becomes unreachable, and a first visit (nothing remembered) still
+  // lands exactly where it used to.
   document.querySelector('[data-testid="shell-surface-toggle-planner"]')
-    ?.addEventListener("click", () => goto("planner/plans"));
+    ?.addEventListener("click", () => goto(plannerEntryHash()));
   document.querySelector('[data-testid="shell-surface-toggle-world"]')
     ?.addEventListener("click", () => goto("world"));
   // Phase 34 task 34.2: the two new surfaces navigate to their canonical
@@ -1240,6 +1312,12 @@ export function renderShell(view, arg) {
   if (sub.kind === "plans") railOpenPlanId = null;
   else if (sub.kind === "plan") railOpenPlanId = sub.id;
   // scene: keep whatever plan context we arrived from (null if deep-linked).
+
+  // Amended Decision 4: remember where we are so the surface toggle can come
+  // back here. Stamped from `sub`, not from the raw `arg`, so only a route the
+  // parser actually recognised is ever stored.
+  // Fire-and-forget: renderShell is sync and nothing below depends on it.
+  rememberPlannerRoute(sub);
 
   renderRail(sub);
   renderBreadcrumb(sub);

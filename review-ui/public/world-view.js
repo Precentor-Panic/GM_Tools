@@ -1916,7 +1916,19 @@ export async function renderWorldSurface(entityId) {
   const worldChanged = cache.world && cache.world !== world;
   if (worldChanged || ui.world !== world) resetForWorld(world);
 
-  const alreadyMounted = !!root() && cache.graph && cache.world === world;
+  // Navigation round (2026-10-07). These two were ONE condition, and the DOM
+  // half of it never held: app-shell's setMain() does `main.innerHTML = ""`,
+  // so `root()` is null on every single return to this surface -- which meant
+  // the full cold mount ran every time, including recomputeUsedInScene's one
+  // /elements request PER SCENE IN THE WORLD. Russell hits this surface
+  // mid-session to look a name up, so that cost was paid at the table.
+  //
+  // The DATA outlives the DOM (resetForWorld is the only thing that clears
+  // it, and it fires on a world change), so the two are now separate: a
+  // re-visit rebuilds the skeleton from cache and paints INSTANTLY, then
+  // refreshes behind the painted page. Stale-while-revalidate, not stale.
+  const dataCached = !!cache.graph && cache.world === world;
+  const alreadyMounted = !!root() && dataCached;
   selectedId = entityId || null;
 
   // W5b: the shell topbar's world slot is retired (search/filters live in
@@ -1931,6 +1943,30 @@ export async function renderWorldSurface(entityId) {
 
   const token = ++mountToken;
   buildSkeleton();
+
+  if (dataCached) {
+    // Paint from cache, then revalidate. Same three steps as the cold path
+    // below, in the same order, each one token-guarded -- navigating away
+    // mid-revalidate must not repaint a surface that is no longer mounted.
+    // Spelled out rather than delegated to `reload()`, which checks no token
+    // of its own.
+    applySelection(selectedId);
+    if (ui.railMode === "graph") renderWorldGraph();
+    (async () => {
+      try {
+        await loadGraph();
+        if (token !== mountToken) return;
+        await refreshScenes();
+        if (token !== mountToken) return;
+        await recomputeUsedInScene();
+        if (token !== mountToken) return;
+        applySelection(selectedId);
+        if (ui.railMode === "graph") renderWorldGraph();
+      } catch { /* the cache-painted page stays usable on a failed revalidate */ }
+    })();
+    return;
+  }
+
   // The root (world-surface-root) exists synchronously from buildSkeleton;
   // the panes fill once the graph loads (guarded below).
   try {
