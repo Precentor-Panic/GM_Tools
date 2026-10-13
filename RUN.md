@@ -67,6 +67,23 @@ profile and hides the interface, so it idles at a few percent of one core.
 It refreshes the Foundry index every two minutes and after every applied
 batch.
 
+## Map grids
+
+A map asset can record the grid its image is drawn at (pixels per square). A
+scene created from it gets that grid; without it Foundry uses 100 px, which
+does not line up with most map packs.
+
+```
+bin/map-grid --world <world>            # what each map has, and what its pack says
+bin/map-grid --world <world> --apply    # record the pack's size where none is recorded
+bin/map-grid --world <world> --set <assetId> 140
+bin/foundry-push --world <world> --plan <planId> --regrid
+```
+
+`--regrid` sets the grid on scenes that are already in Foundry. It is a
+separate, explicit step because it resizes the tokens on those scenes. The
+Library's Stagecraft rows show and edit the same value.
+
 ## What it does
 
 - **Already running** — if something matching GM_Tools is already answering

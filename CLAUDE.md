@@ -184,6 +184,27 @@ left Foundry's world folder. `test/foundry-push-orchestrator.test.mjs` moved to
 index was 8½ hours stale with Russell away — the dry run was run against the
 real aureus world, the apply was not.
 
+**Run-view usability and map grids (2026-10-13, later the same day) is done.**
+Five changes, each committed separately. (1) The party rail's open state is
+kept in sessionStorage per world and survives a detour to another surface;
+the lanes rail still resets. (2) The Run note button left the Run head band
+for the scene toolbar, in the cell Wrap leaves empty in Run; its box is a
+drop-down, `n` opens it, and it lives outside the spread so a poll rebuild
+cannot destroy a half-typed note. (3) The look-up panel is a fixed drawer on
+the right edge and remembers the last search for the session. (4) In Run the
+plans rail is collapsed by CSS reading the scene page's own `data-mode`
+(`#shell-rail-tab` brings it back); `.scene-subbar-controls` is offset by half
+the gained width so the Prep | Layout | Run control does not move, which is
+why layout-stability.e2e passes unchanged. (5) A map asset has `gridSize`
+(pixels per square). `bin/map-grid --world <w> [--apply]` fills it from the
+Scene pack of the module that ships the image
+(`wf-mcp-server/lib/module-scene-grid.mjs`; LevelDB packs are copied before
+opening and read with Foundry's own `classic-level`), the Library row edits
+it, and `composeSceneOps` sends it on CREATE only. An already-pushed scene is
+changed only by `bin/foundry-push --regrid` (route
+`/api/foundry/regrid-scene`), because Foundry sizes tokens in squares. A
+module unpacked for its images only has no pack to read; set those by hand.
+
 **Always-on services and a QC round (2026-10-13) is done.** The stack on a
 table-hosting machine is now three systemd user services (`ops/systemd/`,
 installed by `ops/install-services.sh`, machine paths in
