@@ -425,6 +425,54 @@ function eligibleTokenActors(world, roster, skipped) {
 }
 
 /**
+ * The map asset a scene pushes with: its own linked map (W3b
+ * `scene.mapAssetId`) first, else the first accepted map on its tray. Shared
+ * by composeSceneOps and regridSceneInFoundry so both mean the same map.
+ */
+function resolveSceneMapAsset(world, scene, roster, skipped) {
+  let mapAsset = null;
+  if (scene.mapAssetId) {
+    try {
+      const linked = getStagecraftAsset(world, scene.mapAssetId);
+      if (linked?.kind === "map" && linked.status !== "discarded") mapAsset = linked;
+      else skipped.push({ kind: "asset", id: scene.mapAssetId, reason: "linked map asset is not a usable map (wrong kind or discarded)" });
+    } catch {
+      skipped.push({ kind: "asset", id: scene.mapAssetId, reason: "linked map asset not found" });
+    }
+  }
+  if (!mapAsset) mapAsset = firstAcceptedAssetOfKind(world, roster, "map", skipped);
+  return mapAsset;
+}
+
+/**
+ * Sets an already-pushed scene's grid to its map asset's recorded size, in
+ * place: ONE update_scene op whose patch is the grid and nothing else.
+ *
+ * A create carries the grid (composeSceneOps). An ordinary re-push does not,
+ * on purpose: Foundry sizes tokens in grid squares, so changing the grid
+ * resizes every token on a scene the GM may already have dressed. This is
+ * the explicit, per-scene way to do it.
+ *
+ * @returns {Promise<{status:'applied'|'queued'|'noop', sceneId:string, gridSize:number|null, reason?:string, results?:object[]|null, note?:string}>}
+ */
+export async function regridSceneInFoundry(dir, world, sceneId, opts = {}) {
+  const scene = getScene(world, sceneId);
+  const ref = typeof scene.foundrySceneRef === "string" ? scene.foundrySceneRef : scene.foundrySceneRef?.uuid;
+  if (!ref) throw new Error(`regridSceneInFoundry: scene "${sceneId}" has no Foundry scene yet (push it first).`);
+  const tray = getSceneTray(world, sceneId);
+  const mapAsset = resolveSceneMapAsset(world, scene, Array.isArray(tray.roster) ? tray.roster : [], []);
+  if (!mapAsset) return { status: "noop", sceneId, gridSize: null, reason: "the scene has no map" };
+  if (!mapAsset.gridSize) return { status: "noop", sceneId, gridSize: null, reason: `no grid size recorded for map "${mapAsset.name}"` };
+  const op = {
+    opId: opts.makeOpId ? opts.makeOpId() : makeOpId(),
+    kind: "update_scene",
+    data: { sceneUuid: ref, patch: { grid: { size: mapAsset.gridSize } } }
+  };
+  const outcome = await writeFoundryOps(dir, world, [op], opts);
+  return { status: outcome.status, sceneId, gridSize: mapAsset.gridSize, results: outcome.results ?? null, note: outcome.note };
+}
+
+/**
  * Composes ONE dirty scene's op group: the scene op itself (`create_scene`
  * when `scene.foundrySceneRef == null`, else `update_scene` targeting it),
  * plus -- CREATE PATH ONLY, per §5's pinned "update-path never re-emits
@@ -449,17 +497,7 @@ export function composeSceneOps(dataDir, world, scene, opts = {}) {
   // The scene's own linked map (W3b scene.mapAssetId) is the primary source;
   // the tray-roster scan (phase36's original contract) is the fallback for
   // scenes that stage-dress via tray rows instead of a link.
-  let mapAsset = null;
-  if (scene.mapAssetId) {
-    try {
-      const linked = getStagecraftAsset(world, scene.mapAssetId);
-      if (linked?.kind === "map" && linked.status !== "discarded") mapAsset = linked;
-      else skipped.push({ kind: "asset", id: scene.mapAssetId, reason: "linked map asset is not a usable map (wrong kind or discarded)" });
-    } catch {
-      skipped.push({ kind: "asset", id: scene.mapAssetId, reason: "linked map asset not found" });
-    }
-  }
-  if (!mapAsset) mapAsset = firstAcceptedAssetOfKind(world, roster, "map", skipped);
+  const mapAsset = resolveSceneMapAsset(world, scene, roster, skipped);
   const splashAsset = firstAcceptedAssetOfKind(world, roster, "splash", skipped);
 
   const data = { name: resolveSceneName(dataDir, world, scene) };
@@ -469,6 +507,10 @@ export function composeSceneOps(dataDir, world, scene, opts = {}) {
       data.background = { src };
       const dims = dimsForSrc(dataDir, src);
       if (dims) { data.width = dims.width; data.height = dims.height; }
+      // 2026-10-13: the grid the map was drawn at, on CREATE only. Without it
+      // every scene got Foundry's default 100 px grid under art drawn at
+      // another size. Not sent on the update path -- see regridSceneInFoundry.
+      if (isCreatePath && mapAsset.gridSize) data.grid = { size: mapAsset.gridSize };
     }
   }
   if (splashAsset) {

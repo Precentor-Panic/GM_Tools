@@ -139,7 +139,8 @@ export function saveStagecraftAsset(
     thumb = null,
     pendingImport = null,
     catalogRef = null,
-    src = null
+    src = null,
+    gridSize = null
   },
   opts = {}
 ) {
@@ -175,6 +176,11 @@ export function saveStagecraftAsset(
     // Friction Wave 1 W3a -- see this file's own header comment: the durable
     // "which file does this map asset mean" path/URL, as Foundry resolves it.
     src,
+    // 2026-10-13: pixels per grid square the map image is drawn at (a map
+    // asset only; null = unknown, and a pushed scene then gets Foundry's own
+    // default). Additive-optional: a row written before this has the key
+    // absent, read identically to null.
+    gridSize: normalizeGridSize(gridSize),
     createdAt: now
   };
   const assets = readAssets(world);
@@ -288,6 +294,37 @@ export function removeStagecraftTag(world, assetId, tag) {
   const next = removeTag(assets, assetId, tag);
   writeAssets(world, next);
   return next.find((a) => a.id === assetId);
+}
+
+/** Pixels per square: a whole number from 10 to 2000, or null. Throws on anything else. */
+export function normalizeGridSize(gridSize) {
+  if (gridSize === null || gridSize === undefined || gridSize === "") return null;
+  const n = Number(gridSize);
+  if (!Number.isFinite(n) || n < 10 || n > 2000) {
+    throw new Error(`Stagecraft asset gridSize must be a number of pixels from 10 to 2000, or null (got ${JSON.stringify(gridSize)}).`);
+  }
+  return Math.round(n);
+}
+
+/**
+ * Set (or clear, with null) a map asset's grid size in pixels per square.
+ * Status-independent for the same reason as `updateStagecraftAssetSrc` below:
+ * recording a fact about an accepted map's file is an ongoing edit, not a
+ * re-ingest.
+ * @returns {object}   the updated StagecraftAsset
+ */
+export function updateStagecraftAssetGrid(world, assetId, gridSize) {
+  const size = normalizeGridSize(gridSize);
+  const assets = readAssets(world);
+  const idx = findAssetIndex(world, assetId, assets);
+  if (assets[idx].kind !== "map") {
+    throw new Error(`Stagecraft asset "${assetId}" is a ${assets[idx].kind}, not a map -- only a map has a grid.`);
+  }
+  const updated = { ...assets[idx], gridSize: size };
+  const next = [...assets];
+  next[idx] = updated;
+  writeAssets(world, next);
+  return updated;
 }
 
 /**

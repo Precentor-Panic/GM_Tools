@@ -8,6 +8,9 @@
  *   node bin/foundry-push --world aureus --plan plan_x [--plan plan_y]
  *   node bin/foundry-push --world aureus --verify          # report only
  *   node bin/foundry-push --world aureus --plan plan_x --dry-run
+ *   node bin/foundry-push --world aureus --plan plan_x --regrid   # also set each
+ *        already-pushed scene's grid to its map's recorded size (bin/map-grid).
+ *        Explicit because it resizes the tokens on those scenes.
  *
  * Requires a connected GM client (review-ui/gm-client.mjs). Never deletes
  * anything: the destructive weekly swap stays its own confirm-gated route.
@@ -27,6 +30,7 @@ const base = opt("--base", "http://localhost:8787");
 const planIds = all("--plan");
 const dryRun = flag("--dry-run");
 const force = flag("--force");
+const regrid = flag("--regrid");
 
 const api = async (path, body) => {
   const res = await fetch(base + path, body
@@ -201,13 +205,30 @@ await withPushLock(dataDir, world, async () => {
         // The batch is written; it is applied when the queue empties.
         const late = r.status === "queued";
         const applied = !late || (await awaitQueueDrain(dataDir, world));
+        // --regrid: one more in-place op, the grid alone. Never automatic --
+        // Foundry sizes tokens in squares, so this resizes them.
+        let gridNote = "";
+        let gridOk = true;
+        if (regrid && applied) {
+          if (!(await awaitQueueDrain(dataDir, world))) { gridOk = false; gridNote = "; grid: the queue never drained"; }
+          else {
+            const g = await api("/api/foundry/regrid-scene", { sceneId: s.id });
+            if (g.status === "noop") gridNote = `; grid unchanged (${g.reason})`;
+            else {
+              const landed = g.status !== "queued" || (await awaitQueueDrain(dataDir, world));
+              const failed = (g.results ?? []).find((x) => x && x.ok === false);
+              gridOk = landed && !failed;
+              gridNote = gridOk ? `; grid set to ${g.gridSize} px` : `; grid NOT set — ${failed?.error ?? g.note ?? "never applied"}`;
+            }
+          }
+        }
         sceneRows.push({
           label,
-          status: applied ? "ok" : "failed",
+          status: applied && gridOk ? "ok" : "failed",
           ref: s.foundrySceneRef,
-          reason: !applied
+          reason: (!applied
             ? `token refresh queued, never applied — ${r.note ?? "no live client?"}`
-            : n ? `in place: refreshed ${n} token${n === 1 ? "" : "s"}` : "in place: nothing to refresh"
+            : n ? `in place: refreshed ${n} token${n === 1 ? "" : "s"}` : "in place: nothing to refresh") + gridNote
         });
       } catch (err) {
         sceneRows.push({ label, status: "failed", ref: s.foundrySceneRef, reason: `token refresh failed: ${String(err?.message ?? err).slice(0, 140)}` });

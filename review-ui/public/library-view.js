@@ -2277,6 +2277,58 @@ function buildShelf(ctx, which) {
       bodyCol.appendChild(srcLine);
     }
 
+    // 2026-10-13: a map's grid size (pixels per square), click-to-edit like
+    // the path above. Sent with the scene when it is first pushed, so the
+    // grid lines up with the art. bin/map-grid fills it from the map pack.
+    if (!isReliquary && r.kind === "map" && !r.catalogOnly) {
+      const gridLine = el("div", { style: "display: flex; align-items: center; gap: 7px; margin-top: 3px;" });
+      const paintGrid = () => {
+        gridLine.innerHTML = "";
+        gridLine.appendChild(el("span", {
+          testid: "tagged-shelf-row-grid",
+          "data-item-id": r.id,
+          text: r.gridSize ? `▦ ${r.gridSize} px per square` : "▦ grid size not recorded",
+          title: r.gridSize ? "The grid this map is drawn at. A scene pushed with it is created with this grid." : "Unknown: a scene pushed with this map gets Foundry's default 100 px grid.",
+          style: `font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: ${r.gridSize ? "oklch(0.46 0.014 65)" : "oklch(0.64 0.012 70)"}; ${r.gridSize ? "" : "font-style: italic;"}`
+        }));
+        const editBtn = el("span", {
+          testid: "tagged-shelf-row-grid-edit-btn",
+          text: r.gridSize ? "✎ edit" : "✎ set",
+          style: "font-size: 10.5px; color: oklch(0.50 0.075 185); cursor: pointer; white-space: nowrap;"
+        });
+        editBtn.addEventListener("click", () => {
+          const input = el("input", {
+            testid: "tagged-shelf-row-grid-input",
+            value: r.gridSize ? String(r.gridSize) : "",
+            placeholder: "140",
+            inputmode: "numeric",
+            style: "width: 70px; padding: 2px 8px; border: 1px solid oklch(0.72 0.045 185); border-radius: 4px; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; background: oklch(1 0 0); color: inherit;"
+          });
+          const commit = async () => {
+            const v = input.value.trim();
+            try {
+              const { asset } = await api(`/api/session-planner/stagecraft/${encodeURIComponent(r.id)}/grid`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ world, gridSize: v ? Number(v) : null })
+              });
+              r.gridSize = asset.gridSize ?? null;
+            } catch { /* keep the old value */ }
+            paintGrid();
+          };
+          input.addEventListener("keydown", (ev) => {
+            if (ev.key === "Enter") commit();
+            else if (ev.key === "Escape") paintGrid();
+          });
+          gridLine.innerHTML = "";
+          gridLine.appendChild(input);
+          input.focus();
+        });
+        gridLine.appendChild(editBtn);
+      };
+      paintGrid();
+      bodyCol.appendChild(gridLine);
+    }
+
     const tagsRow = el("div", { style: "display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; align-items: center;" });
     for (const t of r.tags) {
       const on = st.tagFilter.indexOf(t) >= 0;
@@ -2372,7 +2424,8 @@ function normalizeShelf(list, isReliquary) {
           // W3a: the asset's real file path/URL (editable), plus the
           // Foundry pull's own imagePath as a read-only fallback hint.
           src: r.src ?? null,
-          foundryImagePath: r.foundryRef?.imagePath ?? null
+          foundryImagePath: r.foundryRef?.imagePath ?? null,
+          gridSize: r.gridSize ?? null
         });
 }
 

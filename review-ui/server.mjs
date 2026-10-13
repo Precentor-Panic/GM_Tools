@@ -238,7 +238,8 @@ import {
   addStagecraftTag,
   removeStagecraftTag,
   // Friction Wave 1 W3a -- the src edit route's backing patch.
-  updateStagecraftAssetSrc
+  updateStagecraftAssetSrc,
+  updateStagecraftAssetGrid
 } from "../session-planner/stagecraft-store.mjs";
 // Phase 35 task 35.1, §3/§8 -- token index (read-only route).
 import { listTokens } from "../session-planner/token-store.mjs";
@@ -258,7 +259,7 @@ import { pullFoundryActorsToStores } from "../wf-mcp-server/lib/foundry-pull-ops
 // foundry-pull-ops.mjs above -- see its own header comment.
 // Phase 36 task 36.2 -- `flushDirtyStagedScenes`, the quiet-push flush
 // engine (same file, extended -- see that module's own header note).
-import { pushSceneToFoundry, flushDirtyStagedScenes } from "../wf-mcp-server/lib/foundry-push-ops.mjs";
+import { pushSceneToFoundry, flushDirtyStagedScenes, regridSceneInFoundry } from "../wf-mcp-server/lib/foundry-push-ops.mjs";
 // Aureus table wave B1 (G2) -- the scene LIFECYCLE half (same file, extended
 // again): activate/remove-from-Foundry/delete-cascade/stale-sweep. See
 // foundry-push-ops.mjs's own "Aureus table wave B1 (G1)" header comment for
@@ -3040,6 +3041,23 @@ async function handleApi(req, res, url, parts) {
     return sendJson(res, 200, result);
   }
 
+  // POST /api/foundry/regrid-scene   { world, sceneId }
+  // -> {status:'applied'|'queued'|'noop', sceneId, gridSize, reason?, results?}
+  //
+  // 2026-10-13. Sets an ALREADY-PUSHED scene's grid to its map asset's
+  // recorded size, in place (one update_scene op, grid only). A create
+  // carries the grid by itself; an ordinary re-push deliberately does not,
+  // because changing the grid resizes every token on a scene the GM may
+  // already have dressed. This is the explicit way to do it.
+  if (method === "POST" && parts.length === 3 && parts[1] === "foundry" && parts[2] === "regrid-scene") {
+    const body = await readBody(req);
+    const dir = resolveDir();
+    const w = resolveWorld(body.world);
+    if (!body.sceneId) throw new Error("POST /api/foundry/regrid-scene requires sceneId.");
+    const result = await regridSceneInFoundry(dir, w, body.sceneId);
+    return sendJson(res, 200, result);
+  }
+
   // POST /api/foundry/flush-scenes   { world, sceneIds? }
   // -> flushDirtyStagedScenes' own shape {flushed, results, skipped, ...}
   //
@@ -4046,6 +4064,17 @@ async function handleApi(req, res, url, parts) {
     const body = await readBody(req);
     const w = resolveWorld(body.world);
     const asset = updateStagecraftAssetSrc(w, parts[3], body.src ?? null);
+    return sendJson(res, 200, { asset });
+  }
+
+  // POST /api/session-planner/stagecraft/:id/grid   {world, gridSize} -> {asset}
+  // Set (or clear, gridSize:null) a map asset's pixels-per-square. Sent with
+  // the scene on push so the grid lines up with the art. Same status-
+  // independent convention as the src route above.
+  if (method === "POST" && parts.length === 5 && parts[1] === "session-planner" && parts[2] === "stagecraft" && parts[4] === "grid") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const asset = updateStagecraftAssetGrid(w, parts[3], body.gridSize ?? null);
     return sendJson(res, 200, { asset });
   }
 

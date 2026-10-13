@@ -1,0 +1,7 @@
+#!/bin/sh
+# Record the grid size each map asset is drawn at. See bin/map-grid.mjs.
+here=$(cd "$(dirname "$0")" && pwd)
+conf="$HOME/.config/gm-tools/services.env"
+[ -f "$conf" ] && { set -a; . "$conf"; set +a; }
+node=${NODE:-$(command -v node || echo "$HOME/.local/node/bin/node")}
+exec "$node" "$here/map-grid.mjs" "$@"
