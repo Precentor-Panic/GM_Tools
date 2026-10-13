@@ -1158,6 +1158,18 @@ let railOpen = false;
 // reason — layout-stability.e2e asserts Run's geometry is identical whichever
 // view you arrive from, which only holds if the default is deterministic.
 // Default CLOSED.
+//
+// 2026-10-13: remembered for the browser session (per world), and no longer
+// cleared when the shell leaves the planner. Russell opens it at the start of
+// play and a detour to World kept closing it. The default is still CLOSED, so
+// a fresh session is as deterministic as layout-stability.e2e needs.
+function partyRailKey() { return `gmReview.partyRail:${currentWorld() ?? ""}`; }
+function readPartyRailOpen() {
+  try { return sessionStorage.getItem(partyRailKey()) === "open"; } catch { return false; }
+}
+function writePartyRailOpen(open) {
+  try { sessionStorage.setItem(partyRailKey(), open ? "open" : "closed"); } catch { /* unavailable */ }
+}
 let partyRailOpen = false;
 // QA W2 fix (Group A #1): the view must survive prev/next/rail navigation
 // between scenes -- it only resets when the world changes underneath it, or
@@ -1178,17 +1190,16 @@ let scenePageModeWorld = null;
 // navigation between scenes, so keeping it across a surface switch makes the
 // behaviour consistent rather than adding a new rule.
 //
-// The two RAILS still reset, deliberately and for a different reason:
+// The lanes rail still resets, deliberately and for a different reason:
 // layout-stability.e2e asserts Run's geometry is identical whichever view you
-// arrive from, which only holds while their default is deterministic. Opening
-// a rail is a cheap one-click gesture; re-finding your scene is not.
+// arrive from, which only holds while its default is deterministic. The party
+// rail no longer resets here (2026-10-13, see partyRailKey above).
 // `scenePageModeWorld` is deliberately NOT cleared: it is purely the
 // world-change sentinel for the guard at renderScenePage, and nulling it here
 // would make that guard fire on the next render and force Prep anyway --
 // silently undoing everything above.
 export function resetScenePageMode() {
   railOpen = false;
-  partyRailOpen = false;
 }
 
 function detachSceneKeydownHandler() {
@@ -5543,6 +5554,7 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   partyBtn.title = "Show the party's passive Perception, Insight and Investigation beside the scene — hover a name for saves and skills, click to pin";
   partyBtn.innerHTML = '\u25cd party <span class="sp-caret"></span>';
   const partyCaret = partyBtn.querySelector(".sp-caret");
+  partyRailOpen = readPartyRailOpen();
   const paintPartyRail = () => {
     partyCaret.textContent = partyRailOpen ? "\u25be" : "\u25b8";
     partyBtn.setAttribute("aria-pressed", partyRailOpen ? "true" : "false");
@@ -5550,6 +5562,7 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   };
   partyBtn.addEventListener("click", () => {
     partyRailOpen = !partyRailOpen;
+    writePartyRailOpen(partyRailOpen);
     paintPartyRail();
     if (partyRailOpen) partyRail.refresh();
   });

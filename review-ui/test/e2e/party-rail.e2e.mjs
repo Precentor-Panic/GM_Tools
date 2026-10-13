@@ -151,6 +151,23 @@ test("the toggle opens and closes the rail, and the caret does not change its wi
   } finally { await page.close(); }
 });
 
+test("an open rail stays open across a detour to World", async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  try {
+    await openRun(page);
+    await toggle(page).click();
+    await seats(page).first().waitFor({ state: "visible" });
+
+    await page.locator('[data-testid="shell-surface-toggle-world"]').click();
+    await page.locator('#app-shell[data-surface="world"]').waitFor();
+    await page.locator('[data-testid="shell-surface-toggle-planner"]').click();
+    await page.locator('[data-testid="scene-run-spread"]').waitFor({ state: "visible", timeout: 15000 });
+
+    await seats(page).first().waitFor({ state: "visible", timeout: 5000 });
+    assert.equal(await toggle(page).getAttribute("aria-pressed"), "true", "the toggle still reads as pressed");
+  } finally { await page.close(); }
+});
+
 test("one seat per claimed sheet, mule and blank sheet excluded, sorted by passive Perception", async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   try {
