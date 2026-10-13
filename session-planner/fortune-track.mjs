@@ -21,6 +21,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreFile } from "../mutation-engine/campaign-home.mjs";
 import { z } from "zod";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 
@@ -52,7 +53,7 @@ export function fortuneRoot() {
 }
 
 function worldFilePath(world) {
-  return join(fortuneRoot(), `${world}.json`);
+  return campaignStoreFile(world, { store: "fortune-track", envVar: "GM_TOOLS_FORTUNE_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 function stopById(stopId) {

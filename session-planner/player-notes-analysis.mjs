@@ -21,6 +21,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreFile } from "../mutation-engine/campaign-home.mjs";
 import { z } from "zod";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 
@@ -53,7 +54,7 @@ export function playerNotesAnalysisRoot() {
 }
 
 function analysisFilePath(world) {
-  return join(playerNotesAnalysisRoot(), `${world}.json`);
+  return campaignStoreFile(world, { store: "player-notes-analysis", envVar: "GM_TOOLS_PLAYER_NOTES_ANALYSIS_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 export function makeAnalysisId() {

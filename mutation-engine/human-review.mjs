@@ -65,6 +65,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreFile } from "./campaign-home.mjs";
 import { withLock, ConcurrentWriteError } from "./review-state.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -78,7 +79,7 @@ export function humanReviewRoot() {
 }
 
 function worldFilePath(world) {
-  return join(humanReviewRoot(), `${world}.json`);
+  return campaignStoreFile(world, { store: "human-review", envVar: "GM_TOOLS_HUMAN_REVIEW_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 function readState(world) {

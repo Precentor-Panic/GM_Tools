@@ -55,6 +55,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreFile } from "../mutation-engine/campaign-home.mjs";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -94,7 +95,7 @@ function normalizeEncounter(e) {
 }
 
 function worldFilePath(world) {
-  return join(savedEncountersRoot(), `${world}.json`);
+  return campaignStoreFile(world, { store: "saved-encounters", envVar: "GM_TOOLS_SAVED_ENCOUNTERS_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 function readEncounters(world) {

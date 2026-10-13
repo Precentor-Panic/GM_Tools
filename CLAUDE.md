@@ -241,6 +241,17 @@ missing half of the 10-07 "remember the last scene" fix; pinned by a test in
 the plans rail in Run, keep the party rail open across a return, make look-up a
 side drawer, and send a grid size with a pushed scene.
 
+**Campaign data lives in the campaign repo (2026-10-13, phase 1 of 2).** A
+world registered in `~/.config/gm-tools/campaigns.json` keeps its campaign
+stores under `<campaign repo>/data/` instead of in this checkout
+(`mutation-engine/campaign-home.mjs`: the registry, `CAMPAIGN_STORES`, and the
+path precedence store env override -> campaign repo -> legacy folder).
+`bin/campaign-adopt` does the move; RUN.md has the operating notes. GM_Tools
+writes files and never commits. Deliberately not moved yet: the graph and
+`narrative-state` (they move together in phase 2, when the campaign repo
+becomes the graph's source of truth and Foundry reads a published copy). Plan:
+`~/.claude/plans/hidden-exploring-muffin.md`.
+
 Engineering conventions for writing code in this repo live in `.claude/skills/gm-tools-conventions/` — load it before touching `mutation-engine/`, `time-skip/`, `graph-import/`, or `wf-mcp-server/`.
 
 ## Key architectural fact to internalize immediately

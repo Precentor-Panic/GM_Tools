@@ -35,6 +35,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreDir } from "./campaign-home.mjs";
 import { z } from "zod";
 import { withLock, ConcurrentWriteError, loadBatch } from "./review-state.mjs";
 import { summarizeBatch, renderHeadline } from "./grain.mjs";
@@ -68,7 +69,7 @@ export function pendingLedgerRoot() {
 }
 
 function worldDir(world) {
-  return join(pendingLedgerRoot(), world);
+  return campaignStoreDir(world, { store: "pending-resolution", envVar: "GM_TOOLS_PENDING_LEDGER_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 function ledgerFilePath(world, entityId) {

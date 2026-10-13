@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { resolveDataDir } from "../wf-mcp-server/lib/data-dir.mjs";
 import { foundryIndexPath, foundryOpsPath, foundryResultsPath } from "../wf-mcp-server/lib/snapshot.mjs";
 import { bridgeLiveness } from "../wf-mcp-server/lib/bridge-state.mjs";
+import { listCampaigns } from "../mutation-engine/campaign-home.mjs";
 
 const argv = process.argv.slice(2);
 const opt = (n, d = null) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : d; };
@@ -109,6 +110,14 @@ add("services", allInstalled && allEnabled && allActive && linger === "yes", "Se
   !allInstalled ? `not installed: ${units.filter((u) => !u.installed).map((u) => u.name).join(", ")}`
     : `${units.map((u) => `${u.name.replace(".service", "")} ${u.state}${u.restarts ? ` (${u.restarts} restarts)` : ""}`).join(", ")}; start at ${linger === "yes" ? "boot" : "login only (lingering is off)"}`,
   !allInstalled || !allEnabled ? "ops/install-services.sh --start" : linger !== "yes" ? `sudo loginctl enable-linger ${process.env.USER}` : "systemctl --user status foundry gm-tools gm-tools-bridge");
+
+// 7. Campaign repos. Advisory: uncommitted campaign data is normal mid-prep, never a failure.
+for (const [w, dir] of Object.entries(listCampaigns())) {
+  if (!existsSync(dir)) { add(`campaign-${w}`, false, `Campaign ${w}`, `registered at ${dir}, which does not exist`, "fix the entry in ~/.config/gm-tools/campaigns.json"); continue; }
+  const branch = sh("git", ["-C", dir, "rev-parse", "--abbrev-ref", "HEAD"]);
+  const changed = sh("git", ["-C", dir, "status", "--porcelain", "--untracked-files=all", "--", "data"]).split("\n").filter(Boolean).length;
+  add(`campaign-${w}`, true, `Campaign ${w}`, branch ? `${dir}, branch ${branch}, ${changed ? `${changed} uncommitted file(s) under data/` : "data/ committed"}` : `${dir} (not a git repo)`);
+}
 
 const healthy = rows.every((r) => r.ok);
 if (asJson) console.log(JSON.stringify({ healthy, world, checkedAt: new Date(now).toISOString(), checks: rows }, null, 2));

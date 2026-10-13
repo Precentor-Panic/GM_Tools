@@ -46,6 +46,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreFile } from "../mutation-engine/campaign-home.mjs";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -56,7 +57,7 @@ export function sceneTrayRoot() {
 }
 
 function worldFilePath(world) {
-  return join(sceneTrayRoot(), `${world}.json`);
+  return campaignStoreFile(world, { store: "scene-tray", envVar: "GM_TOOLS_SCENE_TRAY_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 function readTray(world) {

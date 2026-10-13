@@ -17,6 +17,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreFile } from "../mutation-engine/campaign-home.mjs";
 import { z } from "zod";
 import { withLock } from "../mutation-engine/review-state.mjs";
 
@@ -42,7 +43,7 @@ export function briefingRoot() {
 }
 
 function worldFilePath(world) {
-  return join(briefingRoot(), `${world}.json`);
+  return campaignStoreFile(world, { store: "briefing", envVar: "GM_TOOLS_BRIEFING_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 function readCards(world) {

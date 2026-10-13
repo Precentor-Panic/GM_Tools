@@ -51,6 +51,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreDir } from "./campaign-home.mjs";
 import { z } from "zod";
 import { withLock, ConcurrentWriteError } from "./review-state.mjs";
 import { callModelDetailed, fillTemplate as fillTemplateShared, parseJsonResponse } from "./llm-call.mjs";
@@ -223,7 +224,7 @@ export function prepContentRoot() {
 }
 
 function worldDir(world) {
-  return join(prepContentRoot(), world);
+  return campaignStoreDir(world, { store: "prep-content", envVar: "GM_TOOLS_PREP_CONTENT_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 function prepContentFilePath(world, entityId) {

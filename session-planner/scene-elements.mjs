@@ -40,6 +40,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreFile } from "../mutation-engine/campaign-home.mjs";
 import { z } from "zod";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 import { getScene } from "./scenes.mjs";
@@ -191,7 +192,7 @@ export function sceneElementsRoot() {
 }
 
 function worldFilePath(world) {
-  return join(sceneElementsRoot(), `${world}.json`);
+  return campaignStoreFile(world, { store: "scene-elements", envVar: "GM_TOOLS_SCENE_ELEMENTS_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 function readElements(world) {

@@ -67,6 +67,34 @@ profile and hides the interface, so it idles at a few percent of one core.
 It refreshes the Foundry index every two minutes and after every applied
 batch.
 
+## A campaign is a git repo
+
+GM_Tools is the tooling; a campaign is its own git repo. When a world is
+registered to a campaign repo, its plans, scenes, elements, notes, map and
+music assets, party, items and review history are read and written under
+`<campaign repo>/data/`, one file or folder per store, so `git diff` and
+`git log` there cover what you run from. A world that is not registered keeps
+its data in this checkout (gitignored), as before.
+
+    bin/campaign-adopt --world <w> --dir /path/to/campaign-repo            # report
+    systemctl --user stop gm-tools
+    bin/campaign-adopt --world <w> --dir /path/to/campaign-repo --apply
+    systemctl --user start gm-tools
+
+The apply copies each store, checks the copy byte for byte, renames the
+original to `*.migrated-<date>` and adds the world to
+`~/.config/gm-tools/campaigns.json` (`{"<world>": "/abs/dir"}`; the
+`GM_TOOLS_CAMPAIGNS` env var, `world=dir;world=dir`, overrides the file). To
+undo, remove the registry entry and rename the originals back.
+
+GM_Tools only writes the files. It never commits: commit the campaign repo
+when you want a checkpoint. `bin/gm-status` shows each campaign's branch and
+how many files under `data/` are uncommitted.
+
+Not moved: the graph and the reveal state beside it (still in Foundry's world
+folder), the shared bestiary and rules shelves, and machine state (push lock,
+sync log, undo slots, app settings, the Foundry token index).
+
 ## Map grids
 
 A map asset can record the grid its image is drawn at (pixels per square). A

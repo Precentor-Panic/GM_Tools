@@ -22,6 +22,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreFile } from "../mutation-engine/campaign-home.mjs";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -40,7 +41,7 @@ function validatePlanName(name) {
 }
 
 function worldFilePath(world) {
-  return join(plansRoot(), `${world}.json`);
+  return campaignStoreFile(world, { store: "session-plans", envVar: "GM_TOOLS_PLANS_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 function readPlans(world) {

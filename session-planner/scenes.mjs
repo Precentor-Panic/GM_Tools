@@ -87,6 +87,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreFile } from "../mutation-engine/campaign-home.mjs";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 import { listPlansForWorld, removeSceneFromPlan } from "./plans.mjs";
 
@@ -106,7 +107,7 @@ export function sessionScenesRoot() {
 }
 
 function worldFilePath(world) {
-  return join(sessionScenesRoot(), `${world}.json`);
+  return campaignStoreFile(world, { store: "session-scenes", envVar: "GM_TOOLS_SESSION_SCENES_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 function readScenes(world) {

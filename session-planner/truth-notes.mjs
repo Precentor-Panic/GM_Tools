@@ -30,6 +30,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreDir } from "../mutation-engine/campaign-home.mjs";
 import { z } from "zod";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 
@@ -54,7 +55,7 @@ export function truthNotesRoot() {
 }
 
 function worldDir(world) {
-  return join(truthNotesRoot(), world);
+  return campaignStoreDir(world, { store: "truth-notes", envVar: "GM_TOOLS_TRUTH_NOTES_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 function notesFilePath(world, planId) {

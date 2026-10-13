@@ -27,6 +27,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, openSync, writeSync, closeSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreDir } from "./campaign-home.mjs";
 import { Batch, StoredMutation, ReviewState } from "./schema.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -44,7 +45,7 @@ export function reviewStateRoot() {
 }
 
 function worldDir(world) {
-  return join(reviewStateRoot(), world);
+  return campaignStoreDir(world, { store: "review-state", envVar: "GM_TOOLS_REVIEW_STATE_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 function batchFilePath(world, batchId) {

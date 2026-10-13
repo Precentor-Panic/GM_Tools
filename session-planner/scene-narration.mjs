@@ -31,6 +31,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreDir } from "../mutation-engine/campaign-home.mjs";
 import { z } from "zod";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 
@@ -54,7 +55,7 @@ export function sceneNarrationRoot() {
 }
 
 function worldDir(world) {
-  return join(sceneNarrationRoot(), world);
+  return campaignStoreDir(world, { store: "scene-narration", envVar: "GM_TOOLS_SCENE_NARRATION_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 function narrationFilePath(world, sceneId) {

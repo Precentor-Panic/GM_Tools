@@ -28,6 +28,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreFile } from "../mutation-engine/campaign-home.mjs";
 import { withLock, ConcurrentWriteError, createBatch } from "../mutation-engine/review-state.mjs";
 import { summarizeBatch, renderHeadline } from "../mutation-engine/grain.mjs";
 import { attachDiffs } from "../time-skip/run.mjs";
@@ -47,7 +48,7 @@ export function sessionNotesRoot() {
 }
 
 function worldFilePath(world) {
-  return join(sessionNotesRoot(), `${world}.json`);
+  return campaignStoreFile(world, { store: "session-notes", envVar: "GM_TOOLS_SESSION_NOTES_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 function readNotes(world) {

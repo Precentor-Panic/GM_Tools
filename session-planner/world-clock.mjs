@@ -49,6 +49,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreFile } from "../mutation-engine/campaign-home.mjs";
 import { z } from "zod";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 import { getSettings } from "./app-settings.mjs";
@@ -88,7 +89,7 @@ export function worldClockRoot() {
 }
 
 function worldFilePath(world) {
-  return join(worldClockRoot(), `${world}.json`);
+  return campaignStoreFile(world, { store: "world-clock", envVar: "GM_TOOLS_WORLD_CLOCK_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 /** A brand-new world's default clock record — no advance has happened yet. */

@@ -35,6 +35,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { campaignStoreFile } from "../mutation-engine/campaign-home.mjs";
 import { z } from "zod";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
 import { addTag, removeTag } from "./tags.mjs";
@@ -53,7 +54,7 @@ export function itemRoot() {
 }
 
 function worldFilePath(world) {
-  return join(itemRoot(), `${world}.json`);
+  return campaignStoreFile(world, { store: "items", envVar: "GM_TOOLS_ITEM_DIR", legacyRoot: DEFAULT_ROOT });
 }
 
 function readItems(world) {

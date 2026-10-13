@@ -56,6 +56,18 @@ the same argument. Every new store still gets the env override, the
 `.gitignore` entry (GM_Tools-side stores), and the no-leak-into-real-dirs
 regression test.
 
+## Campaign stores resolve through campaign-home
+
+A store that holds campaign data (plans, scenes, elements, notes, assets,
+review history) builds its path with `campaignStoreFile` / `campaignStoreDir`
+from `mutation-engine/campaign-home.mjs` and is listed in that module's
+`CAMPAIGN_STORES`. For a world registered to a campaign repo the data then
+lives in `<campaign repo>/data/<store>`; otherwise in the GM_Tools-side
+directory. The store's own `GM_TOOLS_*_DIR` override still wins, so tests are
+unaffected, and the registry file is ignored under `node --test`. A new
+campaign store follows this; a machine-state store (locks, logs, undo slots)
+does not. GM_Tools never commits a campaign repo.
+
 ## Where things live
 
 - `PLAN.md` — architecture, the full tool list, current phase status.
