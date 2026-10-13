@@ -1192,7 +1192,54 @@ async function removeSceneFromPlan(planId, sceneId, rowsHost, metaText) {
 async function renderSceneSurface(sceneId) {
   const wrapper = el("div", { class: "planner-surface planner-scene-surface" });
   setMain(wrapper);
+  const key = sceneScrollKey(sceneId);
+  const restoreTo = returningToPlanner ? readSceneScroll(key) : 0;
+  returningToPlanner = false;
+  wrapper.addEventListener("scroll", () => writeSceneScroll(key, wrapper.scrollTop), { passive: true });
   await renderPlannerScenePage(wrapper, sceneId);
+  if (restoreTo > 0) restoreSceneScroll(wrapper, restoreTo);
+}
+
+// ---------------------------------------------------------------------------
+// The other half of "remember the last scene" (QC round, 2026-10-13).
+//
+// The 2026-10-07 round brought the GM back to the right SCENE and the right
+// view after a detour to another surface, but the page is rebuilt on the way
+// back, so it reopened at the top. In a long Run spread that is still a
+// re-find: the scene was remembered and the place in it was not. This keeps
+// the scroll offset per scene and puts it back, but ONLY on a return from
+// another surface. Moving between scenes with the pager, the rail or a link
+// still opens a scene at its top, as it should.
+//
+// sessionStorage, not localStorage: where you were reading is a property of
+// this sitting, not of the world.
+// ---------------------------------------------------------------------------
+let returningToPlanner = false;
+const sceneScrollMem = new Map();
+function sceneScrollKey(sceneId) { return `gmReview.sceneScroll:${currentWorld() ?? ""}:${sceneId}`; }
+function writeSceneScroll(key, top) {
+  sceneScrollMem.set(key, top);
+  try { sessionStorage.setItem(key, String(Math.round(top))); } catch { /* unavailable */ }
+}
+function readSceneScroll(key) {
+  if (sceneScrollMem.has(key)) return sceneScrollMem.get(key);
+  try { return Number(sessionStorage.getItem(key)) || 0; } catch { return 0; }
+}
+/** The Run spread fills in over several fetches, so the page is not tall
+ *  enough to scroll to the saved offset when the first render resolves. Keep
+ *  trying for a few seconds, and stop at once if the GM scrolls first. */
+function restoreSceneScroll(wrapper, top) {
+  const started = Date.now();
+  let cancelled = false;
+  const cancel = () => { cancelled = true; };
+  for (const evt of ["wheel", "touchstart", "keydown", "mousedown"]) wrapper.addEventListener(evt, cancel, { once: true, passive: true });
+  const step = () => {
+    if (cancelled || !wrapper.isConnected) return;
+    const max = wrapper.scrollHeight - wrapper.clientHeight;
+    wrapper.scrollTop = Math.min(top, Math.max(0, max));
+    if (max < top && Date.now() - started < 4000) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 // view=world -> the real World containment-tree surface (task 30.4). The
@@ -1273,6 +1320,8 @@ export function renderShell(view, arg) {
   // redirect that asked the panel to open.
   mountConnectionChip();
 
+  if (view !== "planner") returningToPlanner = true;
+
   if (view === "world") {
     shell.setAttribute("data-surface", "world");
     paintNavActive("world");
@@ -1321,6 +1370,10 @@ export function renderShell(view, arg) {
 
   renderRail(sub);
   renderBreadcrumb(sub);
+
+  // Coming back by way of the shelf or a plan page is a fresh visit to
+  // whatever scene is opened next, not a return to one.
+  if (sub.kind !== "scene") returningToPlanner = false;
 
   if (sub.kind === "plans") renderPlansSurface();
   else if (sub.kind === "plan") renderPlanSurface(sub.id);

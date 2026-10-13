@@ -166,6 +166,60 @@ test("amended Decision 4: the planner toggle returns to the last scene, in the v
   await page.close();
 });
 
+// QC round 2026-10-13. The round above brought the GM back to the right scene
+// and view, but the page is rebuilt on the way back and reopened at the TOP --
+// in a long Run spread that is still a re-find. The place in the scene comes
+// back too, but only on a return from another surface: scene-to-scene
+// navigation must keep opening a scene at its top.
+test("returning to a scene from another surface restores the scroll position; opening a scene fresh does not", async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 520 } });
+  await primeWorldSelection(page, base, WORLD);
+  const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "shell-place-a" });
+  const other = await createSceneViaRoute(base, WORLD, { locationEntityId: "shell-place-a" });
+  for (const id of [scene.id, other.id]) {
+    for (let i = 0; i < 14; i++) {
+      const res = await fetch(`${base}/api/scene-planning/scenes/${id}/elements`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world: WORLD, name: `Filler ${i}`, kind: "local", fields: { gives: "A line of text that makes the page tall enough to scroll. ".repeat(4) } })
+      });
+      assert.equal(res.ok, true);
+    }
+  }
+  const top = () => page.evaluate(() => document.querySelector(".planner-scene-surface")?.scrollTop ?? -1);
+  const scrollTo = (y) => page.evaluate((v) => { document.querySelector(".planner-scene-surface").scrollTop = v; }, y);
+
+  await page.goto(`${base}/#planner/scene/${scene.id}`);
+  await page.locator('[data-testid="planner-scene-view"]').waitFor({ state: "visible", timeout: 15000 });
+  await page.waitForFunction(() => { const s = document.querySelector(".planner-scene-surface"); return s && s.scrollHeight - s.clientHeight > 500; }, null, { timeout: 10000 });
+  await scrollTo(400);
+  // The offset is recorded from the scroll EVENT, which the browser dispatches
+  // on the next frame -- wait for the record, not just for the property.
+  await page.waitForFunction(() => Object.entries(sessionStorage).some(([k, v]) => k.startsWith("gmReview.sceneScroll:") && v === "400"), null, { timeout: 5000 });
+
+  await page.locator('[data-testid="shell-surface-toggle-world"]').click();
+  await page.locator('[data-testid="world-surface-root"]').waitFor({ state: "visible", timeout: 10000 });
+  await page.locator('[data-testid="shell-surface-toggle-planner"]').click();
+  await page.locator('[data-testid="planner-scene-view"]').waitFor({ state: "visible", timeout: 10000 });
+  // Within a few pixels: the browser's own scroll anchoring nudges the offset
+  // as late content settles above the fold.
+  await page.waitForFunction(() => Math.abs((document.querySelector(".planner-scene-surface")?.scrollTop ?? 0) - 400) <= 24, null, { timeout: 8000 }).catch(() => {});
+  const back = await top();
+  assert.ok(Math.abs(back - 400) <= 24, `coming back from World must put the scene back where it was scrolled to (got ${back}, wanted about 400)`);
+
+  // A different scene opened from inside the planner starts at its top...
+  await page.goto(`${base}/#planner/scene/${other.id}`);
+  await page.locator('[data-testid="planner-scene-view"]').waitFor({ state: "visible", timeout: 10000 });
+  await page.waitForTimeout(600);
+  assert.equal(await top(), 0, "a scene opened from inside the planner must open at the top");
+  // ...and so does the first scene when it is navigated to rather than returned to.
+  await page.goto(`${base}/#planner/scene/${scene.id}`);
+  await page.locator('[data-testid="planner-scene-view"]').waitFor({ state: "visible", timeout: 10000 });
+  await page.waitForTimeout(600);
+  assert.equal(await top(), 0, "navigating to a scene (not returning to it) must open at the top");
+
+  await page.close();
+});
+
 test("amended Decision 4: a remembered scene that no longer exists falls back to the shelf", async () => {
   const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
   await primeWorldSelection(page, base, WORLD);

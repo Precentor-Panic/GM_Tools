@@ -5521,7 +5521,14 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   };
   railBtn.addEventListener("click", () => { railOpen = !railOpen; paintRail(); });
   paintRail();
-  subBarRight.appendChild(railBtn);
+  // QC round 2026-10-13: lanes is Prep-only and party is Run-only, and each
+  // kept its own slot when hidden, so every view showed a hole in the row.
+  // They now share ONE grid cell (the cell is as wide as the wider button), so
+  // nothing to their right moves between views and there is no hole.
+  const railSlot = document.createElement("span");
+  railSlot.className = "scene-subbar-slot";
+  railSlot.appendChild(railBtn);
+  subBarRight.appendChild(railSlot);
 
   // Party rail toggle (2026-10-06). Run-only, but it keeps its SLOT in every
   // view (CSS hides it with `visibility`, never `display`) so the segmented
@@ -5546,7 +5553,7 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
     paintPartyRail();
     if (partyRailOpen) partyRail.refresh();
   });
-  subBarRight.appendChild(partyBtn);
+  railSlot.appendChild(partyBtn);
 
   // Lookup toggle (navigation round, 2026-10-07). Present and usable in EVERY
   // view -- Run is exactly when the GM is hunting a name, so unlike the two

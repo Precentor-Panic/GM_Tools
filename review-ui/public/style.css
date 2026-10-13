@@ -975,7 +975,9 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 .scene-breadcrumb-back-btn { font-weight: 700; letter-spacing: 0.04em; color: var(--text); }
 .scene-breadcrumb-prev-btn, .scene-breadcrumb-next-btn { color: var(--text-muted); }
 .scene-breadcrumb-prev-btn:hover, .scene-breadcrumb-next-btn:hover, .scene-breadcrumb-back-btn:hover { color: var(--accent); text-decoration: none; }
-.scene-breadcrumb-prev-btn::before { content: "· "; color: var(--border); }
+/* QC round 2026-10-13: the leading dot belonged to a "back" button that no
+   longer exists, so the pager opened with a stray "·". One separator, between
+   the two links only. */
 .scene-breadcrumb-next-btn::before { content: "· "; color: var(--border); }
 .scene-breadcrumb-prev-btn:disabled, .scene-breadcrumb-next-btn:disabled { opacity: 0.45; cursor: default; }
 .scene-wrap-toggle-btn { flex-shrink: 0; }
@@ -1898,7 +1900,6 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 :is(#view-session-planner, #app-shell) .scene-breadcrumb-back-btn:hover,
 :is(#view-session-planner, #app-shell) .scene-breadcrumb-prev-btn:hover,
 :is(#view-session-planner, #app-shell) .scene-breadcrumb-next-btn:hover { color: var(--sp-accent-teal); }
-:is(#view-session-planner, #app-shell) .scene-breadcrumb-prev-btn::before,
 :is(#view-session-planner, #app-shell) .scene-breadcrumb-next-btn::before { color: var(--sp-border-control); }
 /* D4 (Phase 34 task 34.3): "Start of plan"/"End of plan" render as real
    disabled controls at the plan's ends, not omitted. */
@@ -1919,15 +1920,49 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
    line-height -- the ▤ glyph's fallback font raised the bare .btn's line box
    ~3px, so hiding the toggle (Layout / Run) shifted the whole page up. */
 :is(#view-session-planner, #app-shell) .scene-rail-toggle-btn,
-:is(#view-session-planner, #app-shell) .scene-party-toggle-btn {
+:is(#view-session-planner, #app-shell) .scene-party-toggle-btn,
+:is(#view-session-planner, #app-shell) .scene-lookup-toggle-btn {
   flex-shrink: 0; border: 1px solid var(--sp-border-control); background: transparent;
   color: var(--sp-ink-muted); border-radius: var(--sp-radius-lg);
   font-family: var(--sp-font-ui); font-size: 12.5px; padding: 5px 12px;
 }
-:is(#view-session-planner, #app-shell) .scene-rail-toggle-btn:hover { color: var(--sp-accent-teal); }
+:is(#view-session-planner, #app-shell) .scene-rail-toggle-btn:hover,
+:is(#view-session-planner, #app-shell) .scene-party-toggle-btn:hover,
+:is(#view-session-planner, #app-shell) .scene-lookup-toggle-btn:hover { color: var(--sp-accent-teal); }
+:is(#view-session-planner, #app-shell) .scene-party-toggle-btn[aria-pressed="true"],
+:is(#view-session-planner, #app-shell) .scene-lookup-toggle-btn[aria-pressed="true"],
+:is(#view-session-planner, #app-shell) .scene-rail-toggle-btn[aria-pressed="true"] {
+  color: var(--sp-accent-teal); border-color: var(--sp-accent-teal);
+}
 :is(#view-session-planner, #app-shell) .scene-rail-toggle-btn,
 :is(#view-session-planner, #app-shell) .scene-party-toggle-btn,
+:is(#view-session-planner, #app-shell) .scene-lookup-toggle-btn,
 :is(#view-session-planner, #app-shell) .scene-wrap-toggle-btn { line-height: 1.2; height: 26px; box-sizing: border-box; }
+/* lanes (Prep) and party (Run) share one cell -- see buildScenePage's railSlot. */
+:is(#view-session-planner, #app-shell) .scene-subbar-slot { display: inline-grid; flex-shrink: 0; }
+:is(#view-session-planner, #app-shell) .scene-subbar-slot > * { grid-area: 1 / 1; }
+
+/* QC round 2026-10-13: the "in Foundry" pill, its Activate button and the
+   status text shipped with no rule at all, so they rendered as bare text
+   jammed against a default button, in both the Prep band and the Run header. */
+:is(#view-session-planner, #app-shell) .scene-activate-foundry-row {
+  display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+:is(#view-session-planner, #app-shell) .scene-in-foundry-pill {
+  font-family: var(--sp-font-mono, ui-monospace, monospace); font-size: 10.5px;
+  letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap;
+  color: var(--sp-accent-teal); border: 1px solid currentColor;
+  border-radius: 999px; padding: 2px 8px;
+}
+:is(#view-session-planner, #app-shell) .scene-activate-foundry-btn {
+  font-family: var(--sp-font-ui); font-size: 12.5px; line-height: 1.2;
+  height: 26px; box-sizing: border-box; padding: 5px 12px;
+  border: 1px solid var(--sp-border-control); border-radius: var(--sp-radius-lg);
+  background: transparent; color: var(--sp-ink-primary);
+}
+:is(#view-session-planner, #app-shell) .scene-activate-foundry-btn:hover { color: var(--sp-accent-teal); border-color: var(--sp-accent-teal); }
+:is(#view-session-planner, #app-shell) .scene-activate-foundry-status { font-size: 12.5px; }
+:is(#view-session-planner, #app-shell) .scene-activate-foundry-status:empty { display: none; }
 
 /* Place name — the page title (Spectral 34px). */
 :is(#view-session-planner, #app-shell) .scene-place-header { margin-bottom: 20px; }
