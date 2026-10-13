@@ -23,6 +23,7 @@
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import { chromium } from "playwright";
+import { settle } from "./layout-stability-fixture.mjs";
 import {
   setupPhase30Env,
   cleanupScratchEnv,
@@ -123,6 +124,37 @@ test("the lookup toggle finds a node by name without leaving the scene, includin
   assert.match(text, /Counts the bodies in/, "the summary must show");
   assert.match(text, /does not negotiate the value of a writ/, "the full description must show under the summary, not replace it");
 
+  await page.close();
+});
+
+test("the lookup is a drawer: opening it moves nothing in the scene, and it remembers the last search", async () => {
+  const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+  await openScene(page);
+  const view = page.locator('[data-testid="planner-scene-view"]');
+  const box = () => view.evaluate((el) => {
+    const marks = [el, ...el.querySelectorAll(".scene-subbar-controls, [data-testid='mode-run-btn']")];
+    return marks.map((m) => { const r = m.getBoundingClientRect(); return [Math.round(r.x), Math.round(r.y), Math.round(r.width)]; });
+  });
+  await page.locator('[data-testid="lookup-toggle-btn"]').waitFor({ state: "visible" });
+  await settle(page);
+  const before = await box();
+
+  await page.locator('[data-testid="lookup-toggle-btn"]').click();
+  const panel = page.locator('[data-testid="scene-lookup-panel"]');
+  await panel.waitFor({ state: "visible", timeout: 10000 });
+  await page.locator('[data-testid="scene-lookup-input"]').fill("bashir");
+  await page.locator('[data-testid="scene-lookup-row"][data-entity-id="lk-clerk"]').waitFor({ state: "visible", timeout: 10000 });
+  assert.deepEqual(await box(), before, "opening the lookup must not move or resize the scene");
+
+  const rect = await panel.evaluate((el) => { const r = el.getBoundingClientRect(); return { right: window.innerWidth - r.right, pos: getComputedStyle(el).position }; });
+  assert.equal(rect.pos, "fixed");
+  assert.ok(rect.right >= 0 && rect.right < 20, `the drawer sits on the right edge (gap ${rect.right}px)`);
+
+  await page.keyboard.press("Escape");
+  await panel.waitFor({ state: "hidden" });
+  await page.locator('[data-testid="lookup-toggle-btn"]').click();
+  await panel.waitFor({ state: "visible" });
+  assert.equal(await page.locator('[data-testid="scene-lookup-input"]').inputValue(), "bashir", "the last search comes back");
   await page.close();
 });
 

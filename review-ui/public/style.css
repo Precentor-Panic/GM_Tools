@@ -2214,6 +2214,17 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   background: var(--sp-surface-card); padding: 10px 12px 12px; margin: 0 0 22px;
   max-width: 460px;
 }
+/* 2026-10-13: a drawer on the right edge instead of a slide-down. In the flow
+   it pushed the whole scene down by its own height, so the line being read
+   moved every time a name was looked up. Fixed to the viewport under the
+   shell's 52px top bar, with its own scroll; nothing underneath moves. */
+:is(#view-session-planner, #app-shell) .scene-lookup-panel {
+  position: fixed; top: 60px; right: 8px; bottom: 8px; z-index: 40;
+  width: min(380px, calc(100vw - 16px)); max-width: none; margin: 0;
+  box-sizing: border-box; display: flex; flex-direction: column;
+  box-shadow: -6px 0 22px rgb(0 0 0 / 0.16);
+}
+:is(#view-session-planner, #app-shell) .scene-lookup-panel[hidden] { display: none; }
 :is(#view-session-planner, #app-shell) .scene-lookup-bar {
   display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
   margin-bottom: 8px;
@@ -2236,7 +2247,7 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 /* Capped and scrollable: a 160-entity world must not push the scene off the
    page, and the GM is reading the top few matches, never all 25. */
 :is(#view-session-planner, #app-shell) .scene-lookup-results {
-  margin-top: 8px; max-height: 300px; overflow-y: auto;
+  margin-top: 8px; flex: 1 1 auto; min-height: 0; overflow-y: auto;
 }
 :is(#view-session-planner, #app-shell) .scene-lookup-row + .scene-lookup-row {
   border-top: 1px solid var(--sp-border-hairline);

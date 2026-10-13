@@ -235,7 +235,8 @@ function buildEntityPicker({ testidPrefix, placeholder = "Search entities…", e
     }
   })();
 
-  input.addEventListener("input", renderResults);
+  input.addEventListener("input", () => { renderResults(); remember(); });
+  results.addEventListener("click", () => queueMicrotask(remember));
 
   return wrap;
 }
@@ -3729,6 +3730,19 @@ function buildLookupPanel() {
   let loaded = false;
   let expandedId = null;
 
+  // 2026-10-13: the last search is remembered for the browser session (per
+  // world). The panel is rebuilt on every scene render, and at the table the
+  // same name gets looked up more than once. Reopening selects the text, so
+  // typing replaces it.
+  const memKey = `gmReview.lookup:${currentWorld() ?? ""}`;
+  const remember = () => {
+    try { sessionStorage.setItem(memKey, JSON.stringify({ q: input.value, expandedId })); } catch { /* unavailable */ }
+  };
+  try {
+    const mem = JSON.parse(sessionStorage.getItem(memKey) || "null");
+    if (mem && typeof mem.q === "string") { input.value = mem.q; expandedId = mem.expandedId ?? null; }
+  } catch { /* unavailable or malformed */ }
+
   // Name and type first, then the description -- a GM typing "water" wants the
   // Dry Well before a person whose description happens to mention water, and
   // ranking is the only thing that makes a body-text match usable at all.
@@ -3874,9 +3888,8 @@ function buildLookupPanel() {
       input.select();
     },
     close() {
+      remember();
       panel.hidden = true;
-      input.value = "";
-      expandedId = null;
     },
     toggle() { if (panel.hidden) api.open(); else api.close(); }
   };
