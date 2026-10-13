@@ -76,9 +76,9 @@ test("a note jotted in Run is saved ONCE, read back in the side strip, survives 
   // Empty strip is hidden, not an empty header.
   assert.equal(await page.locator('[data-testid="run-notes-strip"]').isVisible(), false);
 
-  // The control sits in the Run head band; clicking opens the panel with focus.
+  // The control sits in the scene toolbar; clicking opens its drop-down with focus.
   await page.locator('[data-testid="run-add-event-btn"]').click();
-  const textarea = page.locator('[data-testid="scene-run-spread"] [data-testid="scene-event-textarea"]');
+  const textarea = page.locator('.scene-event-pop [data-testid="scene-event-textarea"]');
   await textarea.waitFor({ state: "visible" });
   assert.equal(await textarea.evaluate((el) => document.activeElement === el), true, "textarea takes focus on open");
 

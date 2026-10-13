@@ -1941,6 +1941,25 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
 /* lanes (Prep) and party (Run) share one cell -- see buildScenePage's railSlot. */
 :is(#view-session-planner, #app-shell) .scene-subbar-slot { display: inline-grid; flex-shrink: 0; }
 :is(#view-session-planner, #app-shell) .scene-subbar-slot > * { grid-area: 1 / 1; }
+/* Wrap (Prep, Layout) and the Run note button share the last cell. The note
+   box drops down from it, absolutely placed so opening it moves nothing. */
+:is(#view-session-planner, #app-shell) .scene-subbar-slot--anchor { position: relative; }
+:is(#view-session-planner, #app-shell) .scene-run-event-btn {
+  flex-shrink: 0; border: 1px solid var(--sp-border-control); background: transparent;
+  color: var(--sp-ink-muted); border-radius: var(--sp-radius-lg);
+  font-family: var(--sp-font-ui); font-size: 12.5px; padding: 5px 12px;
+  line-height: 1.2; height: 26px; box-sizing: border-box;
+}
+:is(#view-session-planner, #app-shell) .scene-run-event-btn:hover { color: var(--sp-accent-teal); }
+:is(#view-session-planner, #app-shell) .scene-page:not([data-mode="run"]) .scene-run-event-btn { visibility: hidden; pointer-events: none; }
+:is(#view-session-planner, #app-shell) .scene-event-pop {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
+  width: min(360px, 86vw); box-sizing: border-box; padding: 10px 12px;
+  background: var(--sp-surface-card); border: 1px solid var(--sp-border-hairline);
+  border-radius: var(--sp-radius-md); box-shadow: 0 6px 18px rgb(0 0 0 / 0.18);
+}
+:is(#view-session-planner, #app-shell) .scene-event-pop .scene-event-textarea { width: 100%; box-sizing: border-box; min-height: 84px; }
+:is(#view-session-planner, #app-shell) .scene-page:not([data-mode="run"]) .scene-event-pop { display: none !important; }
 
 /* QC round 2026-10-13: the "in Foundry" pill, its Activate button and the
    status text shipped with no rule at all, so they rendered as bare text
@@ -2660,11 +2679,9 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   font-family: var(--sp-font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
   color: var(--sp-accent-accept); margin-left: auto; align-self: center;
 }
-/* WS-D (2026-09-09): notes at the table -- the Add Event button in the Run
-   head band, its panel under the band, and the "Notes — this scene" strip
-   (shared with Prep). */
-:is(#view-session-planner, #app-shell) .rs-note-btn { align-self: center; font-size: 12px; padding: 3px 10px; }
-:is(#view-session-planner, #app-shell) .rs-note-panel { padding: 10px 18px; border-bottom: 1px solid var(--sp-border-hairline); background: var(--sp-surface-chrome); }
+/* WS-D (2026-09-09): notes at the table -- the "Notes — this scene" strip
+   (shared with Prep). The Run note button and its drop-down live in the scene
+   toolbar since 2026-10-13: see .scene-run-event-btn. */
 :is(#view-session-planner, #app-shell) .scene-notes-strip {
   margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--sp-border-dashed);
 }

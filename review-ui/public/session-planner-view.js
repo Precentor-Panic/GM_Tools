@@ -564,7 +564,7 @@ function mountAddEventControl(scene, testid = "add-event-btn", { onSaved } = {})
     debounce.onBlur(textarea.value); // flush the current note now
     chain = chain.then(() => { noteId = null; textarea.value = ""; status.textContent = ""; });
   });
-  openNotePanels.set(`__scene_event__${scene.id}`, { panelEl: panel, debounce });
+  openNotePanels.set(`__scene_event__${testid}__${scene.id}`, { panelEl: panel, debounce });
 
   btn.addEventListener("click", () => {
     panel.style.display = panel.style.display === "none" ? "block" : "none";
@@ -4917,17 +4917,14 @@ function buildRunSpread(scene, elements, narration, place, mapAssets, nodeMap) {
   // table moment (activating from Run while actually running the scene),
   // hence its own distinct testid.
   if (scene.foundrySceneRef) head.appendChild(buildActivateFoundryRow(scene, "run-activate-foundry-btn", "run-in-foundry-pill"));
-  // WS-D (2026-09-09): notes are taken AT the table -- the same Add Event
-  // control as Prep, in the head band; its panel drops in under the band and
-  // the scene's notes strip closes the side column (filled async below, and
-  // re-read on every run poll tick via spread._refreshNotes).
+  // WS-D (2026-09-09): the scene's notes strip closes the side column (filled
+  // async below, and re-read on every run poll tick via spread._refreshNotes).
+  // The Add Event control that feeds it moved to the scene toolbar on
+  // 2026-10-13 (see buildScenePage): in this head band it wrapped onto its own
+  // row at narrower widths, and a poll rebuild of the spread destroyed a
+  // half-typed note along with the band.
   const runNotes = buildSceneNotesStrip(scene.id, { testid: "run-notes-strip" });
-  const runEvent = mountAddEventControl(scene, "run-add-event-btn", { onSaved: () => runNotes.refresh() });
-  runEvent.btn.className = "btn scene-action-btn rs-note-btn";
-  head.appendChild(runEvent.btn);
   spread.appendChild(head);
-  runEvent.panel.classList.add("rs-note-panel");
-  spread.appendChild(runEvent.panel);
 
   const grid = runSpreadEl("div", "rs-grid");
   const main = runSpreadEl("div", "rs-main");
@@ -5597,7 +5594,22 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
   wrapBtn.setAttribute("data-scene-id", scene.id);
   wrapBtn.textContent = "Wrap ▸";
   wrapBtn.title = "Wrap this scene: propose graph updates from notes + promote elements";
-  subBarRight.appendChild(wrapBtn);
+  // Add Event in Run (2026-10-13). Wrap is hidden in Run and left a hole at the
+  // end of the row; the Run note button takes that same cell (the railSlot
+  // trick above). Its panel is a drop-down anchored under the button, so
+  // opening it moves nothing. It lives here, outside the spread, so the run
+  // poll's rebuild cannot take a half-typed note with it.
+  const runEvent = mountAddEventControl(scene, "run-add-event-btn", {
+    onSaved: () => runHost.querySelector('[data-testid="scene-run-spread"]')?._refreshNotes?.()
+  });
+  runEvent.btn.className = "btn scene-run-event-btn";
+  runEvent.btn.textContent = "\u270e note";
+  runEvent.btn.title = "Jot what just happened  ( n )";
+  runEvent.panel.classList.add("scene-event-pop");
+  const wrapSlot = document.createElement("span");
+  wrapSlot.className = "scene-subbar-slot scene-subbar-slot--anchor";
+  wrapSlot.append(wrapBtn, runEvent.btn, runEvent.panel);
+  subBarRight.appendChild(wrapSlot);
   topBar.appendChild(subBarRight);
   root.appendChild(topBar);
 
@@ -6215,6 +6227,12 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
       lookup.open();
       paintLookup();
     }
+    else if (e.key === "n" && root.getAttribute("data-mode") === "run" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // `n` opens the Run note box. Same field guard as `/` above.
+      e.preventDefault();
+      runEvent.panel.style.display = "block";
+      runEvent.textarea.focus();
+    }
     else if (e.key === "Escape") {
       // §3.3: Esc CLOSES an open panel — it must not leave the scene. Wrap
       // panel first, then any open inline add/encounter panel; if nothing is
@@ -6227,7 +6245,7 @@ async function renderScenePage(container, sceneId, token, opts = {}) {
         wrapBtn.textContent = "Wrap ▸";
       } else {
         // Inline add-event / add-encounter panels toggle via style.display.
-        for (const p of [eventCtl.panel, encounterCtl.panel]) {
+        for (const p of [eventCtl.panel, encounterCtl.panel, runEvent.panel]) {
           if (p && p.style.display !== "none") p.style.display = "none";
         }
       }
