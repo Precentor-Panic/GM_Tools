@@ -373,7 +373,32 @@ function renderBreadcrumb(sub) {
 // [per-row + add-to-open-plan]. `null` clears the slot so its DOM count is 0
 // on the World surface.
 // ---------------------------------------------------------------------------
+// Run view: the rail is collapsed by CSS (style.css, .shell-rail-tab) and this
+// edge tab brings it back. The choice is remembered for the browser session,
+// so a GM who wants the rail in Run opens it once.
+const RUN_RAIL_KEY = "gmReview.runRail";
+function wireRunRailTab() {
+  const tab = document.getElementById("shell-rail-tab");
+  const shell = document.getElementById("app-shell");
+  if (!tab || !shell || tab.dataset.wired) return;
+  tab.dataset.wired = "1";
+  const paint = (open) => {
+    shell.setAttribute("data-runrail", open ? "open" : "closed");
+    tab.setAttribute("aria-pressed", open ? "true" : "false");
+    tab.title = open ? "Hide the plans and scene library" : "Show the plans and scene library";
+  };
+  let open = false;
+  try { open = sessionStorage.getItem(RUN_RAIL_KEY) === "open"; } catch { /* unavailable */ }
+  paint(open);
+  tab.addEventListener("click", () => {
+    open = !open;
+    try { sessionStorage.setItem(RUN_RAIL_KEY, open ? "open" : "closed"); } catch { /* unavailable */ }
+    paint(open);
+  });
+}
+
 function renderRail(sub) {
+  wireRunRailTab();
   const slot = document.getElementById("shell-rail-slot");
   if (!slot) return;
   if (!sub) { slot.innerHTML = ""; return; }

@@ -247,6 +247,9 @@
     <!-- filled with [data-testid="shell-rail-planner"] on the planner surface,
          emptied on World. display:contents so the rail is the flex child. -->
     <div class="shell-rail-slot" id="shell-rail-slot"></div>
+    <!-- Run view only: the rail is collapsed there and this edge tab brings it
+         back (app-shell.js wireRunRailTab; CSS decides when it shows). -->
+    <button type="button" class="shell-rail-tab" id="shell-rail-tab" data-testid="shell-rail-tab" aria-pressed="false" title="Show the plans and scene library"><span aria-hidden="true">▸</span></button>
     <div class="shell-main" id="shell-main" data-testid="shell-main"></div>
   </div>
 </div>

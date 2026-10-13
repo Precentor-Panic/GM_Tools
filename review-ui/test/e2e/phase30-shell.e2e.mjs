@@ -171,6 +171,37 @@ test("amended Decision 4: the planner toggle returns to the last scene, in the v
 // in a long Run spread that is still a re-find. The place in the scene comes
 // back too, but only on a return from another surface: scene-to-scene
 // navigation must keep opening a scene at its top.
+test("the rail is collapsed in Run, the edge tab brings it back, and Prep always shows it", async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  await primeWorldSelection(page, base, WORLD);
+  const scene = await createSceneViaRoute(base, WORLD, { locationEntityId: "shell-place-a" });
+  await page.goto(`${base}/#planner/scene/${scene.id}`);
+  await page.locator('[data-testid="planner-scene-view"]').waitFor({ state: "visible", timeout: 15000 });
+  const rail = page.locator('[data-testid="shell-rail-planner"]');
+  const tab = page.locator('[data-testid="shell-rail-tab"]');
+  const runLeft = () => page.locator('[data-testid="mode-run-btn"]').evaluate((el) => Math.round(el.getBoundingClientRect().left));
+
+  assert.equal(await rail.isVisible(), true, "Prep shows the rail");
+  assert.equal(await tab.isVisible(), false, "no edge tab in Prep");
+  const left0 = await runLeft();
+
+  await page.locator('[data-testid="mode-run-btn"]').click();
+  await page.locator('[data-testid="scene-run-spread"]').waitFor({ state: "visible" });
+  assert.equal(await rail.isVisible(), false, "Run hides the rail");
+  assert.equal(await tab.isVisible(), true, "Run shows the edge tab");
+  assert.equal(await runLeft(), left0, "the Run button stays under the pointer");
+
+  await tab.click();
+  assert.equal(await rail.isVisible(), true, "the tab brings the rail back");
+  assert.equal(await runLeft(), left0, "and the view control still has not moved");
+  await tab.click();
+  assert.equal(await rail.isVisible(), false);
+
+  await page.locator('[data-testid="mode-prep-btn"]').click();
+  await rail.waitFor({ state: "visible" });
+  await page.close();
+});
+
 test("returning to a scene from another surface restores the scroll position; opening a scene fresh does not", async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 520 } });
   await primeWorldSelection(page, base, WORLD);

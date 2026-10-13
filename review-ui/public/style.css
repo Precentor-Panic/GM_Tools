@@ -3640,6 +3640,34 @@ table.diff-table td.field-value .arrow { color: var(--text-muted); margin: 0 0.3
   min-height: 0;
   overflow-y: auto;
 }
+/* 2026-10-13: in Run the rail is collapsed. At the table it showed every plan
+   and the whole scene library, each row with a delete button, and it cost the
+   scene 232px. CSS reads the scene page's own data-mode, so no view has to
+   tell the shell anything; the edge tab (data-runrail="open") brings it back. */
+#app-shell .shell-rail-tab {
+  display: none; flex: none; width: 14px; padding: 0; cursor: pointer;
+  border: 0; border-right: 1px solid var(--sp-border-hairline);
+  background: var(--sp-surface-chrome); color: var(--sp-ink-muted);
+  font-size: 10px; line-height: 1;
+}
+#app-shell .shell-rail-tab:hover { color: var(--sp-accent-teal); background: var(--sp-row-hover-bg); }
+#app-shell .shell-rail-tab[aria-pressed="true"] span { display: inline-block; transform: scaleX(-1); }
+#app-shell[data-surface="planner"]:has(.scene-page[data-mode="run"]) .shell-rail-tab { display: block; }
+#app-shell[data-surface="planner"]:has(.scene-page[data-mode="run"]):not([data-runrail="open"]) .shell-rail { display: none; }
+@media (max-width: 760px) { #app-shell .shell-rail-tab { display: none !important; } }
+/* The Prep | Layout | Run control is centred in the scene column, so taking
+   the rail away would slide it 109px out from under the pointer that just
+   clicked Run (the sub-bar stability rule, layout-stability.e2e). Offset the
+   cluster by half of what the column gained, so it stays exactly where it was.
+   232px is .shell-rail's width, 14px the tab's. */
+@media (min-width: 761px) {
+  #app-shell[data-surface="planner"]:has(.scene-page[data-mode="run"]):not([data-runrail="open"]) .scene-subbar-controls {
+    position: relative; left: calc((232px - 14px) / 2);
+  }
+  #app-shell[data-surface="planner"]:has(.scene-page[data-mode="run"])[data-runrail="open"] .scene-subbar-controls {
+    position: relative; left: calc(14px / -2);
+  }
+}
 #app-shell .shell-main {
   flex: 1;
   min-width: 0;
