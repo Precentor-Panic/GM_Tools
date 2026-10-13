@@ -38,6 +38,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join, dirname } from "node:path";
 import { z } from "zod";
 import { withLock, ConcurrentWriteError } from "./review-state.mjs";
+import { campaignDataDir } from "./campaign-home.mjs";
+import { campaignOwnsGraph } from "../graph-import/graph-file.mjs";
 
 // v1. `stance` is metadata about the TRUTH, not the holder — why the truth is
 // withheld: "concealing" (someone knows and actively hides it), "unaware"
@@ -87,7 +89,11 @@ export const NarrativeStateRecord = z.object({
  */
 export function narrativeStateRoot(dir, world) {
   const override = process.env.GM_TOOLS_NARRATIVE_STATE_DIR;
-  return override ? join(override, world) : join(dir, "worlds", world, "narrative-state");
+  if (override) return join(override, world);
+  // The store stays beside the graph, wherever the graph lives: in the
+  // campaign repo when the campaign owns the graph, else in the world dir.
+  if (campaignOwnsGraph(world)) return join(campaignDataDir(world), "narrative-state");
+  return join(dir, "worlds", world, "narrative-state");
 }
 
 function recordFilePath(dir, world, entityId) {

@@ -40,6 +40,7 @@ import { gateSnapshotForTable, partitionForTable, renderAllusionInstruction } fr
 // own data dir (never throws — sync/rollback never fail on the timeline).
 import { commitWorldTimeline } from "../../mutation-engine/world-timeline.mjs";
 import { applyHeadless } from "../../graph-import/headless-apply.mjs";
+import { campaignOwnsGraph } from "../../graph-import/graph-file.mjs";
 // Friction Wave 1 (W1b): convert-create-to-update re-diffs the converted
 // mutation (and its re-pointed edges) against the live snapshot so the card
 // immediately shows a real before/after against the existing entity --
@@ -378,6 +379,14 @@ export async function applyMutationsToFoundry(dir, w, mutations) {
  * @returns {{path:'live'|'headless', liveResult:object, headlessResult?:object, snapshotPath?:string}}
  */
 export async function applyMutationsWithHeadlessFallback(dir, w, mutations) {
+  // A campaign-owned graph is written directly: Foundry reads the published
+  // copy and applies nothing, so there is no live client to wait for.
+  if (campaignOwnsGraph(w)) {
+    const snapshotPath = snapshotFilePath(dir, w);
+    const headlessResult = applyHeadless(snapshotPath, mutations);
+    const liveResult = { status: "not-attempted", count: mutations.length, path: null, note: "The campaign repo owns this world's graph; it was written directly." };
+    return { path: "headless", liveResult, headlessResult, snapshotPath };
+  }
   const liveResult = await applyMutationsToFoundry(dir, w, mutations);
   if (liveResult.status === "applied") {
     return { path: "live", liveResult };

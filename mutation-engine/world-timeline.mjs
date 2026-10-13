@@ -51,6 +51,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { getChronicleRun } from "../session-planner/chronicle-run.mjs";
 import { getWorldClock } from "../session-planner/world-clock.mjs";
+import { campaignOwnsGraph } from "../graph-import/graph-file.mjs";
 
 // The time-skip batch producers that always represent world time moving
 // forward, regardless of whether a chronicle-run sidecar exists for the
@@ -140,6 +141,12 @@ export function commitWorldTimeline(dir, world, opts = {}) {
 
   // 2. Target repo dir must already exist — this module never creates the
   // world's own directory, only (lazily) a .git inside it.
+  // 1b. A campaign-owned graph is tracked by the campaign repo, which the GM
+  // commits on demand. This timeline (a git repo inside Foundry's world
+  // folder) would record a file nothing writes any more, so it stands down
+  // quietly: no commit, no warning.
+  if (campaignOwnsGraph(world)) return { committed: false };
+
   const repoDir = join(dir, "worlds", world);
   if (!existsSync(repoDir)) {
     return { committed: false, warning: `world directory does not exist: ${repoDir}` };

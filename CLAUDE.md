@@ -247,10 +247,25 @@ stores under `<campaign repo>/data/` instead of in this checkout
 (`mutation-engine/campaign-home.mjs`: the registry, `CAMPAIGN_STORES`, and the
 path precedence store env override -> campaign repo -> legacy folder).
 `bin/campaign-adopt` does the move; RUN.md has the operating notes. GM_Tools
-writes files and never commits. Deliberately not moved yet: the graph and
-`narrative-state` (they move together in phase 2, when the campaign repo
-becomes the graph's source of truth and Foundry reads a published copy). Plan:
+writes files and never commits. Plan:
 `~/.claude/plans/hidden-exploring-muffin.md`.
+
+**The campaign repo can own the graph (2026-10-13, phase 2: built, not yet
+switched on for any world).** When `<campaign repo>/data/graph.json` exists it
+IS the graph (`graph-import/graph-file.mjs`: canonical sorted shape,
+`campaignOwnsGraph`). `snapshotFilePath`/`loadSnapshot` resolve to it, so no
+caller changed; `applyHeadless` writes it and publishes
+`worlds/<w>/world-fabric-graph.json` for Foundry; sync applies at once with no
+7 s wait; `narrative-state` lives beside it in `data/narrative-state/`; the
+world-timeline stands down (the campaign repo is the history). The module
+reads the published file when its world setting `graphSource` is `"file"`
+(`foundry_worldFabric/scripts/data/graph-source.mjs`; set with
+`gm-client.mjs --graph-source file`) and then saves nothing of the graph.
+`bin/campaign-adopt-graph` does the move and refuses on unsynced edits, a
+stale export, broken edges or dangling references. **Why this matters, found
+by that tool on the real aureus world:** with two writers of the snapshot
+file, anything applied headlessly while Foundry was closed never reached
+Foundry's settings, and Foundry's next export erased it from the snapshot.
 
 Engineering conventions for writing code in this repo live in `.claude/skills/gm-tools-conventions/` — load it before touching `mutation-engine/`, `time-skip/`, `graph-import/`, or `wf-mcp-server/`.
 

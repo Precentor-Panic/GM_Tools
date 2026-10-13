@@ -19,6 +19,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { existsSync, readFileSync } from "node:fs";
 import { listWorlds } from "./lib/data-dir.mjs";
 import { loadSnapshot, mutationsPath } from "./lib/snapshot.mjs";
+import { campaignOwnsGraph } from "../graph-import/graph-file.mjs";
 import { neighborhood, edgesFor, findEntity, findEntityByName, findEdge } from "./lib/graph.mjs";
 import { resolveWorld, resolveDir } from "./lib/resolve.mjs";
 
@@ -58,6 +59,7 @@ import { findUnreviewedEntities, DEFAULT_MAX_AGE_DAYS, DEFAULT_MAX_UNREVIEWED_AC
 // independently-drifting copies. See that module's own doc comment.
 import {
   applyMutationsToFoundry,
+  applyMutationsWithHeadlessFallback,
   reviewGrainOp,
   acceptOp,
   regenerateOp,
@@ -426,6 +428,11 @@ server.registerTool(
     try {
       const dir = resolveDir(dataDir);
       const w = resolveWorld(world);
+      // A campaign-owned graph has no in-Foundry applier: write it directly.
+      if (campaignOwnsGraph(w)) {
+        const { headlessResult, snapshotPath } = await applyMutationsWithHeadlessFallback(dir, w, mutations);
+        return text({ status: "applied", count: mutations.length, path: snapshotPath, ...headlessResult });
+      }
       // Concurrency guard (persona round, 2026-08-31; gm-tools-conventions'
       // never-blind-overwrite rule — the same gap foundry-ops.mjs's own doc
       // comment already flagged): a bridge file that exists and isn't "[]"

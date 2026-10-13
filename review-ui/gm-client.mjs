@@ -13,6 +13,8 @@
  *                                      # (ops/systemd/gm-tools-bridge.service)
  *   node gm-client.mjs                 # drain the queue, then exit
  *   node gm-client.mjs --hold 600      # stay connected 10 min regardless
+ *   node gm-client.mjs --graph-source file   # set where the module reads the graph from
+ *                                      # ("file" or "settings"), then drain and exit
  *   node gm-client.mjs --set-password  # after login, set FOUNDRY_GM_PASSWORD on the
  *                                      # account (for a freshly created blank-password user)
  *
@@ -151,6 +153,17 @@ try {
     // THIS client the active GM in its own eyes only; nothing changes for anyone else.
     await page.evaluate(() => Object.defineProperty(game.users, "activeGM", { get: () => game.user, configurable: true }));
     log("claimed the ops watcher for this client (activeGM override, local to this page)");
+  }
+
+  const graphSource = opt("--graph-source", null);
+  if (graphSource != null) {
+    // Where the module reads the graph from: "settings" (it owns the graph) or
+    // "file" (it reads the copy GM_Tools publishes). Every client picks the
+    // change up on its next load of the world.
+    if (graphSource !== "settings" && graphSource !== "file") throw new Error('--graph-source takes "settings" or "file"');
+    const before = await page.evaluate(() => game.settings.get("world-fabric", "graphSource"));
+    await page.evaluate((v) => game.settings.set("world-fabric", "graphSource", v), graphSource);
+    log(`world-fabric graphSource: ${before} -> ${graphSource}`);
   }
 
   if (flag("--set-password")) {

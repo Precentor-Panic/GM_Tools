@@ -53,6 +53,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { importGraph } from "../../foundry_worldFabric/scripts/data/interchange.mjs";
 import { withLock, ConcurrentWriteError } from "../mutation-engine/review-state.mjs";
+import { readGraphPayload, writeGraphPayload } from "./graph-file.mjs";
 
 export const SNAPSHOT_SCHEMA_VERSION = 1;
 
@@ -86,13 +87,15 @@ export class HeadlessApplyError extends Error {
   }
 }
 
+// Both kinds of file go through graph-file.mjs: a Foundry-exported
+// world-fabric-snapshot.json, or a campaign repo's own graph.json (written in
+// its canonical sorted shape and published for Foundry).
 function readSnapshotFile(snapshotPath) {
-  return JSON.parse(readFileSync(snapshotPath, "utf8"));
+  return readGraphPayload(snapshotPath);
 }
 
 function writeSnapshotFile(snapshotPath, payload) {
-  mkdirSync(dirname(snapshotPath), { recursive: true });
-  writeFileSync(snapshotPath, JSON.stringify(payload, null, 2), "utf8");
+  writeGraphPayload(snapshotPath, payload);
 }
 
 /**

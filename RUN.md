@@ -91,9 +91,24 @@ GM_Tools only writes the files. It never commits: commit the campaign repo
 when you want a checkpoint. `bin/gm-status` shows each campaign's branch and
 how many files under `data/` are uncommitted.
 
-Not moved: the graph and the reveal state beside it (still in Foundry's world
-folder), the shared bestiary and rules shelves, and machine state (push lock,
-sync log, undo slots, app settings, the Foundry token index).
+Not moved by that command: the graph and the reveal state beside it, the
+shared bestiary and rules shelves, and machine state (push lock, sync log,
+undo slots, app settings, the Foundry token index).
+
+The graph is a second, separate step, because it changes who owns it:
+
+    bin/campaign-adopt-graph --world <w>             # report; lists anything that blocks it
+    systemctl --user stop gm-tools gm-tools-bridge
+    bin/campaign-adopt-graph --world <w> --apply
+    (cd review-ui && node --env-file-if-exists=../.env gm-client.mjs --graph-source file)
+    systemctl --user restart foundry && systemctl --user start gm-tools
+
+After it, `data/graph.json` is the graph: GM_Tools writes it directly (a manual
+edit or a sync lands at once, with Foundry open or closed), Foundry reads the
+published copy `worlds/<w>/world-fabric-graph.json` and saves nothing of the
+graph, and the reveal state is in `data/narrative-state/`. Reload any open
+Foundry tab once. To undo: delete `data/graph.json` and
+`data/narrative-state/`, and run the client with `--graph-source settings`.
 
 ## Map grids
 

@@ -1,12 +1,19 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { campaignGraphPath, campaignOwnsGraph, readGraphPayload } from "../../graph-import/graph-file.mjs";
 
-/** Path to a world's world-fabric-snapshot.json, whether it exists yet or not (used by both the live-read path and headless-apply's standalone-file path). */
+/**
+ * Path to the file that holds a world's graph: the campaign repo's own
+ * graph.json when the campaign owns the graph (graph-import/graph-file.mjs),
+ * otherwise the world's Foundry-exported world-fabric-snapshot.json (whether
+ * it exists yet or not). Every graph read and headless write resolves here.
+ */
 export function snapshotFilePath(dataDir, world) {
+  if (campaignOwnsGraph(world)) return campaignGraphPath(world);
   return join(dataDir, "worlds", world, "world-fabric-snapshot.json");
 }
 
-/** Read and parse the world-fabric-snapshot.json for a given world. */
+/** Read a world's graph in the snapshot payload shape, from whichever file holds it. */
 export function loadSnapshot(dataDir, world) {
   const snapPath = snapshotFilePath(dataDir, world);
   if (!existsSync(snapPath)) {
@@ -15,7 +22,7 @@ export function loadSnapshot(dataDir, world) {
       `Is Foundry running with that world loaded and the World Fabric module active?`
     );
   }
-  return JSON.parse(readFileSync(snapPath, "utf8"));
+  return readGraphPayload(snapPath);
 }
 
 export function mutationsPath(dataDir, world) {
