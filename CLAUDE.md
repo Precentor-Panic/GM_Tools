@@ -184,6 +184,42 @@ left Foundry's world folder. `test/foundry-push-orchestrator.test.mjs` moved to
 index was 8½ hours stale with Russell away — the dry run was run against the
 real aureus world, the apply was not.
 
+**Always-on services and a QC round (2026-10-13) is done.** The stack on a
+table-hosting machine is now three systemd user services (`ops/systemd/`,
+installed by `ops/install-services.sh`, machine paths in
+`~/.config/gm-tools/services.env`): `foundry`, `gm-tools`, and
+`gm-tools-bridge` (`review-ui/gm-client.mjs --daemon`). **Run `bin/gm-status`
+first in any session that touches Foundry**: it reports, in dependency order,
+Foundry up, app up, whether the app is running code older than the tree,
+bridge heartbeat, index age, queue depth and service state, and names the fix
+for each failing line. RUN.md has the operating notes. What the round found,
+each measured: the app server had been running week-old code with no
+`flush-scenes` route, so `bin/foundry-push` had never been able to push a scene
+against it (**restart `gm-tools` after server-side changes**); a headless page
+counts as hidden, so Chromium throttled the module's 5 s watchers to one tick a
+minute (45-60 s per op), fixed with launch switches; with throttling off the
+client held 3.4 CPU cores drawing the canvas in software, fixed with Foundry's
+own `core.noCanvas` client setting plus hiding the page (now about 3% of one
+core); the module's graph-mutation watcher had NO single-applier guard, only
+the ops watcher did, so two GM clients double-applied mutation batches. Both
+watchers now use `foundry_worldFabric/scripts/data/bridge-leader.mjs`: an
+active GM whose user carries the `world-fabric.bridge` flag (the daemon sets
+it), else Foundry's activeGM. The client's "refuse while another GM is
+connected" rule is gone; a one-shot run only stands down for a second session
+of its OWN user. Liveness is a heartbeat file
+(`wf-mcp-server/lib/bridge-state.mjs`), because an exported index is no
+evidence of a connection. `bin/foundry-push` now waits for the queue between
+token refreshes. QC of the scene page: the `in Foundry` pill, Activate button
+and status had no CSS rule at all; the pager opened with a stray separator left
+from a removed button; the look-up toggle was unthemed; lanes (Prep-only) and
+party (Run-only) each kept a slot when hidden, leaving a hole in every view,
+and now share one grid cell. Returning to a scene from another surface now also
+restores the SCROLL position (`app-shell.js`, sessionStorage, return-only), the
+missing half of the 10-07 "remember the last scene" fix; pinned by a test in
+`phase30-shell.e2e.mjs` that fails without it. Not done, recommended: collapse
+the plans rail in Run, keep the party rail open across a return, make look-up a
+side drawer, and send a grid size with a pushed scene.
+
 Engineering conventions for writing code in this repo live in `.claude/skills/gm-tools-conventions/` — load it before touching `mutation-engine/`, `time-skip/`, `graph-import/`, or `wf-mcp-server/`.
 
 ## Key architectural fact to internalize immediately

@@ -188,15 +188,25 @@ await withPushLock(dataDir, world, async () => {
       // that a scene he has placed tokens on and set a starting view for is
       // never deleted or recreated. Refresh its token art in place instead,
       // which is what the `update_token` op exists for.
+      // One batch in flight at a time: the route refuses to write onto a
+      // non-empty queue, so wait for the previous scene's batch to clear.
+      if (!(await awaitQueueDrain(dataDir, world))) {
+        sceneRows.push({ label, status: "failed", ref: s.foundrySceneRef, reason: "the ops queue never drained before this scene" });
+        continue;
+      }
       try {
         const r = await api("/api/foundry/refresh-scene-tokens", { sceneId: s.id });
         const n = (r.ops ?? []).length;
+        // "queued" only means the route's own short poll window closed first.
+        // The batch is written; it is applied when the queue empties.
+        const late = r.status === "queued";
+        const applied = !late || (await awaitQueueDrain(dataDir, world));
         sceneRows.push({
           label,
-          status: r.status === "queued" ? "failed" : "ok",
+          status: applied ? "ok" : "failed",
           ref: s.foundrySceneRef,
-          reason: r.status === "queued"
-            ? `token refresh queued, not confirmed — ${r.note ?? "no live client?"}`
+          reason: !applied
+            ? `token refresh queued, never applied — ${r.note ?? "no live client?"}`
             : n ? `in place: refreshed ${n} token${n === 1 ? "" : "s"}` : "in place: nothing to refresh"
         });
       } catch (err) {

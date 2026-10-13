@@ -18,6 +18,55 @@ Three ways to launch (all go through `bin/gm-tools`, the single-instance launche
    PATH — **machine-specific**, update `gm-tools.desktop`'s `Exec=` line if
    node moves or this repo is used on another machine.
 
+## Always-on: the three services
+
+For a machine that hosts a table, run everything as systemd user services
+instead of launching by hand. Three units in `ops/systemd/`:
+
+| Service | What it runs |
+|---|---|
+| `foundry` | Foundry VTT, with the configured world open |
+| `gm-tools` | this app's server (`review-ui/server.mjs`) |
+| `gm-tools-bridge` | the headless GM client (`review-ui/gm-client.mjs --daemon`) that applies GM_Tools' changes inside Foundry |
+
+All three start at boot and restart on failure. Set up once:
+
+```
+mkdir -p ~/.config/gm-tools
+cp ops/services.env.example ~/.config/gm-tools/services.env   # then edit the paths
+ops/install-services.sh --start
+```
+
+Starting at boot (not just at login) needs lingering; the installer turns it
+on and tells you if it could not.
+
+**One status command:** `bin/gm-status` (`--json` for machines). It reports,
+in dependency order: Foundry up, GM_Tools up, whether the server is running
+code older than the tree, bridge connected, index age, queue depth, and the
+service states. It exits 0 only when everything is healthy, and every failing
+line names the command that fixes it.
+
+Everyday commands:
+
+```
+bin/gm-status
+systemctl --user restart gm-tools          # after changing server-side code
+systemctl --user restart foundry           # also restarts the bridge
+journalctl --user -u gm-tools-bridge -n 50 # what the bridge saw
+```
+
+**Your own GM tab and the bridge can be open together.** The World Fabric
+module picks one client to apply changes: the bridge when it is connected,
+otherwise Foundry's active GM. The one rule: **after the module's code
+changes, reload your GM tab** (the bridge reloads itself when Foundry
+restarts). A tab still running the old module code can disagree about who
+applies.
+
+The bridge never draws: it turns Foundry's canvas off for its own browser
+profile and hides the interface, so it idles at a few percent of one core.
+It refreshes the Foundry index every two minutes and after every applied
+batch.
+
 ## What it does
 
 - **Already running** — if something matching GM_Tools is already answering

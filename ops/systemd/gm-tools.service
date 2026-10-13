@@ -1,0 +1,15 @@
+# The GM_Tools app server (review-ui/server.mjs), always on.
+# Restart it after pulling or editing server-side code: the process keeps the
+# code it started with (`bin/gm-status` warns when it is older than the tree).
+[Unit]
+Description=GM_Tools app server
+After=network.target
+
+[Service]
+EnvironmentFile=%h/.config/gm-tools/services.env
+ExecStart=/bin/sh -c 'cd "$GM_TOOLS_DIR/review-ui" && exec "$NODE" --env-file-if-exists=../.env server.mjs'
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

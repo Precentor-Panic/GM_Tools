@@ -1,0 +1,22 @@
+# The headless GM client that applies GM_Tools' changes inside Foundry
+# (review-ui/gm-client.mjs --daemon). It exits non-zero when it loses the
+# connection, so Restart=always gives it a fresh login. PartOf=foundry means a
+# Foundry restart restarts it too, which is also how it picks up a module update.
+[Unit]
+Description=GM_Tools headless Foundry bridge client
+After=foundry.service
+Wants=foundry.service
+PartOf=foundry.service
+
+[Service]
+EnvironmentFile=%h/.config/gm-tools/services.env
+# Wait for Foundry to have its world open before trying to log in.
+ExecStartPre=/bin/sh -c 'i=0; until curl -fs "http://localhost:$FOUNDRY_PORT/api/status" | grep -q active.:true; do i=$((i+1)); [ $i -ge 90 ] && exit 1; sleep 2; done'
+ExecStart=/bin/sh -c 'cd "$GM_TOOLS_DIR/review-ui" && FOUNDRY_URL="http://localhost:$FOUNDRY_PORT" FOUNDRY_DATA_DIR="$FOUNDRY_DATA/Data" exec "$NODE" --env-file-if-exists=../.env gm-client.mjs --daemon'
+Restart=always
+RestartSec=10
+TimeoutStartSec=240
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

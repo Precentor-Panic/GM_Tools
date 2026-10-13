@@ -1,0 +1,15 @@
+# Foundry VTT, always on. Machine paths come from ~/.config/gm-tools/services.env
+# (see ops/services.env.example). Install with ops/install-services.sh.
+[Unit]
+Description=Foundry VTT
+After=network.target
+
+[Service]
+EnvironmentFile=%h/.config/gm-tools/services.env
+ExecStart=/bin/sh -c 'exec "$NODE" "$FOUNDRY_MAIN" --dataPath="$FOUNDRY_DATA" --port="$FOUNDRY_PORT" ${FOUNDRY_WORLD:+--world="$FOUNDRY_WORLD"} --noipdiscovery'
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
