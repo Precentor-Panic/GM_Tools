@@ -88,7 +88,9 @@ else {
   let exportedAt = null;
   try { exportedAt = JSON.parse(readFileSync(ip, "utf8")).exportedAt ?? null; } catch { /* none */ }
   const iAge = exportedAt ? now - Date.parse(exportedAt) : null;
-  add("index", iAge != null && iAge < 5 * 60e3, "Index", exportedAt ? `exported ${age(iAge)} ago` : "never exported", "it refreshes every 2 minutes while the bridge is connected; fix the bridge line first");
+  add("index", iAge != null && iAge < 5 * 60e3, "Index", exportedAt ? `exported ${age(iAge)} ago` : "never exported", live.connected
+    ? "the bridge is connected but its index uploads are not landing (Foundry ends a login after 24 h, and the websocket outlives it): systemctl --user restart gm-tools-bridge"
+    : "it refreshes every 2 minutes while the bridge is connected; fix the bridge line first");
 
   // 5. Queues
   const ops = dataDir ? readArr(foundryOpsPath(dataDir, world)) : null;

@@ -37,7 +37,7 @@
  * Must run from review-ui/ so Playwright resolves.
  */
 import { chromium } from "playwright";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { bridgeStatePath, bridgeLiveness } from "../wf-mcp-server/lib/bridge-state.mjs";
 
 const args = process.argv.slice(2);
@@ -62,6 +62,14 @@ if (!USER) { console.error("FOUNDRY_GM_USER is not set."); process.exit(2); }
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const queueEmpty = () => !existsSync(OPS) || readFileSync(OPS, "utf8").trim() === "[]";
+const INDEX = `${DATA}/worlds/${WORLD}/world-fabric-foundry-index.json`;
+const mtime = (f) => { try { return statSync(f).mtimeMs; } catch { return 0; } };
+// Foundry ends a login session after 24 hours (ClientSessions.COOKIE_MAX_AGE).
+// The websocket survives it, so probes and ops keep working, but the module's
+// index upload is an HTTP request and is refused from then on, silently. The
+// only reliable sign is the file on disk not changing; after this many misses
+// in a row the daemon exits and the service manager logs in afresh.
+const INDEX_MISSES_BEFORE_RELOGIN = 2;
 
 const STATE = bridgeStatePath(WORLD);
 const startedAt = new Date().toISOString();
@@ -180,13 +188,21 @@ try {
     players: game.users.filter((u) => u.active && !u.isGM).map((u) => u.name),
     moduleVersion: game.modules.get("world-fabric")?.version ?? null
   }));
-  const reindex = async () => { await page.evaluate(() => game.modules.get("world-fabric")?.api?.reindexForGmTools?.()); return new Date().toISOString(); };
+  const reindex = async () => {
+    const before = mtime(INDEX);
+    await page.evaluate(() => game.modules.get("world-fabric")?.api?.reindexForGmTools?.());
+    // The upload is fire-and-forget inside the client; wait for it to land.
+    for (let i = 0; i < 20 && mtime(INDEX) === before; i++) await sleep(500);
+    return { at: new Date().toISOString(), saved: mtime(INDEX) !== before };
+  };
 
   if (DAEMON) {
     // Always-on: no quiet-period exit. Leave only when told to (SIGTERM) or
     // when the connection is really gone, and then with a non-zero code so
     // the service manager starts a fresh client.
-    let stopping = false, failures = 0, lastIndexAt = await reindex(), opsBatches = 0, wasEmpty = queueEmpty();
+    const first = await reindex();
+    let stopping = false, failures = 0, lastIndexAt = first.at, indexMisses = first.saved ? 0 : 1, opsBatches = 0, wasEmpty = queueEmpty();
+    if (!first.saved) log("index upload did not land on disk");
     const stop = (sig) => { if (!stopping) { stopping = true; log(`${sig}; leaving the world`); } };
     process.on("SIGTERM", () => stop("SIGTERM"));
     process.on("SIGINT", () => stop("SIGINT"));
@@ -201,10 +217,15 @@ try {
       // Fresh index after every drained batch, and on a timer, so GM_Tools
       // never reads a stale picture of what is in Foundry.
       if (ok && ((!wasEmpty && empty) || Date.now() - Date.parse(lastIndexAt) >= REINDEX_MS)) {
-        try { lastIndexAt = await reindex(); } catch (e) { log("reindex failed:", String(e.message).slice(0, 160)); }
+        try {
+          const r = await reindex(); lastIndexAt = r.at;
+          indexMisses = r.saved ? 0 : indexMisses + 1;
+          if (!r.saved) log(`index upload did not land on disk (${indexMisses} in a row)`);
+        } catch (e) { log("reindex failed:", String(e.message).slice(0, 160)); }
+        if (indexMisses >= INDEX_MISSES_BEFORE_RELOGIN) throw new Error("the index upload keeps being refused (the login session has most likely expired); exiting so the service starts a fresh login");
       }
       wasEmpty = empty;
-      writeState({ state: ok ? "connected" : "degraded", ...(p ?? {}), lastIndexAt, opsBatches, queueEmpty: empty });
+      writeState({ state: ok ? "connected" : "degraded", ...(p ?? {}), lastIndexAt, indexMisses, opsBatches, queueEmpty: empty });
       if (failures >= LOST_AFTER) throw new Error(`lost the Foundry connection (${failures} failed probes)`);
       await sleep(BEAT_MS);
     }
