@@ -169,7 +169,7 @@ import { renderGmTruthBlock } from "../mutation-engine/narrative-gate.mjs";
 // Phase 16 -- Session Planner engine (task 16.6). Thin wrappers only, same
 // convention as every other route in this file: resolveWorld/resolveDir()
 // with NO client-supplied dataDir override anywhere below.
-import { createScene, forkScene, getScene, listScenesForWorld, listScenesByRecency, renameScene, updateScene, deleteScene, touchScene } from "../session-planner/scenes.mjs";
+import { createScene, forkScene, getScene, listScenesForWorld, listScenesByRecency, renameScene, updateScene, deleteScene, touchScene, markScenePushed } from "../session-planner/scenes.mjs";
 // Phase 30 task 30.1 -- the World inspector's "appears in" reverse lookup.
 // A separate module from scenes.mjs itself (avoids a circular import --
 // scene-lookup.mjs's own header comment explains why).
@@ -2256,6 +2256,25 @@ async function handleApi(req, res, url, parts) {
     const w = resolveWorld(q.get("world"));
     const scene = getScene(w, parts[3]);
     return sendJson(res, 200, { scene });
+  }
+
+  // POST /api/session-planner/scenes/:sceneId/foundry-link  { world, foundrySceneRef: "Scene.<id>" | null }  -> {scene}
+  // (2026-10-25) Point a planner scene at a Foundry scene that already exists
+  // -- one laid out by bin/scene-layout, or a pushed scene a later session
+  // reuses -- so Run's Activate works on it. Records the ref only: it never
+  // stages, so it schedules no flush and composes no op. Refused on a staged
+  // scene (its push target is the flush's business) and on anything that is
+  // not a bare Scene uuid. null unlinks.
+  if (method === "POST" && parts.length === 5 && parts[1] === "session-planner" && parts[2] === "scenes" && parts[4] === "foundry-link") {
+    const body = await readBody(req);
+    const w = resolveWorld(body.world);
+    const ref = body.foundrySceneRef;
+    if (ref !== null && !(typeof ref === "string" && /^Scene\.[A-Za-z0-9]{16}$/.test(ref))) {
+      return sendJson(res, 400, { error: "foundrySceneRef must be a Scene uuid (Scene.<16 chars>) or null" });
+    }
+    const scene = getScene(w, parts[3]);
+    if (scene.stagedForFoundry) return sendJson(res, 409, { error: "scene is staged for Foundry; unstage it before linking it by hand" });
+    return sendJson(res, 200, { scene: markScenePushed(w, parts[3], { foundrySceneRef: ref, lastPushedAt: ref ? new Date().toISOString() : null }) });
   }
 
   // POST /api/session-planner/scenes/:sceneId  { world, name?, objectiveNote?, mapAssetId? }  -> {scene}   Phase 29 task 29.1 -- patch-style update, independent optional fields (mirrors updateElement's own "only patch what's provided" convention). Length-4 path -- does not collide with the length-3 create route above, the length-5 fork/rename routes below, or the length-4 GET-by-id route (different method). Backs the scene page's inline objective edit. NOT a rename of the existing POST .../scenes/:id/rename route below (that stays name-only, unmodified).
