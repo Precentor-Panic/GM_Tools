@@ -13,7 +13,8 @@
 //   segment v1 (2026-10-24): prototype shape, kept verbatim (edges/shape/themes
 //     were added by hand after the cut, so they are optional).
 //   composition v1 (2026-10-25): pieces/openings as prototyped, plus optional
-//     `overlays` (tinted tiles over a piece, e.g. a water layer) and `seams`.
+//     `overlays` (tinted tiles over a piece, e.g. a water layer), `seams`, an
+//     opaque `puzzle` passed to the scene, and opening `via: "any"`.
 import { z } from "zod";
 
 export const SEGMENT_SCHEMA_VERSION = 1;
@@ -51,7 +52,7 @@ const Opening = z.object({
   to: z.number(),
   kind: z.enum(["open", "door"]),
   locked: z.boolean().optional(),
-  via: z.enum(["walk", "water"]).optional()
+  via: z.enum(["walk", "water", "any"]).optional() // "any": a walk exit on one side may meet water on the other
 }).refine((o) => o.to > o.from, { message: "opening `to` must be greater than `from`" });
 
 const Overlay = z.object({
@@ -74,7 +75,10 @@ export const Composition = z.object({
   pieces: z.array(Piece).min(1),
   openings: z.array(Opening).default([]),
   overlays: z.array(Overlay).default([]),
-  seams: z.object({ width: z.number().positive().default(0.4), alpha: z.number().min(0).max(1).default(0.6) }).optional()
+  seams: z.object({ width: z.number().positive().default(0.4), alpha: z.number().min(0).max(1).default(0.6) }).optional(),
+  // Opaque to the assembler: a puzzle definition carried onto the scene (flags["world-fabric"].puzzle)
+  // for the module's puzzle panel. Its shape is the panel's contract, not this schema's.
+  puzzle: z.record(z.string(), z.unknown()).optional()
 }).superRefine((c, ctx) => {
   const keys = new Set();
   for (const p of c.pieces) {

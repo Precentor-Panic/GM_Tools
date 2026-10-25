@@ -86,7 +86,7 @@ export function assembleComposition(compositionInput, loadSegment) {
         if (at !== o.at || o.from < lo || o.to > hi) continue;
         touching++;
         const via = o.via ?? "walk";
-        const ok = (seg.edges?.[side] ?? []).some((e) => e.kind === via && e.from <= o.from - off && o.to - off <= e.to);
+        const ok = (seg.edges?.[side] ?? []).some((e) => (via === "any" || e.kind === via) && e.from <= o.from - off && o.to - off <= e.to);
         if (!ok) problems.push(`${o.id}: no tagged ${via} exit on ${p.key} (${p.segment}) side ${side} at ${o.from - off}-${o.to - off}`);
       }
     }
@@ -110,7 +110,7 @@ export function assembleComposition(compositionInput, loadSegment) {
     const pc = pieces[ov.piece];
     tiles.push({ key: `overlay:${ov.key}`, src: ov.src, x: pc.at[0] * G, y: pc.at[1] * G, width: pc.widthSquares * G, height: pc.heightSquares * G, alpha: ov.alpha, sort: ov.sort });
   }
-  return { name: comp.name, width: comp.widthSquares * G, height: comp.heightSquares * G, gridSize: G, backgroundColor: comp.backgroundColor, tiles, walls, problems, pieces };
+  return { name: comp.name, width: comp.widthSquares * G, height: comp.heightSquares * G, gridSize: G, backgroundColor: comp.backgroundColor, tiles, walls, problems, pieces, puzzle: comp.puzzle ?? null };
 }
 
 /** The set_scene_layout op data for an assembled scene. */
@@ -118,6 +118,7 @@ export function layoutOpData(sceneUuid, assembled) {
   return {
     sceneUuid, width: assembled.width, height: assembled.height, padding: 0, gridSize: assembled.gridSize,
     background: { src: null, color: assembled.backgroundColor },
-    tiles: assembled.tiles, walls: assembled.walls
+    tiles: assembled.tiles, walls: assembled.walls,
+    puzzle: assembled.puzzle // null clears a puzzle the scene had
   };
 }

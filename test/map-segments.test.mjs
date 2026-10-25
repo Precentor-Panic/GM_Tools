@@ -75,3 +75,12 @@ test("layoutOpData clears the old background and sets padding 0", () => {
   assert.equal(d.sceneUuid, "Scene.abc"); assert.equal(d.padding, 0);
   assert.deepEqual(d.background, { src: null, color: "#0b0d0c" });
 });
+
+test("via any accepts either exit kind; the puzzle passes through to the op", () => {
+  const water = { ...LIB, hall: seg("hall", 6, 4, { n: [], e: [], s: [], w: [{ kind: "water", from: 0, to: 4 }] }) };
+  const c = comp({ openings: [{ id: "d1", line: "v", at: 4, from: 1, to: 2, kind: "door", via: "any" }], puzzle: { type: "jugs" } });
+  const a = assembleComposition(c, (id) => water[id]);
+  assert.deepEqual(a.problems, []);
+  assert.deepEqual(layoutOpData("Scene.x", a).puzzle, { type: "jugs" });
+  assert.equal(layoutOpData("Scene.x", assembleComposition(comp(), load)).puzzle, null);
+});
