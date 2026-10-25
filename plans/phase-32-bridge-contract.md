@@ -814,8 +814,20 @@ review-ui `POST /api/foundry/push-bestiary-token-art`) — one op per row, from 
 |---|---|---|
 | `create_actor` | `{ name: string, type: string, img?: string, system?: object }` | Push a bestiary/roster entry back INTO Foundry with a hand-composed system payload. v4 note: `import_via_plutonium {kind:"creature"}` covers the real use case (stat blocks at Plutonium fidelity); this stays reserved for a hypothetical non-5etools actor push. |
 
-`walls`/`lighting` on `create_scene` (sketched in `plans/phase-32-deferred.md` §3a) and ambient-light
-*placement* remain explicitly undesigned/out of scope — Phase 36 does not adopt them; a future phase that wants
+### `set_scene_layout` (v8, 2026-10-25, map segments)
+
+`{ sceneUuid, width?, height?, padding?, gridSize?, background?: {src?: string|null, color?: string},
+tiles?: [{key, src, x, y, width, height, sort?, alpha?, hidden?}], walls?: [{key?, c:[x0,y0,x1,y1], move?, sight?,
+light?, sound?, dir?, door?, ds?}] }` → result `{uuid, tiles, walls, removed:{tiles, walls}}`.
+
+Lays out an assembled scene (`map-segments/assemble.mjs`, `bin/scene-layout`). Tile `x/y` on the wire is the
+TOP-LEFT corner; the module converts to v14's centre anchor. Every tile/wall it creates carries
+`flags["world-fabric"].layout = <key>`, and the op first deletes ONLY documents carrying that flag, so it can
+re-lay an already-pushed scene in place and never touches a tile or wall the GM placed by hand.
+`background.src: null` clears the old map art (on the Level doc). The data is validated before anything is
+deleted (`buildSceneLayout`, pure, unit-tested in the module), so a bad op changes nothing.
+
+Ambient-light *placement* remains explicitly undesigned/out of scope — Phase 36 does not adopt them; a future phase that wants
 them amends this contract then.
 
 A producer or consumer encountering an unrecognized `kind` string in a future version MUST skip that one op
@@ -925,6 +937,8 @@ oversight** — 32.1/32.2/32.3 should not "fix" it into consistency.
   - GM_Tools-side content-pipeline spec (Reliquary/Stagecraft pull-mapper shapes, the import-on-accept
     composition + pending/reconcile reuse, plan-delete rail contract, the Loyalty tree + `anchorMembership` op)
     lives in `review-ui/test/e2e/phase38-fixture.mjs`, not in this file — same "wire format only" scoping as v2.
+- **v8 (2026-10-25)**: NEW op kind `set_scene_layout` (§2) — tiles + walls for a scene assembled from map
+    segments; replaces only bridge-flagged documents. Additive; older producers never emit it.
 
 ---
 
