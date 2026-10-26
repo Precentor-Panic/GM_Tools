@@ -186,3 +186,6 @@ design/session-planner/variants-canvas/run-variants.html
 # the GM-only analysis RESULTS, never the notes themselves. Spec-time entry.
 player-notes-analysis/*
 !player-notes-analysis/.gitkeep
+
+# Python bytecode from map-segments/tools
+__pycache__/
