@@ -7,7 +7,10 @@ holds the walls, and each segment's box in source squares. Writes per segment, u
 <Data>/gm-tools-assets/segments/<module>/<segment-id>/:
   <variant>.webp      the box from each variant, rescaled to 100 px per square
   segment.json        size, variants, walls in segment-local px (schema 1; see map-segments/composition.mjs)
-Re-cutting keeps hand-set `edges`, `shape` and `themes` already in a segment.json.
+Re-cutting keeps hand-set `edges`, `shape`, `themes`, `tags`, `variantInfo` and measured `colours`
+already in a segment.json. `--variants a b` cuts only those variants and adds them to the existing
+segment.json, leaving every other variant's file untouched (use it to grow a piece that a live scene
+already uses). Run tag.py afterwards to tag and measure the new variants.
 """
 import argparse, json, math, os, sys, pathlib
 from PIL import Image, ImageDraw
@@ -15,6 +18,7 @@ from PIL import Image, ImageDraw
 ap = argparse.ArgumentParser()
 ap.add_argument("spec"); ap.add_argument("--data", default=os.environ.get("WF_DATA_DIR", str(pathlib.Path.home() / "foundrydata" / "Data")))
 ap.add_argument("--sheet"); ap.add_argument("--only", nargs="*", default=[])
+ap.add_argument("--variants", nargs="*", default=[], help="cut only these variants and merge them into existing segments")
 args = ap.parse_args()
 spec = json.load(open(args.spec))
 MODULE = spec["module"]
@@ -22,6 +26,10 @@ DATA = pathlib.Path(args.data)
 OUT = DATA / "gm-tools-assets" / "segments" / MODULE
 TARGET = 100
 VARIANTS = spec["variants"]          # name -> map file, relative to the module folder
+if args.variants:
+    missing = [v for v in args.variants if v not in VARIANTS]
+    if missing: sys.exit(f"--variants not in the spec: {', '.join(missing)}")
+    VARIANTS = {v: VARIANTS[v] for v in args.variants}
 WALLS_FROM = spec["wallsFrom"]       # substring of the Scene-pack entry's image that carries the walls
 SEGMENTS = {k: tuple(v) for k, v in spec["segments"].items()}
 ONLY = set(args.only)
@@ -75,10 +83,14 @@ for sid, (sx, sy, sw, sh) in SEGMENTS.items():
             "walls": walls, "doors": sum(1 for w in walls if w.get("door", 0) > 0), "cutDoors": cut_doors,
             "edges": None}
     old = d / "segment.json"
-    if old.exists():  # keep what a person set by hand
+    if old.exists() and args.variants:  # merge: only the new variants change
+        meta = json.loads(old.read_text())
+        meta["variants"].update({v: f"{v}.webp" for v in VARIANTS})
+    elif old.exists():  # keep what a person set by hand, and what tag.py measured
         prev = json.loads(old.read_text())
-        for key in ("edges", "shape", "themes"):
+        for key in ("edges", "shape", "themes", "tags", "variantInfo", "colours", "baseVariant"):
             if prev.get(key) is not None: meta[key] = prev[key]
+        if prev.get("schema", 1) > meta["schema"]: meta["schema"] = prev["schema"]
     (d / "segment.json").write_text(json.dumps(meta, indent=1))
     report.append((sid, sw, sh, len(walls), meta["doors"], cut_doors))
     t = Image.open(d / "original.webp").copy(); dr = ImageDraw.Draw(t)

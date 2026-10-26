@@ -15,16 +15,36 @@
 //   composition v1 (2026-10-25): pieces/openings as prototyped, plus optional
 //     `overlays` (tinted tiles over a piece, e.g. a water layer), `seams`, an
 //     opaque `puzzle` passed to the scene, and opening `via: "any"`.
+//   segment v2 (2026-10-26): adds what the clash checks read (clash.mjs), all
+//     optional so v1 files still load unchanged:
+//       tags        { role, unique, setting, floor[], light }   set by a person (tag.py applies a pack's tag sheet)
+//       variantInfo { <variant>: { state, time } }               story state ("clean" when absent) and time of day
+//       colours     { <file>: [L, a, b] }                        mean Lab colour per art file, measured by tag.py
+//     and an optional `socket` name on each exit (standard exit positions, used by kits).
+//   composition v1, additive (2026-10-26): optional `clash` { colourDelta, ignore[] }
+//     to tune the clash checks per map and dismiss a warning the GM has accepted.
 import { z } from "zod";
 
-export const SEGMENT_SCHEMA_VERSION = 1;
+export const SEGMENT_SCHEMA_VERSION = 2; // v1 still accepted
 export const COMPOSITION_SCHEMA_VERSION = 1;
 
-const Exit = z.object({ kind: z.enum(["walk", "water"]), from: z.number(), to: z.number() });
+const Exit = z.object({ kind: z.enum(["walk", "water"]), from: z.number(), to: z.number(), socket: z.string().optional() });
+
+// Free strings wherever a campaign or pack might need its own word (setting, floor, state, time).
+export const SEGMENT_ROLES = ["corridor", "room", "transition", "set-piece"];
+export const LIGHT_DIRECTIONS = ["n", "ne", "e", "se", "s", "sw", "w", "nw", "top"]; // where the light comes from; "top" = overhead, no cast direction
+const Tags = z.object({
+  role: z.enum(SEGMENT_ROLES).optional(),
+  unique: z.boolean().optional(), // a landmark the players would notice twice
+  setting: z.string().optional(),
+  floor: z.array(z.string()).optional(),
+  light: z.enum(LIGHT_DIRECTIONS).optional()
+}).passthrough();
+const VariantInfo = z.object({ state: z.string().optional(), time: z.string().optional() }).passthrough();
 const Wall = z.object({ c: z.array(z.number()).length(4) }).passthrough();
 
 export const Segment = z.object({
-  schema: z.literal(SEGMENT_SCHEMA_VERSION),
+  schema: z.union([z.literal(1), z.literal(2)]),
   id: z.string().min(1),
   gridSize: z.number().positive(),
   widthSquares: z.number().int().positive(),
@@ -32,7 +52,10 @@ export const Segment = z.object({
   variants: z.record(z.string(), z.string()),
   walls: z.array(Wall),
   edges: z.object({ n: z.array(Exit), e: z.array(Exit), s: z.array(Exit), w: z.array(Exit) }).nullable().optional(),
-  themes: z.record(z.string(), z.object({ variants: z.record(z.string(), z.string()) }).passthrough()).optional()
+  themes: z.record(z.string(), z.object({ variants: z.record(z.string(), z.string()) }).passthrough()).optional(),
+  tags: Tags.optional(),
+  variantInfo: z.record(z.string(), VariantInfo).optional(),
+  colours: z.record(z.string(), z.array(z.number()).length(3)).optional()
 }).passthrough();
 
 const Piece = z.object({
@@ -78,7 +101,11 @@ export const Composition = z.object({
   seams: z.object({ width: z.number().positive().default(0.4), alpha: z.number().min(0).max(1).default(0.6) }).optional(),
   // Opaque to the assembler: a puzzle definition carried onto the scene (flags["world-fabric"].puzzle)
   // for the module's puzzle panel. Its shape is the panel's contract, not this schema's.
-  puzzle: z.record(z.string(), z.unknown()).optional()
+  puzzle: z.record(z.string(), z.unknown()).optional(),
+  clash: z.object({
+    colourDelta: z.number().positive().optional(), // ΔE between mean colours across an open join; clash.mjs has the default
+    ignore: z.array(z.string()).default([])        // warning ids the GM has looked at and accepted
+  }).optional()
 }).superRefine((c, ctx) => {
   const keys = new Set();
   for (const p of c.pieces) {

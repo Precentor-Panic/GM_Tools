@@ -8,7 +8,13 @@
 //
 // Output tiles are in the bridge's wire shape (top-left x/y in pixels);
 // set_scene_layout converts to Foundry's centre anchor.
+//
+// Two lists come back. `problems` (strings) are structural: a door into solid
+// art, a piece off the map, two pieces overlapping. bin/scene-layout refuses to
+// send with any. `warnings` (objects with a stable id) are the clash checks in
+// clash.mjs: combinations that would look wrong. They never block.
 import { Composition, Segment } from "./composition.mjs";
+import { clashWarnings } from "./clash.mjs";
 
 const EDGE_WALL = { light: 20, move: 20, sight: 20, sound: 20 };
 const SEAM_SRC = "gm-tools-assets/segments/_common";
@@ -39,12 +45,12 @@ export function subtractIntervals(iv, cuts) {
 /**
  * @param {object} compositionInput  a composition (validated here)
  * @param {(segmentId: string, library: string) => object} loadSegment  returns that segment's segment.json
- * @returns {{name, width, height, gridSize, backgroundColor, tiles, walls, problems, pieces}}
+ * @returns {{name, width, height, gridSize, backgroundColor, tiles, walls, problems, warnings, pieces}}
  */
 export function assembleComposition(compositionInput, loadSegment) {
   const comp = Composition.parse(compositionInput);
   const G = comp.gridSize;
-  const tiles = [], walls = [], problems = [], pieces = {};
+  const tiles = [], walls = [], problems = [], pieces = {}, placed = [];
   const lines = new Map(); // "h:12" -> [[a,b]] in squares
   const addLine = (k, iv) => { if (!lines.has(k)) lines.set(k, []); lines.get(k).push(iv); };
 
@@ -60,6 +66,7 @@ export function assembleComposition(compositionInput, loadSegment) {
     const path = (f) => `${lib}/${p.segment}/${f}`;
     pieces[p.key] = { segment: p.segment, at: [ax, ay], widthSquares: w, heightSquares: h, variants: Object.fromEntries(Object.entries(variants).map(([k, f]) => [k, path(f)])) };
     tiles.push({ key: `piece:${p.key}`, src: path(variants[p.variant]), x: ax * G, y: ay * G, width: w * G, height: h * G, sort: i });
+    placed.push({ key: p.key, label: p.label, segment: p.segment, seg, variant: p.variant, file: variants[p.variant] });
     for (const sw of seg.walls) {
       const { c, cut, ...rest } = sw;
       walls.push({ ...rest, key: `seg:${p.key}`, c: [c[0] + ax * G, c[1] + ay * G, c[2] + ax * G, c[3] + ay * G] });
@@ -74,9 +81,18 @@ export function assembleComposition(compositionInput, loadSegment) {
     }
   });
 
+  // Two pieces may share an edge but never a square.
+  for (let i = 0; i < comp.pieces.length; i++) for (let j = i + 1; j < comp.pieces.length; j++) {
+    const a = pieces[comp.pieces[i].key], b = pieces[comp.pieces[j].key];
+    if (a.at[0] < b.at[0] + b.widthSquares && b.at[0] < a.at[0] + a.widthSquares && a.at[1] < b.at[1] + b.heightSquares && b.at[1] < a.at[1] + a.heightSquares)
+      problems.push(`${comp.pieces[i].key} and ${comp.pieces[j].key} overlap`);
+  }
+
   // Openings must sit inside a tagged exit on every piece edge they touch.
+  const joins = [];
   for (const o of comp.openings) {
     let touching = 0;
+    const touched = [];
     for (const p of comp.pieces) {
       const pc = pieces[p.key], [ax, ay] = pc.at;
       const seg = loadSegment(p.segment, p.library ?? comp.library);
@@ -84,14 +100,16 @@ export function assembleComposition(compositionInput, loadSegment) {
       const [lo, hi, off] = o.line === "v" ? [ay, ay + pc.heightSquares, ay] : [ax, ax + pc.widthSquares, ax];
       for (const [side, at] of Object.entries(sides)) {
         if (at !== o.at || o.from < lo || o.to > hi) continue;
-        touching++;
+        touching++; touched.push(p.key);
         const via = o.via ?? "walk";
         const ok = (seg.edges?.[side] ?? []).some((e) => (via === "any" || e.kind === via) && e.from <= o.from - off && o.to - off <= e.to);
         if (!ok) problems.push(`${o.id}: no tagged ${via} exit on ${p.key} (${p.segment}) side ${side} at ${o.from - off}-${o.to - off}`);
       }
     }
     if (!touching) problems.push(`${o.id}: touches no piece edge`);
+    joins.push({ opening: o, pieces: touched });
   }
+  const warnings = clashWarnings(comp, placed, joins);
 
   const cuts = new Map();
   for (const o of comp.openings) { const k = `${o.line}:${o.at}`; if (!cuts.has(k)) cuts.set(k, []); cuts.get(k).push([o.from, o.to]); }
@@ -110,7 +128,7 @@ export function assembleComposition(compositionInput, loadSegment) {
     const pc = pieces[ov.piece];
     tiles.push({ key: `overlay:${ov.key}`, src: ov.src, x: pc.at[0] * G, y: pc.at[1] * G, width: pc.widthSquares * G, height: pc.heightSquares * G, alpha: ov.alpha, sort: ov.sort });
   }
-  return { name: comp.name, width: comp.widthSquares * G, height: comp.heightSquares * G, gridSize: G, backgroundColor: comp.backgroundColor, tiles, walls, problems, pieces, puzzle: comp.puzzle ?? null };
+  return { name: comp.name, width: comp.widthSquares * G, height: comp.heightSquares * G, gridSize: G, backgroundColor: comp.backgroundColor, tiles, walls, problems, warnings, pieces, puzzle: comp.puzzle ?? null };
 }
 
 /** The set_scene_layout op data for an assembled scene. */

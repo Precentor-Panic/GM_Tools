@@ -5,7 +5,8 @@
 //   bin/scene-layout --world <w> --scene <Scene.uuid> --composition <file.json> [--data-dir <Data>] [--apply]
 //
 // Dry run by default: assembles, validates the openings against the segments'
-// exit tags, and prints what the op would do. --apply writes the op and waits
+// exit tags, prints the clash warnings (clash.mjs; they never block), and prints
+// what the op would do. --apply writes the op and waits
 // for a GM client's watcher to apply it. Problems (a door into solid art, a
 // piece off the map) refuse --apply unless --force.
 import { readFileSync } from "node:fs";
@@ -31,6 +32,8 @@ console.log(`${a.name}: ${a.width}x${a.height} px at ${a.gridSize}/square`);
 console.log(`  tiles ${a.tiles.length} (${a.tiles.filter((t) => t.key.startsWith("piece:")).length} pieces, ${a.tiles.filter((t) => t.key.startsWith("overlay:")).length} overlays, ${a.tiles.filter((t) => t.key.startsWith("seam:")).length} seams)`);
 console.log(`  walls ${a.walls.length} (${a.walls.filter((w) => w.key === "edge").length} edge, ${doors.length} doors, ${doors.filter((w) => w.ds === 2).length} locked)`);
 for (const p of a.problems) console.log(`  PROBLEM ${p}`);
+for (const w of a.warnings) console.log(`  warning ${w.message}  [${w.id}]`);
+if (a.warnings.length) console.log(`  (warnings never block; list an id under the composition's clash.ignore once you've accepted it)`);
 if (!flag("--apply")) { console.log(`dry run: nothing written. Target ${world} ${sceneUuid}. Add --apply to send.`); process.exit(a.problems.length ? 1 : 0); }
 if (a.problems.length && !flag("--force")) { console.error("refusing --apply with problems (add --force to send anyway)"); process.exit(1); }
 const out = await writeFoundryOps(dataDir, world, [{ opId: `layout_${Date.now().toString(36)}`, kind: "set_scene_layout", data }], { timeoutMs: 30000 });
