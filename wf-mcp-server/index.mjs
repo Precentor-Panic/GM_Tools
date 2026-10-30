@@ -22,6 +22,7 @@ import { loadSnapshot, mutationsPath } from "./lib/snapshot.mjs";
 import { campaignOwnsGraph } from "../graph-import/graph-file.mjs";
 import { neighborhood, edgesFor, findEntity, findEntityByName, findEdge } from "./lib/graph.mjs";
 import { resolveWorld, resolveDir } from "./lib/resolve.mjs";
+import { registerAtlasTools } from "./lib/atlas-tools.mjs";
 
 // Phase 3.5 task 3.5.2/3.5.3 — deferred/lazy consequence resolution:
 // orchestrateCycle (headline-focus + backlog deferral, wrapped below as
@@ -2828,6 +2829,9 @@ server.registerTool(
     }
   }
 );
+
+// Atlas (plans/atlas-plan.md): wf_atlas_* tools, registered from their own module to keep this file from growing.
+registerAtlasTools(server, { text, errorText, worldParam });
 
 // Guard the actual stdio connect behind an entrypoint check so this module
 // can be imported (e.g. by test/*.test.mjs, to unit-test attachDiffs against
