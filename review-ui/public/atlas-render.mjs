@@ -11,7 +11,8 @@
  * blue inside them. Widths are symbolic (a city-scale sheet can't show a 10 ft gallery to scale).
  *
  * opts: width (px, default 1600), focus [minX, minY, maxX, maxY] in feet, palette ("ink" | "wash" | "sepia"),
- *       title, subtitle, survey (bool), showSections (default true on GM sheets), showDrafts (default true on GM).
+ *       title, subtitle, survey (bool), showSections (default true on GM sheets), showDrafts (default true on GM),
+ *       idPrefix (scopes the drawing's ids, for several drawings on one page).
  */
 import { routePoints, polar, fromPolar } from "./atlas-geometry.mjs";
 
@@ -315,7 +316,14 @@ export function renderPlan(model, opts = {}) {
   svg += `<g class="places">${chambers}</g><g class="soundings">${soundings}</g><g class="labels">${labels}</g>`;
 
   svg += furniture(model, opts, P, k, box, survey);
-  return svg + "</svg>";
+  return scopeIds(svg + "</svg>", opts.idPrefix);
+}
+
+/** Give every id in one drawing a prefix, so several drawings can share a page without borrowing each other's
+ *  patterns. */
+function scopeIds(svg, prefix) {
+  if (!prefix) return svg;
+  return svg.replace(/ id="([^"]+)"/g, ` id="${prefix}-$1"`).replace(/url\(#([^)]+)\)/g, `url(#${prefix}-$1)`).replace(/href="#([^"]+)"/g, `href="#${prefix}-$1"`);
 }
 
 /** Border, north arrow, scale bar, legend and the title cartouche. */
@@ -415,5 +423,5 @@ export function renderSection(model, opts = {}) {
     const x = X(Math.hypot(n.x, n.y)), y = Y(n);
     s += `<circle cx="${f(x)}" cy="${f(y)}" r="3.6" fill="${n.belief || n.partyOnly ? "none" : P.paper}" stroke="${n.belief || n.partyOnly ? P.accent : n.draft ? P.pencil : P.ink}" stroke-width="1.3"/>`;
   }
-  return s + "</svg>";
+  return scopeIds(s + "</svg>", opts.idPrefix);
 }
