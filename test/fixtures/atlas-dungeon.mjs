@@ -43,7 +43,7 @@ export function millAtlas() {
         gate: { kind: "seal", state: "sealed" }, note: "GM only" },
     ],
     sections: [
-      { id: "cellar-map", name: "The mill cellar", origin: { x: -40, y: -40 }, rotation: 0, sizeSq: { w: 20, h: 16 } },
+      { id: "cellar-map", name: "The mill cellar", origin: { x: -40, y: -40 }, rotation: 0, sizeSq: { w: 18, h: 14 } },
     ],
   };
 }
