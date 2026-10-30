@@ -945,6 +945,7 @@ oversight** — 32.1/32.2/32.3 should not "fix" it into consistency.
 ---
 - **v9 (2026-10-28)**: `create_actor` goes live (§2) for hand-authored NPCs such as a druid's Wildfire Spirit, where Plutonium would prompt for a summon level. Payload built by the pure `buildActorCreateData` (tested); the generic unsupported-kind tests now use a made-up kind.
 - **v10 (2026-10-29)**: `set_puzzle_state` and `delete_token` (§2). First use: carrying the flood locks into session six (every room at 1, solved) and replacing the stand-in token for Jabir. `applyPuzzleEffects` moved into `data/puzzle-jugs.mjs` so the panel and the bridge share it.
+- **v11 (2026-10-30)**: `update_scene.patch` may also carry `tokenVision` (boolean), `fog: {exploration}` and `environment: {globalLight: {enabled}, darknessLevel}` (module `pickScenePatch`; any other key is dropped and the result becomes `{uuid, ignored}`). First use: fog of war on the scenes that now have walls, global light kept on so line of sight, not darkness, limits what players see. Lights are still not pushed.
 
 ## Fixtures (executable form of this contract)
 
