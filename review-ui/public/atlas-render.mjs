@@ -15,15 +15,16 @@
  *       idPrefix (scopes the drawing's ids, for several drawings on one page).
  */
 import { routePoints, polar, fromPolar } from "./atlas-geometry.mjs";
+import { buildCity, citySvg } from "./atlas-city.mjs";
 
 export const PALETTES = {
   ink: { paper: "#f4ecd8", paper2: "#ebe0c6", ink: "#2b2418", faint: "#8c7d62", water: "#3f6f8f", waterFill: "#c9dbe0",
-    accent: "#9a3b26", pencil: "#8a8a8a", systems: null },
+    accent: "#9a3b26", pencil: "#8a8a8a", sand: "#e4cf9c", systems: null },
   wash: { paper: "#f6efdd", paper2: "#ece2c8", ink: "#2a2419", faint: "#8f8066", water: "#3a6d8e", waterFill: "#c7dce3",
-    accent: "#9a3b26", pencil: "#8a8a8a",
+    accent: "#9a3b26", pencil: "#8a8a8a", sand: "#e8d39d",
     systems: { feed: "#3f74a8", flood: "#2e8b80", sewer: "#8a7432", body: "#a5463a", seal: "#6c5aa3", drowned: "#2d4f8f", ancient: "#3d8a52" } },
   sepia: { paper: "#efe2c4", paper2: "#e2d0a8", ink: "#3b2a17", faint: "#957a52", water: "#4c6a72", waterFill: "#cfd6c8",
-    accent: "#8a2f1c", pencil: "#998a74", systems: null },
+    accent: "#8a2f1c", pencil: "#998a74", sand: "#dcc293", systems: null },
 };
 
 const FONT = "'IM Fell English', 'Iowan Old Style', Georgia, serif";
@@ -126,6 +127,10 @@ function areaSvg(a, P, k, survey) {
     const big = ((s.to - s.from + 360) % 360) > 180 ? 1 : 0;
     return `<path d="M${f(p0.x)} ${f(p0.y)}L${f(p1.x)} ${f(p1.y)}A${s.r1} ${s.r1} 0 ${big} 1 ${f(p2.x)} ${f(p2.y)}L${f(p3.x)} ${f(p3.y)}A${s.r0} ${s.r0} 0 ${big} 0 ${f(p0.x)} ${f(p0.y)}Z" fill="url(#stipple)" stroke="${P.faint}" stroke-width="${sw(0.8)}"/>`;
   }
+  if (s.type === "polygon" && (a.kind === "arena" || a.kind === "landmark"))
+    return `<path d="${pathD(s.points)}Z" fill="${P.sand}" stroke="${P.ink}" stroke-width="${sw(1.1)}"/>`;
+  if (s.type === "polygon" && a.kind === "gate-line")
+    return `<path d="${pathD(s.points)}Z" fill="none" stroke="${P.ink}" stroke-width="${sw(1.6)}"/>`;
   if (s.type === "polygon") return `<path d="${pathD(s.points)}Z" fill="none" stroke="${P.faint}" stroke-width="${sw(0.8)}" stroke-dasharray="${sw(3)} ${sw(3)}"/>`;
   if (s.type === "circle") return `<circle cx="${s.cx}" cy="${s.cy}" r="${s.r}" fill="none" stroke="${P.faint}" stroke-width="${sw(0.8)}"/>`;
   return "";
@@ -148,6 +153,11 @@ function ringLabels(areas, P, k) {
     let at = null;
     if (s.type === "sector") at = fromPolar((s.r0 + s.r1) / 2, s.from + (((s.to - s.from + 360) % 360) / 2), { x: s.cx, y: s.cy });
     else if (a.kind === "lake" && s.type === "circle") at = { x: s.cx, y: s.cy + s.r * 0.62 };
+    else if ((a.kind === "arena" || a.kind === "landmark") && s.type === "polygon") {
+      const cx = s.points.reduce((t, p) => t + p.x, 0) / s.points.length, cy = s.points.reduce((t, p) => t + p.y, 0) / s.points.length;
+      out += `<text x="${f(cx)}" y="${f(cy)}" text-anchor="middle" dominant-baseline="middle" font-family="${FONT}" font-style="italic" font-size="${f(11 / k)}" fill="${P.ink}">${esc(a.name)}</text>`;
+      continue;
+    }
     if (!at) continue;
     out += `<text x="${f(at.x)}" y="${f(at.y)}" text-anchor="middle" font-family="${FONT_SC}" font-size="${f(13 / k)}" letter-spacing="${f(4 / k)}" fill="${P.faint}">${esc(a.name.replace(/^The /, "").toUpperCase())}</text>`;
   }
@@ -213,8 +223,13 @@ export function renderPlan(model, opts = {}) {
   svg += `<rect x="${box[0]}" y="${box[1]}" width="${bw}" height="${bh}" fill="${P.paper}"/><rect x="${box[0]}" y="${box[1]}" width="${bw}" height="${bh}" fill="${P.paper}" filter="url(#paper)"/>`;
 
   // The city above: areas, then the ring names.
-  svg += `<g class="areas">${(model.areas || []).map((a) => areaSvg(a, P, k, survey)).join("")}</g>`;
-  svg += `<g class="ring-names">${ringLabels(model.areas || [], P, k)}</g>`;
+  // Under-the-lines order: plain areas, then the city's houses (opts.city), then arenas and gate lines on top.
+  const onTop = (a) => a.kind === "arena" || a.kind === "landmark" || a.kind === "gate-line";
+  const areasShown = (model.areas || []).filter((a) => showDrafts || !a.draft);
+  svg += `<g class="areas">${areasShown.filter((a) => !onTop(a)).map((a) => areaSvg(a, P, k, survey)).join("")}</g>`;
+  if (opts.city && model.city) svg += citySvg(buildCity(model, { focus: opts.focus }), P, k);
+  svg += `<g class="areas-top">${areasShown.filter(onTop).map((a) => areaSvg(a, P, k, survey)).join("")}</g>`;
+  svg += `<g class="ring-names">${ringLabels(areasShown, P, k)}</g>`;
 
   // Sections (GM only): the sheets that exist as battle maps.
   if ((survey || (opts.showSections ?? true)) && groups.length) {

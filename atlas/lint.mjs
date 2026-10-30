@@ -34,7 +34,9 @@ export function lintAtlas(atlas, known = null) {
   for (const n of atlas.nodes) {
     const s = strata[n.stratum];
     if (s && s.bottom > s.top && (n.depth < s.top || n.depth > s.bottom)) add("depth-band", "warn", [n.id], `${label(n)} is ${n.depth} ft down, outside ${s.name} (${s.top}–${s.bottom} ft)`);
-    if (!degree[n.id] && !n.partyOnly) add("orphan", "warn", [n.id], `${label(n)} has no passages`);
+    // A gate or landmark at street level is part of the city, not the network: it needs no passage.
+    const streetOnly = order[n.stratum] === 0 && (n.kind === "gate" || n.kind === "landmark");
+    if (!degree[n.id] && !n.partyOnly && !streetOnly) add("orphan", "warn", [n.id], `${label(n)} has no passages`);
     if (!n.name && !n.wf) add("unnamed", "warn", [n.id], `"${n.id}" has no name`);
     const [x0, y0, x1, y1] = atlas.frame.bounds;
     if (n.x < x0 || n.x > x1 || n.y < y0 || n.y > y1) add("out-of-bounds", "error", [n.id], `${label(n)} lies outside the frame`);

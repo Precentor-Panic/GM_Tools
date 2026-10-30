@@ -15,6 +15,7 @@
  */
 import { z } from "zod";
 
+// v1 grew two optional fields without a bump (old files still parse): Area.fabric and Atlas.city (2026-10-30).
 export const ATLAS_SCHEMA_VERSION = 1;
 export const KNOWN_SCHEMA_VERSION = 1;
 
@@ -42,9 +43,28 @@ export const NodeShape = z.discriminatedUnion("type", [
   z.object({ type: z.literal("polygon"), points: z.array(Pt).min(3) }).strict(),
 ]);
 
+/** What fills a city block in an area (atlas-city.mjs). Feet. Highest z wins where areas overlap. */
+export const Fabric = z.object({
+  z: z.number().default(0),
+  kind: z.enum(["houses", "compounds", "sheds", "none"]).default("houses"),
+  lot: z.tuple([z.number().positive(), z.number().positive()]).optional(),   // frontage, depth
+  gap: z.number().nonnegative().optional(),        // between neighbours along a street
+  vacancy: z.number().min(0).max(1).optional(),    // share of lots left empty
+}).strict();
+
 export const Area = z.object({
   id: Id, name: z.string(), kind: z.string(), shape: AreaShape,
   wf: z.string().optional(), note: z.string().optional(), draft: z.boolean().optional(),
+  fabric: Fabric.optional(),
+}).strict();
+
+/** The street grid the city layer is laid on (atlas-city.mjs). Optional; additive to schema v1. */
+export const City = z.object({
+  seed: z.number().int().default(1),
+  street: z.number().positive().optional(),        // ft between blocks
+  bands: z.array(z.object({ r0: z.number().nonnegative(), r1: z.number().positive(),
+    block: z.tuple([z.number().positive(), z.number().positive()]) }).strict()).default([]),   // length (along the ring), depth
+  avenues: z.array(z.object({ bearing: z.number(), width: z.number().positive().optional(), name: z.string().optional() }).strict()).default([]),
 }).strict();
 
 export const Stratum = z.object({
@@ -119,6 +139,7 @@ export const Atlas = z.object({
   nodes: z.array(Node).default([]),
   edges: z.array(Edge).default([]),
   sections: z.array(Section).default([]),
+  city: City.optional(),
 }).strict();
 
 export const KnownEntry = z.object({
