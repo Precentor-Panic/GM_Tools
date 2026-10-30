@@ -68,7 +68,8 @@ export const CAMPAIGN_STORES = Object.freeze([
   { store: "prep-content", kind: "dir" },
   { store: "pending-resolution", kind: "dir" },
   { store: "human-review", kind: "file" },
-  { store: "review-state", kind: "dir" }
+  { store: "review-state", kind: "dir" },
+  { store: "atlases", kind: "dir" }
 ]);
 
 export function campaignRegistryPath() {

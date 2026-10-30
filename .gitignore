@@ -189,3 +189,6 @@ player-notes-analysis/*
 
 # Python bytecode from map-segments/tools
 __pycache__/
+
+# Atlas store (plans/atlas-plan.md): campaign data, lives in the campaign repo when one is registered
+atlases/
