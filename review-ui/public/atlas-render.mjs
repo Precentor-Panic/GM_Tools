@@ -189,13 +189,14 @@ export function renderPlan(model, opts = {}) {
   const groups = (survey ? model.groups : model.sections) || [];
   const collapsed = groups.filter((g) => Math.max(g.sizeSq.w, g.sizeSq.h) * 5 * k < (opts.collapseBelowPx ?? 60));
   const quiet = new Set();
-  for (const g of collapsed) for (const n of nodes) if (insideRect(g, n)) quiet.add(n.id);
+  for (const g of collapsed) for (const n of nodes) if (insideRect(g, n) && !(n.belief || n.partyOnly)) quiet.add(n.id);
   // Places on (nearly) the same spot form a stack: one label, the shallowest place's name.
   const stackOf = {};
   const stacks = [];
   for (const n of [...nodes].sort((x, y) => (x.depth ?? 0) - (y.depth ?? 0))) {
-    const hit = stacks.find((st) => Math.hypot(st.x - n.x, st.y - n.y) * k < 7);
-    if (hit) { hit.members.push(n); stackOf[n.id] = hit; } else { const st = { x: n.x, y: n.y, members: [n] }; stacks.push(st); stackOf[n.id] = st; }
+    const belief = !!(n.belief || n.partyOnly);
+    const hit = stacks.find((st) => st.belief === belief && Math.hypot(st.x - n.x, st.y - n.y) * k < 7);
+    if (hit) { hit.members.push(n); stackOf[n.id] = hit; } else { const st = { x: n.x, y: n.y, belief, members: [n] }; stacks.push(st); stackOf[n.id] = st; }
   }
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box[0]} ${box[1]} ${bw} ${bh}" width="${W}" height="${H}" role="img" aria-label="${esc(model.name)}">`;
   svg += defs(P, k);

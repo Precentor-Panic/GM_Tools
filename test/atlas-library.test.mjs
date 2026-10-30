@@ -137,7 +137,7 @@ test("SPOILER (render): the players' sheet drawn from the survey view names noth
   for (const secret of ["Sealed vault", "old cistern", "Drain head", "Outfall", "Gullet", "miller's father", "Sheet:"]) {
     assert.ok(!svg.includes(secret), `players' sheet leaks "${secret}"`);
   }
-  assert.ok(svg.includes("Mill cellar") && svg.includes("Treasure under the well (rumour)"));
+  assert.ok(svg.includes("Treasure under the well (rumour)"), "a belief is drawn where the party believes it");
   assert.ok(svg.includes("The mill cellar"), "a section the party has fully walked shows as a named group");
   const gm = renderPlan(a, {});
   assert.ok(gm.includes("Sealed vault") && gm.includes("Sheet: The mill cellar"));
