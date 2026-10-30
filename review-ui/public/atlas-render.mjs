@@ -130,6 +130,13 @@ function areaSvg(a, P, k, survey) {
     const big = ((s.to - s.from + 360) % 360) > 180 ? 1 : 0;
     return `<path d="M${f(p0.x)} ${f(p0.y)}L${f(p1.x)} ${f(p1.y)}A${s.r1} ${s.r1} 0 ${big} 1 ${f(p2.x)} ${f(p2.y)}L${f(p3.x)} ${f(p3.y)}A${s.r0} ${s.r0} 0 ${big} 0 ${f(p0.x)} ${f(p0.y)}Z" fill="url(#stipple)" stroke="${P.faint}" stroke-width="${sw(0.8)}"/>`;
   }
+  if (s.type === "polygon" && a.kind === "arena" && a.fabric?.stands) {
+    // Homes in the stands (the city layer draws them): the outline, and only the floor as sand.
+    const n = s.points.length, cx = s.points.reduce((t, q) => t + q.x, 0) / n, cy = s.points.reduce((t, q) => t + q.y, 0) / n;
+    const k = 1 - a.fabric.stands, floor = s.points.map((q) => ({ x: cx + (q.x - cx) * k, y: cy + (q.y - cy) * k }));
+    return `<path d="${pathD(floor)}Z" fill="${P.sand}" stroke="${P.ink}" stroke-width="${sw(0.8)}"/>` +
+      `<path d="${pathD(s.points)}Z" fill="none" stroke="${P.ink}" stroke-width="${sw(1.1)}"/>`;
+  }
   if (s.type === "polygon" && (a.kind === "arena" || a.kind === "landmark"))
     return `<path d="${pathD(s.points)}Z" fill="${P.sand}" stroke="${P.ink}" stroke-width="${sw(1.1)}"/>`;
   if (s.type === "polygon" && a.kind === "gate-line")
