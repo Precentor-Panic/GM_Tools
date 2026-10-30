@@ -12,9 +12,12 @@
  *
  * opts: width (px, default 1600), focus [minX, minY, maxX, maxY] in feet, palette ("ink" | "wash" | "sepia"),
  *       title, subtitle, survey (bool), showSections (default true on GM sheets), showDrafts (default true on GM),
- *       idPrefix (scopes the drawing's ids, for several drawings on one page).
+ *       idPrefix (scopes the drawing's ids, for several drawings on one page),
+ *       insets [{ focus: [minX, minY, maxX, maxY], title, corner: "tl"|"tr"|"bl"|"br", width (px) }]: close-ups of
+ *       places too close together to read at the sheet's scale. On the main sheet the inset's box is outlined and
+ *       labelled once, and the places inside it lose their own labels.
  */
-import { routePoints, polar, fromPolar } from "./atlas-geometry.mjs";
+import { routePoints, polar, fromPolar, pointInArea } from "./atlas-geometry.mjs";
 import { buildCity, citySvg } from "./atlas-city.mjs";
 
 export const PALETTES = {
@@ -137,7 +140,7 @@ function areaSvg(a, P, k, survey) {
 }
 
 /** Ring names lettered along the ring, like a city plan. */
-function ringLabels(areas, P, k) {
+function ringLabels(areas, P, k, nodes = []) {
   let out = "";
   for (const a of areas) {
     const s = a.shape;
@@ -154,7 +157,13 @@ function ringLabels(areas, P, k) {
     if (s.type === "sector") at = fromPolar((s.r0 + s.r1) / 2, s.from + (((s.to - s.from + 360) % 360) / 2), { x: s.cx, y: s.cy });
     else if (a.kind === "lake" && s.type === "circle") at = { x: s.cx, y: s.cy + s.r * 0.62 };
     else if ((a.kind === "arena" || a.kind === "landmark") && s.type === "polygon") {
-      const cx = s.points.reduce((t, p) => t + p.x, 0) / s.points.length, cy = s.points.reduce((t, p) => t + p.y, 0) / s.points.length;
+      // A place inside it already carries the same name: one label is enough.
+      if (nodes.some((n) => n.name === a.name && pointInArea(n, s))) continue;
+      const cx = s.points.reduce((t, p) => t + p.x, 0) / s.points.length;
+      const ys = s.points.map((p) => p.y), xs = s.points.map((p) => p.x);
+      // Too small to hold its name: the name goes under it.
+      const fits = (Math.max(...xs) - Math.min(...xs)) * k > a.name.length * 11 * 0.52;
+      const cy = fits ? ys.reduce((t, y) => t + y, 0) / ys.length : Math.max(...ys) + 12 / k;
       out += `<text x="${f(cx)}" y="${f(cy)}" text-anchor="middle" dominant-baseline="middle" font-family="${FONT}" font-style="italic" font-size="${f(11 / k)}" fill="${P.ink}">${esc(a.name)}</text>`;
       continue;
     }
@@ -210,6 +219,9 @@ export function renderPlan(model, opts = {}) {
   const collapsed = groups.filter((g) => Math.max(g.sizeSq.w, g.sizeSq.h) * 5 * k < (opts.collapseBelowPx ?? 60));
   const quiet = new Set();
   for (const g of collapsed) for (const n of nodes) if (insideRect(g, n) && !(n.belief || n.partyOnly)) quiet.add(n.id);
+  const insets = opts.insets || [];
+  const inBox = (b, p) => p.x >= b[0] && p.x <= b[2] && p.y >= b[1] && p.y <= b[3];
+  for (const ins of insets) for (const n of nodes) if (inBox(ins.focus, n)) quiet.add(n.id);
   // Places on (nearly) the same spot form a stack: one label, the shallowest place's name.
   const stackOf = {};
   const stacks = [];
@@ -218,7 +230,8 @@ export function renderPlan(model, opts = {}) {
     const hit = stacks.find((st) => st.belief === belief && Math.hypot(st.x - n.x, st.y - n.y) * k < 7);
     if (hit) { hit.members.push(n); stackOf[n.id] = hit; } else { const st = { x: n.x, y: n.y, belief, members: [n] }; stacks.push(st); stackOf[n.id] = st; }
   }
-  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box[0]} ${box[1]} ${bw} ${bh}" width="${W}" height="${H}" role="img" aria-label="${esc(model.name)}">`;
+  const size = opts.nest ? `x="${f(opts.nest.x)}" y="${f(opts.nest.y)}" width="${f(opts.nest.w)}" height="${f(opts.nest.h)}"` : `width="${W}" height="${H}"`;
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box[0]} ${box[1]} ${bw} ${bh}" ${size} role="img" aria-label="${esc(model.name)}">`;
   svg += defs(P, k);
   svg += `<rect x="${box[0]}" y="${box[1]}" width="${bw}" height="${bh}" fill="${P.paper}"/><rect x="${box[0]}" y="${box[1]}" width="${bw}" height="${bh}" fill="${P.paper}" filter="url(#paper)"/>`;
 
@@ -229,7 +242,7 @@ export function renderPlan(model, opts = {}) {
   svg += `<g class="areas">${areasShown.filter((a) => !onTop(a)).map((a) => areaSvg(a, P, k, survey)).join("")}</g>`;
   if (opts.city && model.city) svg += citySvg(buildCity(model, { focus: opts.focus }), P, k);
   svg += `<g class="areas-top">${areasShown.filter(onTop).map((a) => areaSvg(a, P, k, survey)).join("")}</g>`;
-  svg += `<g class="ring-names">${ringLabels(areasShown, P, k)}</g>`;
+  svg += `<g class="ring-names">${ringLabels(areasShown, P, k, nodes)}</g>`;
 
   // Sections (GM only): the sheets that exist as battle maps.
   if ((survey || (opts.showSections ?? true)) && groups.length) {
@@ -241,6 +254,7 @@ export function renderPlan(model, opts = {}) {
       const cx = s.origin.x + w / 2, cy = s.origin.y + h / 2, dw = Math.max(w, minPx), dh = Math.max(h, minPx);
       svg += `<g class="section" data-id="${esc(s.id)}"><rect x="${f(cx - dw / 2)}" y="${f(cy - dh / 2)}" width="${f(dw)}" height="${f(dh)}" fill="${small ? "url(#hatch)" : "none"}" stroke="${col}" stroke-width="${sw(small ? 1.4 : 1)}"${small ? "" : ` stroke-dasharray="${sw(4)} ${sw(3)}"`} transform="rotate(${s.rotation || 0} ${f(cx)} ${f(cy)})"/></g>`;
       const label = survey ? s.name : `Sheet: ${s.name}`;
+      if ((opts.insets || []).some((ins) => inBox(ins.focus, { x: cx, y: cy }))) continue;   // the inset names it
       const at = place(label, cx, cy, small ? (survey ? 13 : 11.5) : 11, { force: small, gap: small ? dw * k / 2 + 6 : 7 });
       if (at) svg += `<text x="${f(at.x)}" y="${f(at.y)}" text-anchor="${at.anchor}" font-family="${FONT}" font-style="italic" font-size="${sw(small ? (survey ? 13 : 11.5) : 11)}" fill="${col}">${esc(label)}</text>`;
     }
@@ -339,8 +353,35 @@ export function renderPlan(model, opts = {}) {
   }
   svg += `<g class="places">${chambers}</g><g class="soundings">${soundings}</g><g class="labels">${labels}</g>`;
 
-  svg += furniture(model, opts, P, k, box, survey);
+  if (!opts.bare) svg += furniture(model, opts, P, k, box, survey);
+  insets.forEach((ins, i) => { svg += insetSvg(model, opts, ins, i, P, k, box, place); });
   return scopeIds(svg + "</svg>", opts.idPrefix);
+}
+
+/**
+ * One close-up: the focus box outlined on the main sheet with a key letter, and the same model drawn again at the
+ * inset's own scale in a framed panel in a corner of the sheet (a nested svg, so its strokes and type keep their
+ * pixel sizes).
+ */
+function insetSvg(model, opts, ins, i, P, k, box, place) {
+  const [fx0, fy0, fx1, fy1] = ins.focus, key = String.fromCharCode(65 + i);
+  const pad = 6 / k, sw = (px) => f(px / k);
+  let s = `<g class="inset-key"><rect x="${f(fx0 - pad)}" y="${f(fy0 - pad)}" width="${f(fx1 - fx0 + 2 * pad)}" height="${f(fy1 - fy0 + 2 * pad)}" fill="none" stroke="${P.ink}" stroke-width="${sw(1.2)}"/>`;
+  const label = `${ins.title} (inset ${key})`;
+  const at = place(label, (fx0 + fx1) / 2, (fy0 + fy1) / 2, 12.5, { force: true, gap: ((fx1 - fx0) * k) / 2 + 10 });
+  s += `<text x="${f(at.x)}" y="${f(at.y)}" text-anchor="${at.anchor}" font-family="${FONT}" font-style="italic" font-size="${sw(12.5)}" fill="${P.ink}">${esc(label)}</text></g>`;
+  const wpx = ins.width || 560, hpx = Math.round(wpx * (fy1 - fy0) / (fx1 - fx0));
+  const w = wpx / k, h = hpx / k, m = 40 / k;
+  const corner = ins.corner || "tl";
+  const x = corner.endsWith("l") ? box[0] + m : box[2] - m - w;
+  const y = corner.startsWith("t") ? box[1] + m : box[3] - m - h - 30 / k;
+  const inner = renderPlan(model, { ...opts, focus: ins.focus, width: wpx, insets: [], bare: true, idPrefix: `inset${i}`, nest: { x, y, w, h } });
+  s += `<g class="inset"><rect x="${f(x - 5 / k)}" y="${f(y - 5 / k)}" width="${f(w + 10 / k)}" height="${f(h + 30 / k)}" fill="${P.paper}" stroke="${P.ink}" stroke-width="${sw(1.6)}"/>` +
+    inner +
+    `<rect x="${f(x)}" y="${f(y)}" width="${f(w)}" height="${f(h)}" fill="none" stroke="${P.ink}" stroke-width="${sw(0.7)}"/>` +
+    `<text x="${f(x + 6 / k)}" y="${f(y + h + 19 / k)}" font-family="${FONT_SC}" font-size="${sw(13)}" fill="${P.ink}">${key}. ${esc(ins.title)}</text>` +
+    `<text x="${f(x + w - 6 / k)}" y="${f(y + h + 19 / k)}" text-anchor="end" font-family="${FONT}" font-style="italic" font-size="${sw(11)}" fill="${P.faint}">${Math.round(fx1 - fx0).toLocaleString("en-GB")} ft across</text></g>`;
+  return s;
 }
 
 /** Give every id in one drawing a prefix, so several drawings can share a page without borrowing each other's
