@@ -84,6 +84,9 @@ export function lintAtlas(atlas, known = null) {
 
 function label(n) { return n.name || n.id; }
 
+/** Climbs (they leave a map upward or downward, not through its edge) and pipes (nobody walks them). */
+const NOT_AN_EXIT = new Set(["shaft", "stair", "ladder", "lift", "pipe", "riser"]);
+
 /**
  * The passages that leave a section: one end inside its footprint, the other outside. Each with the side and the
  * position along it (in squares) where its drawn route crosses the edge, sorted round the map (n, e, s, w).
@@ -93,7 +96,7 @@ export function sectionExits(atlas, section) {
   const out = [];
   for (const e of atlas.edges) {
     const a = nodes[e.from], b = nodes[e.to];
-    if (!a || !b || e.kind === "shaft") continue;
+    if (!a || !b || NOT_AN_EXIT.has(e.kind)) continue;
     const ia = pointInSection(section, a), ib = pointInSection(section, b);
     if (ia === ib) continue;
     const pts = routePoints(e, a, b, atlas.frame.centre);
