@@ -812,7 +812,9 @@ review-ui `POST /api/foundry/push-bestiary-token-art`) — one op per row, from 
 
 | `kind` | Indicative `data` shape | Notes |
 |---|---|---|
-| `create_actor` | `{ name: string, type: string, img?: string, system?: object }` | Push a bestiary/roster entry back INTO Foundry with a hand-composed system payload. v4 note: `import_via_plutonium {kind:"creature"}` covers the real use case (stat blocks at Plutonium fidelity); this stays reserved for a hypothetical non-5etools actor push. |
+| `create_actor` | `{ name: string, type?: "npc", img?, system?, prototypeToken?, ownership?: {default\|<userId>: 0-3}, items?: [{name, type, img?, system?}], folder?: id\|name }` | **v9 (2026-10-28): live.** A NEW hand-authored NPC that never came from 5etools (summons, companions). Type `npc` only; items limited to weapon/feat/loot/equipment/consumable/spell; folder must exist. Never edits an existing actor. Result: the new Actor uuid. |
+| `set_puzzle_state` | `{ sceneUuid, patch: { levels?: {roomId: n}, solved?: bool } }` | **v10 (2026-10-29): live.** Sets the scene's puzzle state (flag `puzzleState`) from outside the GM panel, to carry water levels between sessions. Validated against the scene's own puzzle (unknown room or a level outside 0..cap fails); moves and scrams kept, history cleared; then the same effects the panel applies (overlay alpha, door locks, the solve unlock). Result: `{uuid, levels, solved, tiles, walls}`. |
+| `delete_token` | `{ sceneUuid, actorUuid }` | **v10 (2026-10-29): live.** Removes every token of ONE actor from ONE scene. Refused when any non-GM user owns the actor (a PC or a player's mule), so it only ever removes a GM-placed NPC. Result: `{uuid, deleted}`. |
 
 ### `set_scene_layout` (v8, 2026-10-25, map segments)
 
@@ -941,6 +943,8 @@ oversight** — 32.1/32.2/32.3 should not "fix" it into consistency.
     segments; replaces only bridge-flagged documents. Additive; older producers never emit it.
 
 ---
+- **v9 (2026-10-28)**: `create_actor` goes live (§2) for hand-authored NPCs such as a druid's Wildfire Spirit, where Plutonium would prompt for a summon level. Payload built by the pure `buildActorCreateData` (tested); the generic unsupported-kind tests now use a made-up kind.
+- **v10 (2026-10-29)**: `set_puzzle_state` and `delete_token` (§2). First use: carrying the flood locks into session six (every room at 1, solved) and replacing the stand-in token for Jabir. `applyPuzzleEffects` moved into `data/puzzle-jugs.mjs` so the panel and the bridge share it.
 
 ## Fixtures (executable form of this contract)
 
