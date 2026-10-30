@@ -142,6 +142,15 @@ function ringLabels(areas, P, k) {
       `<text font-family="${FONT_SC}" font-size="${f(15 / k)}" letter-spacing="${f(6 / k)}" fill="${P.faint}" opacity="0.9">` +
       `<textPath href="#${id}" startOffset="50%" text-anchor="middle">${esc(a.name.replace(/^The /, "").toUpperCase())}</textPath></text>`;
   }
+  // Quarters (sectors) and the lake are named where they lie, upright.
+  for (const a of areas) {
+    const s = a.shape;
+    let at = null;
+    if (s.type === "sector") at = fromPolar((s.r0 + s.r1) / 2, s.from + (((s.to - s.from + 360) % 360) / 2), { x: s.cx, y: s.cy });
+    else if (a.kind === "lake" && s.type === "circle") at = { x: s.cx, y: s.cy + s.r * 0.62 };
+    if (!at) continue;
+    out += `<text x="${f(at.x)}" y="${f(at.y)}" text-anchor="middle" font-family="${FONT_SC}" font-size="${f(13 / k)}" letter-spacing="${f(4 / k)}" fill="${P.faint}">${esc(a.name.replace(/^The /, "").toUpperCase())}</text>`;
+  }
   return out;
 }
 
