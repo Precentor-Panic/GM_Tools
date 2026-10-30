@@ -9,7 +9,9 @@
  *   - "heard": a rough position (rounded to `heardGrid` ft) and a name, no depth, no tells.
  *     "seen": position, depth band, tells.   "walked": everything public, with depth in feet.
  *   - Stripped always: notes, owners, hooks, gate keepers, World Fabric ids, systems' GM logic.
+ *   - A battle-map section appears (as a named group) only when the party has seen every place inside it.
  */
+import { pointInSection } from "./geometry.mjs";
 export function surveyView(atlas, known, { hiddenWf = new Set(), heardGrid = 250 } = {}) {
   const lvl = known.known || {};
   const ok = (x) => lvl[x.id] && !x.draft && !(x.wf && hiddenWf.has(x.wf));
@@ -34,8 +36,14 @@ export function surveyView(atlas, known, { hiddenWf = new Set(), heardGrid = 250
   }));
   // Areas the party can see from the street: rings, districts, the lake, the wall. Never a hidden or draft one.
   const areas = atlas.areas.filter((a) => !a.draft && !(a.wf && hiddenWf.has(a.wf))).map((a) => ({ id: a.id, name: a.name, kind: a.kind, shape: a.shape }));
+  // A battle-map section whose every place the party has seen or walked becomes a named group on their sheet.
+  const groups = atlas.sections.flatMap((sec) => {
+    const inside = atlas.nodes.filter((n) => !n.draft && !n.partyOnly && pointInSection(sec, n));
+    if (!inside.length || !inside.every((n) => lvl[n.id] === "seen" || lvl[n.id] === "walked")) return [];
+    return [{ id: sec.id, name: sec.name, origin: sec.origin, rotation: sec.rotation, sizeSq: sec.sizeSq }];
+  });
   return {
-    id: atlas.id, name: atlas.name, frame: atlas.frame,
+    id: atlas.id, name: atlas.name, frame: atlas.frame, groups,
     strata: atlas.strata.map((s) => ({ id: s.id, name: s.name, top: s.top, bottom: s.bottom })),
     areas, nodes, edges,
   };

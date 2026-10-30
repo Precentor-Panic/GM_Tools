@@ -128,3 +128,17 @@ test("applyAtlasOps writes under the lock and keeps one undo", () => {
   assert.equal(store.loadAtlas("w", "old-mill").nodes.find((n) => n.id === "cellar").x, 10);
   assert.throws(() => undoAtlasOps("w", "old-mill"), /nothing to undo/);
 });
+
+test("SPOILER (render): the players' sheet drawn from the survey view names nothing the party doesn't know", async () => {
+  const { renderPlan, renderSection } = await import("../atlas/render.mjs");
+  const a = mill();
+  const known = { known: { mill: "walked", cellar: "walked", "cellar-shaft": "walked", "rumour-vault": "heard" } };
+  const svg = renderPlan(surveyView(a, known), { survey: true }) + renderSection(surveyView(a, known), { survey: true });
+  for (const secret of ["Sealed vault", "old cistern", "Drain head", "Outfall", "Gullet", "miller's father", "Sheet:"]) {
+    assert.ok(!svg.includes(secret), `players' sheet leaks "${secret}"`);
+  }
+  assert.ok(svg.includes("Mill cellar") && svg.includes("Treasure under the well (rumour)"));
+  assert.ok(svg.includes("The mill cellar"), "a section the party has fully walked shows as a named group");
+  const gm = renderPlan(a, {});
+  assert.ok(gm.includes("Sealed vault") && gm.includes("Sheet: The mill cellar"));
+});
