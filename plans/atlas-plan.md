@@ -251,3 +251,20 @@ Where I differ from the review:
 - **q-drafts:** new places and hooks are drafts; moves are trusted.
 - **q-pointcrawl:** deferred. His note: if it means moving between battle maps along the network, "we should just
   get [it] for free along the way" — sections' exits linked to edges give that.
+
+## 9. Status (2026-10-30, overnight build; branch `atlas`)
+
+| Step | State |
+|---|---|
+| Track 0 | **Built, not pushed.** `campaigns/aureus/scripts/session-06/maps/dd-under-the-well.mjs` and `dd-siphon-bay.mjs` (asset packs; same footprints and door ids; Under the well gains the pump room's door east to the gallery and the walkway west). Survey push: `scripts/atlas/push-survey.mjs` (dry run; its own scene). Exit tells in the atlas. |
+| S0 | **Done.** `atlas/schema.mjs`, `atlas/store.mjs` (store `atlases`, lock per edit, sorted output, known file). |
+| S1 | **Done.** geometry (shared with the browser via `review-ui/public/atlas-geometry.mjs`), ops (radial remap, accept, one undo), 13 checks, queries, section briefs + exit check, survey view, `wf_atlas_*` MCP tools, `bin/atlas`. |
+| S2 | **Done (first cut).** `review-ui/public/atlas-render.mjs`: surveyor's sheet, plan + cross-section, three palettes, stacks and section collapse, `idPrefix`. Render spoiler test. |
+| S3 | **Ready, waiting for Russell's confirm** (q-survey-push). |
+| S4 | **As a review page** (https://claude.ai/artifact/GszNPTdkftBUu1a1GKMFpZ): circle-and-note marks saved to its db (`marks/*`). The in-app Maps tab is not built. |
+| S5 | **Proposed** (q-bigger: wall 5,000 → 8,000 ft, Suq 6,900–8,000). Not applied. |
+| S6 | **Started.** Briefs and the exit check run; five map-vs-network mismatches are on the review page as proposals (p-*). |
+
+Data: `campaigns/aureus/data/atlases/under-aureus.json` (63 places, 68 passages, revision 2) and `.known.json`.
+Scripts that changed it, in order: `scripts/atlas/convert-draft.mjs`, `fix-2026-10-30.mjs`, `tells-2026-10-30.mjs`.
+Tests: root 262, wf-mcp 109, review-ui 467, all green.
