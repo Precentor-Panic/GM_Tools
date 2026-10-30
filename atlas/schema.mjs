@@ -52,6 +52,9 @@ export const Fabric = z.object({
   vacancy: z.number().min(0).max(1).optional(),    // share of lots left empty
   open: z.number().min(0).max(1).optional(),       // share of blocks left open: squares, yards, gardens, waste
   patchy: z.number().min(0).max(1).optional(),     // how far density swings between neighbourhoods (0 = even)
+  // How the streets are laid: "ring" (default) follows the bands; "grid" is the city's old straight grid (city.grid),
+  // uniform blocks and lots; "sprawl" is unplanned growth: skewed cross streets, kinked rings, narrow deep lots.
+  plan: z.enum(["ring", "grid", "sprawl"]).optional(),
 }).strict();
 
 export const Area = z.object({
@@ -68,6 +71,9 @@ export const City = z.object({
   bands: z.array(z.object({ r0: z.number().nonnegative(), r1: z.number().positive(),
     block: z.tuple([z.number().positive(), z.number().positive()]) }).strict()).default([]),   // length (along the ring), depth
   avenues: z.array(z.object({ bearing: z.number(), width: z.number().positive().optional(), name: z.string().optional() }).strict()).default([]),
+  // The old grid every "grid" area shares (one alignment, as if they were all pieces of one older city).
+  grid: z.object({ angle: z.number().default(0), block: z.tuple([z.number().positive(), z.number().positive()]),
+    street: z.number().positive().optional() }).strict().optional(),
 }).strict();
 
 export const Stratum = z.object({

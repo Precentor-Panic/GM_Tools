@@ -55,3 +55,52 @@ test("open blocks and patchy density thin the city unevenly, deterministically",
   assert.ok(a.opens.length > 0, "some blocks are left open");
   assert.ok(a.buildings.length < even.buildings.length * 0.9, "noticeably fewer houses");
 });
+
+test("the old grid: uniform, aligned to city.grid, kept inside its area; nothing else is built over it", async () => {
+  const { buildCity, fabricAt } = await import("../atlas/city.mjs");
+  const atlas = {
+    frame: { centre: { x: 0, y: 0 } },
+    city: { seed: 5, street: 14, bands: [{ r0: 300, r1: 2000, block: [180, 90] }], grid: { angle: 12, block: [240, 240], street: 30 } },
+    areas: [
+      { id: "town", name: "Town", kind: "ring", shape: { type: "annulus", cx: 0, cy: 0, r0: 200, r1: 2100 }, fabric: { z: 1, lot: [22, 28] } },
+      { id: "old", name: "Old", kind: "quarter", shape: { type: "circle", cx: 1000, cy: 0, r: 500 }, fabric: { z: 3, plan: "grid", lot: [30, 45] } },
+    ],
+  };
+  const c = buildCity(atlas);
+  const old = c.buildings.filter((b) => b.area === "old");
+  assert.ok(old.length > 40, `${old.length} grid buildings`);
+  const t = (12 * Math.PI) / 180;
+  for (const b of old) {
+    const [[x0, y0], [x1, y1]] = b.pts;
+    const a = Math.atan2(y1 - y0, x1 - x0);
+    const off = Math.abs(Math.sin(2 * (a - t)));
+    assert.ok(off < 1e-2, "every grid edge runs along or across the grid");
+    for (const [x, y] of b.pts) assert.equal(fabricAt(atlas, { x, y })?.area, "old");
+  }
+  const houses = old.filter((b) => b.kind === "houses");
+  const fronts = new Set(houses.map((b) => Math.round(Math.hypot(b.pts[1][0] - b.pts[0][0], b.pts[1][1] - b.pts[0][1]))));
+  assert.ok(fronts.size <= 3, `frontages are uniform (${[...fronts]})`);
+  for (const b of c.buildings.filter((b) => b.area !== "old"))
+    for (const [x, y] of b.pts) assert.notEqual(fabricAt(atlas, { x, y })?.area, "old");
+  assert.deepEqual(buildCity(atlas).buildings, c.buildings);
+});
+
+test("sprawl: cross streets run askew, and the same seed gives the same town", async () => {
+  const { buildCity } = await import("../atlas/city.mjs");
+  const mk = (plan) => ({
+    frame: { centre: { x: 0, y: 0 } },
+    city: { seed: 9, street: 14, bands: [{ r0: 1000, r1: 2400, block: [200, 120] }] },
+    areas: [{ id: "town", name: "Town", kind: "ring", shape: { type: "annulus", cx: 0, cy: 0, r0: 900, r1: 2500 }, fabric: { z: 1, lot: [18, 60], plan } }],
+  });
+  // A house's side edge (pts[1] -> pts[2]) runs radially in a ring block; in sprawl the block ends are askew, so the
+  // end houses facing the side streets are turned off the radius.
+  const radialOff = (city) => city.buildings.map((b) => {
+    const [x0, y0] = b.pts[0], [x3, y3] = b.pts[3], mx = (x0 + x3) / 2, my = (y0 + y3) / 2;
+    const e = Math.atan2(y3 - y0, x3 - x0), r = Math.atan2(my, mx);
+    return Math.abs(Math.sin(e - r));
+  });
+  const ring = buildCity(mk("ring")), sprawl = buildCity(mk("sprawl"));
+  const askew = (xs) => xs.filter((v) => v > 0.15 && v < 0.85).length / xs.length;
+  assert.ok(askew(radialOff(sprawl)) > askew(radialOff(ring)) + 0.02, `sprawl ${askew(radialOff(sprawl))} vs ring ${askew(radialOff(ring))}`);
+  assert.deepEqual(buildCity(mk("sprawl")).buildings, sprawl.buildings);
+});
