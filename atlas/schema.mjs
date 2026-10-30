@@ -50,6 +50,8 @@ export const Fabric = z.object({
   lot: z.tuple([z.number().positive(), z.number().positive()]).optional(),   // frontage, depth
   gap: z.number().nonnegative().optional(),        // between neighbours along a street
   vacancy: z.number().min(0).max(1).optional(),    // share of lots left empty
+  open: z.number().min(0).max(1).optional(),       // share of blocks left open: squares, yards, gardens, waste
+  patchy: z.number().min(0).max(1).optional(),     // how far density swings between neighbourhoods (0 = even)
 }).strict();
 
 export const Area = z.object({
@@ -62,6 +64,7 @@ export const Area = z.object({
 export const City = z.object({
   seed: z.number().int().default(1),
   street: z.number().positive().optional(),        // ft between blocks
+  grain: z.number().positive().optional(),         // ft across one neighbourhood of the density noise (default 700)
   bands: z.array(z.object({ r0: z.number().nonnegative(), r1: z.number().positive(),
     block: z.tuple([z.number().positive(), z.number().positive()]) }).strict()).default([]),   // length (along the ring), depth
   avenues: z.array(z.object({ bearing: z.number(), width: z.number().positive().optional(), name: z.string().optional() }).strict()).default([]),

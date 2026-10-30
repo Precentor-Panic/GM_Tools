@@ -6,10 +6,15 @@
  * Input, all in the atlas (feet, x east, y south, bearings clockwise from north):
  *   atlas.city = { seed, bands: [{ r0, r1, block: [length, depth] }], avenues: [{ bearing, width }] }
  *     bands lay out the street grid: ring streets every `depth` feet, radial streets every `length` feet of arc.
- *   area.fabric = { z, lot: [frontage, depth], gap, vacancy, kind: "houses" | "compounds" | "sheds" | "none" }
+ *   area.fabric = { z, lot: [frontage, depth], gap, vacancy, open, patchy, kind: "houses" | "compounds" | "sheds" | "none" }
  *     what fills a block in that area; where areas overlap, the highest z wins. kind "none" keeps a block empty.
+ *     A real city is not evenly packed (Russell, 2026-10-30: "mega dense uniformly in an odd way"), so:
+ *       open    the share of blocks left open (squares, yards, gardens, waste ground), drawn as open ground;
+ *       patchy  how far density swings between neighbourhoods: a smooth noise field over the city raises vacancy
+ *               in some quarters and packs others tight;
+ *       and every lot varies in frontage and depth, so back yards and courtyards come out ragged.
  *   areas of kind "arena" or "landmark" (and the lake, the island and the wall) are reserved: nothing is built there.
- * Output: { buildings: [{ kind, area, pts: [[x, y] x4] }], blocks, stats }.
+ * Output: { buildings: [{ kind, area, pts: [[x, y] x4] }], opens: [{ area, pts }], blocks, stats }.
  */
 import { fromPolar, pointInArea } from "./atlas-geometry.mjs";
 
@@ -18,6 +23,15 @@ const RESERVED = new Set(["arena", "landmark", "lake", "island", "wall", "yard"]
 function rng(seed) {
   let s = (seed >>> 0) || 1;
   return () => { s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+}
+
+/** Smooth value noise in [0, 1] over a grid of `cell` feet (bilinear between hashed corners). Deterministic. */
+export function noise(seed, x, y, cell = 700) {
+  const h = (i, j) => { let n = (i * 374761393 + j * 668265263 + seed * 2147483647) | 0; n = Math.imul(n ^ (n >>> 13), 1274126177); return ((n ^ (n >>> 16)) >>> 0) / 4294967296; };
+  const gx = x / cell, gy = y / cell, i = Math.floor(gx), j = Math.floor(gy), u = gx - i, v = gy - j;
+  const s = (t) => t * t * (3 - 2 * t);
+  const a = h(i, j) + (h(i + 1, j) - h(i, j)) * s(u), b = h(i, j + 1) + (h(i + 1, j + 1) - h(i, j + 1)) * s(u);
+  return a + (b - a) * s(v);
 }
 
 /** The fabric under a point: the highest-z area with a fabric that contains it, or null. Reserved areas win outright. */
@@ -32,13 +46,13 @@ export function fabricAt(atlas, p) {
   return best ? { area: best.id, ...best.fabric } : null;
 }
 
-/** Distance from p to the radial line at `bearing` through the centre (only on the outward side). */
+/** Signed distance from p to the radial line at `bearing` through the centre (only on the outward side). */
 function offAvenue(p, c, bearing) {
   const d = fromPolar(1, bearing, { x: 0, y: 0 });
   const vx = p.x - c.x, vy = p.y - c.y;
   const along = vx * d.x + vy * d.y;
   if (along < 0) return Infinity;
-  return Math.abs(vx * d.y - vy * d.x);
+  return vx * d.y - vy * d.x;
 }
 
 export function buildCity(atlas, opts = {}) {
@@ -49,7 +63,7 @@ export function buildCity(atlas, opts = {}) {
   const focus = opts.focus;              // [x0, y0, x1, y1]: only blocks touching it (keeps a close-up cheap)
   const avenues = city.avenues || [];
   const street = city.street ?? 14;      // ft between blocks
-  const out = [];
+  const out = [], opens = [];
   let blocks = 0;
   const P = (r, th) => { const q = fromPolar(r, th, c); return [Math.round(q.x * 10) / 10, Math.round(q.y * 10) / 10]; };
   // Reserved ground (arenas, landmarks, the lake) is checked at every corner; the district's fabric is the block's.
@@ -60,8 +74,11 @@ export function buildCity(atlas, opts = {}) {
       if (wall && Math.hypot(x - c.x, y - c.y) > wall.shape.r0) return null;
       for (const a of reserved) if (pointInArea({ x, y }, a.shape)) return null;
     }
-    const mid = { x: (pts[0][0] + pts[2][0]) / 2, y: (pts[0][1] + pts[2][1]) / 2 };
-    for (const av of avenues) if (offAvenue(mid, c, av.bearing) < (av.width ?? 40) / 2 + 6) return null;
+    // No corner of a house in an avenue (a road is only a road if its edges are clean).
+    for (const av of avenues) {
+      const o = pts.map(([x, y]) => offAvenue({ x, y }, c, av.bearing)), h = (av.width ?? 40) / 2 + 3;
+      if (o.some((v) => Math.abs(v) < h) || (Math.min(...o) < 0 && Math.max(...o) > 0 && o.every(Number.isFinite))) return null;
+    }
     return fab;
   };
   for (const band of city.bands) {
@@ -73,8 +90,10 @@ export function buildCity(atlas, opts = {}) {
       const rm = (ra + rb) / 2;
       const n = Math.max(6, Math.round((2 * Math.PI * rm) / len));
       const off = rand() * (360 / n);    // stagger each ring so streets don't line up into spokes
+      // Block lengths vary (±35%), so cross streets don't fall at an even beat round the ring.
+      const cuts = Array.from({ length: n }, (_, j) => off + ((j + (rand() - 0.5) * 0.7) * 360) / n);
       for (let j = 0; j < n; j++) {
-        const t0 = off + (j * 360) / n, t1 = off + ((j + 1) * 360) / n;
+        const t0 = cuts[j], t1 = j + 1 < n ? cuts[j + 1] : cuts[0] + 360;
         const half = ((street / 2) / rm) * (180 / Math.PI);
         const ta = t0 + half, tb = t1 - half;
         if (focus) {
@@ -85,7 +104,15 @@ export function buildCity(atlas, opts = {}) {
         const fab = fabricAt(atlas, centre);
         if (!fab || fab.reserved || fab.kind === "none") continue;
         blocks++;
-        fillBlock(fab, ra, rb, ta, tb);
+        // Density for this neighbourhood: 0 = sparse, 1 = packed. Sparse quarters leave more blocks open too.
+        const dense = noise(city.seed ?? 1, centre.x, centre.y, city.grain ?? 700);
+        const openP = (fab.open ?? 0) * (0.4 + 1.2 * (1 - dense));
+        if (rand() < openP) {
+          const pts = [P(ra, ta), P(ra, tb), P(rb, tb), P(rb, ta)];
+          if (lotOK(pts, fab)) opens.push({ area: fab.area, pts });
+          continue;
+        }
+        fillBlock({ ...fab, vacancy: Math.min(0.9, (fab.vacancy ?? 0.05) + (fab.patchy ?? 0) * (1 - dense) * 0.6) }, ra, rb, ta, tb);
       }
     }
   }
@@ -101,13 +128,16 @@ export function buildCity(atlas, opts = {}) {
       const arc = ((tb - ta) * Math.PI * rm) / 180;
       let s = 0;
       while (s < arc - front * 0.5) {
-        const w = Math.min(arc - s, front * (0.7 + rand() * 0.6));
+        const w = Math.min(arc - s, front * (0.6 + rand() * 1.0));
+        // Each house its own depth: the back line is ragged, and so the yards behind are.
+        const dd = (r1 - r0) * (0.6 + rand() * 0.4), q0 = side === "outer" ? r1 - dd : r0, q1 = side === "outer" ? r1 : r0 + dd;
         const a0 = ta + (s / arc) * (tb - ta), a1 = ta + (Math.min(arc, s + w - gap) / arc) * (tb - ta);
         s += w;
         if (rand() < vac) continue;
         // A compound sits back from the street; a shed runs the whole block deep.
         const inset = kind === "compounds" ? 6 : 0;
-        const pts = side === "outer" ? [P(r1 - inset, a0), P(r1 - inset, a1), P(r0, a1), P(r0, a0)] : [P(r0 + inset, a0), P(r0 + inset, a1), P(r1, a1), P(r1, a0)];
+        const pts = kind === "sheds" ? [P(r1, a0), P(r1, a1), P(r0, a1), P(r0, a0)]
+          : side === "outer" ? [P(q1 - inset, a0), P(q1 - inset, a1), P(q0, a1), P(q0, a0)] : [P(q0 + inset, a0), P(q0 + inset, a1), P(q1, a1), P(q1, a0)];
         const ok = lotOK(pts, fab);
         if (ok) out.push({ kind, area: ok.area, pts });
       }
@@ -128,7 +158,14 @@ export function buildCity(atlas, opts = {}) {
 
   const stats = {};
   for (const b of out) stats[b.area] = (stats[b.area] || 0) + 1;
-  return { buildings: out, blocks, stats };
+  // The avenues as drawn roads: both edges, from the innermost band to the wall.
+  const rIn = Math.min(...city.bands.map((b) => b.r0)), rOut = wall ? wall.shape.r0 : Math.max(...city.bands.map((b) => b.r1));
+  const roads = avenues.map((av) => {
+    const d = fromPolar(1, av.bearing, { x: 0, y: 0 }), nx = -d.y, ny = d.x, h = (av.width ?? 40) / 2;
+    const at = (r, side) => [Math.round((c.x + d.x * r + nx * h * side) * 10) / 10, Math.round((c.y + d.y * r + ny * h * side) * 10) / 10];
+    return { name: av.name, edges: [[at(rIn, 1), at(rOut, 1)], [at(rIn, -1), at(rOut, -1)]] };
+  });
+  return { buildings: out, opens, roads, blocks, stats };
 }
 
 /** The buildings as one SVG group (a path per kind, so a whole city stays a small file). */
@@ -137,6 +174,9 @@ export function citySvg(city, P, k) {
   for (const b of city.buildings) (by[b.kind] ||= []).push(`M${b.pts.map((q) => q.join(" ")).join("L")}Z`);
   const fill = { houses: P.paper2, compounds: P.paper2, sheds: P.paper2 };
   const sw = (px) => (Math.round((px / k) * 100) / 100).toString();
-  return `<g class="city">${Object.entries(by).map(([kind, ds]) =>
-    `<path d="${ds.join("")}" fill="${fill[kind] || P.paper2}" stroke="${P.faint}" stroke-width="${sw(kind === "houses" ? 0.5 : 0.7)}" stroke-linejoin="round"/>`).join("")}</g>`;
+  const open = (city.opens || []).map((o) => `M${o.pts.map((q) => q.join(" ")).join("L")}Z`).join("");
+  const roads = (city.roads || []).flatMap((r) => r.edges.map(([a, b]) => `M${a.join(" ")}L${b.join(" ")}`)).join("");
+  return `<g class="city">${open ? `<path d="${open}" fill="url(#stipple)" stroke="none" opacity="0.7"/>` : ""}${Object.entries(by).map(([kind, ds]) =>
+    `<path d="${ds.join("")}" fill="${fill[kind] || P.paper2}" stroke="${P.faint}" stroke-width="${sw(kind === "houses" ? 0.5 : 0.7)}" stroke-linejoin="round"/>`).join("")}` +
+    (roads ? `<path d="${roads}" fill="none" stroke="${P.faint}" stroke-width="${sw(1.1)}"/>` : "") + `</g>`;
 }

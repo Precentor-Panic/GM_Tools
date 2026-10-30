@@ -39,3 +39,19 @@ test("houses fill the town but never the lake, the arena, the avenue or past the
   assert.equal(onAvenue.length, 0);
   assert.deepEqual(buildCity(town()).buildings, c.buildings);
 });
+
+test("open blocks and patchy density thin the city unevenly, deterministically", async () => {
+  const { buildCity } = await import("../atlas/city.mjs");
+  const base = {
+    frame: { centre: { x: 0, y: 0 } },
+    city: { seed: 3, street: 16, bands: [{ r0: 1000, r1: 3000, block: [200, 80] }] },
+    areas: [{ id: "town", name: "Town", kind: "ring", shape: { type: "annulus", cx: 0, cy: 0, r0: 900, r1: 3100 }, fabric: { z: 1, kind: "houses", lot: [22, 28], vacancy: 0.04 } }],
+  };
+  const even = buildCity(base);
+  const loose = structuredClone(base);
+  loose.areas[0].fabric = { ...loose.areas[0].fabric, open: 0.15, patchy: 0.6 };
+  const a = buildCity(loose), b = buildCity(loose);
+  assert.equal(a.buildings.length, b.buildings.length, "same seed, same city");
+  assert.ok(a.opens.length > 0, "some blocks are left open");
+  assert.ok(a.buildings.length < even.buildings.length * 0.9, "noticeably fewer houses");
+});
