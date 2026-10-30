@@ -46,7 +46,7 @@ export const NodeShape = z.discriminatedUnion("type", [
 /** What fills a city block in an area (atlas-city.mjs). Feet. Highest z wins where areas overlap. */
 export const Fabric = z.object({
   z: z.number().default(0),
-  kind: z.enum(["houses", "compounds", "sheds", "none"]).default("houses"),
+  kind: z.enum(["houses", "compounds", "sheds", "tents", "none"]).default("houses"),
   lot: z.tuple([z.number().positive(), z.number().positive()]).optional(),   // frontage, depth
   gap: z.number().nonnegative().optional(),        // between neighbours along a street
   vacancy: z.number().min(0).max(1).optional(),    // share of lots left empty
@@ -55,6 +55,8 @@ export const Fabric = z.object({
   // How the streets are laid: "ring" (default) follows the bands; "grid" is the city's old straight grid (city.grid),
   // uniform blocks and lots; "sprawl" is unplanned growth: skewed cross streets, kinked rings, narrow deep lots.
   plan: z.enum(["ring", "grid", "sprawl"]).optional(),
+  // On an arena only: homes built into its stands (the share of its radius they fill), floor left clear.
+  stands: z.number().min(0).max(0.8).optional(),
 }).strict();
 
 export const Area = z.object({
@@ -70,7 +72,9 @@ export const City = z.object({
   grain: z.number().positive().optional(),         // ft across one neighbourhood of the density noise (default 700)
   bands: z.array(z.object({ r0: z.number().nonnegative(), r1: z.number().positive(),
     block: z.tuple([z.number().positive(), z.number().positive()]) }).strict()).default([]),   // length (along the ring), depth
-  avenues: z.array(z.object({ bearing: z.number(), width: z.number().positive().optional(), name: z.string().optional() }).strict()).default([]),
+  avenues: z.array(z.object({ bearing: z.number(), width: z.number().positive().optional(), name: z.string().optional(),
+    out: z.boolean().optional() }).strict()).default([]),   // out: the road carries on through a wall gate
+  wallClear: z.number().nonnegative().optional(),   // ft kept clear inside the wall
   // The old grid every "grid" area shares (one alignment, as if they were all pieces of one older city).
   grid: z.object({ angle: z.number().default(0), block: z.tuple([z.number().positive(), z.number().positive()]),
     street: z.number().positive().optional() }).strict().optional(),

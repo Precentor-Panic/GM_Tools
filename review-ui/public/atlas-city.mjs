@@ -24,7 +24,12 @@
  *       "sprawl" unplanned growth: cross streets run askew, ring streets kink and widen into little squares, some
  *                blocks are split by an alley, and lots are narrow and deep (medieval burgage plots ran about
  *                1 : 6, some 17 ft wide and 200 ft long).
- *   areas of kind "arena" or "landmark" (and the lake, the island and the wall) are reserved: nothing is built there.
+ *   areas of kind "arena" or "landmark" (and the lake, the island and the wall) are reserved: nothing is built there,
+ *     except that an arena whose fabric has `stands` (a share of its radius) gets homes built into its stands, rows
+ *     following its outline, the floor and four entrances left clear (Arles's amphitheatre held 200 houses).
+ *   kind "tents": canvas and pens (a caravan belt outside a wall); drawn light and dashed.
+ *   city.wallClear keeps a strip clear inside the wall. Ground outside the wall is built only where a band and a
+ *   fabric reach it; an avenue with `out` carries on as a road through its gate to the frame's edge.
  * Output: { buildings: [{ kind, area, pts: [[x, y] x4] }], opens: [{ area, pts }], blocks, stats }.
  */
 import { fromPolar, pointInArea } from "./atlas-geometry.mjs";
@@ -97,10 +102,11 @@ export function buildCity(atlas, opts = {}) {
   const reserved = (atlas.areas || []).filter((a) => RESERVED.has(a.kind) && a.kind !== "wall");
   const wall = (atlas.areas || []).find((a) => a.kind === "wall" && a.shape.type === "annulus");
   const gridAreas = (atlas.areas || []).filter((a) => a.fabric?.plan === "grid");
-  const lotOK = (pts, fab) => {
+  const clear = city.wallClear ?? 0;
+  const lotOK = (pts, fab, allow) => {
     for (const [x, y] of pts) {
-      if (wall && Math.hypot(x - c.x, y - c.y) > wall.shape.r0) return null;
-      for (const a of reserved) if (pointInArea({ x, y }, a.shape)) return null;
+      if (wall) { const r = Math.hypot(x - c.x, y - c.y); if (r > wall.shape.r0 - clear && r < wall.shape.r1 + 6) return null; }
+      for (const a of reserved) if (a.id !== allow && pointInArea({ x, y }, a.shape)) return null;
       // The old grid and the newer streets don't share a lot: a grid house stays inside its own area, and nothing
       // else is built over the grid.
       if (gridAreas.length) {
@@ -110,7 +116,9 @@ export function buildCity(atlas, opts = {}) {
       }
     }
     // No corner of a house in an avenue (a road is only a road if its edges are clean).
+    const beyond = wall && pts.every(([x, y]) => Math.hypot(x - c.x, y - c.y) > wall.shape.r1);
     for (const av of avenues) {
+      if (beyond && !av.out) continue;   // an avenue that ends at the wall is no road outside it
       const o = pts.map(([x, y]) => offAvenue({ x, y }, c, av.bearing)), h = (av.width ?? 40) / 2 + 3;
       if (o.some((v) => Math.abs(v) < h) || (Math.min(...o) < 0 && Math.max(...o) > 0 && o.every(Number.isFinite))) return null;
     }
@@ -282,14 +290,50 @@ export function buildCity(atlas, opts = {}) {
     }
   }
 
+  // Homes in an arena's stands: rows following the outline inward, lanes between them, four entrances clear.
+  for (const a of (atlas.areas || []).filter((q) => q.kind === "arena" && q.fabric?.stands && q.shape.type === "polygon")) {
+    const pts0 = a.shape.points, m = pts0.length;
+    const cx = pts0.reduce((t, q) => t + q.x, 0) / m, cy = pts0.reduce((t, q) => t + q.y, 0) / m;
+    const R = pts0.reduce((t, q) => t + Math.hypot(q.x - cx, q.y - cy), 0) / m;
+    if (focus && (cx + R < focus[0] || cx - R > focus[2] || cy + R < focus[1] || cy - R > focus[3])) continue;
+    const per = []; let L = 0;
+    for (let i = 0; i < m; i++) { per.push(L); const p = pts0[i], q = pts0[(i + 1) % m]; L += Math.hypot(q.x - p.x, q.y - p.y); }
+    const at = (s, t) => {   // the outline scaled by s about the centre, at perimeter fraction t
+      let d = (((t % 1) + 1) % 1) * L, i = 0;
+      while (i + 1 < m && per[i + 1] <= d) i++;
+      const p = pts0[i], q = pts0[(i + 1) % m], seg = Math.hypot(q.x - p.x, q.y - p.y) || 1, u = (d - per[i]) / seg;
+      const x = p.x + (q.x - p.x) * u, y = p.y + (q.y - p.y) * u;
+      return [Math.round((cx + (x - cx) * s) * 10) / 10, Math.round((cy + (y - cy) * s) * 10) / 10];
+    };
+    const fab = { area: a.id, ...a.fabric, plan: "stands" };
+    const [front, deep] = fab.lot || [18, 22], lane = 8, vac = fab.vacancy ?? 0.08;
+    let s0 = 1 - 6 / R;
+    while (s0 - deep / R >= 1 - fab.stands) {
+      const s1 = s0 - deep / R;
+      const n = Math.max(8, Math.round((L * s0) / front));
+      for (let k = 0; k < n; k++) {
+        const t0 = k / n, t1 = (k + 0.92) / n;
+        if ([0.125, 0.375, 0.625, 0.875].some((e) => Math.abs(t0 - e) < 0.025)) continue;   // the entrances
+        if (rand() < vac) continue;
+        const q = [at(s0, t0), at(s0, t1), at(s1, t1), at(s1, t0)];
+        if (lotOK(q, fab, a.id)) out.push({ kind: fab.kind || "houses", area: a.id, pts: q });
+      }
+      s0 = s1 - lane / R;
+    }
+  }
+
   const stats = {};
   for (const b of out) stats[b.area] = (stats[b.area] || 0) + 1;
   // The avenues as drawn roads: both edges, from the innermost band to the wall.
   const rIn = Math.min(...city.bands.map((b) => b.r0)), rOut = wall ? wall.shape.r0 : Math.max(...city.bands.map((b) => b.r1));
+  const [bx0, by0, bx1, by1] = atlas.frame?.bounds || [-Infinity, -Infinity, Infinity, Infinity];
   const roads = avenues.map((av) => {
     const d = fromPolar(1, av.bearing, { x: 0, y: 0 }), nx = -d.y, ny = d.x, h = (av.width ?? 40) / 2;
+    // Through its gate to the edge of the frame.
+    const edge = av.out ? Math.min(...[[bx0, d.x], [bx1, d.x]].map(([b, v]) => (v ? (b - c.x) / v : Infinity)).filter((t) => t > 0),
+      ...[[by0, d.y], [by1, d.y]].map(([b, v]) => (v ? (b - c.y) / v : Infinity)).filter((t) => t > 0)) : rOut;
     const at = (r, side) => [Math.round((c.x + d.x * r + nx * h * side) * 10) / 10, Math.round((c.y + d.y * r + ny * h * side) * 10) / 10];
-    return { name: av.name, edges: [[at(rIn, 1), at(rOut, 1)], [at(rIn, -1), at(rOut, -1)]] };
+    return { name: av.name, edges: [[at(rIn, 1), at(edge, 1)], [at(rIn, -1), at(edge, -1)]] };
   });
   return { buildings: out, opens, roads, blocks, stats };
 }
@@ -298,11 +342,11 @@ export function buildCity(atlas, opts = {}) {
 export function citySvg(city, P, k) {
   const by = {};
   for (const b of city.buildings) (by[b.kind] ||= []).push(`M${b.pts.map((q) => q.join(" ")).join("L")}Z`);
-  const fill = { houses: P.paper2, compounds: P.paper2, sheds: P.paper2 };
+  const fill = { houses: P.paper2, compounds: P.paper2, sheds: P.paper2, tents: P.paper };
   const sw = (px) => (Math.round((px / k) * 100) / 100).toString();
   const open = (city.opens || []).map((o) => `M${o.pts.map((q) => q.join(" ")).join("L")}Z`).join("");
   const roads = (city.roads || []).flatMap((r) => r.edges.map(([a, b]) => `M${a.join(" ")}L${b.join(" ")}`)).join("");
   return `<g class="city">${open ? `<path d="${open}" fill="url(#stipple)" stroke="none" opacity="0.7"/>` : ""}${Object.entries(by).map(([kind, ds]) =>
-    `<path d="${ds.join("")}" fill="${fill[kind] || P.paper2}" stroke="${P.faint}" stroke-width="${sw(kind === "houses" ? 0.5 : 0.7)}" stroke-linejoin="round"/>`).join("")}` +
+    `<path d="${ds.join("")}" fill="${fill[kind] || P.paper2}" stroke="${P.faint}" stroke-width="${sw(kind === "houses" || kind === "tents" ? 0.5 : 0.7)}" stroke-linejoin="round"${kind === "tents" ? ` stroke-dasharray="${sw(2)} ${sw(1.5)}"` : ""}/>`).join("")}` +
     (roads ? `<path d="${roads}" fill="none" stroke="${P.faint}" stroke-width="${sw(1.1)}"/>` : "") + `</g>`;
 }

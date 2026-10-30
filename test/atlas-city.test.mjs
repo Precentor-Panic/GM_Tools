@@ -104,3 +104,36 @@ test("sprawl: cross streets run askew, and the same seed gives the same town", a
   assert.ok(askew(radialOff(sprawl)) > askew(radialOff(ring)) + 0.02, `sprawl ${askew(radialOff(sprawl))} vs ring ${askew(radialOff(ring))}`);
   assert.deepEqual(buildCity(mk("sprawl")).buildings, sprawl.buildings);
 });
+
+test("outside the wall, the stands of an arena, a clear strip, and a road through the gate", async () => {
+  const { buildCity } = await import("../atlas/city.mjs");
+  const ring = (r, n = 48) => Array.from({ length: n }, (_, i) => ({ x: 600 + r * Math.cos((i / n) * 2 * Math.PI), y: r * Math.sin((i / n) * 2 * Math.PI) }));
+  const atlas = {
+    frame: { centre: { x: 0, y: 0 }, bounds: [-2000, -2000, 2000, 2000] },
+    city: { seed: 2, street: 14, wallClear: 40, bands: [{ r0: 200, r1: 1180, block: [160, 90] }, { r0: 1260, r1: 1900, block: [160, 90] }],
+      avenues: [{ bearing: 90, width: 40, out: true }, { bearing: 270, width: 40 }] },
+    areas: [
+      { id: "town", name: "Town", kind: "ring", shape: { type: "annulus", cx: 0, cy: 0, r0: 150, r1: 1200 }, fabric: { z: 1, lot: [22, 28] } },
+      { id: "wall", name: "Wall", kind: "wall", shape: { type: "annulus", cx: 0, cy: 0, r0: 1200, r1: 1240 } },
+      { id: "belt", name: "Belt", kind: "ring", shape: { type: "annulus", cx: 0, cy: 0, r0: 1240, r1: 2000 }, fabric: { z: 1, kind: "tents", lot: [14, 16], vacancy: 0.4, plan: "sprawl" } },
+      { id: "pit", name: "Pit", kind: "arena", shape: { type: "polygon", points: ring(150) }, fabric: { stands: 0.45, lot: [16, 20] } },
+    ],
+  };
+  const c = buildCity(atlas);
+  const r = (b) => Math.max(...b.pts.map(([x, y]) => Math.hypot(x, y)));
+  assert.ok(c.buildings.some((b) => b.kind === "tents" && r(b) > 1240), "tents outside the wall");
+  for (const b of c.buildings) {
+    const rr = b.pts.map(([x, y]) => Math.hypot(x, y));
+    assert.ok(rr.every((v) => v <= 1160 || v >= 1246), "nothing in the wall or its clear strip");
+  }
+  const pit = c.buildings.filter((b) => b.area === "pit");
+  assert.ok(pit.length > 20, `${pit.length} homes in the stands`);
+  for (const b of pit) for (const [x, y] of b.pts) {
+    const d = Math.hypot(x - 600, y);
+    assert.ok(d > 150 * 0.55 - 1 && d < 150, "in the stands, not on the floor");
+  }
+  // The road east carries on outside; the west avenue doesn't, so tents stand across its line out there.
+  const east = c.roads[0].edges[0][1];
+  assert.ok(east[0] > 1990, "the east road runs to the frame edge");
+  assert.ok(c.buildings.filter((b) => b.kind === "tents" && b.pts.some(([x, y]) => x > 1300 && Math.abs(y) < 20)).length === 0, "nothing on the road out");
+});
