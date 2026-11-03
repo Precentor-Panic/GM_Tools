@@ -1,0 +1,366 @@
+{
+  "about": "The benchmark set (plans/map-quality-plan.md). Each brief is generic, so it works for any campaign. `want` is the character the map should have, as [min, max] ranges on profile features (map-plan/similar.mjs WANT_FEATURES; null = no bound; `enclosure` is the share of the map's area inside rooms); it grades a made map and queries the shelf. `play` is what the scene must do at the table. Every sprint's review re-makes these and scores them on the rubric. `words` are theme words matched against a published map's pack and scene names (catalogue metadata, never the art): the shelf narrows by words, then ranks by character.",
+  "rubric": {
+    "look": "Does it read as the place at a glance, from a token's eye, in the scene's light? Edges, light, a focal point, a frame that isn't flat fill.",
+    "play": "Does the fight or the scene work? Cover where it's needed, a reason to move, more than one route, exits players can see. Graded by the play check, then by the GM.",
+    "fit": "Can it drop into a scene with little work: walls, doors and lights right, size and shape close to what was asked, variants to hand.",
+    "speed": "Minutes from asking to a walled, lit scene: under 2 from the shelf; under 30 for a made map, Dungeondraft render included."
+  },
+  "briefs": [
+    {
+      "id": "sewer-junction",
+      "title": "Sewer junction",
+      "brief": "Brick tunnels meet at a junction with a deeper channel through it. Walkways either side, a sluice gate, a side room for the workers.",
+      "play": "A chase or an ambush from the water. Two ways out besides the way in; a choke at the sluice.",
+      "tests": "Masonry and water. The regression check against our long gallery.",
+      "want": {
+        "area": [
+          600,
+          1600
+        ],
+        "enclosure": [
+          0.4,
+          null
+        ],
+        "rooms": [
+          4,
+          10
+        ],
+        "loops": [
+          1,
+          null
+        ],
+        "squareness": [
+          0.7,
+          null
+        ],
+        "openness": [
+          0.3,
+          0.6
+        ],
+        "narrowShare": [
+          0.5,
+          null
+        ]
+      },
+      "words": [
+        "sewer",
+        "drain",
+        "tunnel",
+        "cistern",
+        "aqueduct"
+      ]
+    },
+    {
+      "id": "river-cave",
+      "title": "Cave with a river and a ledge",
+      "brief": "A cave mouth opens into a hall; an underground river runs through a second chamber below a ledge; a side passage loops back.",
+      "play": "Height matters: a ledge to hold, a river to cross, a loop to flank by.",
+      "tests": "Organic shapes, elevation, a loop.",
+      "want": {
+        "area": [
+          800,
+          2000
+        ],
+        "enclosure": [
+          0.35,
+          null
+        ],
+        "rooms": [
+          1,
+          6
+        ],
+        "loops": [
+          1,
+          null
+        ],
+        "organic": [
+          0.5,
+          null
+        ],
+        "squareness": [
+          null,
+          0.4
+        ],
+        "openness": [
+          0.3,
+          0.7
+        ],
+        "widest": [
+          4,
+          null
+        ]
+      },
+      "words": [
+        "cave",
+        "cavern",
+        "grotto",
+        "mine",
+        "underdark"
+      ]
+    },
+    {
+      "id": "desert-wash",
+      "title": "Desert wash ambush",
+      "brief": "A dry riverbed winds between low cliffs. Boulders and scrub in the wash; a goat path up one side.",
+      "play": "Ambushers on the cliffs, travellers in the wash. Long sightlines, with cover only where it was placed.",
+      "tests": "Outdoor cliffs, long sightlines against cover.",
+      "want": {
+        "area": [
+          1200,
+          3000
+        ],
+        "enclosure": [
+          null,
+          0.3
+        ],
+        "organic": [
+          0.4,
+          null
+        ],
+        "openness": [
+          0.5,
+          0.85
+        ],
+        "longest": [
+          25,
+          null
+        ]
+      },
+      "words": [
+        "canyon",
+        "desert",
+        "wash",
+        "ravine",
+        "gorge",
+        "badlands"
+      ]
+    },
+    {
+      "id": "night-market",
+      "title": "Crooked night market",
+      "brief": "A crooked street opening onto a small square, lined with shopfronts and stalls under lanterns; an alley off it.",
+      "play": "A social scene that can become a chase. Crowds to hide in, lots of ways out.",
+      "tests": "Irregular lots and buildings, stalls, spots for background people.",
+      "want": {
+        "area": [
+          900,
+          2500
+        ],
+        "enclosure": [
+          0.1,
+          0.5
+        ],
+        "rooms": [
+          3,
+          15
+        ],
+        "squareness": [
+          0.6,
+          null
+        ],
+        "openness": [
+          0.3,
+          0.7
+        ],
+        "doorsOut": [
+          2,
+          null
+        ]
+      },
+      "words": [
+        "market",
+        "bazaar",
+        "street",
+        "square",
+        "plaza"
+      ]
+    },
+    {
+      "id": "temple-hall",
+      "title": "Temple hall",
+      "brief": "A pillared hall on one axis, side chapels, a raised sanctum at the far end, a sacristy behind it.",
+      "play": "A set piece: a long approach, pillars for cover, a stage at the end.",
+      "tests": "Formal and symmetric: square done right.",
+      "want": {
+        "buildingRooms": [
+          3,
+          9
+        ],
+        "buildingArea": [
+          300,
+          1500
+        ],
+        "loops": [
+          1,
+          null
+        ],
+        "squareness": [
+          0.8,
+          null
+        ],
+        "widest": [
+          5,
+          null
+        ]
+      },
+      "words": [
+        "temple",
+        "church",
+        "cathedral",
+        "shrine",
+        "chapel",
+        "monastery"
+      ]
+    },
+    {
+      "id": "ruined-fort",
+      "title": "Ruined fort, overgrown",
+      "brief": "A square fort with one tower fallen. A breach in the curtain wall, rubble in the yard, trees growing through the barracks.",
+      "play": "A siege or a search. The breach is a second way in; rubble gives cover.",
+      "tests": "Masonry plus wear, collapse and plants.",
+      "want": {
+        "area": [
+          900,
+          2500
+        ],
+        "enclosure": [
+          0.3,
+          0.8
+        ],
+        "rooms": [
+          3,
+          10
+        ],
+        "loops": [
+          1,
+          null
+        ],
+        "squareness": [
+          0.4,
+          0.85
+        ],
+        "organic": [
+          0.15,
+          null
+        ],
+        "doorsOut": [
+          1,
+          null
+        ]
+      },
+      "words": [
+        "ruin",
+        "fort",
+        "castle",
+        "keep",
+        "outpost"
+      ]
+    },
+    {
+      "id": "ship-dock",
+      "title": "Ship at a dock",
+      "brief": "A two-masted ship tied up at a stone quay, a gangway down, crates and a crane on the quay, water all round.",
+      "play": "A boarding or a fight on the quay. The gangway is the choke; the water is a hazard.",
+      "tests": "A hull shape, water, planks.",
+      "want": {
+        "area": [
+          600,
+          2000
+        ],
+        "enclosure": [
+          0.1,
+          0.6
+        ],
+        "rooms": [
+          1,
+          6
+        ],
+        "organic": [
+          0.2,
+          0.7
+        ]
+      },
+      "words": [
+        "ship",
+        "dock",
+        "harbour",
+        "harbor",
+        "pier",
+        "port",
+        "boat",
+        "wharf"
+      ]
+    },
+    {
+      "id": "forest-clearing",
+      "title": "Forest or swamp clearing",
+      "brief": "A clearing in old woods with a stream at one edge, a fallen tree across it, thick trees round the outside.",
+      "play": "An encounter on the road. Trees and roots as cover, the stream as a slow crossing.",
+      "tests": "Organic outdoors, trees as cover.",
+      "want": {
+        "area": [
+          900,
+          2500
+        ],
+        "enclosure": [
+          null,
+          0.2
+        ],
+        "organic": [
+          0.5,
+          null
+        ],
+        "openness": [
+          0.3,
+          0.7
+        ],
+        "longest": [
+          10,
+          40
+        ]
+      },
+      "words": [
+        "forest",
+        "woods",
+        "clearing",
+        "swamp",
+        "grove",
+        "glade",
+        "marsh"
+      ]
+    },
+    {
+      "id": "tavern",
+      "title": "Tavern interior",
+      "brief": "A common room with a bar and a hearth, a kitchen behind, a back room, stairs up, a door to the yard.",
+      "play": "The everyday drop-in: a talk, a brawl, a quick exit through the kitchen.",
+      "tests": "A small, square interior that must be fast to find on the shelf.",
+      "want": {
+        "buildingRooms": [
+          3,
+          8
+        ],
+        "buildingArea": [
+          120,
+          700
+        ],
+        "squareness": [
+          0.7,
+          null
+        ],
+        "doorsOut": [
+          1,
+          null
+        ]
+      },
+      "words": [
+        "tavern",
+        "inn",
+        "saloon",
+        "pub",
+        "alehouse"
+      ]
+    }
+  ]
+}

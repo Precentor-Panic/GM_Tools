@@ -1,0 +1,5 @@
+#!/bin/sh
+# Profile maps from their walls. See bin/map-profile.mjs.
+here=$(cd "$(dirname "$0")" && pwd)
+node=${NODE:-$(command -v node || echo "$HOME/.local/node/bin/node")}
+exec "$node" "$here/map-profile.mjs" "$@"

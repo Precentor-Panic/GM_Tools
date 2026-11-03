@@ -104,3 +104,19 @@ fort, overgrown · ship at a dock · forest or swamp clearing · tavern interior
 - GM_Tools and the Dungeondraft tooling stay campaign-agnostic; the benchmark briefs are generic.
 - Wall detection on painted maps stays paused (his call, 2026-10-29). Reading walls Czepeku authored is not detection.
 - No push to Foundry without his pick; never recreate a pushed scene.
+
+## Status
+
+**S0 + S1 built 2026-11-03** (branch `map-quality`), awaiting the GM's review.
+- `map-plan/plan.mjs` (plan v1), `readers.mjs` (dd2vtt; Foundry scenes, both wall eras), `profile.mjs` (profile v1),
+  `similar.mjs` (distance, brief ranges, nearest), `svg.mjs` (preview), `bench/briefs.json` (nine briefs with `want`
+  ranges and theme `words`). `bin/map-profile`. Tests: `test/map-plan.test.mjs` (11, synthetic fixtures).
+- Baseline: our seven Dungeondraft maps profiled (all near-square: squareness 0.74–1.0).
+- The 1,157 walled Czepeku scenes profile in 24 s on this laptop into `stagecraft/map-shelf/profiles.jsonl` (ignored).
+- Found while validating: walls on the map's own edge fell off the grid (fixed); "enclosure" as share of open floor
+  counted the rock round a dungeon as floor (now the share of the map's area, less walls, inside rooms); published
+  walls stop short by up to half a square (closed before finding rooms); Czepeku maps are scenes, a building in its
+  surroundings, so briefs like "tavern" target the largest building (`building` in the profile).
+- Lookup: shape alone is ambiguous across 1,157 maps; theme words from pack and scene names plus shape works for most
+  briefs. Open for S2: variants crowd the results (dedupe by layout), the market brief favours shops, and the sewer
+  brief has only 3 named matches because the installed sewer pack isn't in the fetched set.
