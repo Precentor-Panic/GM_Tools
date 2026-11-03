@@ -1,7 +1,8 @@
 // The shelf at the command line (map-plan/shelf.mjs). Reads what bin/map-profile and map-plan/tools/look.py wrote
 // under stagecraft/map-shelf/ (ignored: profiles of published maps are derived from someone else's product).
 //   bin/map-shelf brief <id>|all [--k 5] [--json]     the closest layouts to a benchmark brief, with why
-//   bin/map-shelf like <map id> [--k 5]               layouts most like a map, by shape
+//   bin/map-shelf like <map id>|<plan.json> [--k 5]    layouts most like a map, by shape; a plan file (map-plan/plan.mjs,
+//                                                     e.g. a rough sketch in rectangles) works as well as a map id
 //   bin/map-shelf text "<description>" [--k 5]        layouts whose picture is closest to a description (needs look.py)
 //   bin/map-shelf card <map id>                       one map's character card
 //   bin/map-shelf html                                the local shelf page (<dir>/shelf.html, with wall drawings in
@@ -15,7 +16,8 @@ import { lookTags, textCloseness } from "../map-plan/look.mjs";
 import { lookup, character, groupLayouts, layoutKey } from "../map-plan/shelf.mjs";
 import { nearest } from "../map-plan/similar.mjs";
 import { fromDd2vtt, fromFoundryScene } from "../map-plan/readers.mjs";
-import { analyse } from "../map-plan/profile.mjs";
+import { analyse, profile } from "../map-plan/profile.mjs";
+import { parsePlan } from "../map-plan/plan.mjs";
 import { planSvg } from "../map-plan/svg.mjs";
 import { tagsOf } from "../map-plan/shelf.mjs";
 
@@ -36,7 +38,7 @@ const rows = [...published, ...jsonl(join(dir, "modules.jsonl")).filter((r) => !
 if (!rows.length) { console.error(`no profiles in ${dir}: run bin/map-profile --scenes ... --out ${dir}/profiles.jsonl first`); process.exit(2); }
 const byId = new Map(rows.map((r) => [r.id, r]));
 // Pictures looked at, for maps on this shelf only (look.jsonl holds published and installed maps alike).
-const looks = noPicture ? [] : [...jsonl(join(dir, "look.jsonl")), ...jsonl(join(dir, "look-ours.jsonl"))].filter((l) => byId.has(l.id));
+const looks = noPicture ? [] : [...jsonl(join(dir, "look.jsonl")), ...jsonl(join(dir, "look-modules.jsonl")), ...jsonl(join(dir, "look-ours.jsonl"))].filter((l) => byId.has(l.id));
 const tags = lookTags(looks);
 for (const r of rows) if (tags.has(r.id)) r.look = tags.get(r.id);
 const layouts = groupLayouts(rows);
@@ -83,8 +85,8 @@ if (cmd === "brief") {
   }
   if (asJson) console.log(JSON.stringify(out, null, 1));
 } else if (cmd === "like") {
-  const t = byId.get(rest[0]);
-  if (!t) { console.error(`no map ${rest[0]}`); process.exit(2); }
+  const t = byId.get(rest[0]) ?? (existsSync(rest[0] ?? "") ? { id: rest[0], profile: profile(parsePlan(JSON.parse(readFileSync(rest[0], "utf8")))) } : null);
+  if (!t) { console.error(`no map or plan file ${rest[0]}`); process.exit(2); }
   const seen = new Set([layoutKey(t)]);
   const hits = nearest(t.profile, rows, rows.length).filter((h) => { const key = layoutKey(byId.get(h.id)); if (seen.has(key)) return false; seen.add(key); return true; }).slice(0, k);
   for (const h of hits) console.log(`${h.score}  ${h.name}  [${h.id}]\n    ${Object.values(character(h)).join("\n    ")}`);

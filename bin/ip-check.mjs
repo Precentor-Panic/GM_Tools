@@ -24,7 +24,7 @@ const SECRET = /(sk-ant-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za
 // Files that hold these patterns on purpose, to describe or enforce this rule.
 const SELF = new Set(["bin/ip-check.mjs"]);
 // Paths that must stay ignored whether or not they exist yet.
-export const MUST_IGNORE = ["stagecraft/czepeku-catalogue.json", "stagecraft/map-shelf/profiles.jsonl", "stagecraft/map-shelf/look.jsonl",
+export const MUST_IGNORE = ["stagecraft/czepeku-catalogue.json", "stagecraft/map-shelf/profiles.jsonl", "stagecraft/map-shelf/look.jsonl", "stagecraft/map-shelf/look-modules.jsonl",
   "stagecraft/map-shelf/thumbs/x.jpg", "stagecraft/map-shelf/shelf.html", "stagecraft/map-segment-specs/x.json", ".env"];
 
 /** The problems with one file, from its path and (when it is text) its contents. */

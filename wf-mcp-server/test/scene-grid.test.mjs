@@ -115,3 +115,26 @@ test("regridSceneInFoundry: one update_scene op carrying the grid and nothing el
   assert.equal(noop.status, "noop");
   assert.match(noop.reason, /no grid size recorded/);
 });
+
+test("readModuleScenes: a LevelDB pack's walls and lights come back attached to their scene", async (t) => {
+  const { createRequire } = await import("node:module");
+  const nm = process.env.CLASSIC_LEVEL_NODE_MODULES ?? (process.env.FOUNDRY_MAIN ? join(process.env.FOUNDRY_MAIN, "..", "node_modules") : null);
+  let ClassicLevel = null;
+  try { ClassicLevel = nm && createRequire(join(nm, "noop.js"))("classic-level").ClassicLevel; } catch { /* not on this machine */ }
+  if (!ClassicLevel) { t.skip("classic-level not found (set FOUNDRY_MAIN or CLASSIC_LEVEL_NODE_MODULES)"); return; }
+  const { readModuleScenes } = await import("../lib/module-scene-grid.mjs");
+  const pack = join(dataDir, "modules", "pack-l", "packs", "scenes");
+  mkdirSync(pack, { recursive: true });
+  const db = new ClassicLevel(pack, { valueEncoding: "json" });
+  await db.open();
+  await db.put("!scenes!s1", { _id: "s1", name: "Walled", grid: { size: 100 }, walls: ["w1", "w2"], lights: ["l1"], background: { src: "modules/pack-l/a.jpg" } });
+  await db.put("!scenes.walls!s1.w1", { _id: "w1", c: [0, 0, 100, 0] });
+  await db.put("!scenes.walls!s1.w2", { _id: "w2", c: [100, 0, 100, 100] });
+  await db.put("!scenes.lights!s1.l1", { _id: "l1", x: 50, y: 50 });
+  await db.close();
+  const { scenes, reason } = await readModuleScenes(dataDir, "pack-l", { CLASSIC_LEVEL_NODE_MODULES: nm });
+  assert.equal(reason, null);
+  assert.deepEqual(scenes[0].walls.map((w) => w.c), [[0, 0, 100, 0], [100, 0, 100, 100]]);
+  assert.deepEqual(scenes[0].lights.map((l) => l._id), ["l1"]);
+  assert.deepEqual((await readModuleSceneGrids(dataDir, "pack-l", { CLASSIC_LEVEL_NODE_MODULES: nm })).grids, { "a.jpg": 100 });
+});
