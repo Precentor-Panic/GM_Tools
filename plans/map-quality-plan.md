@@ -97,7 +97,11 @@ fort, overgrown · ship at a dock · forest or swamp clearing · tavern interior
 - **Other people's IP never enters this repo** (it is public). No Czepeku, Forgotten Adventures or DnDungeon images,
   pack files, catalogues, wall extracts or profiles computed from them, and no download links. Czepeku-derived data
   lives under `stagecraft/` (ignored) or outside the repo. Test fixtures are synthetic. Run `bin/ip-check` before
-  every commit in this work.
+  every commit in this work, and `bin/ip-check --push` before every push: it reads every version of every file the
+  push would send, not just the tip. A file named for a map vendor counts as their data whatever it holds.
+- Found by the first `--push` run (2026-11-03): a segment spec for a Czepeku sewer map (our room cuts plus their
+  image file names) had been committed on the unpushed `atlas` line. It was removed from that history before the
+  first push and kept under `stagecraft/map-segment-specs/` (ignored).
 - Never send Czepeku art to a cloud service; FA and DnDungeon renders on private review pages are fine. Wall drawings
   derived from Czepeku scenes count as Czepeku data until the GM says otherwise.
 - Packs are read only through Dungeondraft's catalogues and the index. Never decompile the `.pck`.
