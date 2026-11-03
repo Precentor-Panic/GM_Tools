@@ -20,7 +20,7 @@ Maps must carry **walls**, because Foundry lighting and vision need them. They s
 | Segment schemas, assembler, clash checks (`map-segments/`) | Built. Segment v2, composition v1, `clash.mjs` warns and never blocks. |
 | `bin/scene-layout` + bridge op `set_scene_layout` | Built and used live. |
 | Puzzle panel (jug locks) in the module | Built and used live. |
-| Sprint 1 (tags + clash checks) | Done, commit 52ff47b. |
+| Sprint 1 (tags + clash checks) | Done, commit e3eba9f. |
 | Sprint 2 (cut screen + wall tracing) | **On hold** until automatic wall detection works (GM's call: "fully automatic, no fixing"). |
 | Sprints 3–7 (first kit, composer, layout engine, push form, second kit) | Not started. |
 | Wall detection research | Rounds 1–5 done; round 6 (more training data) running. |

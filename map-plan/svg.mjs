@@ -1,16 +1,18 @@
 // A light preview of a plan as SVG, with no renderer and no art: rooms tinted one colour each, the outside dark,
 // walls drawn by what they stop, doors in amber, lights as dots. Good enough to see a map's shape and character.
+// `overlay: true` draws the lines only (no ground, tints or grid), light on dark, to lay over the map's own picture.
 import { analyse } from "./profile.mjs";
 
 const HUES = [32, 200, 140, 280, 10, 90, 240, 330, 170, 55];
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
-export function planSvg(plan, { px = 12, analysis, title } = {}) {
+export function planSvg(plan, { px = 12, analysis, title, overlay = false } = {}) {
   const A = analysis ?? analyse(plan);
   const { R, W, H, lab, rooms } = A;
   const w = Math.round(plan.width * px), h = Math.round(plan.height * px);
   const out = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">`];
   if (title) out.push(`<title>${esc(title)}</title>`);
+  if (overlay) return overlayLines(plan, A, px, out);
   out.push(`<rect width="${w}" height="${h}" fill="#24211d"/>`);
   // Rooms: one rect per run of cells in a row with the same room, so a big map stays a small file.
   const ids = [...rooms.keys()], hue = new Map(ids.map((id, i) => [id, HUES[i % HUES.length]]));
@@ -35,11 +37,24 @@ export function planSvg(plan, { px = 12, analysis, title } = {}) {
     if (sg.kind === "door") out.push(line(sg, "#e0a040", 4));
     else if (sg.kind === "secret") out.push(line(sg, "#c070e0", 4, "4 3"));
     else if (sg.move && sg.sight) out.push(line(sg, "#15130f", 3));
+    else if (sg.kind === "terrain") out.push(line(sg, "#8a8170", 2, "3 2")); // hedge, tent, rubble line
     else if (sg.move) out.push(line(sg, "#5a8fb0", 2));          // window: stops feet, not eyes
     else if (sg.sight) out.push(line(sg, "#6b6458", 2, "2 3"));   // stops eyes, not feet
     else out.push(line(sg, "#8a8170", 1.5, "1 3"));               // low wall, terrain
   }
   for (const l of plan.lights) out.push(`<circle cx="${(l.x * px).toFixed(1)}" cy="${(l.y * px).toFixed(1)}" r="${Math.max(2, px / 4)}" fill="#ffd27a" stroke="#6b4a10"/>`);
+  out.push(`</svg>`);
+  return out.join("");
+}
+
+const segLine = (sg, px, stroke, width, dash = "") => `<line x1="${(sg.a[0] * px).toFixed(1)}" y1="${(sg.a[1] * px).toFixed(1)}" x2="${(sg.b[0] * px).toFixed(1)}" y2="${(sg.b[1] * px).toFixed(1)}" stroke="${stroke}" stroke-width="${width}" stroke-linecap="round"${dash ? ` stroke-dasharray="${dash}"` : ""}/>`;
+
+/** Walls and doors only, each drawn twice (a dark casing, then a light line) so they read over any picture. */
+function overlayLines(plan, A, px, out) {
+  const style = (sg) => sg.kind === "door" ? ["#ffb340", 3] : sg.kind === "secret" ? ["#e08cff", 3, "4 3"] : sg.move && sg.sight ? ["#ffffff", 2.2]
+    : sg.kind === "terrain" ? ["#d8f0a0", 1.6, "3 2"] : sg.move ? ["#8fd0ff", 1.6] : ["#e0d8c8", 1.4, "2 3"];
+  for (const sg of A.segs) { const [, w2] = style(sg); out.push(segLine(sg, px, "#000", w2 + 2.4)); }
+  for (const sg of A.segs) { const [c, w2, d] = style(sg); out.push(segLine(sg, px, c, w2, d)); }
   out.push(`</svg>`);
   return out.join("");
 }

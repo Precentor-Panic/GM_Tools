@@ -1,7 +1,11 @@
 // Profile maps from their walls (map-plan/profile.mjs).
-//   bin/map-profile <file.dd2vtt>... [--svg <dir>]            print one profile per map; --svg writes a preview each
-//   bin/map-profile --scenes <dir> [--out <file.jsonl>]        every walled scene in <dir>/**/scenes.json (Foundry scene
-//                                                              docs), one JSON line each: { id, pack, name, profile }
+//   bin/map-profile <file.dd2vtt>[=<layout.json>]... [--svg <dir>] [--out f.jsonl] [--look-job f.jsonl]
+//                                                              one line per map: { id, name, profile, theme }; a Dungeondraft
+//                                                              layout spec after "=" adds the map's objects as items
+//   bin/map-profile --scenes <dir> [--out <file.jsonl>] [--look-job <file.jsonl>]   every walled scene in
+//                                                              <dir>/**/scenes.json (Foundry scene docs), one line each:
+//                                                              { id, pack, name, profile, theme }
+//   --look-job writes what map-plan/tools/look.py needs to look at each map's picture (scenes with a local image only)
 //   bin/map-profile --bench <profiles.jsonl> [--k 5] [--shape-only]   the closest maps to each benchmark brief, narrowed
 //                                                              by the brief's theme words unless --shape-only
 // Profiles of published maps are derived from someone else's product: write them under stagecraft/ (ignored) or
@@ -13,10 +17,13 @@ import { fromDd2vtt, fromFoundryScene } from "../map-plan/readers.mjs";
 import { profile, analyse } from "../map-plan/profile.mjs";
 import { nearest } from "../map-plan/similar.mjs";
 import { planSvg } from "../map-plan/svg.mjs";
+import { themeFromText } from "../map-plan/theme.mjs";
+import { lookJob } from "../map-plan/look.mjs";
 
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args.splice(i, 2)[1] : d; };
 const svgDir = opt("--svg"), scenesDir = opt("--scenes"), out = opt("--out"), bench = opt("--bench"), k = Number(opt("--k", 5));
+const jobOut = opt("--look-job");
 const REPO = resolve(dirname(new URL(import.meta.url).pathname), "..");
 
 function assertUntracked(path) {
@@ -34,9 +41,12 @@ function* sceneFiles(dir) {
   }
 }
 
+const writeLines = (path, lines) => { mkdirSync(dirname(resolve(path)), { recursive: true }); writeFileSync(path, lines.join("\n") + (lines.length ? "\n" : "")); };
+
 if (scenesDir) {
   if (out) assertUntracked(out);
-  const lines = [];
+  if (jobOut) assertUntracked(jobOut);
+  const lines = [], jobs = [];
   let n = 0, skipped = 0;
   const t0 = Date.now();
   for (const f of sceneFiles(scenesDir)) {
@@ -45,15 +55,21 @@ if (scenesDir) {
     for (const s of Array.isArray(d) ? d : Object.values(d)) {
       if (!s?.walls?.length) continue;
       try {
-        const plan = fromFoundryScene(s, { pack });
-        lines.push(JSON.stringify({ id: `${pack}/${s._id}`, pack, name: s.name, profile: profile(plan) }));
+        const plan = fromFoundryScene(s, { pack }), id = `${pack}/${s._id}`;
+        lines.push(JSON.stringify({ id, pack, name: s.name, profile: profile(plan), theme: themeFromText(`${pack} ${s.name}`), src: { scenes: resolve(f), _id: s._id } }));
         n++;
+        // The scene's own copy of its picture, if this machine holds one (wall research layout: <root>/extra/<pack>/...).
+        const img = [s.localImg && resolve(dirname(resolve(scenesDir)), s.localImg)].find((p) => p && existsSync(p));
+        if (jobOut && img) {
+          const g = typeof s.grid === "object" ? s.grid.size : s.grid;
+          jobs.push(JSON.stringify(lookJob(plan, analyse(plan), { id, img, gridPx: g, sceneW: s.width, sceneH: s.height })));
+        }
       } catch (e) { skipped++; if (skipped <= 5) console.error(`skip ${pack}/${s._id}: ${e.message}`); }
     }
   }
-  if (out) { mkdirSync(dirname(resolve(out)), { recursive: true }); writeFileSync(out, lines.join("\n") + "\n"); }
-  else console.log(lines.join("\n"));
-  console.error(`profiled ${n} scene(s), skipped ${skipped}, ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  if (out) writeLines(out, lines); else console.log(lines.join("\n"));
+  if (jobOut) writeLines(jobOut, jobs);
+  console.error(`profiled ${n} scene(s), skipped ${skipped}, ${jobs.length} with a local picture, ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 } else if (bench) {
   const rows = readFileSync(bench, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
   const { briefs } = JSON.parse(readFileSync(join(REPO, "map-plan/bench/briefs.json"), "utf8"));
@@ -72,10 +88,23 @@ if (scenesDir) {
 } else {
   if (!args.length) { console.error("usage: bin/map-profile <file.dd2vtt>... [--svg <dir>] | --scenes <dir> [--out f.jsonl] | --bench <f.jsonl>"); process.exit(2); }
   if (svgDir && !existsSync(svgDir)) mkdirSync(svgDir, { recursive: true });
-  for (const f of args) {
-    const plan = fromDd2vtt(JSON.parse(readFileSync(f, "utf8")), { name: basename(f), ref: f });
-    const A = analyse(plan);
-    console.log(JSON.stringify({ id: basename(f).replace(/\.dd2vtt$/, ""), profile: profile(plan) }));
-    if (svgDir) writeFileSync(join(svgDir, basename(f).replace(/\.dd2vtt$/, ".svg")), planSvg(plan, { analysis: A, title: basename(f) }));
+  const lines = [], jobs = [];
+  for (const arg of args) {
+    const [f, layout] = arg.split("=");
+    const d = JSON.parse(readFileSync(f, "utf8"));
+    let plan = fromDd2vtt(d, { name: basename(f), ref: f });
+    let name = basename(f).replace(/\.dd2vtt$/, "");
+    if (layout) {
+      // The layout spec's objects, in squares on the same grid: what was placed in each room.
+      const spec = JSON.parse(readFileSync(layout, "utf8"));
+      name = spec.name ?? name;
+      plan = { ...plan, items: (spec.objects ?? []).filter((o) => Number.isFinite(o.x)).map((o) => ({ what: o.asset, x: o.x, y: o.y, ...(o.size ? { size: o.size } : {}) })) };
+    }
+    const A = analyse(plan), id = basename(f).replace(/\.dd2vtt$/, "");
+    lines.push(JSON.stringify({ id, name, profile: profile(plan), theme: themeFromText(name), src: { dd2vtt: resolve(f), ...(layout ? { layout: resolve(layout) } : {}) } }));
+    if (jobOut) jobs.push(JSON.stringify(lookJob(plan, A, { id, dd2vtt: resolve(f), gridPx: d.resolution.pixels_per_grid, sceneW: d.resolution.map_size.x * d.resolution.pixels_per_grid, sceneH: d.resolution.map_size.y * d.resolution.pixels_per_grid })));
+    if (svgDir) writeFileSync(join(svgDir, `${id}.svg`), planSvg(plan, { analysis: A, title: basename(f) }));
   }
+  if (out) writeLines(out, lines); else console.log(lines.join("\n"));
+  if (jobOut) writeLines(jobOut, jobs);
 }

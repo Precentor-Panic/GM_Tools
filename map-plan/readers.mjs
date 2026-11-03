@@ -22,9 +22,12 @@ export function fromDd2vtt(d, { name, ref } = {}) {
 }
 
 // Foundry wall flags changed in v10: move 0/1 became 0/20, `sense` became `sight` (and `light`, `sound`).
-// Limited walls (old sense 2, new sight 10) block sight only on the second wall crossed; we count them as not blocking.
+// Limited walls (old sense 2, new sight 10) block sight only on the second wall crossed: Foundry's terrain walls
+// (hedges, tents, rubble). We count them as not blocking, kind "terrain". Proximity walls (sight 30/40) are windows.
 const blocksMove = (w) => (w.move ?? 1) > 0;
-const blocksSight = (w) => ("sight" in w ? w.sight : w.sense ?? 1) === ("sight" in w ? 20 : 1);
+const sightOf = (w) => ("sight" in w ? w.sight : { 0: 0, 1: 20, 2: 10 }[w.sense ?? 1] ?? 20);
+const blocksSight = (w) => sightOf(w) === 20;
+const moveKind = (w) => (blocksSight(w) ? "wall" : sightOf(w) === 10 ? "terrain" : "window");
 const DOOR_KIND = { 1: "door", 2: "secret" };
 
 export function fromFoundryScene(s, { ref, pack } = {}) {
@@ -40,7 +43,7 @@ export function fromFoundryScene(s, { ref, pack } = {}) {
     const [x1, y1, x2, y2] = w.c || [];
     if (![x1, y1, x2, y2].every(Number.isFinite) || (x1 === x2 && y1 === y2)) continue;
     const door = DOOR_KIND[w.door] || null;
-    walls.push({ points: [sq(x1, y1), sq(x2, y2)], kind: door || (blocksMove(w) ? (blocksSight(w) ? "wall" : "window") : (blocksSight(w) ? "invisible" : "low")),
+    walls.push({ points: [sq(x1, y1), sq(x2, y2)], kind: door || (blocksMove(w) ? moveKind(w) : (blocksSight(w) ? "invisible" : "low")),
       move: blocksMove(w), sight: door ? true : blocksSight(w), ...(door ? { closed: (w.ds ?? 0) !== 1 } : {}) });
   }
   const lights = (s.lights || []).filter((l) => Number.isFinite(l.x)).map((l) => {

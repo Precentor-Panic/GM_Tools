@@ -1,0 +1,124 @@
+<!doctype html>
+<!-- The local shelf page: bin/map-shelf html fills in DATA and writes the page beside its thumbnails and wall
+     drawings under stagecraft/map-shelf/ (ignored). Open it from disk; it never needs a server and never leaves this
+     machine, which is why it may show published maps' pictures. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Map shelf</title>
+<style>
+:root { --bg: #f4f1ea; --panel: #fffdf8; --ink: #23201b; --muted: #6d665a; --line: #d8d0c0; --accent: #8a4b1f; --chip: #ece5d6; --chip-on: #23201b; --chip-on-ink: #fffdf8; --good: #3f6b3a; color-scheme: light; }
+@media (prefers-color-scheme: dark) { :root { --bg: #17191c; --panel: #202328; --ink: #e9e4da; --muted: #9a9488; --line: #33373e; --accent: #e0a060; --chip: #2a2e34; --chip-on: #e9e4da; --chip-on-ink: #17191c; --good: #8fbf86; color-scheme: dark; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line); padding: 12px 16px; display: grid; gap: 10px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+h1 { font: 600 20px/1.2 "Iowan Old Style", Georgia, serif; margin: 0; }
+.count { color: var(--muted); font-variant-numeric: tabular-nums; }
+input[type=search], select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; min-width: 0; }
+input[type=search] { flex: 1 1 260px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chips b { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-right: 4px; align-self: center; }
+.chip { font: inherit; font-size: 12px; border: 0; background: var(--chip); color: var(--ink); border-radius: 999px; padding: 3px 9px; cursor: pointer; }
+.chip[aria-pressed=true] { background: var(--chip-on); color: var(--chip-on-ink); }
+label.tog { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+main { padding: 16px; display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr)); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: grid; grid-template-rows: auto 1fr; min-width: 0; }
+.pic { position: relative; background: var(--chip); height: 220px; }
+.pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+.pic .walls[hidden] { display: none; }
+.pic .none { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 12px; }
+.body { padding: 10px 12px 12px; display: grid; gap: 6px; min-width: 0; }
+.name { font-weight: 600; }
+.pack { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+dl { margin: 0; display: grid; grid-template-columns: 64px 1fr; gap: 2px 8px; font-size: 12.5px; }
+dt { color: var(--muted); }
+dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.fit { font-size: 12px; color: var(--good); font-variant-numeric: tabular-nums; }
+details { font-size: 12px; color: var(--muted); }
+details li { overflow-wrap: anywhere; }
+.empty { padding: 40px 16px; color: var(--muted); }
+@media (max-width: 700px) {
+  header { position: static; }
+  .chips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+  .chip { flex: none; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="row"><h1>Map shelf</h1><span class="count" id="count"></span></div>
+  <div class="row">
+    <input type="search" id="q" placeholder="Search names, theme, contents">
+    <select id="brief"><option value="">Rank by brief: none</option></select>
+    <select id="size"><option value="">Any size</option><option value="s">Small (under 800 sq)</option><option value="m">Medium (800–2,000)</option><option value="l">Large (over 2,000)</option></select>
+    <select id="inout"><option value="">Inside or out</option><option value="in">Mostly indoors</option><option value="mixed">Part indoors</option><option value="out">Open ground</option></select>
+    <label class="tog"><input type="checkbox" id="walls"> walls over the picture</label>
+  </div>
+  <div class="chips" id="places"><b>Place</b></div>
+  <div class="chips" id="terrains"><b>Terrain</b></div>
+  <div class="chips" id="contents"><b>Contents</b></div>
+</header>
+<main id="grid"></main>
+<script>
+const DATA = /*DATA*/null;
+const $ = (id) => document.getElementById(id);
+const on = { place: new Set(), terrain: new Set(), contents: new Set() };
+function chips(host, facet, values) {
+  for (const v of values) {
+    const b = document.createElement("button"); b.className = "chip"; b.textContent = v; b.setAttribute("aria-pressed", "false");
+    b.onclick = () => { on[facet].has(v) ? on[facet].delete(v) : on[facet].add(v); b.setAttribute("aria-pressed", on[facet].has(v)); render(); };
+    host.append(b);
+  }
+}
+const count = (key) => { const n = new Map(); for (const l of DATA.layouts) for (const v of l.tags[key]) n.set(v, (n.get(v) ?? 0) + 1); return [...n].sort((a, b) => b[1] - a[1]).map(([v]) => v); };
+chips($("places"), "place", count("place")); chips($("terrains"), "terrain", count("terrain")); chips($("contents"), "contents", count("contents"));
+for (const b of DATA.briefs) { const o = document.createElement("option"); o.value = b.id; o.textContent = `Rank by brief: ${b.title}`; $("brief").append(o); }
+for (const id of ["q", "brief", "size", "inout", "walls"]) $(id).addEventListener("input", render);
+
+function card(l, fit) {
+  const c = document.createElement("article"); c.className = "card";
+  const pic = document.createElement("div"); pic.className = "pic";
+  if (l.thumb || l.walls) {
+    const base = document.createElement("img"); base.loading = "lazy"; base.alt = ""; base.src = l.thumb ?? l.walls;
+    pic.append(base);
+    // Picture and drawing cover the same scene rectangle, so with the same fit they line up.
+    if (l.thumb && l.lines) { const w = document.createElement("img"); w.className = "walls"; w.loading = "lazy"; w.alt = ""; w.src = l.lines; w.hidden = !$("walls").checked; pic.append(w); }
+  } else pic.innerHTML = '<span class="none">no picture on this machine</span>';
+  const body = document.createElement("div"); body.className = "body";
+  const add = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; e.textContent = text; body.append(e); return e; };
+  add("div", "name", l.name); add("div", "pack", l.pack);
+  if (fit) add("div", "fit", `fit ${fit.fit.toFixed(2)} · ${fit.why}`);
+  const dl = document.createElement("dl");
+  for (const [k, v] of Object.entries(l.card)) { const dt = document.createElement("dt"); dt.textContent = k; const dd = document.createElement("dd"); dd.textContent = v; dl.append(dt, dd); }
+  body.append(dl);
+  if (l.variants.length) {
+    const d = document.createElement("details"); const s = document.createElement("summary"); s.textContent = `${l.variants.length} other variant${l.variants.length === 1 ? "" : "s"}`;
+    const ul = document.createElement("ul"); for (const v of l.variants) { const li = document.createElement("li"); li.textContent = v; ul.append(li); }
+    d.append(s, ul); body.append(d);
+  }
+  c.append(pic, body);
+  return c;
+}
+
+function render() {
+  const q = $("q").value.trim().toLowerCase(), brief = $("brief").value, size = $("size").value, inout = $("inout").value;
+  let list = DATA.layouts.filter((l) => {
+    if (q && !l.search.includes(q)) return false;
+    for (const f of ["place", "terrain", "contents"]) for (const v of on[f]) if (!l.tags[f].includes(v)) return false;
+    if (size && l.sizeBand !== size) return false;
+    if (inout && l.inout !== inout) return false;
+    return true;
+  });
+  const fits = brief ? DATA.fits[brief] : null;
+  if (fits) list = list.filter((l) => fits[l.key]).sort((a, b) => fits[b.key].fit - fits[a.key].fit);
+  $("count").textContent = `${list.length} of ${DATA.layouts.length} layouts · ${DATA.maps} maps`;
+  const grid = $("grid"); grid.replaceChildren();
+  if (!list.length) { grid.innerHTML = '<div class="empty">Nothing matches. Clear a filter.</div>'; return; }
+  for (const l of list.slice(0, 240)) grid.append(card(l, fits?.[l.key]));
+}
+render();
+</script>
+</body>
+</html>

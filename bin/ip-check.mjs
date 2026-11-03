@@ -17,14 +17,15 @@ const BINARY = /\.(png|jpe?g|webp|gif|avif|bmp|tiff?|webm|mp4|m4a|ogg|mp3|pdf|zi
 const GATED = /https?:\/\/[a-z0-9.-]*(dropbox|dropboxusercontent|patreon|patreonusercontent|forgottenadventures|czepeku|cyclopean|dndungeon|gumroad|itch\.io)[a-z0-9.-]*/i;
 // Data derived from a licensed product even when it is text, recognised by its path. A file named for a map vendor is
 // notes on their maps (cuts, walls, profiles, file lists); those live under stagecraft/ (ignored).
-const DERIVED = /(czepeku|forgotten.?adventures|dndungeon|cyclopean|map-shelf|scenes\.json$|\/packs\/(index|catalogue|thumbs)\/)/i;
+const DERIVED = /(czepeku|forgotten.?adventures|dndungeon|cyclopean|map-shelf\/|scenes\.json$|\/packs\/(index|catalogue|thumbs)\/)/i;
 const BLOB = /[A-Za-z0-9+/=]{4000,}/;
 // Keys and private keys. The match is never printed.
 const SECRET = /(sk-ant-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|xox[abp]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/;
 // Files that hold these patterns on purpose, to describe or enforce this rule.
 const SELF = new Set(["bin/ip-check.mjs"]);
 // Paths that must stay ignored whether or not they exist yet.
-export const MUST_IGNORE = ["stagecraft/czepeku-catalogue.json", "stagecraft/map-shelf/profiles.jsonl", "stagecraft/map-segment-specs/x.json", ".env"];
+export const MUST_IGNORE = ["stagecraft/czepeku-catalogue.json", "stagecraft/map-shelf/profiles.jsonl", "stagecraft/map-shelf/look.jsonl",
+  "stagecraft/map-shelf/thumbs/x.jpg", "stagecraft/map-shelf/shelf.html", "stagecraft/map-segment-specs/x.json", ".env"];
 
 /** The problems with one file, from its path and (when it is text) its contents. */
 export function fileProblems(path, text) {

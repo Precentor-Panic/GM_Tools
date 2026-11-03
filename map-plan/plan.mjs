@@ -10,8 +10,8 @@
 // play check reads. It is derived data and never edited by hand.
 //
 // SCHEMA HISTORY
-//   plan v1 (2026-11-03): areas, walls, lights, marks, art, brief, source.
-//   profile v1 (2026-11-03): see profile.mjs.
+//   plan v1 (2026-11-03): areas, walls, lights, marks, art, brief, source. Later the same day, additive: items.
+//   profile v1 (2026-11-03), v2 (2026-11-03): see profile.mjs.
 import { z } from "zod";
 
 export const PLAN_SCHEMA_VERSION = 1;
@@ -50,6 +50,10 @@ export const Light = z.object({ x: z.number(), y: z.number(), bright: z.number()
 export const MARK_KINDS = ["entrance", "exit", "landmark", "interactable", "objective", "spot"];
 export const Mark = z.object({ kind: z.enum(MARK_KINDS), x: z.number(), y: z.number(), label: z.string().optional(), to: z.string().optional() });
 
+// Things standing or lying on the map: furniture, props, dressing. `what` is a plain name or an asset name; `kinds`
+// are content kinds from vocab.json when the name doesn't say (theme.mjs, kindsOfName).
+export const Item = z.object({ what: z.string().min(1), x: z.number(), y: z.number(), size: z.number().positive().optional(), kinds: z.array(z.string()).optional() });
+
 export const Art = z.object({
   src: z.string().min(1),
   role: z.enum(["background", "overlay"]).default("background"),
@@ -66,6 +70,7 @@ export const Plan = z.object({
   walls: z.array(Wall).default([]),
   lights: z.array(Light).default([]),
   marks: z.array(Mark).default([]),
+  items: z.array(Item).default([]),
   art: z.array(Art).default([]),
   brief: z.record(z.string(), z.unknown()).optional(),
   // Where the plan came from, for the shelf: { kind: "dd2vtt" | "foundry-scene" | "maker", ref, pack? }.

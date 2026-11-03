@@ -8,6 +8,9 @@ import { fromDd2vtt, fromFoundryScene } from "../map-plan/readers.mjs";
 import { profile, analyse } from "../map-plan/profile.mjs";
 import { distance, briefScore, nearest, WANT_FEATURES } from "../map-plan/similar.mjs";
 import { planSvg } from "../map-plan/svg.mjs";
+import { themeFromText, kindsOfName, contentsFromItems, CONTENT_KINDS, PLACES, TERRAINS } from "../map-plan/theme.mjs";
+import { groupLayouts, lookup, character } from "../map-plan/shelf.mjs";
+import { lookJob, lookTags } from "../map-plan/look.mjs";
 
 const box = (x, y, w, h) => ({ points: [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]] });
 const door = (a, b) => ({ points: [a, b], kind: "door", closed: true });
@@ -91,11 +94,13 @@ test("readers: Foundry scene walls in both eras, padding offset, doors and windo
     { c: [300, 200, 300, 1000], move: 1, sense: 1, door: 1, ds: 0 },   // v9 closed door down the left
     { c: [1300, 200, 1300, 1000], move: 20, sight: 0, door: 0 },       // v10: stops feet, not eyes
     { c: [300, 1000, 1300, 1000], move: 0, sight: 20, door: 0 },       // v10: stops eyes only
+    { c: [400, 300, 600, 300], move: 20, sight: 10, door: 0 },         // v10 limited: a hedge
+    { c: [400, 500, 600, 500], move: 1, sense: 2, door: 0 },           // v9 limited
   ], lights: [{ x: 800, y: 600, config: { dim: 30, bright: 15 } }] };
   const p = fromFoundryScene(scene, { pack: "synthetic" });
   assert.deepEqual([p.width, p.height], [10, 8]);
   assert.deepEqual(p.walls[0].points, [[0, 0], [10, 0]]);
-  assert.deepEqual(p.walls.map((w) => w.kind), ["wall", "door", "window", "invisible"]);
+  assert.deepEqual(p.walls.map((w) => w.kind), ["wall", "door", "window", "invisible", "terrain", "terrain"]);
   assert.equal(p.walls[1].closed, true);
   assert.deepEqual([p.walls[2].move, p.walls[2].sight], [true, false]);
   assert.deepEqual(p.lights[0], { x: 5, y: 4, dim: 30, bright: 15 });
@@ -139,4 +144,75 @@ test("svg: a preview with rooms, walls and the door", () => {
   assert.match(svg, /#e0a040/);       // a door
   assert.match(svg, /hsl\(/);         // a tinted room
   assert.match(svg, /two &lt;rooms&gt;/);
+});
+
+test("theme: place, terrain, mood and setting from names, camelCase and plurals included", () => {
+  const t = themeFromText("Riverside Inn - Upstairs (WinterNight)");
+  assert.deepEqual(t.place, ["tavern"]);
+  assert.deepEqual(t.terrain, ["river", "snow"]);
+  assert.deepEqual(t.mood, ["night", "winter"]);
+  assert.equal(t.setting, "interior");
+  assert.deepEqual(themeFromText("Goblin Bridge, Night").place, ["bridge"]);
+  assert.equal(themeFromText("The Yard and the Hall").setting, null); // both: say neither
+});
+
+test("contents: kinds from asset and object names", () => {
+  assert.deepEqual(kindsOfName("res://packs/x/Barrel_Wood_Dark_A_1x1.webp"), ["storage"]);
+  assert.deepEqual(kindsOfName("Gore/Corpses/Humanoid/Burnt_Body_A_01_1x2.webp"), ["remains"]);
+  assert.deepEqual(kindsOfName("tables"), ["seating"]);
+  assert.deepEqual(kindsOfName("Wall_Torch_01_A_Lit_1x1"), []);
+  assert.deepEqual(contentsFromItems([{ what: "Crate_A" }, { what: "barrel" }, { what: "altar", kinds: ["altar"] }]),
+    { count: 3, kinds: { storage: 2, altar: 1 } });
+});
+
+test("profile v2: room bands, see-through and terrain walls, lit rooms, items", () => {
+  const base = twoRooms();
+  const p = profile(parsePlan({ ...base, walls: [...base.walls,
+    { points: [[12, 8], [16, 8]], kind: "window", move: true, sight: false },
+    { points: [[3, 8], [6, 8]], kind: "terrain", move: true, sight: false }],
+    lights: [{ x: 4, y: 4 }], items: [{ what: "Table_Wood", x: 4, y: 4 }, { what: "chair", x: 5, y: 4 }] }));
+  assert.equal(p.schemaVersion, 2);
+  assert.equal(p.rooms.bands.medium, 2); // two 8 x 8 rooms
+  assert.deepEqual([p.features.windows, p.features.low, p.features.litRooms], [4, 3, 0.5]);
+  assert.deepEqual(p.items.kinds, { seating: 2 });
+  assert.ok(p.items.density > 1 && p.items.density < 3);
+});
+
+test("shelf: variants of one layout group; a brief scores shape, theme and contents and says what matched", () => {
+  const p = profile(twoRooms());
+  const other = profile(parsePlan({ width: 20, height: 12, walls: [box(1, 1, 18, 10)] }));
+  const rows = [
+    { id: "a/day", pack: "a", name: "Riverside Inn Day", profile: p, theme: themeFromText("Riverside Inn Day") },
+    { id: "a/night", pack: "a", name: "Riverside Inn Night", profile: p, theme: themeFromText("Riverside Inn Night") },
+    { id: "a/hall", pack: "a", name: "Great Hall", profile: other, theme: themeFromText("Great Hall") },
+    { id: "b/inn", pack: "b", name: "Inn", profile: p, theme: themeFromText("Inn"), look: { place: [], terrain: [], contents: { bar: 1, seating: 2 } } },
+  ];
+  const groups = groupLayouts(rows);
+  assert.equal(groups.length, 3);
+  assert.equal(rows[0].layout, rows[1].layout);
+  const brief = { want: { buildingRooms: [2, 4] }, theme: { place: ["tavern"] }, contents: ["bar", "seating", "hearth"] };
+  const hits = lookup(brief, rows, 3);
+  assert.equal(hits[0].r.id, "b/inn");
+  assert.deepEqual(hits[0].matched, { theme: ["tavern"], contents: ["bar", "seating"] });
+  assert.equal(hits[1].variants.length, 1); // day and night: one entry
+  assert.ok(Math.abs(hits[1].parts.contents) < 1e-9 && hits[1].parts.theme === 1 && hits[1].parts.shape === 1);
+  const c = character(rows[3]);
+  assert.match(c.size, /2 rooms \(2 medium\)/);
+  assert.match(c.contents, /seating, bar/);
+});
+
+test("look: jobs mark rooms and outside per square; tags keep only what stands out across the shelf", () => {
+  const plan = twoRooms(), A = analyse(plan);
+  const job = lookJob(plan, A, { id: "x", img: "/nowhere.jpg", gridPx: 100, sceneW: 2000, sceneH: 1200 });
+  assert.equal(job.cells.length, 20 * 12);
+  assert.equal(job.cells[0], -1);                      // corner: outside
+  assert.equal(job.rooms.length, 2);
+  assert.ok(job.rooms.includes(job.cells[5 * 20 + 5])); // middle of the left room
+  const base = CONTENT_KINDS.map(() => 0.2);
+  const looks = [0, 1, 2, 3].map((i) => ({ id: `m${i}`, emb: [1, 0], place: { ...Object.fromEntries(PLACES.map((p) => [p, 0.2])), tavern: i === 0 ? 0.3 : 0.2 },
+    terrain: Object.fromEntries(TERRAINS.map((t) => [t, 0.2])), rooms: { 1: base.map((v, j) => (i === 0 && CONTENT_KINDS[j] === "bar" ? 0.3 : v + 0.001 * i)) }, out: null }));
+  const tags = lookTags(looks);
+  assert.deepEqual(tags.get("m0").place, ["tavern"]);
+  assert.deepEqual(tags.get("m0").rooms["1"].slice(0, 1), ["bar"]);
+  assert.deepEqual(tags.get("m0").contents.bar, 1);
 });

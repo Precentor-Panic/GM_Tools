@@ -5,11 +5,12 @@
 // door shut, are regions. A region that touches the map's edge is the outside (open ground, or the void round a
 // dungeon); every other region big enough to stand in is a room. Doors join rooms into a graph.
 //
-// PROFILE v1 (2026-11-03) fields, all in squares unless named otherwise:
+// PROFILE v2 (2026-11-03; v1 the same day without bands, features and items) fields, in squares unless named otherwise:
 //   size {w, h, area, aspect}         aspect = long side / short side
 //   enclosure                         share of the map's area (less its walls) inside rooms (0 open country .. 1 a building cropped to
 //                                     its walls; a dungeon in rock sits between, the rest being rock)
-//   rooms {count, median, max, small, large}   small < 9 sq, large > 100 sq (counts)
+//   rooms {count, median, max, small, large, bands}   small < 9 sq, large > 100 sq (counts); bands counts rooms by size
+//                                     the way a GM says it: closet < 9, small < 36 (6x6), medium < 100, large < 300, hall
 //   building {count, rooms, area}     rooms joined by doors, outside not counted: how many with 2+ rooms; the largest's
 //                                     rooms and area
 //   graph {links, loops, deadEnds, isolated, doorsOut}   links = doors between rooms or to the outside
@@ -17,10 +18,17 @@
 //   openness {median, p90, longest}   share of floor seen within 12 sq (60 ft), sampled; longest sightline seen
 //   space {narrowShare, widest}       share of floor within 1.25 sq of a wall; radius of the biggest open space
 //   lights {count, density}           per 100 sq
+//   features {windows, low, litRooms} length of walls that stop feet but not eyes (windows, fences, bars); length of low
+//                                     and terrain walls (counters, hedges, tents, rubble lines); share of rooms with a light
+//                                     inside
+//   items {count, density, kinds}     things placed on the map (plan.items), per 100 sq of floor, by content kind
 //   footprint {n, rooms[], walls[]}   n x n picture of where rooms and walls are, 0..1 per cell, for shape matching
 import { segments } from "./plan.mjs";
+import { contentsFromItems } from "./theme.mjs";
 
-export const PROFILE_SCHEMA_VERSION = 1;
+export const PROFILE_SCHEMA_VERSION = 2;
+export const ROOM_BANDS = [["closet", 9], ["small", 36], ["medium", 100], ["large", 300], ["hall", Infinity]];
+const band = (sq) => ROOM_BANDS.find(([, max]) => sq < max)[0];
 const SIGHT_RADIUS = 12;
 const FOOT = 12;
 
@@ -223,11 +231,24 @@ export function profile(plan, opts = {}) {
   }
   const maxW = Math.max(1e-9, ...fw.map((v, k) => v / (fc[k] || 1)));
 
+  // Features: see-through walls, low and terrain walls, and which rooms have a light in them.
+  let windows = 0, low = 0;
+  for (const s of segs) {
+    const len = Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]);
+    if (s.kind === "window") windows += len;
+    else if (s.kind === "low" || s.kind === "terrain") low += len;
+  }
+  const lit = new Set(plan.lights.map((l) => lab[Math.min(H - 1, Math.max(0, Math.floor(l.y * R))) * W + Math.min(W - 1, Math.max(0, Math.floor(l.x * R)))]).filter((id) => rooms.has(id)));
+  const bands = Object.fromEntries(ROOM_BANDS.map(([b]) => [b, 0]));
+  for (const sq of roomSq) bands[band(sq)]++;
+  const items = contentsFromItems(plan.items ?? []);
+  const floorSq = openCells / (R * R);
+
   return {
     schemaVersion: PROFILE_SCHEMA_VERSION,
     size: { w: r2(plan.width), h: r2(plan.height), area: Math.round(area), aspect: r2(Math.max(plan.width, plan.height) / Math.min(plan.width, plan.height)) },
     enclosure: r2(Math.min(1, inRooms / Math.max(1e-9, area - wallCells / (R * R)))),
-    rooms: { count: rooms.size, median: r2(median(roomSq)), max: r2(Math.max(0, ...roomSq)), small: roomSq.filter((v) => v < 9).length, large: roomSq.filter((v) => v > 100).length },
+    rooms: { count: rooms.size, median: r2(median(roomSq)), max: r2(Math.max(0, ...roomSq)), small: roomSq.filter((v) => v < 9).length, large: roomSq.filter((v) => v > 100).length, bands },
     building: { count: buildings.filter((b) => b.rooms >= 2).length, rooms: buildings[0]?.rooms ?? 0, area: Math.round(buildings[0]?.area ?? 0) },
     graph: { links: links.length, loops: Math.max(0, links.length - nodes.size + components), deadEnds: roomDeg.filter((d) => d === 1).length,
       isolated: roomDeg.filter((d) => d === 0).length, doorsOut: links.filter(([a, b]) => a === 0 || b === 0).length },
@@ -236,6 +257,8 @@ export function profile(plan, opts = {}) {
     openness: { median: r2(median(seen)), p90: r2(quantile(seen, 0.9)), longest: Math.round(longest) },
     space: { narrowShare: r2(openCells ? narrow / openCells : 0), widest: r2(widest / R) },
     lights: { count: plan.lights.length, density: r2((100 * plan.lights.length) / area) },
+    features: { windows: Math.round(windows), low: Math.round(low), litRooms: r2(rooms.size ? lit.size / rooms.size : 0) },
+    items: { count: items.count, density: r2(floorSq ? (100 * items.count) / floorSq : 0), kinds: items.kinds },
     footprint: { n: FOOT, rooms: [...fr].map((v, k) => r2(v / (fc[k] || 1))), walls: [...fw].map((v, k) => r2(v / (fc[k] || 1) / maxW)) },
   };
 }

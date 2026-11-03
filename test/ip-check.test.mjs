@@ -32,6 +32,11 @@ test("keys and long blobs are refused; the key is never echoed", () => {
   assert.match(fileProblems("x.pem", "-----BEGIN " + "RSA PRIVATE KEY-----\n")[0], /key/);
 });
 
+test("the shelf's own tools pass; only its data folder is derived", () => {
+  assert.deepEqual(fileProblems("bin/map-shelf.mjs", "export {}"), []);
+  assert.match(fileProblems("stagecraft/map-shelf/look.jsonl", "{}")[0], /derived/);
+});
+
 test("ordinary code that mentions vendors or tokens passes", () => {
   assert.deepEqual(fileProblems("test/pull.test.mjs", 'packId: "cze' + 'peku-taverns.scenes", apiKey: "k-test"'), []);
 });

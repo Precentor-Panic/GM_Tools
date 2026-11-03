@@ -1,0 +1,5 @@
+#!/bin/sh
+# The map shelf: look up a brief, a map or a description. See bin/map-shelf.mjs.
+here=$(cd "$(dirname "$0")" && pwd)
+node=${NODE:-$(command -v node || echo "$HOME/.local/node/bin/node")}
+exec "$node" "$here/map-shelf.mjs" "$@"
