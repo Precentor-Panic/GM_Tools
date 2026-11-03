@@ -5,6 +5,9 @@
 //   bin/map-profile --scenes <dir> [--out <file.jsonl>] [--look-job <file.jsonl>]   every walled scene in
 //                                                              <dir>/**/scenes.json (Foundry scene docs), one line each:
 //                                                              { id, pack, name, profile, theme }
+//   bin/map-profile --modules <Foundry Data dir> --match <regex> --out <f.jsonl> [--look-job f.jsonl]   installed
+//                                                              modules' scene packs; their walls are cached beside --out
+//                                                              (<out dir>/modules/<id>.scenes.json) for drawings
 //   --look-job writes what map-plan/tools/look.py needs to look at each map's picture (scenes with a local image only)
 //   bin/map-profile --bench <profiles.jsonl> [--k 5] [--shape-only]   the closest maps to each benchmark brief, narrowed
 //                                                              by the brief's theme words unless --shape-only
@@ -19,11 +22,13 @@ import { nearest } from "../map-plan/similar.mjs";
 import { planSvg } from "../map-plan/svg.mjs";
 import { themeFromText } from "../map-plan/theme.mjs";
 import { lookJob } from "../map-plan/look.mjs";
+import { readModuleScenes } from "../wf-mcp-server/lib/module-scene-grid.mjs";
 
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args.splice(i, 2)[1] : d; };
 const svgDir = opt("--svg"), scenesDir = opt("--scenes"), out = opt("--out"), bench = opt("--bench"), k = Number(opt("--k", 5));
-const jobOut = opt("--look-job");
+const jobOut = opt("--look-job"), modulesDir = opt("--modules"), match = opt("--match");
+const writeLines = (path, lines) => { mkdirSync(dirname(resolve(path)), { recursive: true }); writeFileSync(path, lines.join("\n") + (lines.length ? "\n" : "")); };
 const REPO = resolve(dirname(new URL(import.meta.url).pathname), "..");
 
 function assertUntracked(path) {
@@ -41,9 +46,36 @@ function* sceneFiles(dir) {
   }
 }
 
-const writeLines = (path, lines) => { mkdirSync(dirname(resolve(path)), { recursive: true }); writeFileSync(path, lines.join("\n") + (lines.length ? "\n" : "")); };
-
-if (scenesDir) {
+if (modulesDir) {
+  if (!out) { console.error("--modules needs --out"); process.exit(2); }
+  assertUntracked(out); if (jobOut) assertUntracked(jobOut);
+  const re = new RegExp(match ?? ".", "i"), cache = join(dirname(resolve(out)), "modules");
+  mkdirSync(cache, { recursive: true });
+  const lines = [], jobs = [];
+  for (const mod of readdirSync(join(modulesDir, "modules")).filter((m) => re.test(m))) {
+    const { scenes, reason } = await readModuleScenes(modulesDir, mod);
+    // A module can ship the same scene in two packs (an old .db and its LevelDB successor): keep one per id.
+    const walled = [...new Map(scenes.filter((s) => s?.walls?.length).map((s) => [s._id, s])).values()];
+    if (!walled.length) { console.error(`${mod}: ${reason ?? "no walled scenes"}`); continue; }
+    const file = join(cache, `${mod}.scenes.json`);
+    writeFileSync(file, JSON.stringify(walled.map(({ _id, name, width, height, grid, padding, shiftX, shiftY, walls, lights, background, img }) =>
+      ({ _id, name, width, height, grid, padding, shiftX, shiftY, walls, lights, background, img }))));
+    for (const s of walled) {
+      try {
+        const plan = fromFoundryScene(s, { pack: mod }), id = `${mod}/${s._id}`;
+        lines.push(JSON.stringify({ id, pack: mod, name: s.name, profile: profile(plan), theme: themeFromText(`${mod} ${s.name}`), src: { scenes: file, _id: s._id } }));
+        const bg = s.background?.src ?? s.img, img = bg && join(modulesDir, decodeURIComponent(bg));
+        if (jobOut && img && existsSync(img)) {
+          const g = typeof s.grid === "object" ? s.grid.size : s.grid;
+          jobs.push(JSON.stringify(lookJob(plan, analyse(plan), { id, img, gridPx: g, sceneW: s.width, sceneH: s.height })));
+        }
+      } catch (e) { console.error(`skip ${mod}/${s._id}: ${e.message}`); }
+    }
+    console.error(`${mod}: ${walled.length} walled scene(s)`);
+  }
+  writeLines(out, lines); if (jobOut) writeLines(jobOut, jobs);
+  console.error(`profiled ${lines.length} scene(s), ${jobs.length} with a picture on disk`);
+} else if (scenesDir) {
   if (out) assertUntracked(out);
   if (jobOut) assertUntracked(jobOut);
   const lines = [], jobs = [];

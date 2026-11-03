@@ -35,7 +35,13 @@ function stats(vectors, n) {
 const top = (v, { mean, sd }, names, z, k) =>
   names.map((name, i) => [name, (v[i] - mean[i]) / sd[i]]).filter(([, s]) => s >= z).sort((a, b) => b[1] - a[1]).slice(0, k).map(([name]) => name);
 
-/** Tags for every map in `looks` (look.py output lines). Returns Map<id, { place[], terrain[], rooms{k: kinds[]}, out[], contents{kind: rooms} }>. */
+/**
+ * Tags for every map in `looks` (look.py output lines). Returns Map<id, { place[], terrain[], placeRank[], terrainRank[],
+ * rooms{k: kinds[]}, out[], contents{kind: rooms} }>. place/terrain hold only tags that stand out; the ranks hold the
+ * picture's top five guesses in order. Measured against the names of 1,157 published maps (numbers only), the name's
+ * own terrain is the picture's first guess about a third of the time and in its top three over half; places are
+ * weaker (top three about a third). So the picture's theme is a hint, and the shelf scores it by rank.
+ */
 export function lookTags(looks) {
   const roomS = stats(looks.flatMap((l) => Object.values(l.rooms)), CONTENT_KINDS.length);
   const outs = looks.map((l) => l.out).filter(Boolean);
@@ -50,7 +56,9 @@ export function lookTags(looks) {
     const contents = {};
     for (const kinds of [...Object.values(rooms), open]) for (const k of kinds) contents[k] = (contents[k] ?? 0) + 1;
     out.set(l.id, { place: top(vec(l.place, PLACES), placeS, PLACES, LOOK_MAP_Z, LOOK_MAP_TOP),
-      terrain: top(vec(l.terrain, TERRAINS), terrS, TERRAINS, LOOK_MAP_Z, LOOK_MAP_TOP), rooms, out: open, contents });
+      terrain: top(vec(l.terrain, TERRAINS), terrS, TERRAINS, LOOK_MAP_Z, LOOK_MAP_TOP),
+      placeRank: top(vec(l.place, PLACES), placeS, PLACES, -Infinity, 5), terrainRank: top(vec(l.terrain, TERRAINS), terrS, TERRAINS, -Infinity, 5),
+      rooms, out: open, contents });
   }
   return out;
 }

@@ -124,3 +124,24 @@ fort, overgrown · ship at a dock · forest or swamp clearing · tavern interior
 - Lookup: shape alone is ambiguous across 1,157 maps; theme words from pack and scene names plus shape works for most
   briefs. Open for S2: variants crowd the results (dedupe by layout), the market brief favours shops, and the sewer
   brief has only 3 named matches because the installed sewer pack isn't in the fetched set.
+
+**S1 review answers (2026-11-03):** the profile mostly fits; he picks by "room size, contents, theme, and that sort of
+shape factor". The lookups question wasn't clear ("provide a more clear example"). Wall-line drawings of Czepeku
+scenes may go on private review pages (lines only, never the art). Push: yes, "make double sure" nothing leaks. S2:
+after the changes in his notes.
+
+**S2 part 1 built 2026-11-03:**
+- The character speaks his four words. Room size in bands (closet < 9, small < 36, medium < 100, large < 300, hall).
+  Theme (place, terrain, mood, inside/out) from names via `map-plan/vocab.json` + `theme.mjs`. Contents from placed
+  objects (plan `items`; our layout specs) and from the picture.
+- Pictures are read on the laptop by `map-plan/tools/look.py` (CLIP ViT-B-32, CPU, optional venv): per-room content
+  phrases, map place/terrain, and an embedding for description search. About 50 minutes for the 1,157 pictures the
+  wall research saved. Output only under `stagecraft/map-shelf/`. Measured: on our maps the top three contents per
+  room held 19 of 50 known kinds (~3x chance; ViT-B-16 21, ViT-L-14 23 at 2.5x / 10x the time). Against Czepeku's own
+  names the picture's first terrain guess matches about a third of the time, top three over half; places about one
+  in ten, a third. So names count in full, picture guesses by rank (`RANK_CREDIT`), and theme gates the fit.
+- `shelf.mjs` groups variants into layouts (1,164 maps, about 590 layouts), writes a character card in words, and
+  answers a brief by shape, theme, contents and picture, with what matched. `bin/map-shelf` (brief, like, text, card,
+  html) and a local page (`map-plan/shelf-page.html` → `stagecraft/map-shelf/shelf.html`) with thumbnails and wall
+  lines over them, local only.
+- Still open: the installed packs (sewer and others) aren't on the shelf; the sewer brief stays weak until they are.

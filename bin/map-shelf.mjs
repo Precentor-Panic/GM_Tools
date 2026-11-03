@@ -29,12 +29,16 @@ const asJson = flag("--json"), noPicture = flag("--no-picture");
 const [cmd, ...rest] = args;
 
 const jsonl = (f) => (existsSync(f) ? readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
-const rows = [...jsonl(join(dir, "profiles.jsonl")), ...jsonl(join(dir, "ours.jsonl")).map((r) => ({ ...r, pack: r.pack ?? "ours" }))];
+// Published maps (the wall research's scene data, then installed modules not already in it), then ours.
+const published = jsonl(join(dir, "profiles.jsonl")), have = new Set(published.map((r) => r.id));
+const rows = [...published, ...jsonl(join(dir, "modules.jsonl")).filter((r) => !have.has(r.id)),
+  ...jsonl(join(dir, "ours.jsonl")).map((r) => ({ ...r, pack: r.pack ?? "ours" }))];
 if (!rows.length) { console.error(`no profiles in ${dir}: run bin/map-profile --scenes ... --out ${dir}/profiles.jsonl first`); process.exit(2); }
-const looks = noPicture ? [] : [...jsonl(join(dir, "look.jsonl")), ...jsonl(join(dir, "look-ours.jsonl"))];
+const byId = new Map(rows.map((r) => [r.id, r]));
+// Pictures looked at, for maps on this shelf only (look.jsonl holds published and installed maps alike).
+const looks = noPicture ? [] : [...jsonl(join(dir, "look.jsonl")), ...jsonl(join(dir, "look-ours.jsonl"))].filter((l) => byId.has(l.id));
 const tags = lookTags(looks);
 for (const r of rows) if (tags.has(r.id)) r.look = tags.get(r.id);
-const byId = new Map(rows.map((r) => [r.id, r]));
 const layouts = groupLayouts(rows);
 
 /** Embeddings of descriptions, cached beside the shelf (they're ours, but the cache sits with the data it serves). */

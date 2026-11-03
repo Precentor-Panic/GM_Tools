@@ -98,13 +98,21 @@ async function readLeveldb(packDir, env) {
     const db = new ClassicLevel(copy, { valueEncoding: "json" });
     await db.open();
     const scenes = [];
-    const levels = {};
+    // A scene's embedded documents (levels, walls, lights, ...) are separate keys: !scenes.<coll>!<sceneId>.<docId>.
+    const embedded = {};
     for await (const [key, value] of db.iterator()) {
-      const lm = /^!scenes\.levels!([^.!]+)\.([^.!]+)$/.exec(key);
-      if (lm) { (levels[lm[1]] ??= {})[lm[2]] = value; continue; }
+      const em = /^!scenes\.([a-zA-Z]+)!([^.!]+)\.([^.!]+)$/.exec(key);
+      if (em) { ((embedded[em[1]] ??= {})[em[2]] ??= {})[em[3]] = value; continue; }
       if (/^!scenes!([^.!]+)$/.test(key) && value) scenes.push(value);
     }
     await db.close();
+    for (const s of scenes) {
+      for (const [coll, bySceneId] of Object.entries(embedded)) {
+        if (coll === "levels" || !Array.isArray(s[coll])) continue;
+        s[coll] = s[coll].map((d) => (typeof d === "string" ? bySceneId[s._id]?.[d] : d)).filter(Boolean);
+      }
+    }
+    const levels = embedded.levels ?? {};
     // Foundry v14 moved `background` off the Scene onto its first Level, and
     // stores levels as separate keys. Resolve it back.
     for (const s of scenes) {
@@ -126,9 +134,20 @@ async function readLeveldb(packDir, env) {
  *   `grids` maps imageKey -> grid size. `reason` says why it is empty.
  */
 export async function readModuleSceneGrids(dataDir, moduleId, env = process.env) {
+  const { scenes, reason } = await readModuleScenes(dataDir, moduleId, env);
+  const grids = gridsFromSceneDocs(scenes);
+  if (Object.keys(grids).length) return { grids, reason: null };
+  return { grids, reason: reason ?? "pack holds no scene with a grid and a background" };
+}
+
+/**
+ * Every Scene document a module's packs hold, with embedded walls, lights and the rest attached (LevelDB packs store
+ * them as separate keys). `{scenes, reason}`: `reason` says why `scenes` is empty, when it is.
+ */
+export async function readModuleScenes(dataDir, moduleId, env = process.env) {
   const moduleDir = join(dataDir, "modules", moduleId);
-  if (!existsSync(moduleDir)) return { grids: {}, reason: "module is not installed" };
-  const grids = {};
+  if (!existsSync(moduleDir)) return { scenes: [], reason: "module is not installed" };
+  const scenes = [];
   let sawPack = false;
   let leveldbUnreadable = false;
   for (const sub of ["packs", "Packs"]) {
@@ -147,13 +166,14 @@ export async function readModuleSceneGrids(dataDir, moduleId, env = process.env)
           docs = readNedb(p);
         }
       } catch { docs = null; }
-      Object.assign(grids, gridsFromSceneDocs(docs));
+      // NeDB scene packs hold scenes only; LevelDB packs, everything (the reader above keeps scenes).
+      for (const d of docs ?? []) if (d && (d.grid != null || d.walls || d.background || d.img)) scenes.push(d);
     }
   }
-  if (Object.keys(grids).length) return { grids, reason: null };
-  if (!sawPack) return { grids, reason: "module has no scene pack installed (images only)" };
-  if (leveldbUnreadable) return { grids, reason: "pack is LevelDB and classic-level was not found (set FOUNDRY_MAIN or CLASSIC_LEVEL_NODE_MODULES)" };
-  return { grids, reason: "pack holds no scene with a grid and a background" };
+  if (scenes.length) return { scenes, reason: null };
+  if (!sawPack) return { scenes, reason: "module has no scene pack installed (images only)" };
+  if (leveldbUnreadable) return { scenes, reason: "pack is LevelDB and classic-level was not found (set FOUNDRY_MAIN or CLASSIC_LEVEL_NODE_MODULES)" };
+  return { scenes, reason: "pack holds no scene documents" };
 }
 
 /** The grid for one asset `src`, or `{size:null, reason}`. */

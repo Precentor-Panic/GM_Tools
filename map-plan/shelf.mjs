@@ -14,17 +14,17 @@ export const SHELF_WEIGHTS = { shape: 0.35, theme: 0.4, contents: 0.15, picture:
 
 /**
  * Variants of one layout (day, night, flooded, ruined ...) come in one pack, at one size, with nearly the same walls:
- * the same room count give or take one and nearly the same footprint. Returns [{ key, rows }], and stamps each row
+ * the same room count give or take two (a ruined or fogged version gains or loses a nook) and nearly the same footprint. Returns [{ key, rows }], and stamps each row
  * with its group's key as `layout`.
  */
-export function groupLayouts(rows, { footprint = 0.06 } = {}) {
+export function groupLayouts(rows, { footprint = 0.1, rooms = 2 } = {}) {
   const parent = rows.map((_, i) => i);
   const find = (i) => { while (parent[i] !== i) i = parent[i] = parent[parent[i]]; return i; };
   const byPack = new Map();
   rows.forEach((r, i) => { const k = `${r.pack ?? r.id}:${r.profile.size.w}x${r.profile.size.h}`; if (!byPack.has(k)) byPack.set(k, []); byPack.get(k).push(i); });
   for (const idx of byPack.values()) for (let a = 0; a < idx.length; a++) for (let b = a + 1; b < idx.length; b++) {
     const p = rows[idx[a]].profile, q = rows[idx[b]].profile;
-    if (Math.abs(p.rooms.count - q.rooms.count) <= 1 && footprintDistance(p, q) <= footprint) parent[find(idx[a])] = find(idx[b]);
+    if (Math.abs(p.rooms.count - q.rooms.count) <= rooms && footprintDistance(p, q) <= footprint) parent[find(idx[a])] = find(idx[b]);
   }
   const groups = new Map();
   rows.forEach((r, i) => {
@@ -52,13 +52,12 @@ export function tagsOf(r) {
   };
 }
 
-/** Contents by weight of evidence: placed items count once each, a room whose picture shows the kind counts three. */
+/** Contents: what was placed (by count), then what the picture suggests (by rooms that show it), most first. */
 export function contentsLine(r, max = 8) {
-  const items = r.profile.items?.kinds ?? {}, pic = r.look?.contents ?? {};
-  const w = new Map();
-  for (const [k, n] of Object.entries(items)) w.set(k, (w.get(k) ?? 0) + n);
-  for (const [k, n] of Object.entries(pic)) w.set(k, (w.get(k) ?? 0) + 3 * n);
-  return [...w].sort((a, b) => b[1] - a[1]).slice(0, max).map(([k]) => k).join(", ");
+  const items = Object.entries(r.profile.items?.kinds ?? {}).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  const pic = Object.entries(r.look?.contents ?? {}).sort((a, b) => b[1] - a[1]).map(([k]) => k).filter((k) => !items.includes(k));
+  const placed = items.slice(0, max), seen = pic.slice(0, Math.max(0, max - placed.length));
+  return [placed.length ? `placed ${placed.join(", ")}` : "", seen.length ? `looks like ${seen.join(", ")}` : ""].filter(Boolean).join("; ");
 }
 
 /** A character card in words: size, shape, theme, contents. */
@@ -68,12 +67,23 @@ export function character(r) {
   const enclosed = p.enclosure >= 0.6 ? "indoors" : p.enclosure >= 0.25 ? "part indoors" : "open ground";
   const walls = p.walls.organic >= 0.5 ? "organic (rock, roots, rubble)" : p.walls.squareness >= 0.8 ? "square" : "mixed square and irregular";
   return {
-    size: `${p.size.w} x ${p.size.h} squares; ${p.rooms.count} room${p.rooms.count === 1 ? "" : "s"}${bands ? ` (${bands})` : ""}` +
+    size: `${Math.round(p.size.w)} x ${Math.round(p.size.h)} squares; ${p.rooms.count} room${p.rooms.count === 1 ? "" : "s"}${bands ? ` (${bands})` : ""}` +
       (p.building?.rooms >= 2 ? `; largest building ${p.building.rooms} rooms, ${p.building.area} sq` : ""),
     shape: `${enclosed}, walls ${walls}; ${p.graph.loops} loop${p.graph.loops === 1 ? "" : "s"}, ${p.graph.deadEnds} dead end${p.graph.deadEnds === 1 ? "" : "s"}; longest sightline ${p.openness.longest} sq`,
-    theme: union(t.place, t.terrain, t.mood).join(", ") || "(no theme words)",
+    theme: [union(r.theme?.place, r.theme?.terrain, r.theme?.mood).join(", "),
+      (() => { const g = union(r.look?.place, r.look?.terrain).filter((x) => !union(r.theme?.place, r.theme?.terrain).includes(x)); return g.length ? `looks like ${g.join(", ")}` : ""; })()]
+      .filter(Boolean).join("; ") || "(no theme words)",
     contents: contentsLine(r) || "(nothing named)",
   };
+}
+
+// A theme tag the name gives counts in full; otherwise the picture's ranked guesses give part credit, about as often
+// as they turned out right against named maps (look.mjs): terrain a third at first guess, place one in ten.
+export const RANK_CREDIT = { terrain: [0.5, 0.3, 0.3, 0.1, 0.1], place: [0.3, 0.15, 0.15, 0.05, 0.05] };
+function facetFit(facet, want, named, rank = []) {
+  if (!want?.length) return null;
+  if (want.some((x) => named.includes(x))) return 1;
+  return Math.max(0, ...want.map((x) => (rank.indexOf(x) >= 0 ? RANK_CREDIT[facet][rank.indexOf(x)] : 0)));
 }
 
 const share = (want, have) => (want?.length ? want.filter((w) => have.includes(w)).length / want.length : null);
@@ -88,9 +98,7 @@ export function briefFit(r, brief, weights = SHELF_WEIGHTS) {
   const parts = {
     shape: miss == null ? null : 1 / (1 + 2 * miss),
     theme: brief.theme ? (() => {
-      const pl = brief.theme.place?.length ? (brief.theme.place.some((x) => t.place.includes(x)) ? 1 : 0) : null;
-      const te = brief.theme.terrain?.length ? (brief.theme.terrain.some((x) => t.terrain.includes(x)) ? 1 : 0) : null;
-      const got = [pl, te].filter((v) => v != null);
+      const got = ["place", "terrain"].map((f) => facetFit(f, brief.theme[f], r.theme?.[f] ?? [], r.look?.[`${f}Rank`])).filter((v) => v != null);
       return got.length ? got.reduce((s, v) => s + v, 0) / got.length : null;
     })() : null,
     contents: share(brief.contents, t.contents),
@@ -98,7 +106,9 @@ export function briefFit(r, brief, weights = SHELF_WEIGHTS) {
   };
   let s = 0, w = 0;
   for (const [k, v] of Object.entries(parts)) if (v != null) { s += weights[k] * v; w += weights[k]; }
-  return { fit: w ? Math.round((1000 * s) / w) / 1000 : 0, parts, matched: {
+  // Theme is also a gate: a map of the wrong kind of place keeps at most half its fit, however well it's shaped.
+  const gate = parts.theme == null ? 1 : 0.5 + 0.5 * parts.theme;
+  return { fit: w ? Math.round((1000 * gate * s) / w) / 1000 : 0, parts, matched: {
     theme: union(t.place.filter((x) => brief.theme?.place?.includes(x)), t.terrain.filter((x) => brief.theme?.terrain?.includes(x))),
     contents: (brief.contents ?? []).filter((k) => t.contents.includes(k)),
   } };

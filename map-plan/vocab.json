@@ -9,7 +9,7 @@
       "ship": ["ship", "boat", "deck", "galleon", "shipwreck", "airship", "barge"],
       "castle": ["castle", "fortress", "fort", "keep", "citadel", "bailey", "motte", "stronghold", "barracks", "garrison"],
       "palace": ["palace", "throne", "court", "royal", "manor", "mansion", "estate", "villa"],
-      "street": ["street", "streets", "alley", "crossroads", "square", "plaza", "avenue", "road", "roadside"],
+      "street": ["street", "streets", "alley", "alleys", "square", "plaza", "avenue", "boulevard"],
       "settlement": ["city", "town", "village", "hamlet", "district", "quarter", "slum"],
       "house": ["house", "home", "cottage", "farmhouse", "cabin", "hut", "lodge", "hovel"],
       "shop": ["shop", "store", "smithy", "blacksmith", "forge", "surgery", "apothecary", "guild", "workshop", "bakery"],

@@ -177,18 +177,14 @@
    "want": {
     "area": [
      900,
-     2500
+     3000
     ],
     "enclosure": [
      null,
      0.4
     ],
     "openness": [
-     0.35,
-     0.85
-    ],
-    "doorsOut": [
-     2,
+     0.3,
      null
     ]
    },

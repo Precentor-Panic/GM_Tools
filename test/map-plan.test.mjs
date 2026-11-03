@@ -9,7 +9,7 @@ import { profile, analyse } from "../map-plan/profile.mjs";
 import { distance, briefScore, nearest, WANT_FEATURES } from "../map-plan/similar.mjs";
 import { planSvg } from "../map-plan/svg.mjs";
 import { themeFromText, kindsOfName, contentsFromItems, CONTENT_KINDS, PLACES, TERRAINS } from "../map-plan/theme.mjs";
-import { groupLayouts, lookup, character } from "../map-plan/shelf.mjs";
+import { groupLayouts, lookup, character, briefFit, RANK_CREDIT } from "../map-plan/shelf.mjs";
 import { lookJob, lookTags } from "../map-plan/look.mjs";
 
 const box = (x, y, w, h) => ({ points: [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]] });
@@ -198,7 +198,7 @@ test("shelf: variants of one layout group; a brief scores shape, theme and conte
   assert.ok(Math.abs(hits[1].parts.contents) < 1e-9 && hits[1].parts.theme === 1 && hits[1].parts.shape === 1);
   const c = character(rows[3]);
   assert.match(c.size, /2 rooms \(2 medium\)/);
-  assert.match(c.contents, /seating, bar/);
+  assert.match(c.contents, /looks like seating, bar/);
 });
 
 test("look: jobs mark rooms and outside per square; tags keep only what stands out across the shelf", () => {
@@ -215,4 +215,13 @@ test("look: jobs mark rooms and outside per square; tags keep only what stands o
   assert.deepEqual(tags.get("m0").place, ["tavern"]);
   assert.deepEqual(tags.get("m0").rooms["1"].slice(0, 1), ["bar"]);
   assert.deepEqual(tags.get("m0").contents.bar, 1);
+});
+
+test("shelf: the picture's ranked theme guesses give part credit; the name gives full", () => {
+  const p = profile(twoRooms());
+  const named = { id: "n", name: "Inn", profile: p, theme: themeFromText("Inn") };
+  const guessed = { id: "g", name: "Map 7", profile: p, theme: themeFromText("Map 7"), look: { place: [], terrain: [], placeRank: ["temple", "tavern"], terrainRank: [], contents: {} } };
+  const none = { id: "x", name: "Map 8", profile: p, theme: themeFromText("Map 8") };
+  const b = { theme: { place: ["tavern"] } };
+  assert.deepEqual([briefFit(named, b).parts.theme, briefFit(guessed, b).parts.theme, briefFit(none, b).parts.theme], [1, RANK_CREDIT.place[1], 0]);
 });
