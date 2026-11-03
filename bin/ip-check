@@ -1,0 +1,5 @@
+#!/bin/sh
+# Refuse to publish other people's IP from this public repo. See bin/ip-check.mjs.
+here=$(cd "$(dirname "$0")" && pwd)
+node=${NODE:-$(command -v node || echo "$HOME/.local/node/bin/node")}
+exec "$node" "$here/ip-check.mjs" "$@"
