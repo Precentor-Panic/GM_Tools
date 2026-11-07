@@ -11,6 +11,18 @@ Plan and status: `plans/map-quality-plan.md`.
   map's likely place and terrain, and an embedding a description can be matched against. A hint, scored by rank.
 - **The shelf** (`shelf.mjs`) groups variants into layouts, writes a character card in words, and answers a brief
   (`bench/briefs.json`) by shape, theme, contents and picture, with what matched. Theme also gates the fit.
+- **The makers** (`makers/`) make plans from a recipe and a seed, deterministically:
+  - `canvas.mjs` is the drawing surface: rooms, open ground and solid masses painted onto a grid of 8 cells per
+    square. Straight and round shapes leave guides (their exact outlines).
+  - `trace.mjs` turns the grid into walls and floor outlines. Each boundary is simplified once, so neighbours share
+    it exactly. Masonry snaps back onto its guides; rough edges (cave rock, rubble) are smoothed. Links cut doors,
+    arches and windows into straight stretches, edge overrides make a boundary a ledge or leave it open, and every
+    wall gets a material.
+  - `build.mjs` is the masonry kit the recipes use (rooms, links, furniture placement that keeps doors clear).
+    `wear.mjs` breaches, fells and crumbles masonry, and `transform.mjs` turns and mirrors a finished plan.
+  - Recipes: `tavern.mjs`, `temple.mjs`, `fort.mjs` (with wear), `sewer.mjs`, and `cave.mjs` (chambers and passages
+    carved from rock, with a river, ledges, pillars and dressing). `index.mjs` names them.
+- **Writers** (`writers.mjs`): a plan to Universal VTT for Foundry, walls from the plan itself.
 
 ## Commands
 
@@ -22,7 +34,12 @@ bin/map-profile <map.dd2vtt>=<layout.json>... --out stagecraft/map-shelf/ours.js
 <python> map-plan/tools/look.py thumbs <look-job.jsonl> stagecraft/map-shelf/thumbs
 bin/map-shelf brief <id>|all     bin/map-shelf like <map id>|<plan.json>     bin/map-shelf text "<description>"
 bin/map-shelf card <map id>      bin/map-shelf html                         # then open stagecraft/map-shelf/shelf.html
+bin/map-make <recipe> --seed N [--out plan.json] [--svg preview.svg] [--brief <id>]   # tavern, temple, fort, sewer, cave
 ```
+
+A picture of a made plan comes from a renderer outside this repo: the Dungeondraft tooling compiles a plan to a
+layout spec (floors, explicit walls, doors, ground, water, caves, objects by a theme that names asset-pack files) and
+builds it. Keeping the asset names there keeps third-party pack names out of this public repo.
 
 LevelDB module packs need Foundry's own `classic-level`: set `FOUNDRY_MAIN` (or `CLASSIC_LEVEL_NODE_MODULES`).
 

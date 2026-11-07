@@ -1,5 +1,5 @@
 {
- "about": "The benchmark set (plans/map-quality-plan.md). Each brief is generic, so it works for any campaign. `want` is the character the map should have, as [min, max] ranges on profile features (map-plan/similar.mjs WANT_FEATURES; null = no bound; `enclosure` is the share of the map's area inside rooms); it grades a made map and queries the shelf. `play` is what the scene must do at the table. Every sprint's review re-makes these and scores them on the rubric. `words` are theme words matched against a published map's pack and scene names (catalogue metadata, never the art): the shelf narrows by words, then ranks by character. Briefs v2 (2026-11-03): theme (vocab.json tags), contents (kinds wanted) and describe (for the picture search) beside want; words stay for the name-only search.",
+ "about": "The benchmark set (plans/map-quality-plan.md). Each brief is generic, so it works for any campaign. `want` is the character the map should have, as [min, max] ranges on profile features (map-plan/similar.mjs WANT_FEATURES; null = no bound; `enclosure` is the share of the map's area inside rooms); it grades a made map and queries the shelf. `play` is what the scene must do at the table. Every sprint's review re-makes these and scores them on the rubric. `words` are theme words matched against a published map's pack and scene names (catalogue metadata, never the art): the shelf narrows by words, then ranks by character. Briefs v2 (2026-11-03): theme (vocab.json tags), contents (kinds wanted) and describe (for the picture search) beside want; words stay for the name-only search. Briefs v3 (2026-11-04): two S0 guesses corrected after the first made maps and 1,381 published ones were measured. ruined-fort enclosure [0.3, 0.8] -> [0.05, 0.6]: a breached ruin's yard is open ground (published forts measure 0 to 0.2). sewer-junction enclosure [0.4, -] -> [0.2, -] and rooms [4, 10] -> [3, 10]: tunnels cut in rock leave most of the map rock (the published sewer layout measures 0.04 and 3 rooms). Published maps are walled lightly for Foundry (most have no loops and few doors), so their numbers describe the shelf, not a target for a made map.",
  "rubric": {
   "look": "Does it read as the place at a glance, from a token's eye, in the scene's light? Edges, light, a focal point, a frame that isn't flat fill.",
   "play": "Does the fight or the scene work? Cover where it's needed, a reason to move, more than one route, exits players can see. Graded by the play check, then by the GM.",
@@ -19,11 +19,11 @@
      1600
     ],
     "enclosure": [
-     0.4,
+     0.2,
      null
     ],
     "rooms": [
-     4,
+     3,
      10
     ],
     "loops": [
@@ -265,8 +265,8 @@
      2500
     ],
     "enclosure": [
-     0.3,
-     0.8
+     0.05,
+     0.6
     ],
     "rooms": [
      3,

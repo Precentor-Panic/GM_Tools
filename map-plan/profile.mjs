@@ -5,7 +5,10 @@
 // door shut, are regions. A region that touches the map's edge is the outside (open ground, or the void round a
 // dungeon); every other region big enough to stand in is a room. Doors join rooms into a graph.
 //
-// PROFILE v2 (2026-11-03; v1 the same day without bands, features and items) fields, in squares unless named otherwise:
+// PROFILE v3 (2026-11-03; v2 without the two changes below, v1 also without bands, features and items). v3: a space that
+// only leaves the map through a mouth or a tunnel is a room, not the outside; a solid mass of 4+ squares inside one room
+// counts as a loop; a plan with areas counts only its open-ground areas as floor outside the rooms. Fields, in squares
+// unless named otherwise:
 //   size {w, h, area, aspect}         aspect = long side / short side
 //   enclosure                         share of the map's area (less its walls) inside rooms (0 open country .. 1 a building cropped to
 //                                     its walls; a dungeon in rock sits between, the rest being rock)
@@ -13,7 +16,8 @@
 //                                     the way a GM says it: closet < 9, small < 36 (6x6), medium < 100, large < 300, hall
 //   building {count, rooms, area}     rooms joined by doors, outside not counted: how many with 2+ rooms; the largest's
 //                                     rooms and area
-//   graph {links, loops, deadEnds, isolated, doorsOut}   links = doors between rooms or to the outside
+//   graph {links, loops, deadEnds, isolated, doorsOut}   links = doors between rooms or to the outside; loops = cycles in
+//                                     the door graph plus solid masses a room runs round
 //   walls {length, density, squareness, diagonal, organic, meanSegment}   density = length per 100 sq; shares by length
 //   openness {median, p90, longest}   share of floor seen within 12 sq (60 ft), sampled; longest sightline seen
 //   space {narrowShare, widest}       share of floor within 1.25 sq of a wall; radius of the biggest open space
@@ -23,10 +27,12 @@
 //                                     inside
 //   items {count, density, kinds}     things placed on the map (plan.items), per 100 sq of floor, by content kind
 //   footprint {n, rooms[], walls[]}   n x n picture of where rooms and walls are, 0..1 per cell, for shape matching
-import { segments } from "./plan.mjs";
+import { segments, shapePolygon } from "./plan.mjs";
+const inPoly = (poly, x, y) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const [xi, yi] = poly[i], [xj, yj] = poly[j];
+  if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c; } return c; };
 import { contentsFromItems } from "./theme.mjs";
 
-export const PROFILE_SCHEMA_VERSION = 2;
+export const PROFILE_SCHEMA_VERSION = 3;
 export const ROOM_BANDS = [["closet", 9], ["small", 36], ["medium", 100], ["large", 300], ["hall", Infinity]];
 const band = (sq) => ROOM_BANDS.find(([, max]) => sq < max)[0];
 const SIGHT_RADIUS = 12;
@@ -46,24 +52,26 @@ function drawSeg(grid, W, H, R, [ax, ay], [bx, by]) {
   }
 }
 
-/** Connected open cells (4-neighbour). Returns labels (0 = blocked) and per-label {cells, border}. */
+/** Connected open cells (4-neighbour). Returns labels (0 = blocked) and per-label {cells, border, edge, rim}: edge =
+ *  cells on the map's edge, rim = cells next to a blocked cell (the region's walls). */
 function label(blocked, W, H) {
   const lab = new Int32Array(W * H), regions = [null];
   const stack = new Int32Array(W * H);
   for (let s = 0; s < W * H; s++) {
     if (blocked[s] || lab[s]) continue;
-    const id = regions.length; let top = 0, cells = 0, border = false;
+    const id = regions.length; let top = 0, cells = 0, border = false, edge = 0, rim = 0;
     stack[top++] = s; lab[s] = id;
     while (top) {
       const c = stack[--top]; cells++;
       const x = c % W, y = (c - x) / W;
-      if (x === 0 || y === 0 || x === W - 1 || y === H - 1) border = true;
+      if (x === 0 || y === 0 || x === W - 1 || y === H - 1) { border = true; edge++; }
+      if ((x > 0 && blocked[c - 1]) || (x < W - 1 && blocked[c + 1]) || (y > 0 && blocked[c - W]) || (y < H - 1 && blocked[c + W])) rim++;
       if (x > 0 && !blocked[c - 1] && !lab[c - 1]) { lab[c - 1] = id; stack[top++] = c - 1; }
       if (x < W - 1 && !blocked[c + 1] && !lab[c + 1]) { lab[c + 1] = id; stack[top++] = c + 1; }
       if (y > 0 && !blocked[c - W] && !lab[c - W]) { lab[c - W] = id; stack[top++] = c - W; }
       if (y < H - 1 && !blocked[c + W] && !lab[c + W]) { lab[c + W] = id; stack[top++] = c + W; }
     }
-    regions.push({ cells, border });
+    regions.push({ cells, border, edge, rim });
   }
   return { lab, regions };
 }
@@ -124,11 +132,15 @@ export function analyse(plan, { R } = {}) {
     }
   }
   const { lab, regions } = label(closed, W, H);
-  const rooms = new Map(), outside = new Set();
+  // The outside is open space that runs off the map's edge. A space walled nearly all round that only leaves the map
+  // through a mouth or a tunnel (a cave mouth, sewer pipes running on) is a room: under a tenth of its edge is the
+  // map's edge, and that is under a fifth of the map's perimeter.
+  const rooms = new Map(), outside = new Set(), perim = 2 * (W + H) - 4;
   regions.forEach((r, id) => {
     if (!r) return;
     const sq = r.cells / (R * R);
-    if (r.border) outside.add(id);
+    const mouthOnly = r.border && r.edge / Math.max(1, r.edge + r.rim) < 0.1 && r.edge / perim < 0.2;
+    if (r.border && !mouthOnly) outside.add(id);
     else if (sq >= 2) rooms.set(id, sq);
   });
   // Doors: the region on each side of the door's middle. All outside regions are one node, 0.
@@ -151,7 +163,25 @@ export function analyse(plan, { R } = {}) {
   const linked = new Set(links.flat()), solid = new Map();
   const total = [...rooms.values()].reduce((s, v) => s + v, 0), biggest = Math.max(0, ...rooms.values());
   for (const [id, sq] of rooms) if (!linked.has(id) && sq !== biggest && sq < 0.2 * total) { solid.set(id, sq); rooms.delete(id); }
-  return { R, W, H, move: closed, sight, lab, regions, rooms, solid, outside, links, segs };
+  // A way round: a solid mass of 4 squares or more standing inside one room (a rock island in a cave, a pillar block,
+  // a stair core) makes a loop you can run round, doors or not.
+  const islands = [];
+  for (const [id, sq] of solid) {
+    if (sq < 4) continue;
+    const around = new Set();
+    for (let c = 0; c < W * H; c++) {
+      if (lab[c] !== id) continue;
+      const x = c % W, y = (c - x) / W;
+      for (const [dx, dy] of [[4, 0], [-4, 0], [0, 4], [0, -4]]) {
+        const xx = x + dx, yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+        const v = lab[yy * W + xx];
+        if (v && v !== id) around.add(v);
+      }
+    }
+    if (around.size === 1 && rooms.has([...around][0])) islands.push(id);
+  }
+  return { R, W, H, move: closed, sight, lab, regions, rooms, solid, outside, links, segs, islands };
 }
 
 export function profile(plan, opts = {}) {
@@ -193,11 +223,19 @@ export function profile(plan, opts = {}) {
     if (ang < 4 || ang > 86) axis += len; else if (Math.abs(ang - 45) < 4) diag += len;
   }
 
-  // The floor people stand on: the rooms, plus the outside when rooms are a small part of the map (a street, a camp,
-  // open country). A dungeon's outside is the void round it and doesn't count.
-  const useOutside = inRooms < 0.3 * (inRooms + outsideSq);
+  // The floor people stand on: the rooms, plus open ground outside them. A plan that says what its ground is (open
+  // areas: a yard, a street) counts just that, so the rock round a dungeon never counts. A plan of walls only (a
+  // published map) counts the whole outside when rooms are a small part of the map (a street, a camp, open country).
+  const groundAreas = (plan.areas ?? []).filter((a) => a.kind === "open").map((a) => {
+    const poly = shapePolygon(a.shape), xs = poly.map((q) => q[0]), ys = poly.map((q) => q[1]);
+    return { poly, bb: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] };
+  });
+  const known = (plan.areas ?? []).some((a) => a.kind === "floor" || a.kind === "open");
+  const onGround = (c) => { const x = ((c % W) + 0.5) / R, y = (Math.floor(c / W) + 0.5) / R;
+    return groundAreas.some(({ poly, bb }) => x >= bb[0] && y >= bb[1] && x <= bb[2] && y <= bb[3] && inPoly(poly, x, y)); };
+  const useOutside = !known && inRooms < 0.3 * (inRooms + outsideSq);
   const open = [];
-  for (let c = 0; c < W * H; c++) if (!move[c] && (rooms.has(lab[c]) || (useOutside && outside.has(lab[c])))) open.push(c);
+  for (let c = 0; c < W * H; c++) if (!move[c] && (rooms.has(lab[c]) || (outside.has(lab[c]) && (useOutside || (known && onGround(c)))))) open.push(c);
   // Openness: sample that floor on a stride, see which other samples are in sight within 12 squares.
   const stride = Math.max(1, Math.floor(open.length / 350));
   const pts = open.filter((_, i) => i % stride === 0).map((c) => [c % W, Math.floor(c / W)]);
@@ -250,7 +288,7 @@ export function profile(plan, opts = {}) {
     enclosure: r2(Math.min(1, inRooms / Math.max(1e-9, area - wallCells / (R * R)))),
     rooms: { count: rooms.size, median: r2(median(roomSq)), max: r2(Math.max(0, ...roomSq)), small: roomSq.filter((v) => v < 9).length, large: roomSq.filter((v) => v > 100).length, bands },
     building: { count: buildings.filter((b) => b.rooms >= 2).length, rooms: buildings[0]?.rooms ?? 0, area: Math.round(buildings[0]?.area ?? 0) },
-    graph: { links: links.length, loops: Math.max(0, links.length - nodes.size + components), deadEnds: roomDeg.filter((d) => d === 1).length,
+    graph: { links: links.length, loops: Math.max(0, links.length - nodes.size + components) + A.islands.length, deadEnds: roomDeg.filter((d) => d === 1).length,
       isolated: roomDeg.filter((d) => d === 0).length, doorsOut: links.filter(([a, b]) => a === 0 || b === 0).length },
     walls: { length: Math.round(total), density: r2((100 * total) / area), squareness: r2(total ? axis / total : 0), diagonal: r2(total ? diag / total : 0),
       organic: r2(total ? 1 - (axis + diag) / total : 0), meanSegment: r2(moving.length ? total / moving.length : 0) },

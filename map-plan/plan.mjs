@@ -10,7 +10,8 @@
 // play check reads. It is derived data and never edited by hand.
 //
 // SCHEMA HISTORY
-//   plan v1 (2026-11-03): areas, walls, lights, marks, art, brief, source. Later the same day, additive: items.
+//   plan v1 (2026-11-03): areas, walls, lights, marks, art, brief, source. Later the same day, additive: items; wall
+//   kind "ledge" (the edge of a drop: stops feet, not eyes); wall material; item rotation and layer.
 //   profile v1 (2026-11-03), v2 (2026-11-03): see profile.mjs.
 import { z } from "zod";
 
@@ -36,13 +37,14 @@ export const Area = z.object({
 });
 
 // A wall is a polyline. `move` and `sight` say what it stops; a door is a wall that opens.
-export const WALL_KINDS = ["wall", "door", "secret", "window", "low", "terrain", "invisible"];
+export const WALL_KINDS = ["wall", "door", "secret", "window", "low", "terrain", "invisible", "ledge"];
 export const Wall = z.object({
   points: z.array(Pt).min(2),
   kind: z.enum(WALL_KINDS).default("wall"),
   move: z.boolean().default(true),
   sight: z.boolean().default(true),
   closed: z.boolean().optional(), // doors: closed at the start
+  material: z.string().optional(), // what it's made of: "stone", "wood", "rock" (a cave's own edge), ... for the art layer
 });
 
 export const Light = z.object({ x: z.number(), y: z.number(), bright: z.number().nonnegative().optional(), dim: z.number().nonnegative().optional(), color: z.string().optional() });
@@ -52,7 +54,9 @@ export const Mark = z.object({ kind: z.enum(MARK_KINDS), x: z.number(), y: z.num
 
 // Things standing or lying on the map: furniture, props, dressing. `what` is a plain name or an asset name; `kinds`
 // are content kinds from vocab.json when the name doesn't say (theme.mjs, kindsOfName).
-export const Item = z.object({ what: z.string().min(1), x: z.number(), y: z.number(), size: z.number().positive().optional(), kinds: z.array(z.string()).optional() });
+// `rotation` in degrees clockwise; `layer` "floor" for things lying flat (rugs, grates), else standing.
+export const Item = z.object({ what: z.string().min(1), x: z.number(), y: z.number(), size: z.number().positive().optional(), kinds: z.array(z.string()).optional(),
+  rotation: z.number().optional(), layer: z.enum(["floor", "object", "above"]).optional() });
 
 export const Art = z.object({
   src: z.string().min(1),

@@ -2,6 +2,7 @@
 // walls drawn by what they stop, doors in amber, lights as dots. Good enough to see a map's shape and character.
 // `overlay: true` draws the lines only (no ground, tints or grid), light on dark, to lay over the map's own picture.
 import { analyse } from "./profile.mjs";
+import { shapePolygon } from "./plan.mjs";
 
 const HUES = [32, 200, 140, 280, 10, 90, 240, 330, 170, 55];
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -27,6 +28,13 @@ export function planSvg(plan, { px = 12, analysis, title, overlay = false } = {}
       x = e;
     }
   }
+  // Areas drawn over the rooms: water, raised ledges, solid masses.
+  const AREA_FILL = { water: (a) => (a.depth === "shallow" ? "#7fb6c9" : "#3f7f9a"), ledge: () => "#e8d7b4", solid: () => "#3a352e", pit: () => "#111" };
+  for (const a of plan.areas ?? []) {
+    const f = AREA_FILL[a.kind];
+    if (!f || !a.shape) continue;
+    out.push(`<polygon points="${shapePolygon(a.shape).map(([x, y]) => `${(x * px).toFixed(1)},${(y * px).toFixed(1)}`).join(" ")}" fill="${f(a)}" fill-opacity="${a.kind === "ledge" ? 0.55 : 0.85}"/>`);
+  }
   // Grid every square, faint.
   out.push(`<g stroke="#000" stroke-opacity=".12" stroke-width="1">`);
   for (let x = 1; x < plan.width; x++) out.push(`<line x1="${x * px}" y1="0" x2="${x * px}" y2="${h}"/>`);
@@ -38,6 +46,8 @@ export function planSvg(plan, { px = 12, analysis, title, overlay = false } = {}
     else if (sg.kind === "secret") out.push(line(sg, "#c070e0", 4, "4 3"));
     else if (sg.move && sg.sight) out.push(line(sg, "#15130f", 3));
     else if (sg.kind === "terrain") out.push(line(sg, "#8a8170", 2, "3 2")); // hedge, tent, rubble line
+    else if (sg.kind === "ledge") out.push(line(sg, "#b0603a", 2.5, "6 2")); // the edge of a drop
+    else if (sg.kind === "low") out.push(line(sg, "#8a8170", 1.5, "1 3"));   // a counter, a low wall
     else if (sg.move) out.push(line(sg, "#5a8fb0", 2));          // window: stops feet, not eyes
     else if (sg.sight) out.push(line(sg, "#6b6458", 2, "2 3"));   // stops eyes, not feet
     else out.push(line(sg, "#8a8170", 1.5, "1 3"));               // low wall, terrain
@@ -52,7 +62,8 @@ const segLine = (sg, px, stroke, width, dash = "") => `<line x1="${(sg.a[0] * px
 /** Walls and doors only, each drawn twice (a dark casing, then a light line) so they read over any picture. */
 function overlayLines(plan, A, px, out) {
   const style = (sg) => sg.kind === "door" ? ["#ffb340", 3] : sg.kind === "secret" ? ["#e08cff", 3, "4 3"] : sg.move && sg.sight ? ["#ffffff", 2.2]
-    : sg.kind === "terrain" ? ["#d8f0a0", 1.6, "3 2"] : sg.move ? ["#8fd0ff", 1.6] : ["#e0d8c8", 1.4, "2 3"];
+    : sg.kind === "terrain" ? ["#d8f0a0", 1.6, "3 2"] : sg.kind === "ledge" ? ["#ff9a6a", 2, "6 2"] : sg.kind === "low" ? ["#e0d8c8", 1.4, "2 3"]
+    : sg.move ? ["#8fd0ff", 1.6] : ["#e0d8c8", 1.4, "2 3"];
   for (const sg of A.segs) { const [, w2] = style(sg); out.push(segLine(sg, px, "#000", w2 + 2.4)); }
   for (const sg of A.segs) { const [c, w2, d] = style(sg); out.push(segLine(sg, px, c, w2, d)); }
   out.push(`</svg>`);

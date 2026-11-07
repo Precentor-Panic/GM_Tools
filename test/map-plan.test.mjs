@@ -165,13 +165,13 @@ test("contents: kinds from asset and object names", () => {
     { count: 3, kinds: { storage: 2, altar: 1 } });
 });
 
-test("profile v2: room bands, see-through and terrain walls, lit rooms, items", () => {
+test("profile v2+: room bands, see-through and terrain walls, lit rooms, items", () => {
   const base = twoRooms();
   const p = profile(parsePlan({ ...base, walls: [...base.walls,
     { points: [[12, 8], [16, 8]], kind: "window", move: true, sight: false },
     { points: [[3, 8], [6, 8]], kind: "terrain", move: true, sight: false }],
     lights: [{ x: 4, y: 4 }], items: [{ what: "Table_Wood", x: 4, y: 4 }, { what: "chair", x: 5, y: 4 }] }));
-  assert.equal(p.schemaVersion, 2);
+  assert.equal(p.schemaVersion, 3);
   assert.equal(p.rooms.bands.medium, 2); // two 8 x 8 rooms
   assert.deepEqual([p.features.windows, p.features.low, p.features.litRooms], [4, 3, 0.5]);
   assert.deepEqual(p.items.kinds, { seating: 2 });

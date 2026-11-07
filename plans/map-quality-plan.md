@@ -145,3 +145,34 @@ after the changes in his notes.
   html) and a local page (`map-plan/shelf-page.html` → `stagecraft/map-shelf/shelf.html`) with thumbnails and wall
   lines over them, local only.
 - Still open: the installed packs (sewer and others) aren't on the shelf; the sewer brief stays weak until they are.
+
+**S2 review answers (2026-11-03):** he couldn't mark the shelf's picks from wall drawings: "I can't see the vibe.
+Seeing is believing." He'd pull the "western, indoor" folder from the filing drawer and look at the actual maps. The
+shelf page: not tried yet. Next: S3. "The shelf at table is not the workflow I envision. I'm prepping beforehand.
+This doesn't need to be super fast turnaround. Just high quality." So S7 as planned is dropped, and every map review
+shows the real art.
+
+**S3 built 2026-11-04 (makers):**
+- `map-plan/makers/`: the canvas and tracer (masonry snaps true, rough edges smooth, shared outlines exact, doors cut
+  into walls, ledge edges, wall materials), the masonry kit, wear, turning; recipes for the tavern, temple, ruined
+  fort, sewer junction and river cave. `bin/map-make`. `writers.mjs` (plan to Universal VTT). Tests:
+  `test/map-makers.test.mjs` (determinism, true walls, recipes near their briefs, wear, turning, profile v3).
+- Profile v3: a space that only leaves the map through a mouth or tunnel is a room; a solid mass a room runs round
+  counts as a loop; a plan with areas counts only its open ground as outside floor (the rock round a dungeon never).
+  The shelf was re-profiled (1,381 maps; the installed sewer pack now has 22 walled scenes).
+- Briefs v3: the fort's enclosure and the sewer's enclosure and rooms were S0 guesses the made maps proved wrong.
+  Published maps are walled lightly for Foundry (most have no loops and few doors), so their numbers describe the
+  shelf, not a target for a made map.
+- The Dungeondraft tooling (outside this repo) gained explicit walls and doors in a layout spec, a plan compiler and
+  themes (asset-pack names), and a fix to its boot wait after a pack load. Each map builds in about a minute once the
+  packs are loaded.
+
+**S3 renders checked 2026-11-06:** all five recipes, two seeds each, rebuilt in Dungeondraft and looked at before
+review (FA and DnDungeon renders only). The look found, and the build fixed: FA window frames are only the jambs
+(DnDungeon windows carry frame and glass); colourable sacks and bedrolls drawn in raw paint colours; the only puddles
+in the packs are blood (the colourable ones, now coloured as water); a counter stretched past its own thickness (now in
+pieces of three squares and a return); the sewer without its south drain left a third of the map as rock (the map now
+stops below the junction); the cave's camp went to the smallest chamber (now the den, the shrine gets a statue); the
+ford's stepping stones sat under the water layer; the ruined fort's yard was bare dirt (now patches of grass and
+weeds); the barracks' bunks were double beds and the chapel statues were wing add-ons (asset lookups by plain words that picked the wrong type). Forgotten Adventures art fills about two thirds of its named footprint, so objects at their footprint size read at real-world size; a counter's pieces are sized by the share they fill so they meet. Sewer seeds 1-3 all skip the south drain, so the review shows seeds 1 and 4. Dungeondraft holds about 5 GB
+after ten maps; the batch closes it at the end.
