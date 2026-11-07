@@ -176,3 +176,14 @@ stops below the junction); the cave's camp went to the smallest chamber (now the
 ford's stepping stones sat under the water layer; the ruined fort's yard was bare dirt (now patches of grass and
 weeds); the barracks' bunks were double beds and the chapel statues were wing add-ons (asset lookups by plain words that picked the wrong type). Forgotten Adventures art fills about two thirds of its named footprint, so objects at their footprint size read at real-world size; a counter's pieces are sized by the share they fill so they meet. Sewer seeds 1-3 all skip the south drain, so the review shows seeds 1 and 4. Dungeondraft holds about 5 GB
 after ten maps; the batch closes it at the end.
+
+**Paused 2026-11-07.** Russell looked at the renders ("These are pretty good") and pivoted while he gets more compute
+for image generation and image work. Where S3 stopped:
+- Final renders exist for tavern 1 and 2, temple 1 and 2, and fort 1.
+- Fort 1 predates the bunk fix (rotation 0, head to the wall).
+- Fort 2, sewers 1 and 4, and caves 1 and 2 still need the final rebuild. Run them three at a time: Dungeondraft grows
+  past 5 GB, and the system stopped a batch of six for memory.
+- The S3 review page is drafted but not published.
+- The render and page scripts are with the Dungeondraft tooling (`mcp/tools/plan-review/`). That tooling is now in a
+  local git repo, which is never pushed: its themes name pack files.
+- Next on resume: finish the six renders, publish the page, and ask q-next (S4, S5 or S6).

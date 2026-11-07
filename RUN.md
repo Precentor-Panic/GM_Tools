@@ -1,5 +1,7 @@
 # Running GM Tools
 
+First time on a machine? [README.md](README.md) lists what to install.
+
 Three ways to launch (all go through `bin/gm-tools`, the single-instance launcher):
 
 1. **`npm run app`** — from the repo root. Simplest if you already have `node`
