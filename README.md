@@ -108,6 +108,22 @@ npm test                                # root suites
 
 These suites need no API key. The `*.smoke.mjs` files make real, small model calls. Run them by hand with a key set.
 
+## Moving to another machine
+
+Git carries the code. It doesn't carry these, so copy them across:
+
+- **`.env`**, which holds your keys.
+- **The data stores in this checkout.** These are the ignored folders, such as `bestiary/`, `items/`, `party-roster/`,
+  `review-state/`, `session-scenes/`, `stagecraft/`, `rules-library/` and `tokens/`. The library-wide stores stay here
+  even when a world has a campaign repo. The simplest way is to copy the whole checkout and then run `git status` on
+  the new machine.
+- **`~/.config/gm-tools/`**, which holds `services.env` and `campaigns.json`. Fix any paths in them that changed.
+- **Foundry's `Data` folder**, which holds worlds, modules and systems. Copy Foundry itself, or reinstall it.
+- **Each campaign repo.** Push it, or copy it, and re-register it if its path changed.
+
+Rebuild everything else on the new machine: `node_modules/` (the install steps above), Playwright's Chromium, and any
+Python virtualenvs. Then re-run `ops/install-services.sh` if you use the services, and check with `bin/gm-status`.
+
 ## What isn't in the repo
 
 - **Your campaign.** The data stores are ignored folders in this checkout, unless a world is registered to its own
