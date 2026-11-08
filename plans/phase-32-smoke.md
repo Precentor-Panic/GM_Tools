@@ -158,7 +158,7 @@ the batch" contract rule actually holds live, not just in the unit tests:
 
 ```bash
 cat > /path/to/foundryData/worlds/<worldId>/world-fabric-foundry-ops.json <<'EOF'
-[{"opId":"op_smoke_neg_1","kind":"create_actor","data":{}}]
+[{"opId":"op_smoke_neg_1","kind":"create_dragon","data":{}}]
 EOF
 ```
 
@@ -169,7 +169,7 @@ curl http://localhost:30000/worlds/<worldId>/world-fabric-foundry-results.json
 curl http://localhost:30000/worlds/<worldId>/world-fabric-foundry-ops.json
 ```
 
-**Success looks like:** results shows `[{"opId":"op_smoke_neg_1","ok":false,"error":"unsupported kind \"create_actor\""}]`
+**Success looks like:** results shows `[{"opId":"op_smoke_neg_1","ok":false,"error":"unsupported kind \"create_dragon\""}]`
 (momentarily, same clearing caveat as 2b), the ops file reads back `[]` (cleared — the watcher didn't hang or
 throw on the unrecognized kind), and the browser console shows a `world-fabric | applied 0/1 foundry-op(s)` +
 warning line, not an uncaught exception.
