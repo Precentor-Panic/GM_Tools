@@ -116,15 +116,17 @@ page.on("pageerror", (e) => log("[pageerror]", String(e).slice(0, 400)));
 let exitCode = 0;
 try {
   await page.goto(`${URL}/join`, { waitUntil: "domcontentloaded", timeout: 60000 });
-  // The join form: a <select name="userid"> of user names, a password input, and a Join button.
-  await page.waitForSelector('select[name="userid"]', { timeout: 60000 });
-  const picked = await page.evaluate((name) => {
-    const sel = document.querySelector('select[name="userid"]');
+  // The join form: a <select> of user names, a password input, and a Join button.
+  // Foundry 14.370 renamed the select from "userid" to "userId"; accept either.
+  const USER_SELECT = 'select[name="userId"], select[name="userid"]';
+  await page.waitForSelector(USER_SELECT, { timeout: 60000 });
+  const picked = await page.evaluate(({ name, selector }) => {
+    const sel = document.querySelector(selector);
     const o = [...sel.options].find((x) => x.textContent.trim() === name);
     if (!o) return null;
     sel.value = o.value; sel.dispatchEvent(new Event("change", { bubbles: true }));
     return o.value;
-  }, USER);
+  }, { name: USER, selector: USER_SELECT });
   if (!picked) throw new Error(`no user named "${USER}" on the join screen`);
   if (PASSWORD) await page.fill('input[name="password"]', PASSWORD);
   await Promise.all([

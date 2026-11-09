@@ -88,7 +88,8 @@ export async function postHtmlToFoundryChat(html, opts = {}) {
     const page = await ctx.newPage();
 
     await page.goto(`${baseUrl}/join`, { waitUntil: "networkidle" });
-    await page.locator('select[name="userid"]').selectOption({ label: "Gamemaster" });
+    // Foundry 14.370 renamed the user select from "userid" to "userId".
+    await page.locator('select[name="userId"], select[name="userid"]').selectOption({ label: "Gamemaster" });
     await page.locator('button[name="join"], button[type="submit"]').first().click();
     await page.waitForFunction(() => window.game?.ready === true, { timeout: 60000 });
 
